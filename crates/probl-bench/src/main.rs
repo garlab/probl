@@ -5,6 +5,7 @@
 //! cargo run --release -p probl-bench                # every model
 //! cargo run --release -p probl-bench -- tennis      # the models whose name contains "tennis"
 //! cargo run --release -p probl-bench -- --quick     # one timed run each
+//! cargo run --release -p probl-bench -- --threads=1 # sampling on one thread
 //! ```
 //!
 //! For each model: the median time of a few runs, the engine's statistics,
@@ -82,12 +83,25 @@ struct Run {
     result: Result<Outcome, String>,
 }
 
-fn run_once(program: &Program, merge: bool, limit: Duration) -> Run {
+/// How the models are run.
+#[derive(Clone, Copy)]
+struct Settings {
+    /// One timed run each, instead of five.
+    quick: bool,
+    /// The most threads that sample at once (all the cores by default).
+    threads: Option<usize>,
+}
+
+fn run_once(program: &Program, settings: Settings, merge: bool, limit: Duration) -> Run {
     let cancel = Arc::new(AtomicBool::new(false));
+    let mut limits = Limits::default();
+    if let Some(n) = settings.threads {
+        limits.max_threads = n;
+    }
     let options = Options {
         merge,
         cancel: Some(cancel.clone()),
-        limits: Limits::default(),
+        limits,
         ..Options::default()
     };
     // A watchdog cancels the run at the time limit.
@@ -123,28 +137,32 @@ struct Measured {
     unmerged: Option<Result<(Duration, u64), String>>,
 }
 
-fn measure(name: &str, program: &Program, quick: bool) -> Measured {
+fn measure(name: &str, program: &Program, settings: Settings) -> Measured {
     let enumerated = !matches!(program.settings.mode, probl_sema::ir::Mode::Sample { .. });
-    // The first run counts the heap; later ones are timed without counting.
+    // The heap is counted in a run of its own, which isn't timed: counting
+    // slows allocation down, much more so when threads allocate at once.
     IN_USE.store(0, Ordering::Relaxed);
     PEAK.store(0, Ordering::Relaxed);
     COUNTING.store(true, Ordering::Relaxed);
-    let first = run_once(program, true, TIME_LIMIT);
+    let counted = run_once(program, settings, true, TIME_LIMIT);
     COUNTING.store(false, Ordering::Relaxed);
     let peak_heap = PEAK.load(Ordering::Relaxed);
+    // A failed run isn't repeated, and neither is a long one.
+    let first = match counted.result {
+        Ok(_) => run_once(program, settings, true, TIME_LIMIT),
+        Err(_) => counted,
+    };
     let mut times = vec![first.time];
-    // Short runs are repeated; long or failed ones aren't.
-    if first.result.is_ok() && first.time < Duration::from_secs(5) {
-        for _ in 0..if quick { 1 } else { 5 } {
-            times.push(run_once(program, true, TIME_LIMIT).time);
+    if first.result.is_ok() && first.time < Duration::from_secs(5) && !settings.quick {
+        for _ in 0..4 {
+            times.push(run_once(program, settings, true, TIME_LIMIT).time);
         }
-        times.remove(0);
     }
     times.sort();
     let time = times[times.len() / 2];
     let unmerged = (enumerated && first.result.is_ok()).then(|| {
         let limit = (first.time * 20).clamp(Duration::from_secs(1), Duration::from_secs(30));
-        let run = run_once(program, false, limit);
+        let run = run_once(program, settings, false, limit);
         run.result.map(|o| (run.time, o.stats.world_steps))
     });
     Measured {
@@ -283,7 +301,13 @@ fn row(m: &Measured) -> String {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let quick = args.iter().any(|a| a == "--quick");
+    let settings = Settings {
+        quick: args.iter().any(|a| a == "--quick"),
+        threads: args.iter().find_map(|a| a.strip_prefix("--threads=")).map(|n| {
+            n.parse()
+                .unwrap_or_else(|_| panic!("--threads= needs a number, not {n:?}"))
+        }),
+    };
     let filter: Vec<String> = args.into_iter().filter(|a| !a.starts_with("--")).collect();
     println!(
         "| model | mode | time | peak worlds | world-steps | per step | calls | peak heap | without merging | notes |"
@@ -296,7 +320,7 @@ fn main() {
             println!("| {name} | | | | | | | | | **doesn't compile** |");
             continue;
         };
-        let m = measure(&name, &program, quick);
+        let m = measure(&name, &program, settings);
         println!("{}", row(&m));
     }
 }

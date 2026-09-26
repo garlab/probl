@@ -335,6 +335,7 @@ Choose a mode with a pragma at the top of a file, or override it on the command 
 ```
 ```sh
 probl run model.probl --mode sample --runs 100000 --seed 3   # sample, whatever the program says
+probl run model.probl --threads 2                            # sample on at most 2 cores
 probl run model.probl --timeout 10                           # stop after 10 seconds
 probl check model.probl                                      # parse and check without running
 probl repl
@@ -346,6 +347,8 @@ The output always starts with a line saying how the numbers were computed, so an
 enumerated · evidence 8.87% · unresolved < 1e-12
 sample · 50,000 runs · seed 11 · effective sample size 50,000
 ```
+
+Sampling uses every core by default. The runs go in batches of 1,000 with random numbers of their own, combined in order, so the output is the same on any number of cores.
 
 Whoever runs a program sets limits on its worlds, work, loop iterations, call depth and output (`--max-worlds`, `--max-work`, `--timeout`). A program's `@max_worlds` and `@max_iterations` can lower these limits, never raise them.
 

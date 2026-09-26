@@ -40,6 +40,9 @@ fn options(mode: Option<Mode>) -> Options {
 struct Scores {
     z: Vec<f64>,
     compared: u64,
+    /// The program being compared, and the estimates furthest off so far.
+    seed: u64,
+    worst: Vec<(f64, String)>,
 }
 
 impl Scores {
@@ -57,7 +60,17 @@ impl Scores {
             ));
         }
         if se > 1e-12 && n >= 100.0 {
-            self.z.push((est - exact) / se);
+            let z = (est - exact) / se;
+            self.z.push(z);
+            if z.abs() > 3.0 {
+                self.worst.push((
+                    z.abs(),
+                    format!(
+                        "seed {}, {what}: estimate {est} ± {se}, exact {exact}, z = {z:.1}",
+                        self.seed
+                    ),
+                ));
+            }
         }
         Ok(())
     }
@@ -165,6 +178,7 @@ fn sampling_agrees_with_enumeration() {
             continue;
         };
         let mode = Mode::Sample { runs, seed };
+        scores.seed = seed;
         match probl_engine::run(&program, &options(Some(mode)), &mut print) {
             Ok(sampled) => {
                 checked += 1;
@@ -189,23 +203,30 @@ fn sampling_agrees_with_enumeration() {
             break;
         }
     }
+    // Calibration: with honest standard errors, |z| > 4 happens 0.006% of the
+    // time, and the mean of z² is about 1. A few estimates are far off when
+    // their standard error is itself estimated from the few runs that matter
+    // (a rare event, or a few heavy weights), which section 14 says makes
+    // both unreliable: those are counted beyond 4, and count as 4 in the mean
+    // of z², so that one of them can't hide how the others do.
     let far = scores.z.iter().filter(|z| z.abs() > 4.0).count();
-    let mean_square = scores.z.iter().map(|z| z * z).sum::<f64>() / scores.z.len().max(1) as f64;
+    let mean_square = scores.z.iter().map(|z| z.clamp(-4.0, 4.0).powi(2)).sum::<f64>() / scores.z.len().max(1) as f64;
     eprintln!(
         "{checked} programs checked, {skipped} skipped; {} estimates compared; {} z-scores, mean z² {mean_square:.2}, {far} beyond 4",
         scores.compared,
         scores.z.len()
     );
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
-    // Calibration: with honest standard errors, |z| > 4 happens 0.006% of the
-    // time, and the mean of z² is about 1.
+    scores.worst.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let worst: Vec<&str> = scores.worst.iter().take(5).map(|(_, s)| s.as_str()).collect();
+    let worst = worst.join("\n");
     assert!(
         far * 100 <= scores.z.len().max(100),
-        "{far} of {} estimates are more than 4 standard errors off",
+        "{far} of {} estimates are more than 4 standard errors off; the furthest:\n{worst}",
         scores.z.len()
     );
     assert!(
         scores.z.len() < 100 || (0.5..2.0).contains(&mean_square),
-        "mean z² is {mean_square}: the standard errors are off"
+        "mean z² is {mean_square}: the standard errors are off; the furthest estimates:\n{worst}"
     );
 }

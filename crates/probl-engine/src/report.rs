@@ -64,9 +64,20 @@ impl Base {
         self.b += w.scale(b);
         self.bb += (w * w).scale(b * b);
     }
+
+    fn absorb(&mut self, other: Base) {
+        self.b += other.b;
+        self.bb += other.bb;
+    }
 }
 
 impl Sums {
+    fn absorb(&mut self, other: Sums) {
+        self.aa += other.aa;
+        self.ab += other.ab;
+        self.ab_negative += other.ab_negative;
+    }
+
     fn add(&mut self, w: Weight, a: f64, b: f64) {
         let w2 = w * w;
         self.aa += w2.scale(a * a);
@@ -114,6 +125,26 @@ struct Moments {
     /// number of visits.
     visits: Base,
     values: Vec<(Value, Sums)>,
+}
+
+impl Moments {
+    fn absorb(&mut self, other: Moments) {
+        self.weight += other.weight;
+        self.squares += other.squares;
+        self.facts.absorb(other.facts);
+        self.yes.absorb(other.yes);
+        self.numbers.absorb(other.numbers);
+        self.sum.absorb(other.sum);
+        self.sum_positive += other.sum_positive;
+        self.sum_negative += other.sum_negative;
+        self.visits.absorb(other.visits);
+        for (v, sums) in other.values {
+            match self.values.iter_mut().find(|(x, _)| *x == v) {
+                Some((_, mine)) => mine.absorb(sums),
+                None => self.values.push((v, sums)),
+            }
+        }
+    }
 }
 
 /// What one sampled run reported for one key, added up over its visits: the
@@ -222,6 +253,26 @@ impl Acc {
     fn unresolved_share(&self, unresolved: Weight) -> f64 {
         let u = unresolved + self.missing;
         u.ratio(self.total + unresolved)
+    }
+
+    /// Add what another batch of runs reported for this key.
+    fn absorb(&mut self, other: Acc) {
+        debug_assert!(
+            self.runs.is_empty() && other.runs.is_empty(),
+            "batches end before they're combined"
+        );
+        self.total += other.total;
+        self.yes += other.yes;
+        self.facts += other.facts;
+        self.missing += other.missing;
+        for (v, w) in other.values {
+            *self.values.entry(v).or_insert(Weight::ZERO) += w;
+        }
+        match (&mut self.moments, other.moments) {
+            (Some(mine), Some(theirs)) => mine.absorb(theirs),
+            (mine @ None, theirs) => *mine = theirs,
+            (Some(_), None) => {}
+        }
     }
 
     /// Whether the values come from sampled runs.
@@ -350,6 +401,21 @@ impl Sink {
         }
         for acc in self.groups.values_mut() {
             acc.end_batch();
+        }
+    }
+
+    /// Add what another batch of runs reported. Batches are combined in
+    /// order, so the sums don't depend on which thread ran which batch.
+    pub fn absorb(&mut self, other: Sink) {
+        self.reached += other.reached;
+        self.reached_squares += other.reached_squares;
+        for (key, acc) in other.groups {
+            match self.groups.entry(key) {
+                std::collections::btree_map::Entry::Occupied(mut mine) => mine.get_mut().absorb(acc),
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    slot.insert(acc);
+                }
+            }
         }
     }
 

@@ -34,7 +34,7 @@ The implementation differs from the original plan in a few places, each delibera
 - **Random numbers and samplers are written by hand** (xoshiro256++, Box–Muller, Marsaglia–Tsang, inversion), with `libm` for the special functions, instead of `rand` and `statrs`: a seed must give the same numbers on every platform and in every version of the dependencies. They're tested against their distributions with Kolmogorov–Smirnov and chi-square tests.
 - **Weights are `f64` with an extended exponent** (`Weight`), not a generic parameter. Exact rational weights were dropped: they would have made `--fractions` a proof only for programs without loops or observations of floats, which is too narrow to promise (audit I1). If exact answers come back, it will be for an explicitly supported subset.
 - **Collections are `Arc`-shared and copied on write**, not `im` persistent structures. No benchmark spends significant time copying collections (docs/benchmarks.md), so persistent collections wait for one that does.
-- **The engine thread's stack is 64 MiB**, with a call-depth limit of 500. Replacing recursion in the interpreter with an explicit stack waits for a model that needs deeper calls.
+- **The engine thread's stack is 64 MiB** (and so is each sampling thread's), with a call-depth limit of 500. Replacing recursion in the interpreter with an explicit stack waits for a model that needs deeper calls.
 
 ## 1. Scope
 
@@ -179,9 +179,17 @@ Each `report` site owns an accumulator for each value of its `by` key: the weigh
 
 ### 3.10 Randomness and reproducibility
 
-Random numbers come from one xoshiro256++ stream, seeded through SplitMix64, used by the batches in order; the batch size is fixed at 1,000. The samplers use `libm`, not the platform's math library. So a program and a seed give the same output on every machine, whatever the engine's other settings.
+Runs go in batches of a fixed size, 1,000, and each batch draws from a xoshiro256++ stream of its own, seeded through SplitMix64 from the seed and the batch's number. The samplers use `libm`, not the platform's math library.
 
-Running batches in parallel will need a stream per batch, derived from `(seed, batch index)`, combined in batch order so that the output doesn't depend on the number of threads. That changes the numbers a seed gives, which is fine between versions.
+Batches run on up to `max_threads` threads (all the cores by default, `--threads` on the command line), each with an engine of its own. Batches are combined in order, as they arrive:
+
+- Each batch's reports are added in batch order, so the sums are the same whatever thread ran which batch.
+- What a batch prints is kept, with where it was printed, and printed in batch order. The output limit counts in that order too.
+- The first error in batch order is the one reported. Once a batch fails, no later batch starts.
+
+A batch starts only if it's fewer than two per thread past the batch being combined, which bounds what finished batches hold in memory. So a program and a seed give the same output on every machine and with any number of threads, whatever the engine's other settings.
+
+The threads share one work budget, which they take in chunks of 16,384 units. The total stays within `max_work`. Only whether a run reaches that limit can depend on timing, when it comes within a few chunks of it.
 
 ### 3.11 Errors
 
@@ -213,7 +221,8 @@ The effort ranges assume one developer working full time, and they are 90% confi
 - Done: independent sampling, checked against enumeration on generated programs with fixed seeds, including the calibration of its standard errors.
 - Done: continuous families with pdf, cdf, quantile and sampling; `a to b`, `normal_range`, `pert`, `triangular`; `observe … from` with densities; `--mode`, `--runs` and `--seed`.
 - **Exit reached:** examples 07 to 09 match their reference outputs within tolerance, and every sampler passes its statistical tests.
-- Left before the release: parallel batches with reproducible seeding; an estimate of the evidence (log-evidence with densities).
+- Done: parallel batches, each with a random stream of its own. The output is the same with any number of threads, and sampled models run 6–8× faster on 12 cores (docs/benchmarks.md).
+- Left before the release: an estimate of the evidence (log-evidence with densities).
 - Only if benchmarks call for them, each with its contract first: arithmetic on continuous distributions, merged sampling, particles, beam, nested estimates, and an `auto` mode that says what it chose.
 
 ### Phase 5: inspection (2–4 weeks)
@@ -258,7 +267,8 @@ The forecast made when the plan was first written, by running [`examples/09_road
   It found four engine bugs: `one_of` kept distributions as outcomes, so a drawn value could still be a distribution; `chance` weights didn't accept facts and uncertain facts, as the semantics says they should; floating-point rounding left branches of weight 10⁻¹⁶ behind certain conditions, reported as unresolved weight or as evidence where there was none; and an operand that can fail or print (such as `simulate { … }` in `simulate { … } == f(x)`) ran after a later operand's call, not before it.
 - **Fuzzing.** Mutated examples, mutated generated programs and random fragments go through parsing, compiling, rendering diagnostics and running under small limits. Nothing may panic, hang or return an internal error. `PROBL_FUZZ_CASES` runs more.
 - **Snapshots.** The AST and the IR of every example.
-- **Sampling against enumeration.** For generated programs, every estimate sampling prints (probabilities, means, reach) must be within six standard errors of the exact value from enumeration, and across all of them the standard errors must be calibrated: few estimates more than four standard errors off, and a mean squared z-score near 1. On 2,271 programs and 9,316 estimates it was 0.99. `PROBL_SAMPLING_CASES` runs more.
+- **Sampling against enumeration.** For generated programs, every estimate sampling prints (probabilities, means, reach) must be within six standard errors of the exact value from enumeration, and across all of them the standard errors must be calibrated: few estimates more than four standard errors off, and a mean squared z-score near 1. In the mean, each z counts as at most 4. An estimate whose standard error comes from the few runs that matter (a rare event, or a few heavy weights) can be dozens of standard errors off, and one of them would otherwise dwarf the rest; the count beyond 4 bounds them instead. On 2,272 programs and 9,320 estimates, the mean was 0.94, with 2 beyond 4. `PROBL_SAMPLING_CASES` runs more.
+- **Threads.** Sampled programs give the same output, the same printed lines and the same first error on 1, 2, 3 and 8 threads, and the threads share the work budget.
 - **Samplers.** Kolmogorov–Smirnov tests for every continuous family, chi-square tests for the direct count samplers, and closed-form checks of CDFs, quantiles and densities. `probl-engine/tests/sampling.rs` covers the rules of semantics §13–14.
 - **Sampled examples.** Examples 07–09 are compared with outputs from an independent reference simulation, token by token: estimates within five standard errors, other numbers within 4%, dates within three days. The comparator has its own test.
 - **Benchmarks.** `cargo run --release -p probl-bench` runs the models in `benches/` and `examples/` and prints their time, worlds, world-steps, calls, peak heap, and cost without merging; `cargo test` checks that they compile. They aren't run in the test suite (they take about 3½ minutes), and nothing tracks them over time yet.
@@ -266,7 +276,7 @@ The forecast made when the plan was first written, by running [`examples/09_road
 ## 6. Performance targets
 
 - Enumeration: examples 02 to 06 each finish in under one second on a laptop, and craps in under 50 ms. (Met.)
-- Sample mode: example 07 (50,000 runs × 18 months) finishes in under two seconds on eight cores. (It takes 1.8 seconds on one core; the same runs as 8 processes take 0.27 seconds, which is what parallel batches should reach.)
+- Sample mode: example 07 (50,000 runs × 18 months) finishes in under two seconds on eight cores. (Met: 0.28 seconds on 8 threads, 1.8 seconds on one.)
 - If a target is missed by more than 10×, the vectorized VM from phase 7 moves earlier.
 
 ## 7. Risks
@@ -305,11 +315,10 @@ Still open:
 
 ## 9. Next steps
 
-The order the benchmarks recommend (docs/benchmarks.md):
+The order the benchmarks recommend (docs/benchmarks.md). The first recommendation, parallel sampling batches, is done: 6–8× for sampled models on 12 cores. v0.2 still needs an estimate of the evidence.
 
-1. **Parallel sampling batches**, with a random stream per batch: about 6.6× for sampled models on 8 cores. Then finish v0.2 with an estimate of the evidence.
-2. **Cheaper merging**: cached hashes for collections, and precomputed dead slots. Merging takes 34–70% of the time in state-heavy enumeration.
-3. **Moving draws to their first use**, a compiler pass: 1,048,576 worlds become 256 in the reliability benchmark.
-4. **Better inference for evidence-heavy forecasts**: specify, then build, conjugate updates and a general method (Metropolis–Hastings over a run's choices, or particles with rejuvenation), with the audit's D4 checklist. Likelihood weighting's effective sample size falls from 852 to 211 as an A/B test's data grows from 30 to 120 days.
-5. **Reading data from files and stdin**, as proposed in [docs/data-input.md](data-input.md), once its open questions are settled.
-6. **Markov-chain solving**, for exact cyclic loops and recursion to the same call.
+1. **Cheaper merging**: cached hashes for collections, and precomputed dead slots. Merging takes 34–70% of the time in state-heavy enumeration.
+2. **Moving draws to their first use**, a compiler pass: 1,048,576 worlds become 256 in the reliability benchmark.
+3. **Better inference for evidence-heavy forecasts**: specify, then build, conjugate updates and a general method (Metropolis–Hastings over a run's choices, or particles with rejuvenation), with the audit's D4 checklist. Likelihood weighting's effective sample size falls from 852 to 211 as an A/B test's data grows from 30 to 120 days.
+4. **Reading data from files and stdin**, as proposed in [docs/data-input.md](data-input.md), once its open questions are settled.
+5. **Markov-chain solving**, for exact cyclic loops and recursion to the same call.

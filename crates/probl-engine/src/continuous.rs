@@ -580,19 +580,35 @@ pub struct Rng {
     s: [u64; 4],
 }
 
+/// SplitMix64's step and output function.
+const GOLDEN: u64 = 0x9E37_79B9_7F4A_7C15;
+
+fn mix(z: u64) -> u64 {
+    let z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    let z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 impl Rng {
     pub fn new(seed: u64) -> Rng {
         let mut z = seed;
         let mut next = || {
-            z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
-            let mut x = z;
-            x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-            x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-            x ^ (x >> 31)
+            z = z.wrapping_add(GOLDEN);
+            mix(z)
         };
         Rng {
             s: [next(), next(), next(), next()],
         }
+    }
+
+    /// The random numbers of the batch numbered `index`, for a run with this
+    /// seed. Every batch has a stream of its own, so batches can run in any
+    /// order and on any number of threads, and still get the same numbers
+    /// (docs/semantics.md, section 14).
+    pub fn stream(seed: u64, index: u64) -> Rng {
+        // The index-th output of SplitMix64 from the seed: different for
+        // every index.
+        Rng::new(mix(seed.wrapping_add(index.wrapping_add(1).wrapping_mul(GOLDEN))))
     }
 
     pub fn next_u64(&mut self) -> u64 {
@@ -870,6 +886,17 @@ mod tests {
             let mean = xs.iter().sum::<f64>() / n as f64;
             close(mean, f.mean(), 6.0 * f.variance().sqrt() / (n as f64).sqrt());
         }
+    }
+
+    #[test]
+    fn batches_have_streams_of_their_own() {
+        let firsts: Vec<u64> = (0..1000).map(|i| Rng::stream(11, i).next_u64()).collect();
+        let mut distinct = firsts.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(distinct.len(), firsts.len());
+        assert_eq!(Rng::stream(11, 3).next_u64(), Rng::stream(11, 3).next_u64());
+        assert_ne!(Rng::stream(11, 3).next_u64(), Rng::stream(12, 3).next_u64());
     }
 
     #[test]

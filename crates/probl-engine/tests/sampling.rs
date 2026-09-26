@@ -5,7 +5,7 @@
 mod common;
 
 use common::*;
-use probl_engine::Options;
+use probl_engine::{Limits, Options};
 
 /// The first report's probability and standard error.
 fn estimate(src: &str) -> (f64, f64) {
@@ -205,4 +205,86 @@ fn a_report_that_is_rarely_reached_says_so() {
 fn evidence_no_run_survives_is_an_error() {
     let e = error("@mode sample(runs: 100, seed: 1)\nobserve false\nreport true");
     assert!(e.contains("every run was ruled out"), "{e}");
+}
+
+/// Run a sampled program on `threads` threads: its output (or error) and
+/// what it printed.
+fn on_threads(src: &str, threads: usize, max_work: u64) -> (Result<String, String>, Vec<String>) {
+    let (program, _) = probl_sema::compile(src);
+    let program = program.expect("the program compiles");
+    let options = Options {
+        limits: Limits {
+            max_threads: threads,
+            max_work,
+            ..Limits::default()
+        },
+        ..Options::default()
+    };
+    let mut lines = Vec::new();
+    let result = probl_engine::run(&program, &options, &mut |line: &str| lines.push(line.to_string()));
+    (result.map(|o| o.output).map_err(|e| e.message), lines)
+}
+
+#[test]
+fn the_output_does_not_depend_on_threads() {
+    // 7,500 runs: 8 batches, the last one partial.
+    let src = r#"
+@mode sample(runs: 7_500, seed: 9)
+let x ~ d6
+let y ~ normal(x, 1)
+observe y > 2
+if x == 6 and y > 7.5 { print("high", x, round(y)) }
+report x
+report y > 4 as "y above 4"
+report y by x mod 2
+"#;
+    let (one, printed) = on_threads(src, 1, u64::MAX);
+    let one = one.unwrap();
+    assert!(printed.len() > 20, "{printed:?}");
+    assert!(one.contains("effective sample size"), "{one}");
+    for threads in [2, 3, 8] {
+        let (other, other_printed) = on_threads(src, threads, u64::MAX);
+        assert_eq!(other.unwrap(), one, "{threads} threads");
+        assert_eq!(other_printed, printed, "{threads} threads");
+    }
+}
+
+#[test]
+fn the_first_error_in_run_order_is_reported() {
+    // About one run in a thousand fails, with its own index in the message:
+    // most batches fail, and the first one's error must be reported, after
+    // what the batches up to it printed.
+    let src = r#"
+@mode sample(runs: 20_000, seed: 3)
+let k ~ d100
+let m ~ d100
+if m == 1 { print("run with", k) }
+let xs = [0, 1, 2]
+if m == 1 and k > 90 { report xs[k] }
+report k
+"#;
+    let (one, printed) = on_threads(src, 1, u64::MAX);
+    let e = one.unwrap_err();
+    assert!(e.contains("is out of range"), "{e}");
+    assert!(!printed.is_empty());
+    for threads in [2, 8] {
+        let (other, other_printed) = on_threads(src, threads, u64::MAX);
+        assert_eq!(other.unwrap_err(), e, "{threads} threads");
+        assert_eq!(other_printed, printed, "{threads} threads");
+    }
+}
+
+#[test]
+fn threads_share_the_work_budget() {
+    let src = format!("@mode sample(runs: 20_000, seed: 1){CRAPS}");
+    let steps = outcome(&src).stats.world_steps;
+    // Half the work the runs need: each of 8 threads would have enough on
+    // its own, but together they don't.
+    for threads in [1, 8] {
+        let (result, _) = on_threads(&src, threads, steps / 2);
+        let e = result.unwrap_err();
+        assert!(e.contains("used up its work budget"), "{threads} threads: {e}");
+    }
+    let (plenty, _) = on_threads(&src, 8, steps * 4);
+    assert!(plenty.is_ok());
 }

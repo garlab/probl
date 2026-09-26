@@ -53,10 +53,25 @@ pub struct Config {
     pub sample_seed: Option<u64>,
 }
 
-/// Runs are executed this many at a time. The order in which they use
-/// random numbers depends on it, so it's fixed: changing it changes the
-/// output for a given seed.
+/// Runs are executed this many at a time, and each batch has a random
+/// stream of its own. The size is fixed: changing it changes the output for
+/// a given seed.
 pub const BATCH: u64 = 1000;
+
+/// What a batch of sampled runs produced, to be combined with the other
+/// batches in order.
+#[derive(Debug)]
+pub struct Batch {
+    pub sinks: Vec<Sink>,
+    pub totals: SampleTotals,
+    pub observed: bool,
+    pub unresolved: Weight,
+    pub last_ruling_out: Option<Span>,
+    pub stats: Stats,
+}
+
+/// Lines printed by `print(…)`, with where.
+pub type Printed = Vec<(Span, String)>;
 
 /// The final weights of all the runs, when sampling.
 #[derive(Clone, Copy, Debug)]
@@ -98,7 +113,11 @@ pub struct Engine<'p> {
     record_names: Vec<Arc<str>>,
     enum_values: Vec<Vec<Value>>,
     print: &'p mut (dyn FnMut(&str) + Send),
+    /// Bytes printed, counting the batches printed before this one.
     printed: usize,
+    /// When sampling a batch: what it printed, kept to be printed in batch
+    /// order.
+    lines: Option<Printed>,
     pub stats: Stats,
     /// When sampling: the random numbers. `None` when enumerating, including
     /// inside `simulate` while sampling.
@@ -144,6 +163,7 @@ impl<'p> Engine<'p> {
                 .collect(),
             print,
             printed: 0,
+            lines: None,
             stats: Stats::default(),
             sampler,
             nested: 0,
@@ -163,35 +183,55 @@ impl<'p> Engine<'p> {
         Ok(total_weight(&flow.next))
     }
 
-    /// Sample: run the top level `runs` times, `BATCH` runs at a time, and
-    /// return the runs' final weights (docs/semantics.md, section 14).
-    pub fn run_sampled(&mut self, runs: u64) -> Result<SampleTotals> {
+    /// Sample the runs `first..first + n` with the random numbers `rng`
+    /// (docs/semantics.md, section 14), after earlier batches printed
+    /// `printed` bytes. A batch starts afresh: its reports and counters are
+    /// its own, so batches can run on any thread; only caches carry over.
+    /// What it prints comes back with its result, even when it fails.
+    pub fn run_batch(&mut self, rng: Rng, first: u64, n: u64, printed: usize) -> (Result<Batch>, Printed) {
+        self.sampler = Some(rng);
+        self.sinks = vec![Sink::default(); self.prog.reports.len()];
+        self.observed = false;
+        self.unresolved = Weight::ZERO;
+        self.last_ruling_out = None;
+        self.stats = Stats::default();
+        self.printed = printed;
+        self.lines = Some(Vec::new());
+        self.budget = self.config.budget.clone();
+        let result = self.sample_runs(first, n);
+        self.budget.give_back();
+        (result, self.lines.take().unwrap_or_default())
+    }
+
+    fn sample_runs(&mut self, first: u64, n: u64) -> Result<Batch> {
         let main = self.prog.main();
+        let worlds = (first..first + n)
+            .map(|run| World {
+                slots: vec![Value::Dead; main.n_slots()],
+                weight: Weight::ONE,
+                run: run as u32,
+            })
+            .collect();
+        let flow = self.exec_block(MAIN, &main.body, worlds)?;
         let mut totals = SampleTotals {
             weight: Weight::ZERO,
             squares: Weight::ZERO,
         };
-        let mut start = 0;
-        while start < runs {
-            let n = (runs - start).min(BATCH);
-            let worlds = (start..start + n)
-                .map(|run| World {
-                    slots: vec![Value::Dead; main.n_slots()],
-                    weight: Weight::ONE,
-                    run: run as u32,
-                })
-                .collect();
-            let flow = self.exec_block(MAIN, &main.body, worlds)?;
-            for w in &flow.next {
-                totals.weight += w.weight;
-                totals.squares += w.weight * w.weight;
-            }
-            for sink in &mut self.sinks {
-                sink.end_batch();
-            }
-            start += n;
+        for w in &flow.next {
+            totals.weight += w.weight;
+            totals.squares += w.weight * w.weight;
         }
-        Ok(totals)
+        for sink in &mut self.sinks {
+            sink.end_batch();
+        }
+        Ok(Batch {
+            sinks: std::mem::take(&mut self.sinks),
+            totals,
+            observed: self.observed,
+            unresolved: self.unresolved,
+            last_ruling_out: self.last_ruling_out,
+            stats: std::mem::take(&mut self.stats),
+        })
     }
 
     /// When sampling: one draw from a distribution. A finite distribution
@@ -1143,12 +1183,12 @@ impl<'p> Engine<'p> {
                 };
                 self.printed += line.len() + 1;
                 if self.printed > self.config.max_output {
-                    return Err(RuntimeError::limit(
-                        span,
-                        "the program printed more than the output limit",
-                    ));
+                    return Err(too_much_output(span));
                 }
-                (self.print)(&line);
+                match &mut self.lines {
+                    Some(lines) => lines.push((span, line)),
+                    None => (self.print)(&line),
+                }
                 Ok(Value::Unit)
             }
             Builtin::Map | Builtin::Filter | Builtin::Reduce => self.higher_order(b, &values, span),
@@ -1262,6 +1302,11 @@ impl<'p> Engine<'p> {
             _ => unreachable!(),
         }
     }
+}
+
+/// The error when `print` at `span` goes over the output limit.
+pub fn too_much_output(span: Span) -> RuntimeError {
+    RuntimeError::limit(span, "the program printed more than the output limit")
 }
 
 /// A weight as a percentage, even when it's too small for an `f64`.

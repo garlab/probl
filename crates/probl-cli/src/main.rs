@@ -78,6 +78,9 @@ enum Command {
         /// When sampling: the seed of the random numbers (implies `--mode sample`).
         #[arg(long)]
         seed: Option<u64>,
+        /// When sampling: the most threads to use (the output doesn't depend on it).
+        #[arg(long)]
+        threads: Option<usize>,
         /// Stop the run after this many seconds.
         #[arg(long)]
         timeout: Option<f64>,
@@ -120,6 +123,7 @@ fn main() -> ExitCode {
             mode,
             runs,
             seed,
+            threads,
             timeout,
             max_worlds,
             max_work,
@@ -146,6 +150,9 @@ fn main() -> ExitCode {
             }
             if let Some(d) = max_depth {
                 options.limits.max_call_depth = d;
+            }
+            if let Some(n) = threads {
+                options.limits.max_threads = n.max(1);
             }
             if let Some(seconds) = timeout {
                 let cancel = Arc::new(AtomicBool::new(false));

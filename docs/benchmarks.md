@@ -4,7 +4,7 @@
 
 ## Summary
 
-1. **Parallel sampling batches first.** Every sampled forecast takes 0.5–2.6 s on one core, and runs are independent. Running example 07's runs as 8 processes takes 0.27 s instead of 1.77 s (6.6×). This is the cheapest large win, and it meets the plan's target for example 07 (under 2 s on 8 cores) several times over.
+1. **Parallel sampling batches first.** Every sampled forecast takes 0.5–2.6 s on one core, and runs are independent. Running example 07's runs as 8 processes takes 0.27 s instead of 1.77 s (6.6×). This is the cheapest large win, and it meets the plan's target for example 07 (under 2 s on 8 cores) several times over. *Done: 6–8× on 12 cores ([below](#since-parallel-batches)).*
 2. **Then cheaper merging, and moving draws to their first use.** Enumeration hits a wall when states are large or many facts stay live together: blackjack from a real deck takes 5.2 s and 952 MB, and a 20-component reliability model 1.4 s and 847 MB. Merging (hashing and comparing world states) takes 34–70% of that time; caching the hashes of collections cuts most of it. Separately, moving each draw to just before its first use turns the reliability model's 1,048,576 worlds into 256, with the same answer.
 3. **Then better inference for evidence-heavy forecasts.** Weighting runs by the evidence (likelihood weighting) degrades as data accumulates: an A/B test's 100,000 runs are worth 852 after 30 days of data, 467 after 60 and 211 after 120, and it gets exponentially worse with more unknown parameters. Forecasts with real data need conjugate updates, MCMC or particles; each needs its contract specified first (audit D4).
 4. **Not now:** symbolic inference, persistent collections and a bytecode interpreter. No benchmark is limited by what they'd fix, or a cheaper change fixes it first. Markov-chain solving would make cyclic loops exact and allow recursion to the same call, but no model is slow because of them.
@@ -15,9 +15,10 @@
 cargo run --release -p probl-bench              # every model in benches/ and examples/ (about 3½ minutes)
 cargo run --release -p probl-bench -- tennis    # models whose name contains "tennis"
 cargo run --release -p probl-bench -- --quick   # one timed run each
+cargo run --release -p probl-bench -- --threads=1   # sample on one thread
 ```
 
-For each model, the runner reports the median time of up to five runs, the engine's statistics, the peak heap (from a separate run that counts allocations), and for enumerated models the same run without merging worlds. A run that takes more than 60 seconds is cancelled and reported as such. `cargo test` checks that every model still compiles.
+For each model, the runner reports the median time of up to five runs, the engine's statistics, the peak heap (from a separate run that counts allocations, and isn't timed), and for enumerated models the same run without merging worlds. Sampling uses every core unless `--threads=` says otherwise. A run that takes more than 60 seconds is cancelled and reported as such. `cargo test` checks that every model still compiles.
 
 ## The models
 
@@ -39,6 +40,8 @@ The twelve models in [`benches/`](../benches/) are realistic uses of the languag
 | `ab_test` | an A/B test with 30 days of data (sampled) | evidence-heavy sampling |
 
 ## Results
+
+Measured before sampling ran in parallel: sampled models used one core.
 
 | model | mode | time | peak worlds | world-steps | per step | calls | peak heap | without merging | notes |
 |---|---|--:|--:|--:|--:|--:|--:|---|---|
@@ -104,6 +107,21 @@ Large states are dominated by merging: a world's slots, including its deck (a ma
 **Persistent collections.** No benchmark spends significant time copying large collections: the collections in these models are small (a deck of 10 counts, a pipeline of 3 orders, hands as records), and each world's copy differs from the others. What costs is hashing them, which cached hashes fix. *Not now; revisit if a model with large shared collections shows up.*
 
 **A bytecode interpreter.** Interpretation overhead (evaluating expressions, copying values) is about half of a sampled run's time, so a faster design could give 2–4×, at the cost of rewriting the engine's core. Parallel batches give more for much less, and should come first; then profile again. *Not now.*
+
+## Since: parallel batches
+
+Sampling now runs its batches of 1,000 runs on every core. Each batch has a random stream of its own, and the batches are combined in order, so the output is the same on any number of threads (docs/semantics.md, section 14). The same machine:
+
+| model | runs | 1 thread | 8 threads | 12 threads |
+|---|--:|--:|--:|--:|
+| benches/ab_test | 100,000 | 1.95 s | 289 ms (6.7×) | 247 ms (7.9×) |
+| benches/epidemic | 10,000 | 1.39 s | 294 ms (4.7×) | 178 ms (7.8×) |
+| benches/inventory | 10,000 | 2.53 s | 553 ms (4.6×) | 347 ms (7.3×) |
+| examples/07_launch_forecast | 50,000 | 1.80 s | 277 ms (6.5×) | 260 ms (6.9×) |
+| examples/08_signup_forecast | 200,000 | 1.14 s | 187 ms (6.1×) | 169 ms (6.7×) |
+| examples/09_roadmap | 100,000 | 553 ms | 82 ms (6.7×) | 75 ms (7.4×) |
+
+One thread is as fast as before. The M2 Pro has 8 performance and 4 efficiency cores, so the last four threads add less than the first eight. A model can't use more threads than it has batches: `epidemic` and `inventory` have 10, which take two rounds on 8 threads. Peak heap grows with the threads, since each has an engine and a batch of its own: example 07 takes 55 MB on 12 threads instead of 10 MB.
 
 ## Smaller findings
 

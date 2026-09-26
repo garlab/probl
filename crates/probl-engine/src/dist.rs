@@ -8,6 +8,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering as Atomic};
 
 /// Outcomes below this probability are dropped from infinite supports.
 const TAIL: f64 = 1e-18;
@@ -22,6 +23,10 @@ pub struct Dist {
     pub missing: f64,
 }
 
+/// Work taken from a shared budget at a time: threads rarely touch it, and
+/// between them hold back little of it.
+const WORK_CHUNK: u64 = 1 << 14;
+
 /// Limits on building distributions, shared by everything in a run.
 #[derive(Clone, Debug)]
 pub struct Budget {
@@ -31,6 +36,9 @@ pub struct Budget {
     pub max_collection: usize,
     /// Units of work left: world-steps plus outcomes computed.
     pub work_left: u64,
+    /// Work shared with other threads, which `work_left` is topped up from
+    /// (when batches of runs are sampled in parallel).
+    pub shared: Option<Arc<AtomicU64>>,
 }
 
 impl Budget {
@@ -39,6 +47,7 @@ impl Budget {
             max_outcomes: usize::MAX,
             max_collection: usize::MAX,
             work_left: u64::MAX,
+            shared: None,
         }
     }
 
@@ -71,15 +80,36 @@ impl Budget {
 
     /// Spend `n` units of work.
     pub fn work(&mut self, n: u64) -> OpResult<()> {
-        match self.work_left.checked_sub(n) {
-            Some(left) => {
-                self.work_left = left;
-                Ok(())
+        if n > self.work_left && !self.top_up(n - self.work_left) {
+            self.work_left = 0;
+            return Err(OpError::limit("the run used up its work budget"));
+        }
+        self.work_left -= n;
+        Ok(())
+    }
+
+    /// Take at least `need` units from the shared budget, if it has them.
+    fn top_up(&mut self, need: u64) -> bool {
+        let Some(shared) = &self.shared else {
+            return false;
+        };
+        let want = need.max(WORK_CHUNK);
+        let taken = shared.fetch_update(Atomic::Relaxed, Atomic::Relaxed, |left| {
+            (left >= need).then(|| left - want.min(left))
+        });
+        match taken {
+            Ok(left) => {
+                self.work_left += want.min(left);
+                true
             }
-            None => {
-                self.work_left = 0;
-                Err(OpError::limit("the run used up its work budget"))
-            }
+            Err(_) => false,
+        }
+    }
+
+    /// Give the work not spent back to the shared budget.
+    pub fn give_back(&mut self) {
+        if let Some(shared) = &self.shared {
+            shared.fetch_add(std::mem::take(&mut self.work_left), Atomic::Relaxed);
         }
     }
 }
@@ -719,12 +749,30 @@ mod tests {
             max_outcomes: 1000,
             max_collection: 1000,
             work_left: u64::MAX,
+            shared: None,
         };
         assert!(Dist::dice(1, 100_000, &mut small).is_err());
         assert!(Dist::pool(40, &Dist::dice(1, 6, &mut Budget::unlimited()).unwrap(), &mut small).is_err());
         assert!(Dist::geometric(1e-9, &mut small).is_err());
         assert_eq!(multisets(6, 3), 56);
         assert_eq!(multisets(u64::MAX as u128, 40), u128::MAX);
+    }
+
+    #[test]
+    fn a_shared_budget_is_spent_once() {
+        let shared = Arc::new(AtomicU64::new(100_000));
+        let budget = Budget {
+            work_left: 0,
+            shared: Some(shared.clone()),
+            ..Budget::unlimited()
+        };
+        let (mut a, mut b) = (budget.clone(), budget);
+        a.work(60_000).unwrap();
+        assert!(b.work(60_000).is_err(), "only 40,000 are left");
+        b.work(30_000).unwrap();
+        a.give_back();
+        b.give_back();
+        assert_eq!(shared.load(Atomic::Relaxed), 10_000);
     }
 
     #[test]

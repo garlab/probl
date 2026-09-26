@@ -177,7 +177,7 @@ Anything else, such as arithmetic (`normal(0, 1) * 2`) or comparing two continuo
 - **Weights come from evidence.** `observe` multiplies a run's weight as in section 7 (likelihood weighting). A run that is ruled out has weight zero.
 - **Runs are independent.** They don't merge, and calls aren't memoized, so every call makes its own choices. A function may call itself with the same arguments: each call chooses its own path. Unbounded loops aren't cut short; the iteration limit still applies.
 - **`simulate` is enumerated.** Inside each run, a `simulate` block is computed exactly, by enumeration, as in section 8, so its result has no sampling error. A block that enumeration can't compute (because it draws from a continuous distribution, say) is an error, even when sampling: estimates inside estimates aren't supported yet.
-- **Reproducible.** The same program, seed and version of Probl give the same output on any machine.
+- **Reproducible.** The same program, seed and version of Probl give the same output on any machine, with any number of threads. Runs go in batches of 1,000, each with a random stream of its own, derived from the seed and the batch's number. Batches may run at the same time, but they're combined in order: the estimates, what `print` shows and the first error are those of running them one after another. Only whether a run reaches a host's limit on work, which the threads share, can depend on timing.
 - The missing mass of infinite discrete distributions (below 10⁻¹⁸, section 10) is ignored.
 
 **Estimates.** Let the runs end with weights w₁…wₙ. A run's weight when it reaches a report is its final weight, since no observation may follow a report (section 7). A report's estimates are averages over the runs, weighted and normalized:
