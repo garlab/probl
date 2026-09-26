@@ -1,0 +1,11 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: "errors(\"let d = if 30% { 1 }\")"
+---
+Error: an `if` used as a value needs an `else`
+   ╭─[ test.probl:1:9 ]
+   │
+ 1 │ let d = if 30% { 1 }
+   │         ──────┬─────  
+   │               ╰─────── here
+───╯

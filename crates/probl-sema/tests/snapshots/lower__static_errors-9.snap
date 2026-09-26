@@ -1,0 +1,13 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: "errors(\"var deck = bag([1: 2])\\nlet c = deck.take()\")"
+---
+Error: `take()` draws a card, so it has to be used with `~`
+   ╭─[ test.probl:2:9 ]
+   │
+ 2 │ let c = deck.take()
+   │         ─────┬─────  
+   │              ╰─────── here
+   │ 
+   │ Help: write `let card ~ deck.take()`
+───╯

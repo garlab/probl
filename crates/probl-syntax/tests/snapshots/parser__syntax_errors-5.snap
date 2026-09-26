@@ -1,0 +1,22 @@
+---
+source: crates/probl-syntax/tests/parser.rs
+expression: "parse_errors(\"3 = x\\nlet y 5\")"
+---
+Error: can't assign to this
+   ╭─[ test.probl:1:1 ]
+   │
+ 1 │ 3 = x
+   │ ┬  
+   │ ╰── here
+   │ 
+   │ Help: only variables, fields (`a.b`) and elements (`a[i]`) can be assigned
+───╯
+Error: expected `=` or `~` in the binding, found number `5`
+   ╭─[ test.probl:2:7 ]
+   │
+ 2 │ let y 5
+   │       ┬  
+   │       ╰── here
+   │ 
+   │ Help: `=` keeps a value; `~` draws one from a distribution
+───╯

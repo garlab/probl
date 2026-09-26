@@ -1,0 +1,13 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: "errors(\"let x = 1\\nx = 2\")"
+---
+Error: can't assign to `x`: it was declared with `let`
+   ╭─[ test.probl:2:1 ]
+   │
+ 2 │ x = 2
+   │ ┬  
+   │ ╰── here
+   │ 
+   │ Help: declare it with `var` to be able to change it
+───╯

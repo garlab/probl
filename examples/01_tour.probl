@@ -1,0 +1,67 @@
+# A tour of Probl: conditions are probabilities, and every branch runs.
+# Run it with:  probl run examples/01_tour.probl
+
+@mode exact
+
+# ── 1. A condition is a probability ─────────────────────────────────────
+# This `if` does not pick a branch. It splits the world in two: one where
+# weather is "rain" (weight 0.3) and one where it is "sun" (weight 0.7).
+let weather = if 30% { "rain" } else { "sun" }
+report weather
+
+# ── 2. Dice are distributions; comparing one gives a probability ────────
+report 2d6 >= 10 as "2d6 rolls 10+"
+report d20 + 5 >= 15 as "a +5 attack hits armour class 15"
+
+# ── 3. `~` settles a value; `=` keeps the distribution ──────────────────
+let die = d6          # the die itself: every use is a fresh, independent roll
+report die + die      # two rolls: 2..12, most often 7
+
+let r ~ d6            # one roll: six worlds, with r = 1, 2, ..., 6
+report r + r          # the same roll twice: 2, 4, ..., 12
+
+# ── 4. Chances and facts ────────────────────────────────────────────────
+let rain = 30%
+let late = 20%
+report rain and late          # two independent events: 6%
+report rain or late           # 44%
+
+let raining ~ rain            # settle it: true in 30% of worlds, false in 70%
+report raining and raining    # one fact checked twice: 30%, not 9%
+
+# ── 5. Loops run until every world has left them ────────────────────────
+var rolls = 1
+while d6 != 6 {               # a fresh roll each time: 5/6 chance to go round again
+  rolls += 1
+}
+report rolls as "rolls until a six"
+
+# ── 6. Worlds that reach the same state merge ───────────────────────────
+# 2^1000 possible paths, but only 1,001 possible positions, and positions
+# are all the engine has to keep track of.
+var pos = 0
+repeat 1000 {
+  pos += if 50% { 1 } else { -1 }
+}
+report pos as "random walk after 1,000 steps"
+
+# ── 7. Evidence re-weights the worlds (Bayes' rule) ─────────────────────
+let sick ~ 1%                                 # 1 in 100 people has the disease
+let positive = if sick { 95% } else { 8% }    # chance that their test is positive
+observe positive                              # ...and the test was positive
+report sick as "sick, given a positive test"
+
+# ── Output ──────────────────────────────────────────────────────────────
+# exact · evidence 8.87% · unresolved < 1e-12
+#
+# weather                             sun 70.00% · rain 30.00%
+# 2d6 rolls 10+                       16.67%
+# a +5 attack hits armour class 15    55.00%
+# die + die                           mean 7.00 · sd 2.42 · 5% 3 · median 7 · 95% 11 · 2 ▂▃▄▆▇█▇▆▄▃▂ 12
+# r + r                               mean 7.00 · sd 3.42 · 5% 2 · median 6 · 95% 12 · 2 █ █ █ █ █ █ 12
+# rain and late                       6.00%
+# rain or late                        44.00%
+# raining and raining                 30.00%
+# rolls until a six                   mean 6.00 · sd 5.48 · 5% 1 · median 4 · 95% 17
+# random walk after 1,000 steps       mean 0.00 · sd 31.62 · 5% -52 · median 0 · 95% 52
+# sick, given a positive test         10.71%

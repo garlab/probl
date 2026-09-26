@@ -1,0 +1,13 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: "errors(\"let rolls = 1\\nreport rols\")"
+---
+Error: unknown name `rols`
+   ╭─[ test.probl:2:8 ]
+   │
+ 2 │ report rols
+   │        ──┬─  
+   │          ╰─── here
+   │ 
+   │ Help: did you mean `rolls`?
+───╯

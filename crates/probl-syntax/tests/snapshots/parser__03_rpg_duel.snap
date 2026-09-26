@@ -1,0 +1,15 @@
+---
+source: crates/probl-syntax/tests/parser.rs
+expression: tree
+---
+(@mode exact)
+(type Fighter {hp: int, ac: int, to_hit: int, dice: dist[int], bonus: int})
+(let hero = (record Fighter (hp 12) (ac 16) (to_hit 5) (dice 1d8) (bonus 3)))
+(let monster = (record Fighter (hp 7) (ac 15) (to_hit 4) (dice 1d6) (bonus 2)))
+(fn attack (a: Fighter, target: Fighter) -> int (block (let roll ~ 1d20) (if (== roll 20) (block (let dmg ~ (+ (+ (. a dice) (. a dice)) (. a bonus))) dmg) (if (and (> roll 1) (>= (+ roll (. a to_hit)) (. target ac))) (block (let dmg ~ (+ (. a dice) (. a bonus))) dmg) (block 0)))))
+(fn duel (hero: Fighter, foe: Fighter) (block (var h = (. hero hp)) (var f = (. foe hp)) (var rounds = 0) (while (and (> h 0) (> f 0)) (block (+= rounds 1) (-= f (call attack hero foe)) (if (> f 0) (block (-= h (call attack foe hero)))))) (record (won (> h 0)) (rounds rounds) (hp_left (call max h 0)))))
+(let fight = (call duel hero monster))
+(report (. fight won) as "hero wins")
+(report (. fight rounds) as "rounds")
+(report (. fight hp_left) as "hero hp left")
+(for hp [7 12 17 22 27] (block (report (simulate (block (. (call duel hero (with monster (hp hp))) won))) by hp as "hero wins, by monster hp")))

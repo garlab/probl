@@ -1,0 +1,18 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: "errors(\"type P = { x: int, y: int }\\nlet p = P { x: 1, z: 2 }\")"
+---
+Error: missing `y` in `P`
+   ╭─[ test.probl:2:9 ]
+   │
+ 2 │ let p = P { x: 1, z: 2 }
+   │         ────────┬───────  
+   │                 ╰───────── here
+───╯
+Error: `P` has no field `z`
+   ╭─[ test.probl:2:19 ]
+   │
+ 2 │ let p = P { x: 1, z: 2 }
+   │                   ┬  
+   │                   ╰── here
+───╯

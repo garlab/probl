@@ -1,0 +1,37 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: ir(&src)
+---
+fn#0 the top level ()
+  deck_0 = bag([2: 4, 3: 4, 4: 4, 5: 4, 6: 4, 7: 4, 8: 4, 9: 4, 10: 16, 11: 4])    [live: deck_0]
+  up_1 ~ take(deck_0)    [live: deck_0 up_1]
+  total_2 = up_1    [live: deck_0 up_1 total_2]
+  if (== up_1 11) {
+    $3 = 1    [live: deck_0 up_1 total_2 $3]
+  } else {
+    $3 = 0    [live: deck_0 up_1 total_2 $3]
+  }
+  soft_aces_4 = $3    [live: deck_0 up_1 total_2 soft_aces_4]
+  loop {    [live at head: deck_0 up_1 total_2 soft_aces_4]
+    if (< total_2 17) {
+      card_5 ~ take(deck_0)    [live: deck_0 up_1 total_2 soft_aces_4 card_5]
+      total_2 = (+ total_2 card_5)    [live: deck_0 up_1 total_2 soft_aces_4 card_5]
+      if (== card_5 11) {
+        soft_aces_4 = (+ soft_aces_4 1)    [live: deck_0 up_1 total_2 soft_aces_4]
+      }
+      if (and (> total_2 21) (> soft_aces_4 0)) {
+        total_2 = (- total_2 10)    [live: deck_0 up_1 total_2 soft_aces_4]
+        soft_aces_4 = (- soft_aces_4 1)    [live: deck_0 up_1 total_2 soft_aces_4]
+      }
+    } else {
+      break    [live: deck_0 up_1 total_2 soft_aces_4]
+    }
+  }
+  if (> total_2 21) {
+    $6 = "bust"    [live: up_1 total_2 $6]
+  } else {
+    $6 = str(total_2)    [live: up_1 total_2 $6]
+  }
+  result_7 = $6    [live: up_1 total_2 result_7]
+  report result_7 by up_1 as "dealer's final hand, by up-card (11 = ace)"    [live: total_2]
+  report (> total_2 21) as "dealer busts"    [live: ]

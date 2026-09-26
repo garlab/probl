@@ -1,0 +1,15 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: "errors(\"var total = 0\\nfn add(n) { total += n }\")"
+---
+Error: can't assign to `total` here
+   ╭─[ test.probl:2:13 ]
+   │
+ 2 │ fn add(n) { total += n }
+   │             ──┬──  
+   │               ╰──── here
+   │ 
+   │ Help: return the new value instead
+   │ 
+   │ Note: functions, lambdas and `simulate` blocks can read outside variables but only change their own
+───╯

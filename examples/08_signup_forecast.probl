@@ -1,0 +1,29 @@
+# Sign-ups: learn the conversion rate from a two-week pilot, then forecast next month.
+
+@mode sample(runs: 200_000, seed: 7)
+
+# The pilot sent 250 visitors a day for 14 days. Sign-ups per day:
+let pilot = [9, 6, 11, 7, 8, 12, 5, 9, 10, 7, 8, 11, 6, 9]
+
+let rate ~ beta(2, 40)                  # belief before the pilot: "a few percent, probably"
+for signups in pilot {
+  observe signups from binomial(250, rate)
+}
+report rate * 100 as "conversion rate (%)"
+
+# Next month, marketing expects 300 to 500 visitors a day.
+let daily_visitors ~ 300 to 500
+let next_month ~ binomial(round(30 * daily_visitors), rate)
+report next_month as "sign-ups next month"
+report next_month >= 400 as "at least 400 sign-ups"
+
+# Each run starts from a draw of `rate` and is weighted by how well that rate
+# explains the pilot (likelihood weighting). The summary line reports the
+# effective sample size: how many equally weighted runs those amount to.
+
+# ── Output (sampled: expect small differences in the last digits) ───────
+# sample · 200,000 runs · seed 7 · effective sample size 30,933
+#
+# conversion rate (%)      mean 3.39 · sd 0.30 · 5% 2.90 · median 3.38 · 95% 3.91
+# sign-ups next month      mean 398 · sd 75 · 5% 288 · median 392 · 95% 530
+# at least 400 sign-ups    46.1% ± 0.3%

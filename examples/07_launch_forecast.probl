@@ -1,0 +1,53 @@
+# SaaS launch: monthly recurring revenue (MRR) over the first 18 months,
+# while the market drifts between boom, steady and slump.
+
+@mode sample(runs: 50_000, seed: 11)
+
+enum Market { Boom, Steady, Slump }
+
+# How the market moves from one month to the next.
+fn next_month(m: Market) -> Market {
+  match m {
+    Boom   => chance { 70% => Boom, 25% => Steady, else => Slump }
+    Steady => chance { 10% => Boom, 80% => Steady, else => Slump }
+    Slump  => chance { 5% => Boom,  35% => Steady, else => Slump }
+  }
+}
+
+let price = 49                 # $ per customer per month
+let churn ~ 3% to 7%           # share of customers who leave each month: uncertain, but fixed
+var market ~ one_of([Boom: 20%, Steady: 60%, Slump: 20%])
+var signups ~ 60 to 150        # new customers per month at launch
+var customers = 0
+
+for month in 1..18 {
+  let new ~ poisson(signups)
+  let lost ~ binomial(customers, churn)
+  customers += new - lost
+  report customers * price by month as "MRR ($)"
+
+  market = next_month(market)
+  let growth ~ match market {  # month-on-month growth in sign-ups
+    Boom   => 8% to 20%
+    Steady => 1% to 6%
+    Slump  => -8% to 0%        # a range that reaches zero or below is a normal distribution
+  }
+  signups *= 1 + growth
+}
+
+report customers * price >= 100_000 as "MRR ≥ $100k after 18 months"
+
+# ── Output (sampled: expect small differences in the last digits) ───────
+# sample · 50,000 runs · seed 11
+#
+# MRR ($)           5%        25%     median        75%        95%
+#   month 1      2,793      3,773      4,655      5,635      7,497
+#   month 3      8,526     11,319     13,769     16,709     22,148
+#   month 6     16,562     22,197     27,293     33,467     45,325
+#   month 9     23,961     32,683     40,719     50,960     71,246
+#   month 12    30,772     43,022     54,341     69,531    100,450
+#   month 15    37,240     53,214     68,404     89,327    133,476
+#   month 18    43,463     63,406     83,104    110,838    171,598
+#   (all 18 months are printed; some rows are left out here)
+#
+# MRR ≥ $100k after 18 months    33.0% ± 0.2%

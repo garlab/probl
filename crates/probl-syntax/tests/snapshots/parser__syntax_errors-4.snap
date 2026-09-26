@@ -1,0 +1,20 @@
+---
+source: crates/probl-syntax/tests/parser.rs
+expression: "parse_errors(\"fn f() {\\n  let a = 1\\n  a +* 2\\n}\\nreport 30 %\")"
+---
+Error: expected an expression, found `*`
+   ╭─[ test.probl:3:6 ]
+   │
+ 3 │   a +* 2
+   │      ┬  
+   │      ╰── here
+───╯
+Error: unexpected `%`
+   ╭─[ test.probl:5:11 ]
+   │
+ 5 │ report 30 %
+   │           ┬  
+   │           ╰── here
+   │ 
+   │ Help: `%` only marks percentages, as in `30%`; for the remainder of a division use `mod`
+───╯

@@ -1,0 +1,31 @@
+# Craps, pass line bet: what's the chance of winning, and how long does a bet last?
+#
+# The come-out roll wins on 7 or 11 and loses on 2, 3 or 12. Any other total
+# becomes the "point": keep rolling until the point comes up again (win) or
+# a 7 does (lose).
+
+@mode exact
+
+let come_out ~ 2d6            # eleven worlds, one per total
+var win = false
+var rolls = 1
+
+if come_out in [7, 11] {
+  win = true
+} else if come_out not in [2, 3, 12] {
+  loop {                      # no fixed end: runs until every world has hit
+    rolls += 1                # its point or a 7 (or weighs less than 1e-12)
+    let r ~ 2d6
+    if r == come_out { win = true; break }
+    if r == 7 { break }
+  }
+}
+
+report win                    # `probl run --fractions` also shows it as 244/495
+report rolls as "rolls per bet"
+
+# ── Output ──────────────────────────────────────────────────────────────
+# exact · unresolved < 1e-12
+#
+# win              49.29%
+# rolls per bet    mean 3.38 · sd 3.00 · 5% 1 · median 2 · 95% 9

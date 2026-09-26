@@ -1,0 +1,74 @@
+# RPG duel: a hero against a monster, to the end.
+# Who wins, how long does it take, and how tough can the monster get
+# before the fight turns against the hero?
+
+@mode exact
+
+type Fighter = {
+  hp: int,
+  ac: int,           # armour class: an attack total at least this high hits
+  to_hit: int,       # bonus added to the d20 attack roll
+  dice: dist[int],   # damage dice: distributions are ordinary values
+  bonus: int,        # flat damage bonus
+}
+
+let hero    = Fighter { hp: 12, ac: 16, to_hit: 5, dice: 1d8, bonus: 3 }
+let monster = Fighter { hp: 7,  ac: 15, to_hit: 4, dice: 1d6, bonus: 2 }
+
+# Damage from one attack. A natural 20 always hits and rolls the damage dice
+# twice; a natural 1 always misses.
+fn attack(a: Fighter, target: Fighter) -> int {
+  let roll ~ d20
+  if roll == 20 {
+    let dmg ~ a.dice + a.dice + a.bonus    # each use of a.dice is its own roll
+    dmg
+  } else if roll > 1 and roll + a.to_hit >= target.ac {
+    let dmg ~ a.dice + a.bonus
+    dmg
+  } else {
+    0
+  }
+}
+# Functions only depend on their inputs, so the engine works out the damage
+# distribution of attack(hero, monster) once and reuses it in every round.
+
+# Fight until someone drops. The hero strikes first in each round.
+fn duel(hero: Fighter, foe: Fighter) {
+  var h = hero.hp
+  var f = foe.hp
+  var rounds = 0
+  while h > 0 and f > 0 {
+    rounds += 1
+    f -= attack(hero, foe)
+    if f > 0 {
+      h -= attack(foe, hero)
+    }
+  }
+  { won: h > 0, rounds: rounds, hp_left: max(h, 0) }
+}
+
+let fight = duel(hero, monster)
+report fight.won as "hero wins"
+report fight.rounds as "rounds"
+report fight.hp_left as "hero hp left"
+
+# Balancing: the same fight against tougher versions of the monster.
+# Each `simulate` is a separate simulation that returns a distribution;
+# for a yes/no outcome, that is simply its probability.
+for hp in [7, 12, 17, 22, 27] {
+  report simulate { duel(hero, monster with { hp: hp }).won } by hp as "hero wins, by monster hp"
+}
+
+# ── Output ──────────────────────────────────────────────────────────────
+# exact · unresolved 3.7e-12
+#
+# hero wins       89.26%
+# rounds          mean 2.22 · sd 1.32 · 5% 1 · median 2 · 95% 5
+# hero hp left    mean 8.72 · sd 4.36 · 5% 0 · median 12 · 95% 12 · 0 ▂▁▁▁▁▁▁▁▁▁  █ 12
+#
+# hero wins, by monster hp
+#    7   89.26%
+#   12   76.03%
+#   17   63.41%
+#   22   49.44%
+#   27   37.58%

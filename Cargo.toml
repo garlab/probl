@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85"
+
+[workspace.dependencies]
+probl-syntax = { path = "crates/probl-syntax" }
+probl-sema = { path = "crates/probl-sema" }
+probl-engine = { path = "crates/probl-engine" }
+ariadne = "0.5"
+rustc-hash = "2"
+clap = { version = "4", features = ["derive"] }
+insta = "1"
+libtest-mimic = "0.8"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+debug = 1

@@ -1,0 +1,18 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: "errors(\"break\\nfn g() { return }\\nreturn 1\")"
+---
+Error: `break` outside of a loop
+   ╭─[ test.probl:1:1 ]
+   │
+ 1 │ break
+   │ ──┬──  
+   │   ╰──── here
+───╯
+Error: `return` outside of a function
+   ╭─[ test.probl:3:1 ]
+   │
+ 3 │ return 1
+   │ ────┬───  
+   │     ╰───── here
+───╯

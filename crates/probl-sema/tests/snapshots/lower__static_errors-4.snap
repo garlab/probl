@@ -1,0 +1,13 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: "errors(\"fn f() { report 1 }\")"
+---
+Error: `report` is only allowed at the top level of the program
+   ╭─[ test.probl:1:10 ]
+   │
+ 1 │ fn f() { report 1 }
+   │          ────┬───  
+   │              ╰───── here
+   │ 
+   │ Help: return the value from the function and report it where it's called
+───╯

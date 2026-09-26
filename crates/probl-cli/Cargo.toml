@@ -1,0 +1,23 @@
+[package]
+name = "probl-cli"
+description = "The probl command-line tool"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "probl"
+path = "src/main.rs"
+
+[dependencies]
+probl-syntax.workspace = true
+probl-sema.workspace = true
+probl-engine.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+libtest-mimic.workspace = true
+
+[[test]]
+name = "examples"
+harness = false

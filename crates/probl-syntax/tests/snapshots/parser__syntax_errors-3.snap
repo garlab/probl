@@ -1,0 +1,11 @@
+---
+source: crates/probl-syntax/tests/parser.rs
+expression: "parse_errors(\"x = (1, 2\")"
+---
+Error: expected `)` to close the parenthesis, found `,`
+   ╭─[ test.probl:1:7 ]
+   │
+ 1 │ x = (1, 2
+   │       ┬  
+   │       ╰── here
+───╯

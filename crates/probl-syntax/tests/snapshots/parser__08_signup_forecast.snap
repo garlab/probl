@@ -1,0 +1,13 @@
+---
+source: crates/probl-syntax/tests/parser.rs
+expression: tree
+---
+(@mode (call sample runs: 200000 seed: 7))
+(let pilot = [9 6 11 7 8 12 5 9 10 7 8 11 6 9])
+(let rate ~ (call beta 2 40))
+(for signups pilot (block (observe signups from (call binomial 250 rate))))
+(report (* rate 100) as "conversion rate (%)")
+(let daily_visitors ~ (to 300 500))
+(let next_month ~ (call binomial (call round (* 30 daily_visitors)) rate))
+(report next_month as "sign-ups next month")
+(report (>= next_month 400) as "at least 400 sign-ups")

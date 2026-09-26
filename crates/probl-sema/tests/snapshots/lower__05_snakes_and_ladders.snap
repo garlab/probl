@@ -1,0 +1,30 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: ir(&src)
+---
+fn#0 the top level ()
+  jumps_0 = [1: 38, 4: 14, 9: 31, 21: 42, 28: 84, 36: 44, 51: 67, 71: 91, 80: 100, 16: 6, 47: 26, 49: 11, 56: 53, 62: 19, 64: 60, 87: 24, 93: 73, 95: 75, 98: 78]    [live: jumps_0]
+  game_1 = simulate fn#2 [jumps_0]    [live: game_1]
+  report game_1 as "turns to finish"    [live: game_1]
+  report (<= game_1 20) as "done within 20 turns"    [live: game_1]
+  mine_2 ~ game_1    [live: game_1 mine_2]
+  report (>= game_1 mine_2) as "first player wins"    [live: ]
+fn#1 race () captures [jumps_4 <- global jumps]
+  square_0 = 0    [live: square_0 jumps_4]
+  turns_1 = 0    [live: square_0 turns_1 jumps_4]
+  loop {    [live at head: square_0 turns_1 jumps_4]
+    if (< square_0 100) {
+      turns_1 = (+ turns_1 1)    [live: square_0 turns_1 jumps_4]
+      roll_2 ~ 1d6    [live: square_0 turns_1 roll_2 jumps_4]
+      target_3 = (+ square_0 roll_2)    [live: square_0 turns_1 target_3 jumps_4]
+      if (<= target_3 100) {
+        square_0 = get(jumps_4, target_3, target_3)    [live: square_0 turns_1 jumps_4]
+      }
+    } else {
+      break    [live: square_0 turns_1 jumps_4]
+    }
+  }
+  return turns_1    [live: ]
+fn#2 a simulate block () captures [jumps_1 <- parent slot 0]
+  $0 = call fn#1 race with [jumps_1]()    [live: $0]
+  return $0    [live: ]

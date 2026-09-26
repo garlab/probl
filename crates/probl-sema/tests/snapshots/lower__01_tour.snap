@@ -1,0 +1,58 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: ir(&src)
+---
+fn#0 the top level ()
+  if 30% {
+    $0 = "rain"    [live: $0]
+  } else {
+    $0 = "sun"    [live: $0]
+  }
+  weather_1 = $0    [live: weather_1]
+  report weather_1 as "weather"    [live: ]
+  report (>= 2d6 10) as "2d6 rolls 10+"    [live: ]
+  report (>= (+ 1d20 5) 15) as "a +5 attack hits armour class 15"    [live: ]
+  die_2 = 1d6    [live: die_2]
+  report (+ die_2 die_2) as "die + die"    [live: ]
+  r_3 ~ 1d6    [live: r_3]
+  report (+ r_3 r_3) as "r + r"    [live: ]
+  rain_4 = 30%    [live: rain_4]
+  late_5 = 20%    [live: rain_4 late_5]
+  report (and rain_4 late_5) as "rain and late"    [live: rain_4 late_5]
+  report (or rain_4 late_5) as "rain or late"    [live: rain_4]
+  raining_6 ~ rain_4    [live: raining_6]
+  report (and raining_6 raining_6) as "raining and raining"    [live: ]
+  rolls_7 = 1    [live: rolls_7]
+  loop {    [live at head: rolls_7]
+    if (!= 1d6 6) {
+      rolls_7 = (+ rolls_7 1)    [live: rolls_7]
+    } else {
+      break    [live: rolls_7]
+    }
+  }
+  report rolls_7 as "rolls until a six"    [live: ]
+  pos_8 = 0    [live: pos_8]
+  $9 = $repeat_count(1000)    [live: pos_8 $9]
+  $10 = 0    [live: pos_8 $9 $10]
+  loop {    [live at head: pos_8 $9 $10]
+    if (>= $10 $9) {
+      break    [live: pos_8 $9 $10]
+    }
+    $10 = (+ $10 1)    [live: pos_8 $9 $10]
+    if 50% {
+      $11 = 1    [live: pos_8 $9 $10 $11]
+    } else {
+      $11 = (- 1)    [live: pos_8 $9 $10 $11]
+    }
+    pos_8 = (+ pos_8 $11)    [live: pos_8 $9 $10]
+  }
+  report pos_8 as "random walk after 1,000 steps"    [live: ]
+  sick_12 ~ 1%    [live: sick_12]
+  if sick_12 {
+    $13 = 95%    [live: sick_12 $13]
+  } else {
+    $13 = 8%    [live: sick_12 $13]
+  }
+  positive_14 = $13    [live: sick_12 positive_14]
+  observe positive_14    [live: sick_12]
+  report sick_12 as "sick, given a positive test"    [live: ]

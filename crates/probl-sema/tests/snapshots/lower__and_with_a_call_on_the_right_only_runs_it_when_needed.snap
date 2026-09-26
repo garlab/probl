@@ -1,0 +1,16 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: "ir(\"fn check(x) { x > 3 }\\n\\\n         let a ~ d6\\n\\\n         let ok = a > 1 and check(a)\\n\\\n         report ok\")"
+---
+fn#0 the top level ()
+  a_0 ~ 1d6    [live: a_0]
+  $2 = (> a_0 1)    [live: a_0 $2]
+  if $is_false($2) {
+  } else {
+    $1 = call fn#1 check(a_0)    [live: $1 $2]
+    $2 = (and $2 $1)    [live: $2]
+  }
+  ok_3 = $2    [live: ok_3]
+  report ok_3 as "ok"    [live: ]
+fn#1 check (x_0)
+  return (> x_0 3)    [live: ]

@@ -1,0 +1,30 @@
+# Risk: 10 attacking armies against 8 defenders, fought to the end.
+
+@mode exact
+
+var attackers = 10
+var defenders = 8
+
+while attackers > 1 and defenders > 0 {
+  # The attacker rolls up to three dice but must leave one army at home;
+  # the defender rolls up to two. roll(n, d6) gives the dice sorted high to low.
+  let attack ~ roll(min(3, attackers - 1), d6)
+  let defend ~ roll(min(2, defenders), d6)
+
+  # Highest against highest, second against second. Ties go to the defender.
+  for i in 0..<min(attack.len(), defend.len()) {
+    if attack[i] > defend[i] { defenders -= 1 } else { attackers -= 1 }
+  }
+}
+# A full round has 56 × 21 distinct dice outcomes. But once it's over, the
+# dice are never read again, so the only state left is the two army counts:
+# the worlds merge back into a handful after every round.
+
+report defenders == 0 as "attacker conquers"
+report attackers - 1 as "armies left to move in"
+
+# ── Output ──────────────────────────────────────────────────────────────
+# exact
+#
+# attacker conquers         64.64%
+# armies left to move in    mean 3.05 · sd 2.78 · 5% 0 · median 3 · 95% 8 · 0 █▁▂▃▃▃▃▂▂▁ 9

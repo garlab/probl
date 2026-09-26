@@ -1,0 +1,18 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: "errors(\"fn f(a, b) { a }\\nlet v = f(1)\\nlet w = max()\")"
+---
+Error: `f` takes 2 arguments, but 1 was given
+   ╭─[ test.probl:2:9 ]
+   │
+ 2 │ let v = f(1)
+   │         ──┬─  
+   │           ╰─── here
+───╯
+Error: `max` takes at least 1 argument, but 0 were given
+   ╭─[ test.probl:3:9 ]
+   │
+ 3 │ let w = max()
+   │         ──┬──  
+   │           ╰──── here
+───╯

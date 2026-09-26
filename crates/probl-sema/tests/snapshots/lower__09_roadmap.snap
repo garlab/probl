@@ -1,0 +1,48 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: ir(&src)
+---
+fn#0 the top level ()
+  start_0 = date("2026-09-28")    [live: start_0]
+  groundwork_1 ~ to(1, 2)    [live: start_0 groundwork_1]
+  front_end_2 ~ to(3, 5)    [live: start_0 groundwork_1 front_end_2]
+  worlds_3 ~ to(4, 7)    [live: start_0 groundwork_1 front_end_2 worlds_3]
+  discrete_4 ~ to(3, 5)    [live: start_0 groundwork_1 front_end_2 worlds_3 discrete_4]
+  sampling_5 ~ to(4, 6)    [live: start_0 groundwork_1 front_end_2 worlds_3 discrete_4 sampling_5]
+  inspection_6 ~ to(2, 4)    [live: start_0 groundwork_1 front_end_2 worlds_3 discrete_4 sampling_5 inspection_6]
+  tooling_7 ~ to(5, 8)    [live: start_0 groundwork_1 front_end_2 worlds_3 discrete_4 sampling_5 inspection_6 tooling_7]
+  if 35% {
+    $8 = to(1, 3)    [live: start_0 groundwork_1 front_end_2 worlds_3 discrete_4 sampling_5 inspection_6 tooling_7 $8]
+  } else {
+    $8 = 0    [live: start_0 groundwork_1 front_end_2 worlds_3 discrete_4 sampling_5 inspection_6 tooling_7 $8]
+  }
+  merge_redesign_9 ~ $8    [live: start_0 groundwork_1 front_end_2 worlds_3 discrete_4 sampling_5 inspection_6 tooling_7 merge_redesign_9]
+  if 25% {
+    $10 = to(1, 4)    [live: start_0 groundwork_1 front_end_2 worlds_3 discrete_4 sampling_5 inspection_6 tooling_7 merge_redesign_9 $10]
+  } else {
+    $10 = 0    [live: start_0 groundwork_1 front_end_2 worlds_3 discrete_4 sampling_5 inspection_6 tooling_7 merge_redesign_9 $10]
+  }
+  slow_engine_11 ~ $10    [live: start_0 groundwork_1 front_end_2 worlds_3 discrete_4 sampling_5 inspection_6 tooling_7 merge_redesign_9 slow_engine_11]
+  if 30% {
+    $12 = to(1, 3)    [live: start_0 groundwork_1 front_end_2 worlds_3 discrete_4 sampling_5 inspection_6 tooling_7 merge_redesign_9 slow_engine_11 $12]
+  } else {
+    $12 = 0    [live: start_0 groundwork_1 front_end_2 worlds_3 discrete_4 sampling_5 inspection_6 tooling_7 merge_redesign_9 slow_engine_11 $12]
+  }
+  weak_sampler_13 ~ $12    [live: start_0 groundwork_1 front_end_2 worlds_3 discrete_4 sampling_5 inspection_6 tooling_7 merge_redesign_9 slow_engine_11 weak_sampler_13]
+  overhead_14 ~ to(10%, 30%)    [live: start_0 groundwork_1 front_end_2 worlds_3 discrete_4 sampling_5 inspection_6 tooling_7 merge_redesign_9 slow_engine_11 weak_sampler_13 overhead_14]
+  holidays_15 = 2    [live: start_0 groundwork_1 front_end_2 worlds_3 discrete_4 sampling_5 inspection_6 tooling_7 merge_redesign_9 slow_engine_11 weak_sampler_13 overhead_14 holidays_15]
+  v01_16 = (+ (+ (+ (+ (+ groundwork_1 front_end_2) worlds_3) discrete_4) merge_redesign_9) slow_engine_11)    [live: start_0 sampling_5 inspection_6 tooling_7 weak_sampler_13 overhead_14 holidays_15 v01_16]
+  v02_17 = (+ (+ v01_16 sampling_5) weak_sampler_13)    [live: start_0 inspection_6 tooling_7 overhead_14 holidays_15 v01_16 v02_17]
+  v03_18 = (+ (+ v02_17 inspection_6) tooling_7)    [live: start_0 overhead_14 holidays_15 v01_16 v02_17 v03_18]
+  $19 = call fn#1 ship_date with [start_0, overhead_14, holidays_15](v01_16)    [live: start_0 overhead_14 holidays_15 v01_16 v02_17 v03_18 $19]
+  report $19 as "v0.1  games (exact engine)"    [live: start_0 overhead_14 holidays_15 v01_16 v02_17 v03_18]
+  $20 = call fn#1 ship_date with [start_0, overhead_14, holidays_15](v02_17)    [live: start_0 overhead_14 holidays_15 v01_16 v03_18 $20]
+  report $20 as "v0.2  forecasting (sampling)"    [live: start_0 overhead_14 holidays_15 v01_16 v03_18]
+  $21 = call fn#1 ship_date with [start_0, overhead_14, holidays_15](v03_18)    [live: start_0 overhead_14 holidays_15 v01_16 v03_18 $21]
+  report $21 as "v0.3  types and tooling"    [live: start_0 overhead_14 holidays_15 v01_16 v03_18]
+  $22 = call fn#1 ship_date with [start_0, overhead_14, holidays_15](v01_16)    [live: start_0 overhead_14 holidays_15 v03_18 $22]
+  report (<= $22 date("2027-02-28")) as "v0.1 by the end of February 2027"    [live: start_0 overhead_14 holidays_15 v03_18]
+  $23 = call fn#1 ship_date with [start_0, overhead_14, holidays_15](v03_18)    [live: $23]
+  report (<= $23 date("2027-06-30")) as "v0.3 by the end of June 2027"    [live: ]
+fn#1 ship_date (weeks_0) captures [start_1 <- global start, overhead_2 <- global overhead, holidays_3 <- global holidays]
+  return (+ start_1 days(round((* 7 (+ (* weeks_0 (+ 1 overhead_2)) holidays_3)))))    [live: ]

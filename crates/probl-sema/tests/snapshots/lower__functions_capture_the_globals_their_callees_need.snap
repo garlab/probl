@@ -1,0 +1,22 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: "ir(\"let limit = 10\\n\\\n         let bonus = 2\\n\\\n         fn inner(x) { x + bonus }\\n\\\n         fn outer(x) { if x > limit { 0 } else { inner(x) } }\\n\\\n         let s = simulate { outer(d20) }\\n\\\n         report s\")"
+---
+fn#0 the top level ()
+  limit_0 = 10    [live: limit_0]
+  bonus_1 = 2    [live: limit_0 bonus_1]
+  s_2 = simulate fn#3 [limit_0, bonus_1]    [live: s_2]
+  report s_2 as "s"    [live: ]
+fn#1 inner (x_0) captures [bonus_1 <- global bonus]
+  return (+ x_0 bonus_1)    [live: ]
+fn#2 outer (x_0) captures [limit_2 <- global limit, bonus_4 <- global bonus]
+  if (> x_0 limit_2) {
+    $1 = 0    [live: $1]
+  } else {
+    $3 = call fn#1 inner with [bonus_4](x_0)    [live: $3]
+    $1 = $3    [live: $1]
+  }
+  return $1    [live: ]
+fn#3 a simulate block () captures [limit_1 <- parent slot 0, bonus_2 <- parent slot 1]
+  $0 = call fn#2 outer with [limit_1, bonus_2](1d20)    [live: $0]
+  return $0    [live: ]

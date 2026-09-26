@@ -1,0 +1,11 @@
+---
+source: crates/probl-syntax/tests/parser.rs
+expression: tree
+---
+(@mode exact)
+(let come_out ~ 2d6)
+(var win = false)
+(var rolls = 1)
+(if (in come_out [7 11]) (block (= win true)) (if (not in come_out [2 3 12]) (block (loop (block (+= rolls 1) (let r ~ 2d6) (if (== r come_out) (block (= win true) (break))) (if (== r 7) (block (break))))))))
+(report win)
+(report rolls as "rolls per bet")

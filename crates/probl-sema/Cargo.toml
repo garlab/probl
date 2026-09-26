@@ -1,0 +1,13 @@
+[package]
+name = "probl-sema"
+description = "Name resolution, lowering to IR and liveness analysis for Probl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+probl-syntax.workspace = true
+rustc-hash.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

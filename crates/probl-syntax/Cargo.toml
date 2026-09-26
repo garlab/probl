@@ -1,0 +1,12 @@
+[package]
+name = "probl-syntax"
+description = "Lexer, parser, AST and diagnostics for Probl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ariadne.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

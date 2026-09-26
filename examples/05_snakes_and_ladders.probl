@@ -1,0 +1,42 @@
+# Snakes and ladders on the classic Milton Bradley 100-square board.
+# How long does a game last, and how much does going first help?
+
+@mode exact
+
+let jumps = [
+   1: 38,  4: 14,  9: 31, 21: 42, 28: 84, 36: 44, 51: 67, 71: 91, 80: 100,       # ladders
+  16:  6, 47: 26, 49: 11, 56: 53, 62: 19, 64: 60, 87: 24, 93: 73, 95: 75, 98: 78, # snakes
+]
+
+# Turns one player needs to reach square 100. Overshooting 100 wastes the turn.
+fn race() -> int {
+  var square = 0
+  var turns = 0
+  while square < 100 {       # a game can in principle last forever, so this runs
+    turns += 1               # until the unfinished worlds weigh less than 1e-12
+    let roll ~ d6
+    let target = square + roll
+    if target <= 100 {
+      square = jumps.get(target, target)    # follow a snake or ladder, if there is one
+    }
+  }
+  turns
+}
+# `roll` is never read again once the turn is over, so worlds merge on
+# (square, turns): at most 100 of them at a time, however long the game.
+
+let game = simulate { race() }     # the distribution of turns for one player
+report game as "turns to finish"
+report game <= 20 as "done within 20 turns"
+
+# Players never interact, so a two-player game is two independent races,
+# and the first player wins ties because they move first.
+let mine ~ game
+report game >= mine as "first player wins"   # this `game` is a fresh race, independent of `mine`
+
+# ── Output ──────────────────────────────────────────────────────────────
+# exact · unresolved < 1e-12
+#
+# turns to finish         mean 39.23 · sd 25.22 · 5% 13 · median 32 · 95% 89
+# done within 20 turns    22.34%
+# first player wins       50.79%

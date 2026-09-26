@@ -1,0 +1,57 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: ir(&src)
+---
+fn#0 the top level ()
+  hero_0 = Fighter { hp: 12, ac: 16, to_hit: 5, dice: 1d8, bonus: 3 }    [live: hero_0]
+  monster_1 = Fighter { hp: 7, ac: 15, to_hit: 4, dice: 1d6, bonus: 2 }    [live: hero_0 monster_1]
+  $2 = call fn#2 duel(hero_0, monster_1)    [live: hero_0 monster_1 $2]
+  fight_3 = $2    [live: hero_0 monster_1 fight_3]
+  report fight_3.won as "hero wins"    [live: hero_0 monster_1 fight_3]
+  report fight_3.rounds as "rounds"    [live: hero_0 monster_1 fight_3]
+  report fight_3.hp_left as "hero hp left"    [live: hero_0 monster_1]
+  $4 = $iter_items([7, 12, 17, 22, 27])    [live: hero_0 monster_1 $4]
+  $5 = 0    [live: hero_0 monster_1 $4 $5]
+  loop {    [live at head: hero_0 monster_1 $4 $5]
+    if (>= $5 len($4)) {
+      break    [live: hero_0 monster_1 $4 $5]
+    }
+    hp_6 = $4[$5]    [live: hero_0 monster_1 $4 $5 hp_6]
+    $5 = (+ $5 1)    [live: hero_0 monster_1 $4 $5 hp_6]
+    report simulate fn#3 [hero_0, monster_1, hp_6] by hp_6 as "hero wins, by monster hp"    [live: hero_0 monster_1 $4 $5]
+  }
+fn#1 attack (a_0, target_1)
+  roll_2 ~ 1d20    [live: a_0 target_1 roll_2]
+  if (== roll_2 20) {
+    dmg_4 ~ (+ (+ a_0.dice a_0.dice) a_0.bonus)    [live: dmg_4]
+    $3 = dmg_4    [live: $3]
+  } else {
+    if (and (> roll_2 1) (>= (+ roll_2 a_0.to_hit) target_1.ac)) {
+      dmg_5 ~ (+ a_0.dice a_0.bonus)    [live: dmg_5]
+      $3 = dmg_5    [live: $3]
+    } else {
+      $3 = 0    [live: $3]
+    }
+  }
+  return $3    [live: ]
+fn#2 duel (hero_0, foe_1)
+  h_2 = hero_0.hp    [live: hero_0 foe_1 h_2]
+  f_3 = foe_1.hp    [live: hero_0 foe_1 h_2 f_3]
+  rounds_4 = 0    [live: hero_0 foe_1 h_2 f_3 rounds_4]
+  loop {    [live at head: hero_0 foe_1 h_2 f_3 rounds_4]
+    if (and (> h_2 0) (> f_3 0)) {
+      rounds_4 = (+ rounds_4 1)    [live: hero_0 foe_1 h_2 f_3 rounds_4]
+      $5 = call fn#1 attack(hero_0, foe_1)    [live: hero_0 foe_1 h_2 f_3 rounds_4 $5]
+      f_3 = (- f_3 $5)    [live: hero_0 foe_1 h_2 f_3 rounds_4]
+      if (> f_3 0) {
+        $6 = call fn#1 attack(foe_1, hero_0)    [live: hero_0 foe_1 h_2 f_3 rounds_4 $6]
+        h_2 = (- h_2 $6)    [live: hero_0 foe_1 h_2 f_3 rounds_4]
+      }
+    } else {
+      break    [live: hero_0 foe_1 h_2 f_3 rounds_4]
+    }
+  }
+  return { won: (> h_2 0), rounds: rounds_4, hp_left: max(h_2, 0) }    [live: ]
+fn#3 a simulate block () captures [hero_0 <- parent slot 0, monster_1 <- parent slot 1, hp_2 <- parent slot 6]
+  $3 = call fn#2 duel(hero_0, (monster_1 with { hp: hp_2 }))    [live: $3]
+  return $3.won    [live: ]

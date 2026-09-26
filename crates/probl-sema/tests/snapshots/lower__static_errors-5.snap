@@ -1,0 +1,13 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: "errors(\"for i in 1..3 { report i }\")"
+---
+Error: a `report` inside a loop needs `by`
+   ╭─[ test.probl:1:17 ]
+   │
+ 1 │ for i in 1..3 { report i }
+   │                 ────┬───  
+   │                     ╰───── here
+   │ 
+   │ Help: add a key that says which iteration each value belongs to, like `report x by month`
+───╯

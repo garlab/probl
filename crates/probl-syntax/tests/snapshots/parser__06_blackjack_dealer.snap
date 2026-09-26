@@ -1,0 +1,13 @@
+---
+source: crates/probl-syntax/tests/parser.rs
+expression: tree
+---
+(@mode exact)
+(var deck = (call bag [2: 4, 3: 4, 4: 4, 5: 4, 6: 4, 7: 4, 8: 4, 9: 4, 10: 16, 11: 4]))
+(let up ~ (.take deck))
+(var total = up)
+(var soft_aces = (if (== up 11) (block 1) (block 0)))
+(while (< total 17) (block (let card ~ (.take deck)) (+= total card) (if (== card 11) (block (+= soft_aces 1))) (if (and (> total 21) (> soft_aces 0)) (block (-= total 10) (-= soft_aces 1)))))
+(let result = (if (> total 21) (block "bust") (block (call str total))))
+(report result by up as "dealer's final hand, by up-card (11 = ace)")
+(report (> total 21) as "dealer busts")

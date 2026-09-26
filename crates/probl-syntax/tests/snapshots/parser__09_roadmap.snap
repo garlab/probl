@@ -1,0 +1,27 @@
+---
+source: crates/probl-syntax/tests/parser.rs
+expression: tree
+---
+(@mode (call sample runs: 100000 seed: 2026))
+(let start = (call date "2026-09-28"))
+(let groundwork ~ (to 1 2))
+(let front_end ~ (to 3 5))
+(let worlds ~ (to 4 7))
+(let discrete ~ (to 3 5))
+(let sampling ~ (to 4 6))
+(let inspection ~ (to 2 4))
+(let tooling ~ (to 5 8))
+(let merge_redesign ~ (if 35% (block (to 1 3)) (block 0)))
+(let slow_engine ~ (if 25% (block (to 1 4)) (block 0)))
+(let weak_sampler ~ (if 30% (block (to 1 3)) (block 0)))
+(let overhead ~ (to 10% 30%))
+(let holidays = 2)
+(fn ship_date (weeks: float) -> date (block (+ start (call days (call round (* 7 (+ (* weeks (+ 1 overhead)) holidays)))))))
+(let v01 = (+ (+ (+ (+ (+ groundwork front_end) worlds) discrete) merge_redesign) slow_engine))
+(let v02 = (+ (+ v01 sampling) weak_sampler))
+(let v03 = (+ (+ v02 inspection) tooling))
+(report (call ship_date v01) as "v0.1  games (exact engine)")
+(report (call ship_date v02) as "v0.2  forecasting (sampling)")
+(report (call ship_date v03) as "v0.3  types and tooling")
+(report (<= (call ship_date v01) (call date "2027-02-28")) as "v0.1 by the end of February 2027")
+(report (<= (call ship_date v03) (call date "2027-06-30")) as "v0.3 by the end of June 2027")

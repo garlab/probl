@@ -1,0 +1,11 @@
+---
+source: crates/probl-syntax/tests/parser.rs
+expression: "parse_errors(\"let x = 1 +\\nlet y = 2\")"
+---
+Error: expected an expression, found `let`
+   ╭─[ test.probl:2:1 ]
+   │
+ 2 │ let y = 2
+   │ ─┬─  
+   │  ╰─── here
+───╯

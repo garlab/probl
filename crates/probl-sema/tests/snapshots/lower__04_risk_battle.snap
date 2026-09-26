@@ -1,0 +1,31 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: ir(&src)
+---
+fn#0 the top level ()
+  attackers_0 = 10    [live: attackers_0]
+  defenders_1 = 8    [live: attackers_0 defenders_1]
+  loop {    [live at head: attackers_0 defenders_1]
+    if (and (> attackers_0 1) (> defenders_1 0)) {
+      attack_2 ~ roll(min(3, (- attackers_0 1)), 1d6)    [live: attackers_0 defenders_1 attack_2]
+      defend_3 ~ roll(min(2, defenders_1), 1d6)    [live: attackers_0 defenders_1 attack_2 defend_3]
+      $4 = $iter_items((..< 0 min(len(attack_2), len(defend_3))))    [live: attackers_0 defenders_1 attack_2 defend_3 $4]
+      $5 = 0    [live: attackers_0 defenders_1 attack_2 defend_3 $4 $5]
+      loop {    [live at head: attackers_0 defenders_1 attack_2 defend_3 $4 $5]
+        if (>= $5 len($4)) {
+          break    [live: attackers_0 defenders_1 attack_2 defend_3 $4 $5]
+        }
+        i_6 = $4[$5]    [live: attackers_0 defenders_1 attack_2 defend_3 $4 $5 i_6]
+        $5 = (+ $5 1)    [live: attackers_0 defenders_1 attack_2 defend_3 $4 $5 i_6]
+        if (> attack_2[i_6] defend_3[i_6]) {
+          defenders_1 = (- defenders_1 1)    [live: attackers_0 defenders_1 attack_2 defend_3 $4 $5]
+        } else {
+          attackers_0 = (- attackers_0 1)    [live: attackers_0 defenders_1 attack_2 defend_3 $4 $5]
+        }
+      }
+    } else {
+      break    [live: attackers_0 defenders_1]
+    }
+  }
+  report (== defenders_1 0) as "attacker conquers"    [live: attackers_0]
+  report (- attackers_0 1) as "armies left to move in"    [live: ]

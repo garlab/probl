@@ -1,0 +1,46 @@
+# When will Probl ship? The phases of docs/implementation-plan.md as a forecast.
+# Effort is in weeks for one developer working full time, and `a to b` means
+# "90% sure it's between a and b". Change the numbers and run it again.
+
+@mode sample(runs: 100_000, seed: 2026)
+
+let start = date("2026-09-28")
+
+# Phases
+let groundwork ~ 1 to 2    # P0  workspace, CI, test harness
+let front_end  ~ 3 to 5    # P1  lexer, parser, diagnostics, single-world interpreter
+let worlds     ~ 4 to 7    # P2  world sets, splitting, merging, loops, reports
+let discrete   ~ 3 to 5    # P3  discrete distributions, simulate, observe
+let sampling   ~ 4 to 6    # P4  continuous distributions, sampling modes, dates
+let inspection ~ 2 to 4    # P5  traces, explain, JSON and HTML output
+let tooling    ~ 5 to 8    # P6  static types, formatter, language server
+
+# Risks: each one either happens or it doesn't
+let merge_redesign ~ if 35% { 1 to 3 } else { 0 }   # merging and liveness need a second design
+let slow_engine    ~ if 25% { 1 to 4 } else { 0 }   # the game examples are too slow at first
+let weak_sampler   ~ if 30% { 1 to 3 } else { 0 }   # likelihood weighting struggles on real models
+let overhead       ~ 10% to 30%                     # reviews, bugs, everything else
+let holidays = 2                                    # weeks off around the new year
+
+fn ship_date(weeks: float) -> date {
+  start + days(round(7 * (weeks * (1 + overhead) + holidays)))
+}
+
+let v01 = groundwork + front_end + worlds + discrete + merge_redesign + slow_engine
+let v02 = v01 + sampling + weak_sampler
+let v03 = v02 + inspection + tooling
+
+report ship_date(v01) as "v0.1  games (exact engine)"
+report ship_date(v02) as "v0.2  forecasting (sampling)"
+report ship_date(v03) as "v0.3  types and tooling"
+report ship_date(v01) <= date("2027-02-28") as "v0.1 by the end of February 2027"
+report ship_date(v03) <= date("2027-06-30") as "v0.3 by the end of June 2027"
+
+# ── Output (sampled: expect small differences in the last digits) ───────
+# sample · 100,000 runs · seed 2026
+#
+# v0.1  games (exact engine)          5% 2027-01-26 · median 2027-02-18 · 95% 2027-03-24
+# v0.2  forecasting (sampling)        5% 2027-03-07 · median 2027-04-05 · 95% 2027-05-13
+# v0.3  types and tooling             5% 2027-05-17 · median 2027-06-21 · 95% 2027-08-05
+# v0.1 by the end of February 2027    71.1% ± 0.1%
+# v0.3 by the end of June 2027        65.6% ± 0.2%

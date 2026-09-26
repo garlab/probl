@@ -1,0 +1,46 @@
+# Blackjack: how does the dealer's hand end, depending on the up-card?
+# One deck, dealer stands on all 17s, cards dealt without replacement.
+
+@mode exact
+
+# Card values: 2 to 9, 10 for tens and face cards (16 of them), 11 for aces.
+var deck = bag([2: 4, 3: 4, 4: 4, 5: 4, 6: 4, 7: 4, 8: 4, 9: 4, 10: 16, 11: 4])
+
+let up ~ deck.take()            # the dealer's face-up card, removed from the deck
+var total = up
+var soft_aces = if up == 11 { 1 } else { 0 }    # aces currently counted as 11
+
+while total < 17 {              # to hit soft 17 as well: `or (total == 17 and soft_aces > 0)`
+  let card ~ deck.take()        # one world per distinct card left, weighted by count
+  total += card
+  if card == 11 { soft_aces += 1 }
+  if total > 21 and soft_aces > 0 {   # count an ace as 1 instead of 11
+    total -= 10
+    soft_aces -= 1
+  }
+}
+# Drawing 5 then 6, or 6 then 5, leaves the same deck and total, so those
+# worlds merge: the table never needs more than about 3,200 worlds at once,
+# against 48,532 distinct sequences of cards the dealer could draw.
+
+let result = if total > 21 { "bust" } else { str(total) }
+report result by up as "dealer's final hand, by up-card (11 = ace)"
+report total > 21 as "dealer busts"
+
+# ── Output ──────────────────────────────────────────────────────────────
+# exact
+#
+# dealer's final hand, by up-card (11 = ace)
+#   up       17       18       19       20       21     bust
+#    2   13.90%   13.18%   13.18%   12.39%   12.05%   35.30%
+#    3   13.03%   13.09%   12.38%   12.33%   11.60%   37.56%
+#    4   13.10%   11.42%   12.07%   11.63%   11.51%   40.28%
+#    5   11.97%   12.35%   11.69%   10.47%   10.63%   42.89%
+#    6   16.69%   10.65%   10.72%   10.07%    9.79%   42.08%
+#    7   37.23%   13.86%    7.73%    7.89%    7.30%   25.99%
+#    8   13.09%   36.30%   12.94%    6.83%    6.98%   23.86%
+#    9   12.19%   10.39%   35.74%   12.23%    6.11%   23.34%
+#   10   11.44%   11.29%   11.47%   32.89%   11.49%   21.43%
+#   11   12.61%   13.10%   12.95%   13.16%   36.53%   11.65%
+#
+# dealer busts    28.36%
