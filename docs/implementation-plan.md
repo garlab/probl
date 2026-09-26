@@ -238,7 +238,7 @@ The effort ranges assume one developer working full time, and they are 90% confi
 
 ### Phase 6: types and tooling (5–8 weeks), release v0.3
 
-- A static type checker with local inference, growing out of today's checks; errors that tell a distribution from a value, with suggested fixes.
+- The static type checker (section 8: static, with inference), growing out of today's checks. It works out every expression's type before the program runs; annotations stay optional, except for data. Values and distributions have different types, so its errors tell a distribution from a value and suggest the fix, such as `~` for `=`. `read` takes its type from the declaration.
 - `probl fmt`, a language server, and a VS Code extension.
 - **Exit:** release **v0.3**.
 
@@ -298,7 +298,7 @@ The forecast made when the plan was first written, by running [`examples/09_road
 
 ## 8. Decisions
 
-Settled by the audit:
+Settled by the audit, and in review since:
 
 | Decision | Chosen | Instead of |
 |---|---|---|
@@ -307,6 +307,8 @@ Settled by the audit:
 | Evaluation order | left to right, each operand once | unspecified |
 | `a to b` | lognormal, positive ends only; `normal_range` for normal | normal when an end is negative |
 | Name of the mode | enumeration | exact |
+| Typing | static, with inference: every expression's type is known before running, and values and distributions have different types. Annotations are optional, except for data read from outside | dynamic, with annotations checked as the program runs (what exists today) |
+| Types of data | declared in the program, and they decide how data is read; `probl schema` suggests them | guessed from the data when running |
 
 Still open:
 
@@ -323,5 +325,5 @@ The order the benchmarks recommend (docs/benchmarks.md). The first two are done:
 
 1. **Moving draws to their first use**, a compiler pass: 1,048,576 worlds become 256 in the reliability benchmark.
 2. **Better inference for evidence-heavy forecasts**: specify, then build, conjugate updates and a general method (Metropolis–Hastings over a run's choices, or particles with rejuvenation), with the audit's D4 checklist. Likelihood weighting's effective sample size falls from 852 to 211 as an A/B test's data grows from 30 to 120 days.
-3. **Reading data from files and stdin**, as proposed in [docs/data-input.md](data-input.md), once its open questions are settled.
+3. **Reading data from files and stdin**: CSV, JSON and lines, with declared types, as proposed in [docs/data-input.md](data-input.md).
 4. **Markov-chain solving**, for exact cyclic loops and recursion to the same call.

@@ -167,7 +167,9 @@ let hero = Fighter { hp: 12, ac: 16, to_hit: 5, dice: 1d8, bonus: 3 }
 let tougher = hero with { hp: 20 }       # a copy with some fields changed
 ```
 
-The built-in types are `bool`, `int`, `float`, `prob`, `str`, `date`, `list[T]`, `map[K, V]`, `bag[T]` and `dist[T]`, plus records and enums. Annotations are optional, and checked when they're there: `let p: prob = "high"` is an error. Note `dice: dist[int]`: distributions are ordinary values you can store, pass and return.
+The built-in types are `bool`, `int`, `float`, `prob`, `str`, `date`, `list[T]`, `map[K, V]`, `bag[T]` and `dist[T]`, plus records and enums. Note `dice: dist[int]`: distributions are ordinary values you can store, pass and return.
+
+Probl is statically typed, with inference: every expression's type is known before the program runs, but you rarely write one. Annotations are optional, and checked when they're there: `let p: prob = "high"` is an error. Data read from a file is the exception, since nothing in the program says what the file contains. For data, the type is required ([proposal](data-input.md)). Until the type checker arrives in v0.3, annotations are checked as the program runs.
 
 Three of these types describe uncertainty, and keeping them apart is what lets `and` and `or` mean what they say:
 
