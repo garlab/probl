@@ -24,7 +24,9 @@ fn#1 race () captures [jumps_4 <- global jumps]
       break    [live: square_0 turns_1 jumps_4]
     }
   }
-  return turns_1    [live: ]
+  $5 = turns_1    [live: $5]
+  check $5: int    [live: $5]
+  return $5    [live: ]
 fn#2 a simulate block () captures [jumps_1 <- parent slot 0]
   $0 = call fn#1 race with [jumps_1]()    [live: $0]
   return $0    [live: ]

@@ -2,7 +2,7 @@
 # Who wins, how long does it take, and how tough can the monster get
 # before the fight turns against the hero?
 
-@mode exact
+@mode enumerate
 
 type Fighter = {
   hp: int,
@@ -60,7 +60,7 @@ for hp in [7, 12, 17, 22, 27] {
 }
 
 # ── Output ──────────────────────────────────────────────────────────────
-# exact · unresolved 3.7e-12
+# enumerated · unresolved < 1e-12
 #
 # hero wins       89.26%
 # rounds          mean 2.22 · sd 1.32 · 5% 1 · median 2 · 95% 5

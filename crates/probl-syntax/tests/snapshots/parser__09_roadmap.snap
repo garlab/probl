@@ -20,7 +20,7 @@ expression: tree
 (let v01 = (+ (+ (+ (+ (+ groundwork front_end) worlds) discrete) merge_redesign) slow_engine))
 (let v02 = (+ (+ v01 sampling) weak_sampler))
 (let v03 = (+ (+ v02 inspection) tooling))
-(report (call ship_date v01) as "v0.1  games (exact engine)")
+(report (call ship_date v01) as "v0.1  games (enumeration)")
 (report (call ship_date v02) as "v0.2  forecasting (sampling)")
 (report (call ship_date v03) as "v0.3  types and tooling")
 (report (<= (call ship_date v01) (call date "2027-02-28")) as "v0.1 by the end of February 2027")

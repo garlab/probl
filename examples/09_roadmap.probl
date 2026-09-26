@@ -30,7 +30,7 @@ let v01 = groundwork + front_end + worlds + discrete + merge_redesign + slow_eng
 let v02 = v01 + sampling + weak_sampler
 let v03 = v02 + inspection + tooling
 
-report ship_date(v01) as "v0.1  games (exact engine)"
+report ship_date(v01) as "v0.1  games (enumeration)"
 report ship_date(v02) as "v0.2  forecasting (sampling)"
 report ship_date(v03) as "v0.3  types and tooling"
 report ship_date(v01) <= date("2027-02-28") as "v0.1 by the end of February 2027"
@@ -39,7 +39,7 @@ report ship_date(v03) <= date("2027-06-30") as "v0.3 by the end of June 2027"
 # ── Output (sampled: expect small differences in the last digits) ───────
 # sample · 100,000 runs · seed 2026
 #
-# v0.1  games (exact engine)          5% 2027-01-26 · median 2027-02-18 · 95% 2027-03-24
+# v0.1  games (enumeration)           5% 2027-01-26 · median 2027-02-18 · 95% 2027-03-24
 # v0.2  forecasting (sampling)        5% 2027-03-07 · median 2027-04-05 · 95% 2027-05-13
 # v0.3  types and tooling             5% 2027-05-17 · median 2027-06-21 · 95% 2027-08-05
 # v0.1 by the end of February 2027    71.1% ± 0.1%

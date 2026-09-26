@@ -1,0 +1,15 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: "errors(\"fn check(x) { observe x > 1\\n x }\\nlet a ~ d6\\nreport a\\nlet b = check(a)\")"
+---
+Error: `check` makes observations, and it can run after a `report`
+   ╭─[ test.probl:5:9 ]
+   │
+ 5 │ let b = check(a)
+   │         ────┬───  
+   │             ╰───── runs after the report on line 4
+   │ 
+   │ Help: move the observations before the report, or the report after them
+   │ 
+   │ Note: a report describes the evidence observed before it, so later observations would change its meaning
+───╯

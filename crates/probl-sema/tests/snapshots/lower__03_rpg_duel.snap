@@ -12,7 +12,7 @@ fn#0 the top level ()
   report fight_3.hp_left as "hero hp left"    [live: hero_0 monster_1]
   $4 = $iter_items([7, 12, 17, 22, 27])    [live: hero_0 monster_1 $4]
   $5 = 0    [live: hero_0 monster_1 $4 $5]
-  loop {    [live at head: hero_0 monster_1 $4 $5]
+  loop (bounded) {    [live at head: hero_0 monster_1 $4 $5]
     if (>= $5 len($4)) {
       break    [live: hero_0 monster_1 $4 $5]
     }
@@ -21,6 +21,8 @@ fn#0 the top level ()
     report simulate fn#3 [hero_0, monster_1, hp_6] by hp_6 as "hero wins, by monster hp"    [live: hero_0 monster_1 $4 $5]
   }
 fn#1 attack (a_0, target_1)
+  check a_0: Fighter    [live: a_0 target_1]
+  check target_1: Fighter    [live: a_0 target_1]
   roll_2 ~ 1d20    [live: a_0 target_1 roll_2]
   if (== roll_2 20) {
     dmg_4 ~ (+ (+ a_0.dice a_0.dice) a_0.bonus)    [live: dmg_4]
@@ -33,8 +35,12 @@ fn#1 attack (a_0, target_1)
       $3 = 0    [live: $3]
     }
   }
-  return $3    [live: ]
+  $6 = $3    [live: $6]
+  check $6: int    [live: $6]
+  return $6    [live: ]
 fn#2 duel (hero_0, foe_1)
+  check hero_0: Fighter    [live: hero_0 foe_1]
+  check foe_1: Fighter    [live: hero_0 foe_1]
   h_2 = hero_0.hp    [live: hero_0 foe_1 h_2]
   f_3 = foe_1.hp    [live: hero_0 foe_1 h_2 f_3]
   rounds_4 = 0    [live: hero_0 foe_1 h_2 f_3 rounds_4]

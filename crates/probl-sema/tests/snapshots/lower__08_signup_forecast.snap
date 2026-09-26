@@ -7,7 +7,7 @@ fn#0 the top level ()
   rate_1 ~ beta(2, 40)    [live: pilot_0 rate_1]
   $2 = $iter_items(pilot_0)    [live: rate_1 $2]
   $3 = 0    [live: rate_1 $2 $3]
-  loop {    [live at head: rate_1 $2 $3]
+  loop (bounded) {    [live at head: rate_1 $2 $3]
     if (>= $3 len($2)) {
       break    [live: rate_1 $2 $3]
     }

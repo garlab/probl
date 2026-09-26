@@ -1,0 +1,25 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: "errors(\"let p: prob = \\\"x\\\"\\nlet q: probability = 1\\nlet r: list = [1]\")"
+---
+Error: expected a probability, found a string
+   ╭─[ test.probl:1:15 ]
+   │
+ 1 │ let p: prob = "x"
+   │               ─┬─  
+   │                ╰─── here
+───╯
+Error: unknown type `probability`
+   ╭─[ test.probl:2:8 ]
+   │
+ 2 │ let q: probability = 1
+   │        ─────┬─────  
+   │             ╰─────── here
+───╯
+Error: `list` takes 1 type argument, like `list[int]`
+   ╭─[ test.probl:3:8 ]
+   │
+ 3 │ let r: list = [1]
+   │        ──┬─  
+   │          ╰─── here
+───╯

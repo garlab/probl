@@ -30,7 +30,7 @@ for month in 1..18 {
   let growth ~ match market {  # month-on-month growth in sign-ups
     Boom   => 8% to 20%
     Steady => 1% to 6%
-    Slump  => -8% to 0%        # a range that reaches zero or below is a normal distribution
+    Slump  => normal_range(-8%, 0%)   # growth can be negative: say which shape you mean
   }
   signups *= 1 + growth
 }
@@ -40,14 +40,15 @@ report customers * price >= 100_000 as "MRR ≥ $100k after 18 months"
 # ── Output (sampled: expect small differences in the last digits) ───────
 # sample · 50,000 runs · seed 11
 #
-# MRR ($)           5%        25%     median        75%        95%
-#   month 1      2,793      3,773      4,655      5,635      7,497
-#   month 3      8,526     11,319     13,769     16,709     22,148
-#   month 6     16,562     22,197     27,293     33,467     45,325
-#   month 9     23,961     32,683     40,719     50,960     71,246
-#   month 12    30,772     43,022     54,341     69,531    100,450
-#   month 15    37,240     53,214     68,404     89,327    133,476
-#   month 18    43,463     63,406     83,104    110,838    171,598
+# MRR ($)
+#   month       5%      25%   median       75%       95%
+#       1    2,793    3,773    4,655     5,635     7,497
+#       3    8,526   11,319   13,769    16,709    22,148
+#       6   16,562   22,197   27,293    33,467    45,325
+#       9   23,961   32,683   40,719    50,960    71,246
+#      12   30,772   43,022   54,341    69,531   100,450
+#      15   37,240   53,214   68,404    89,327   133,476
+#      18   43,463   63,406   83,104   110,838   171,598
 #   (all 18 months are printed; some rows are left out here)
 #
 # MRR ≥ $100k after 18 months    33.0% ± 0.2%

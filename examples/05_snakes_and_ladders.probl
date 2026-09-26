@@ -1,7 +1,7 @@
 # Snakes and ladders on the classic Milton Bradley 100-square board.
 # How long does a game last, and how much does going first help?
 
-@mode exact
+@mode enumerate
 
 let jumps = [
    1: 38,  4: 14,  9: 31, 21: 42, 28: 84, 36: 44, 51: 67, 71: 91, 80: 100,       # ladders
@@ -35,7 +35,7 @@ let mine ~ game
 report game >= mine as "first player wins"   # this `game` is a fresh race, independent of `mine`
 
 # ── Output ──────────────────────────────────────────────────────────────
-# exact · unresolved < 1e-12
+# enumerated · unresolved < 1e-12
 #
 # turns to finish         mean 39.23 · sd 25.22 · 5% 13 · median 32 · 95% 89
 # done within 20 turns    22.34%

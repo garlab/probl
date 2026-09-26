@@ -2,7 +2,7 @@
 
 **A programming language where conditions are probabilities.**
 
-In Probl, `if 30% { … } else { … }` runs *both* branches: one in a world with weight 0.3, the other in a world with weight 0.7. A program doesn't produce one answer; it produces the distribution over every world it can end up in. Worlds that reach the same state merge, so game simulations stay small and their answers are exact. When exact answers are out of reach, the same program runs by sampling instead.
+In Probl, `if 30% { … } else { … }` runs *both* branches: one in a world with weight 0.3, the other in a world with weight 0.7. A program doesn't produce one answer; it produces the distribution over every world it can end up in. Worlds that reach the same state merge, which keeps many game simulations small enough to follow every possibility. For models too big for that, or with continuous quantities, the same program runs by sampling instead.
 
 ```probl
 # Craps, pass line bet: what's the chance of winning?
@@ -17,7 +17,7 @@ if come_out in [7, 11] {
     if r == 7 { break }
   }
 }
-report win                       # 49.29%, exactly 244/495
+report win                       # 49.29%: the known answer, 244/495
 ```
 
 Probl is aimed at two kinds of work:
@@ -27,15 +27,19 @@ Probl is aimed at two kinds of work:
 
 ## Status
 
-v0.1 is in progress. The exact engine works: examples 01–06 run and print their documented output, and those numbers were checked against independent calculations. Sampling mode, needed for the forecasting examples 07–09, is next (v0.2).
+The engine enumerates and samples. Examples 01–06 print their documented output, checked against independent calculations; the forecasting examples 07–09 sample, and agree with an independent reference simulation within their sampling error. The rules are written down in [the reference semantics](docs/semantics.md). A second, deliberately simple interpreter checks enumeration against them on thousands of generated programs, and sampling is checked against enumeration, standard errors included.
 
 ```sh
 cargo run --release -p probl-cli -- run examples/02_craps.probl
-cargo run --release -p probl-cli -- run examples/02_craps.probl --fractions   # 244/495
+cargo run --release -p probl-cli -- run examples/02_craps.probl --fractions   # ≈ 244/495
+cargo run --release -p probl-cli -- run examples/07_launch_forecast.probl      # sampled
+cargo run --release -p probl-cli -- run examples/02_craps.probl --runs 100000  # sampled too
 cargo run --release -p probl-cli -- repl
 cargo test --all
 ```
 
-- [Language overview](docs/language-overview.md): the model, a syntax proposal, semantics and grammar
-- [Implementation plan](docs/implementation-plan.md): architecture, phases, testing and risks
+- [Language overview](docs/language-overview.md): the model, the syntax, and a tour of the language
+- [Reference semantics](docs/semantics.md): the precise rules the engine follows
+- [Implementation plan](docs/implementation-plan.md): status, architecture, phases, testing and risks
+- [Project audit](docs/project-audit.md): the review that led to the reference semantics
 - [Examples](examples/): nine sample programs with their expected output, from a tour of the language to a revenue forecast

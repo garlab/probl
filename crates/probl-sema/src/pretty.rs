@@ -132,7 +132,7 @@ impl Printer<'_> {
                 }
                 writeln!(out, "{indent}}}").unwrap();
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, bounded } => {
                 let head = match self.liveness {
                     Some(l) => {
                         let live: Vec<String> = l.loop_head[s.id as usize].iter().map(|s| self.slot(s)).collect();
@@ -140,7 +140,8 @@ impl Printer<'_> {
                     }
                     None => String::new(),
                 };
-                writeln!(out, "{indent}loop {{{head}").unwrap();
+                let kind = if *bounded { "loop (bounded)" } else { "loop" };
+                writeln!(out, "{indent}{kind} {{{head}").unwrap();
                 self.block(body, depth + 1, out);
                 writeln!(out, "{indent}}}").unwrap();
             }
@@ -163,6 +164,12 @@ impl Printer<'_> {
                 self.line(s, depth, format!("report {}{key} as {label:?}", self.expr(value)), out)
             }
             StmtKind::Fail { message } => self.line(s, depth, format!("fail {message:?}"), out),
+            StmtKind::Check { slot, ty } => self.line(
+                s,
+                depth,
+                format!("check {}: {}", self.slot(*slot), ty.describe(self.p)),
+                out,
+            ),
         }
     }
 
@@ -181,6 +188,7 @@ impl Printer<'_> {
         match &e.kind {
             ExprKind::Lit(l) => match l {
                 Lit::Unit => "()".into(),
+                Lit::Bool(b) => b.to_string(),
                 Lit::Int(v) => v.to_string(),
                 Lit::Float(v) => format!("{v:?}"),
                 Lit::Prob(v) => percent(*v),

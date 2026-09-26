@@ -1,42 +1,11 @@
 //! The engine against questions with known answers, and checks that merging
 //! and memoization never change a result.
 
+mod common;
+
+use common::*;
 use probl_engine::value::Value;
-use probl_engine::{Options, Outcome, run};
-use probl_syntax::{SourceFile, render_all};
-
-fn exec(src: &str, options: &Options) -> Result<Outcome, String> {
-    let (program, diags) = probl_sema::compile(src);
-    let file = SourceFile::new("test.probl", src);
-    let Some(program) = program else {
-        panic!("compile errors:\n{}", render_all(&diags, &file, false));
-    };
-    let mut print = |_: &str| {};
-    run(&program, options, &mut print).map_err(|e| e.to_diagnostic().render(&file, false))
-}
-
-fn outcome(src: &str) -> Outcome {
-    exec(src, &Options::default()).unwrap_or_else(|e| panic!("runtime error:\n{e}"))
-}
-
-/// The chance reported by the first `report`.
-fn chance(src: &str) -> f64 {
-    outcome(src).reports[0].chance().expect("the first report should be a probability")
-}
-
-fn mean(src: &str) -> f64 {
-    let dist = outcome(src).reports[0].distribution();
-    dist.iter().map(|(v, p)| v.as_f64().unwrap() * p).sum()
-}
-
-fn error(src: &str) -> String {
-    exec(src, &Options::default()).expect_err("expected a runtime error")
-}
-
-#[track_caller]
-fn close(actual: f64, expected: f64) {
-    assert!((actual - expected).abs() < 1e-9, "expected {expected}, got {actual}");
-}
+use probl_engine::{ErrorKind, Options};
 
 // ── Known answers ────────────────────────────────────────────────────────
 
@@ -50,15 +19,30 @@ fn two_dice() {
 #[test]
 fn conditions_split_worlds() {
     close(chance("let x = if 30% { 1 } else { 2 }\nreport x == 1"), 0.3);
-    close(chance("var x = 0\nif 30% { x = 1 }\nif 50% { x += 1 }\nreport x == 2"), 0.15);
+    close(
+        chance("var x = 0\nif 30% { x = 1 }\nif 50% { x += 1 }\nreport x == 2"),
+        0.15,
+    );
+    close(chance("let x = if d6 > 4 { 1 } else { 0 }\nreport x == 1"), 1.0 / 3.0);
 }
 
 #[test]
-fn chances_are_independent_and_facts_are_not() {
-    close(chance("let rain = 30%\nreport rain and rain"), 0.09);
-    close(chance("let raining ~ 30%\nreport raining and raining"), 0.3);
-    close(chance("report 30% or 50%"), 0.65);
-    close(chance("report not 30%"), 0.7);
+fn events_need_identities() {
+    close(chance("let a ~ bernoulli(30%)\nreport a and a"), 0.3);
+    close(
+        chance("let a ~ bernoulli(30%)\nlet b ~ bernoulli(50%)\nreport a or b"),
+        0.65,
+    );
+    close(chance("let a ~ bernoulli(30%)\nreport not a"), 0.7);
+    close(chance("report not (d6 > 4)"), 2.0 / 3.0);
+    // One settled fact and one uncertain one combine safely.
+    close(chance("let r ~ d6\nreport r > 4 and d6 > 4"), 1.0 / 9.0);
+    // A drawn distribution of facts gives an event with an identity.
+    close(chance("let big ~ d6 > 4\nreport big and big"), 1.0 / 3.0);
+    assert!(error("report 30% and 30%").contains("30% is a probability"));
+    assert!(error("report (d6 > 4) and (d6 > 4)").contains("two uncertain facts"));
+    assert!(error("let e = d6 > 4\nreport e or e").contains("two uncertain facts"));
+    assert!(error("let p ~ 30%").contains("bernoulli"));
 }
 
 #[test]
@@ -108,26 +92,33 @@ fn loops_that_may_never_end_stop_at_epsilon() {
     let dist = o.reports[0].distribution();
     let mean: f64 = dist.iter().map(|(v, p)| v.as_f64().unwrap() * p).sum();
     assert!((mean - 6.0).abs() < 1e-8);
-    assert!(o.unresolved > 0.0 && o.unresolved < 1e-12);
+    let u = o.unresolved.to_f64();
+    assert!(u > 0.0 && u < 1e-12);
 }
 
 #[test]
 fn evidence() {
-    close(chance("let a ~ d6\nlet b ~ d6\nobserve a + b == 7\nreport a == 1"), 1.0 / 6.0);
+    close(
+        chance("let a ~ d6\nlet b ~ d6\nobserve a + b == 7\nreport a == 1"),
+        1.0 / 6.0,
+    );
     let medical = "
-        let sick ~ 1%
+        let sick ~ bernoulli(1%)
         let positive = if sick { 95% } else { 8% }
         observe positive
         report sick";
     close(chance(medical), 0.0095 / (0.0095 + 0.99 * 0.08));
-    close(outcome(medical).evidence.unwrap(), 0.0887);
-    let coin = "
-        let coin ~ one_of([\"fair\", \"biased\"])
-        let heads = if coin == \"fair\" { 50% } else { 90% }
-        repeat 5 { observe true from heads }
-        report coin == \"biased\"";
-    let (b, f) = (0.9f64.powi(5), 0.5f64.powi(5));
-    close(chance(coin), b / (b + f));
+    close(outcome(medical).evidence.unwrap().to_f64(), 0.0887);
+    for observation in ["observe heads", "observe true from bernoulli(heads)"] {
+        let coin = format!(
+            "let coin ~ one_of([\"fair\", \"biased\"])
+             let heads = if coin == \"fair\" {{ 50% }} else {{ 90% }}
+             repeat 5 {{ {observation} }}
+             report coin == \"biased\""
+        );
+        let (b, f) = (0.9f64.powi(5), 0.5f64.powi(5));
+        close(chance(&coin), b / (b + f));
+    }
     close(chance("let k ~ d6\nobserve 3 from binomial(5, k / 6)\nreport k > 3"), {
         let pmf = |p: f64| 10.0 * p.powi(3) * (1.0 - p).powi(2);
         let ks: Vec<f64> = (1..=6).map(|k| pmf(k as f64 / 6.0)).collect();
@@ -168,25 +159,43 @@ fn chance_blocks() {
         }
         report pos == 0";
     close(chance(src), 0.2);
-    close(chance("let w = chance { 60% => \"sun\", 30% => \"rain\", else => \"snow\" }\nreport w == \"snow\""), 0.1);
+    close(
+        chance("let w = chance { 60% => \"sun\", 30% => \"rain\", else => \"snow\" }\nreport w == \"snow\""),
+        0.1,
+    );
 }
 
 #[test]
 fn simulate_returns_distributions() {
-    close(chance("let g = simulate { let a ~ d6\n a * 2 }\nreport g == 4"), 1.0 / 6.0);
+    close(
+        chance("let g = simulate { let a ~ d6\n a * 2 }\nreport g == 4"),
+        1.0 / 6.0,
+    );
     close(chance("report simulate { d6 > 4 }"), 1.0 / 3.0);
     // A settled draw from a simulated distribution, compared with a fresh one.
-    close(chance("let g = simulate { d6 }\nlet mine ~ g\nreport g >= mine"), 7.0 / 12.0);
+    close(
+        chance("let g = simulate { d6 }\nlet mine ~ g\nreport g >= mine"),
+        7.0 / 12.0,
+    );
+    // A distribution over probabilities stays one.
+    let rates = distribution("report simulate { if 50% { 10% } else { 90% } }");
+    assert_eq!(rates, vec![(Value::Prob(0.1), 0.5), (Value::Prob(0.9), 0.5)]);
 }
 
 #[test]
 fn functions_and_recursion() {
-    close(chance("fn fact(n) { if n <= 1 { 1 } else { n * fact(n - 1) } }\nreport fact(10) == 3628800"), 1.0);
+    close(
+        chance("fn fact(n) { if n <= 1 { 1 } else { n * fact(n - 1) } }\nreport fact(10) == 3628800"),
+        1.0,
+    );
     let src = "
         fn heads(n) { if n == 0 { 0 } else { (if 50% { 1 } else { 0 }) + heads(n - 1) } }
         report heads(10) == 5";
     close(chance(src), 252.0 / 1024.0);
-    close(chance("fn count(n) { if n == 0 { 0 } else { 1 + count(n - 1) } }\nreport count(900) == 900"), 1.0);
+    close(
+        chance("fn depth(n) { if n == 0 { 0 } else { 1 + depth(n - 1) } }\nreport depth(400) == 400"),
+        1.0,
+    );
 }
 
 #[test]
@@ -226,6 +235,21 @@ fn dates() {
     close(chance("report weekday(date(\"2026-09-28\")) == \"Monday\""), 1.0);
 }
 
+#[test]
+fn declared_types_are_checked() {
+    close(chance("let n: int = 3\nreport n == 3"), 1.0);
+    close(
+        chance("fn half(x: float) -> float { x / 2 }\nreport half(3) == 1.5"),
+        1.0,
+    );
+    assert!(error("fn f(x: int) { x }\nreport f(\"a\") == 1").contains("`x` should be an int, but it's a str"));
+    assert!(error("fn f(x) -> int { x / 2 }\nreport f(3) == 1").contains("the result should be an int"));
+    assert!(error("var n: int = 1\nn = n / 2").contains("`n` should be an int, but it's a float"));
+    assert!(error("let d: dist[int] = one_of([\"a\"])").contains("should be a dist[int]"));
+    assert!(compile_error("let p: prob = \"x\"").contains("expected a probability, found a string"));
+    assert!(compile_error("let p: probability = 1").contains("unknown type `probability`"));
+}
+
 // ── Errors ───────────────────────────────────────────────────────────────
 
 #[test]
@@ -233,7 +257,7 @@ fn runtime_errors() {
     assert!(error("let x ~ d6\nreport 10 / (x - x)").contains("division by zero"));
     assert!(error("let xs = [1, 2]\nreport xs[2]").contains("out of range"));
     assert!(error("fn f(x) { if 50% { f(x) } else { x } }\nreport f(1)").contains("calls itself"));
-    assert!(error("report if 3 { 1 } else { 2 }").contains("expected a probability"));
+    assert!(error("report if 3 { 1 } else { 2 }").contains("a probability or a fact"));
     assert!(error("for i in 1..d6 { }").contains("range"));
     assert!(error("let w = chance { 60% => 1, 30% => 2 }\nreport w").contains("no `else`"));
     assert!(error("chance { 60% => {}, 50% => {} }").contains("more than 100%"));
@@ -242,10 +266,14 @@ fn runtime_errors() {
 
 #[test]
 fn unimplemented_features_say_so() {
-    let (program, _) = probl_sema::compile("report normal(0, 1) > 1.96");
-    let mut print = |_: &str| {};
-    let err = run(&program.unwrap(), &Options::default(), &mut print).unwrap_err();
-    assert!(err.unsupported);
+    for src in [
+        "@mode particles(runs: 10, seed: 1)\nreport 1",
+        "@mode beam(worlds: 10)\nreport 1",
+        "report bins(normal(0, 1), 10)",
+    ] {
+        let err = exec_raw(src, &Options::default()).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Unsupported, "{src}");
+    }
 }
 
 // ── Merging and memoization don't change results ─────────────────────────

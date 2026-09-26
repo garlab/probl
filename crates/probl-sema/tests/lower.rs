@@ -81,3 +81,58 @@ fn static_errors() {
     insta::assert_snapshot!(errors("var deck = bag([1: 2])\nlet c = deck.take()"));
     insta::assert_snapshot!(errors("let d = if 30% { 1 }"));
 }
+
+#[test]
+fn rules_from_the_semantics() {
+    // No observation may follow a report (docs/semantics.md, section 7).
+    insta::assert_snapshot!(errors("let a ~ d6\nreport a\nobserve a > 2"));
+    insta::assert_snapshot!(errors(
+        "fn check(x) { observe x > 1\n x }\nlet a ~ d6\nreport a\nlet b = check(a)"
+    ));
+    // The mode formerly called `exact`.
+    insta::assert_snapshot!(errors("@mode exact\nreport 1"));
+    // Declared types.
+    insta::assert_snapshot!(errors("let p: prob = \"x\"\nlet q: probability = 1\nlet r: list = [1]"));
+}
+
+#[test]
+fn reports_in_loops_are_classified() {
+    let (program, _) = compile(
+        "report 1 as \"once\"\n\
+         for i in 1..3 { report i by i as \"per key\" }\n\
+         for i in 1..3 { report i by 1 as \"per visit\" }\n\
+         var n = 0\nwhile n < 3 { n += 1\n report n by n as \"while\" }",
+    );
+    let kinds: Vec<_> = program
+        .unwrap()
+        .reports
+        .iter()
+        .map(|r| (r.label.clone(), r.kind))
+        .collect();
+    use probl_sema::ir::ReportKind::*;
+    assert_eq!(
+        kinds,
+        vec![
+            ("once".to_string(), Once),
+            ("per key".to_string(), PerKey),
+            ("per visit".to_string(), PerVisit),
+            ("while".to_string(), PerVisit),
+        ]
+    );
+}
+
+#[test]
+fn effects_decide_memoization() {
+    let (program, _) = compile(
+        "fn noisy() { print(\"hi\")\n 1 }\n\
+         fn caller() { noisy() }\n\
+         fn quiet(x) { x + 1 }\n\
+         fn looks(x) { observe x > 0\n x }\n\
+         let a = caller() + quiet(1) + looks(1)",
+    );
+    let program = program.unwrap();
+    let effects = |name: &str| program.functions.iter().find(|f| f.name == name).unwrap().effects;
+    assert!(effects("noisy").prints && effects("caller").prints);
+    assert!(!effects("quiet").prints && !effects("quiet").observes);
+    assert!(effects("looks").observes && !effects("looks").prints);
+}

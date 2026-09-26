@@ -167,7 +167,7 @@ impl Pass<'_> {
                 }
                 live
             }
-            StmtKind::Loop { body } => {
+            StmtKind::Loop { body, .. } => {
                 let mut head = SlotSet::with_capacity(self.size);
                 loop {
                     let inner = LoopCtx {
@@ -208,6 +208,11 @@ impl Pass<'_> {
                 live
             }
             StmtKind::Fail { .. } => SlotSet::with_capacity(self.size),
+            StmtKind::Check { slot, .. } => {
+                let mut live = out;
+                live.insert(*slot);
+                live
+            }
         }
     }
 }

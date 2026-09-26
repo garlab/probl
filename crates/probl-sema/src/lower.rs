@@ -20,6 +20,10 @@ pub fn lower(program: &ast::Program, src: &str) -> (Program, Vec<Diagnostic>) {
     lowerer.finish()
 }
 
+/// The name of compiler-generated variables. Each is assigned once per path
+/// and never changed afterwards.
+const TEMP: &str = "(temporary)";
+
 struct FnBuild {
     name: String,
     kind: FnKind,
@@ -37,18 +41,41 @@ struct FnBuild {
     captures: Vec<Capture>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Binding {
     slot: SlotId,
     mutable: bool,
     /// Copied in from outside the function, so it can't be assigned.
     captured: bool,
+    /// Declared type, checked whenever the variable is assigned.
+    ty: Option<TypeSpec>,
 }
 
 struct Ctx {
     func: FnId,
     scopes: Vec<FxHashMap<String, Binding>>,
-    loops: u32,
+    /// Enclosing loops, innermost last.
+    loops: Vec<LoopKind>,
+    /// The declared return type, checked at every `return`.
+    ret: Option<TypeSpec>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum LoopKind {
+    /// A `for` loop; the name of its variable if the pattern is a plain name.
+    For(Option<String>),
+    Other,
+}
+
+/// What the statements lowered from a later operand can do. It decides which
+/// earlier operands must be evaluated before them (docs/semantics.md,
+/// section 4).
+#[derive(Clone, Copy)]
+struct Later {
+    /// There are statements: they can split worlds, observe, fail or print.
+    any: bool,
+    /// They can assign a program variable.
+    assigns: bool,
 }
 
 enum Variant {
@@ -147,7 +174,7 @@ impl<'a> Lowerer<'a> {
 
     fn temp(&mut self, span: Span) -> SlotId {
         let func = self.cur_func();
-        self.new_slot_in(func, "(temporary)", span)
+        self.new_slot_in(func, TEMP, span)
     }
 
     fn stmt(&mut self, span: Span, kind: StmtKind) -> Stmt {
@@ -181,12 +208,128 @@ impl<'a> Lowerer<'a> {
             slot,
             mutable,
             captured: false,
+            ty: None,
         };
-        self.cur().scopes.last_mut().unwrap().insert(name.to_string(), binding);
         if top {
-            self.globals.insert(name.to_string(), binding);
+            self.globals.insert(name.to_string(), binding.clone());
         }
+        self.cur().scopes.last_mut().unwrap().insert(name.to_string(), binding);
         slot
+    }
+
+    /// Record a declared type for the variable most recently declared as `name`.
+    fn set_declared_type(&mut self, name: &str, ty: &TypeSpec) {
+        if let Some(b) = self.cur().scopes.last_mut().unwrap().get_mut(name) {
+            b.ty = Some(ty.clone());
+        }
+    }
+
+    fn check(&mut self, slot_id: SlotId, ty: &TypeSpec, span: Span) -> Stmt {
+        self.stmt(
+            span,
+            StmtKind::Check {
+                slot: slot_id,
+                ty: ty.clone(),
+            },
+        )
+    }
+
+    /// The type named by a type annotation.
+    fn type_spec(&mut self, t: &ast::TypeExpr) -> Option<TypeSpec> {
+        match t {
+            ast::TypeExpr::Record { fields, .. } => {
+                let mut specs = Vec::new();
+                for (name, ty) in fields {
+                    specs.push((name.name.clone(), self.type_spec(ty)?));
+                }
+                specs.sort_by(|a, b| a.0.cmp(&b.0));
+                Some(TypeSpec::AnonRecord(specs))
+            }
+            ast::TypeExpr::Named { name, args } => {
+                let n = name.name.as_str();
+                let expected = match n {
+                    "list" | "bag" | "dist" => 1,
+                    "map" => 2,
+                    _ => 0,
+                };
+                if args.len() != expected {
+                    let msg = if expected == 0 {
+                        format!("`{n}` doesn't take type arguments")
+                    } else {
+                        format!(
+                            "`{n}` takes {expected} type argument{}, like `{n}[int]`",
+                            plural(expected)
+                        )
+                    };
+                    self.error(name.span, msg);
+                    return None;
+                }
+                let arg = |i: usize, this: &mut Self| this.type_spec(&args[i]).map(Box::new);
+                Some(match n {
+                    "int" => TypeSpec::Int,
+                    "float" => TypeSpec::Float,
+                    "prob" => TypeSpec::Prob,
+                    "bool" => TypeSpec::Bool,
+                    "str" => TypeSpec::Str,
+                    "date" => TypeSpec::Date,
+                    "list" => TypeSpec::List(arg(0, self)?),
+                    "bag" => TypeSpec::Bag(arg(0, self)?),
+                    "dist" => TypeSpec::Dist(arg(0, self)?),
+                    "map" => TypeSpec::Map(arg(0, self)?, arg(1, self)?),
+                    _ => {
+                        if let Some(&r) = self.record_by_name.get(n) {
+                            TypeSpec::Record(r)
+                        } else if let Some(&e) = self.enum_by_name.get(n) {
+                            TypeSpec::Enum(e)
+                        } else {
+                            let mut known: Vec<String> = [
+                                "int", "float", "prob", "bool", "str", "date", "list", "map", "bag", "dist",
+                            ]
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect();
+                            known.extend(self.record_by_name.keys().cloned());
+                            known.extend(self.enum_by_name.keys().cloned());
+                            let suggestion = closest(n, &known);
+                            let d = self.error(name.span, format!("unknown type `{n}`"));
+                            if let Some(s) = suggestion {
+                                d.help(format!("did you mean `{s}`?"));
+                            }
+                            return None;
+                        }
+                    }
+                })
+            }
+        }
+    }
+
+    /// Reject a literal that can never have the declared type.
+    fn check_literal(&mut self, value: &ast::Expr, ty: &TypeSpec) {
+        let found = match (&value.kind, ty) {
+            (ast::ExprKind::Int(_), TypeSpec::Int | TypeSpec::Float) => return,
+            (ast::ExprKind::Float(v), TypeSpec::Prob) if (0.0..=1.0).contains(v) => return,
+            (ast::ExprKind::Float(_), TypeSpec::Float) => return,
+            (ast::ExprKind::Percent(v), TypeSpec::Prob) if (0.0..=1.0).contains(v) => return,
+            (ast::ExprKind::Percent(_), TypeSpec::Float) => return,
+            (ast::ExprKind::Str(_), TypeSpec::Str) => return,
+            (ast::ExprKind::Bool(_), TypeSpec::Bool) => return,
+            (ast::ExprKind::Int(_), _) => "an int",
+            (ast::ExprKind::Float(_), _) => "a float",
+            (ast::ExprKind::Percent(_), _) => "a percentage",
+            (ast::ExprKind::Str(_), _) => "a string",
+            (ast::ExprKind::Bool(_), _) => "a bool",
+            _ => return,
+        };
+        let expected = match ty {
+            TypeSpec::Int => "an int",
+            TypeSpec::Float => "a float",
+            TypeSpec::Prob => "a probability",
+            TypeSpec::Bool => "a bool",
+            TypeSpec::Str => "a string",
+            TypeSpec::Date => "a date",
+            _ => "a value of the declared type",
+        };
+        self.error(value.span, format!("expected {expected}, found {found}"));
     }
 
     /// Resolve a variable name from the context at `depth`, capturing it into
@@ -194,7 +337,7 @@ impl<'a> Lowerer<'a> {
     fn lookup_at(&mut self, depth: usize, name: &str) -> Option<Binding> {
         for scope in self.ctx[depth].scopes.iter().rev() {
             if let Some(b) = scope.get(name) {
-                return Some(*b);
+                return Some(b.clone());
             }
         }
         let func = self.ctx[depth].func;
@@ -209,7 +352,7 @@ impl<'a> Lowerer<'a> {
                 slot
             }
             _ => {
-                let global = *self.globals.get(name)?;
+                let global = self.globals.get(name)?.clone();
                 let span = self.funcs[func as usize].span;
                 let slot = self.new_slot_in(func, name, span);
                 self.funcs[func as usize].global_slots.insert(global.slot, slot);
@@ -220,8 +363,9 @@ impl<'a> Lowerer<'a> {
             slot: found,
             mutable: false,
             captured: true,
+            ty: None,
         };
-        self.ctx[depth].scopes[0].insert(name.to_string(), binding);
+        self.ctx[depth].scopes[0].insert(name.to_string(), binding.clone());
         Some(binding)
     }
 
@@ -319,7 +463,8 @@ impl<'a> Lowerer<'a> {
         self.ctx.push(Ctx {
             func: MAIN,
             scopes: vec![FxHashMap::default()],
-            loops: 0,
+            loops: Vec::new(),
+            ret: None,
         });
         let mut body = Vec::new();
         for item in &program.items {
@@ -345,8 +490,12 @@ impl<'a> Lowerer<'a> {
         match name {
             "mode" => match arg.map(|a| &a.kind) {
                 Some(ast::ExprKind::Name(mode)) => match mode.as_str() {
-                    "exact" => self.settings.mode = Mode::Exact,
+                    "enumerate" => self.settings.mode = Mode::Enumerate,
                     "auto" => self.settings.mode = Mode::Auto,
+                    "exact" => {
+                        self.error(pragma.span, "`@mode exact` is now called `@mode enumerate`")
+                            .note("enumeration follows every branch, but its answers are floating-point and loops may be cut short, so it isn't called exact");
+                    }
                     _ => self.bad_mode(pragma.span),
                 },
                 Some(ast::ExprKind::Call { callee, args }) => {
@@ -412,7 +561,7 @@ impl<'a> Lowerer<'a> {
 
     fn bad_mode(&mut self, span: Span) {
         self.error(span, "unknown mode").help(
-            "use `@mode exact`, `@mode auto`, `@mode sample(runs: 10_000, seed: 1)`, \
+            "use `@mode enumerate`, `@mode auto`, `@mode sample(runs: 10_000, seed: 1)`, \
              `@mode particles(runs: 10_000, seed: 1)` or `@mode beam(worlds: 100_000)`",
         );
     }
@@ -473,8 +622,10 @@ impl<'a> Lowerer<'a> {
         self.ctx.push(Ctx {
             func: id,
             scopes: vec![FxHashMap::default()],
-            loops: 0,
+            loops: Vec::new(),
+            ret: None,
         });
+        let mut stmts = Vec::new();
         for param in &decl.params {
             if self.ctx[self.ctx.len() - 1].scopes[0].contains_key(&param.name.name) {
                 self.error(
@@ -482,13 +633,19 @@ impl<'a> Lowerer<'a> {
                     format!("the parameter `{}` appears twice", param.name.name),
                 );
             }
-            self.declare(&param.name.name, param.name.span, false);
+            let slot_id = self.declare(&param.name.name, param.name.span, false);
+            if let Some(spec) = param.ty.as_ref().and_then(|t| self.type_spec(t)) {
+                self.set_declared_type(&param.name.name, &spec);
+                let st = self.check(slot_id, &spec, param.name.span);
+                stmts.push(st);
+            }
         }
         self.funcs[id as usize].n_params = decl.params.len() as u32;
-        let mut stmts = Vec::new();
+        self.cur().ret = decl.ret.as_ref().and_then(|t| self.type_spec(t));
         self.push_scope();
         let value = self.block_value(&decl.body, &mut stmts);
         self.pop_scope();
+        let value = self.checked_return_value(value, decl.body.span, &mut stmts);
         let ret = self.stmt(decl.body.span, StmtKind::Return(value));
         stmts.push(ret);
         self.funcs[id as usize].body = Block { stmts };
@@ -504,13 +661,34 @@ impl<'a> Lowerer<'a> {
                 pattern,
                 op,
                 value,
-                ty: _,
-            } => self.let_stmt(*mutable, pattern, *op, value, s.span, out),
+                ty,
+            } => {
+                let spec = ty.as_ref().and_then(|t| self.type_spec(t));
+                if let Some(spec) = &spec {
+                    if *op == ast::BindOp::Assign {
+                        self.check_literal(value, spec);
+                    }
+                }
+                self.let_stmt(*mutable, pattern, *op, value, s.span, out);
+                if let (Some(spec), Some(_)) = (spec, ty) {
+                    match &pattern.kind {
+                        ast::PatternKind::Name(name) => {
+                            let slot_id = self.lookup(name).unwrap().slot;
+                            self.set_declared_type(name, &spec);
+                            let st = self.check(slot_id, &spec, s.span);
+                            out.push(st);
+                        }
+                        _ => {
+                            self.error(pattern.span, "a type annotation needs a plain variable name");
+                        }
+                    }
+                }
+            }
             ast::StmtKind::Assign { target, op, value } => self.assign(target, *op, value, s.span, out),
             ast::StmtKind::For { pattern, iter, body } => self.for_loop(pattern, iter, body, s.span, out),
             ast::StmtKind::While { cond, body } => {
                 // loop { if cond { body } else { break } }
-                self.cur().loops += 1;
+                self.cur().loops.push(LoopKind::Other);
                 let mut inner = Vec::new();
                 let c = self.expr(cond, &mut inner);
                 let then = self.scoped_block(body);
@@ -524,11 +702,12 @@ impl<'a> Lowerer<'a> {
                     },
                 );
                 inner.push(branch);
-                self.cur().loops -= 1;
+                self.cur().loops.pop();
                 let lp = self.stmt(
                     s.span,
                     StmtKind::Loop {
                         body: Block { stmts: inner },
+                        bounded: false,
                     },
                 );
                 out.push(lp);
@@ -553,7 +732,7 @@ impl<'a> Lowerer<'a> {
                 );
                 out.push(set_n);
                 out.push(set_k);
-                self.cur().loops += 1;
+                self.cur().loops.push(LoopKind::Other);
                 let mut inner = Vec::new();
                 let done = binary(BinOp::Ge, slot(k, s.span), slot(n, s.span), s.span);
                 let brk = self.stmt(s.span, StmtKind::Break);
@@ -576,25 +755,26 @@ impl<'a> Lowerer<'a> {
                 inner.push(incr);
                 let body = self.scoped_block(body);
                 inner.extend(body.stmts);
-                self.cur().loops -= 1;
+                self.cur().loops.pop();
                 let lp = self.stmt(
                     s.span,
                     StmtKind::Loop {
                         body: Block { stmts: inner },
+                        bounded: true,
                     },
                 );
                 out.push(lp);
             }
             ast::StmtKind::Loop { body } => {
-                self.cur().loops += 1;
+                self.cur().loops.push(LoopKind::Other);
                 let body = self.scoped_block(body);
-                self.cur().loops -= 1;
-                let lp = self.stmt(s.span, StmtKind::Loop { body });
+                self.cur().loops.pop();
+                let lp = self.stmt(s.span, StmtKind::Loop { body, bounded: false });
                 out.push(lp);
             }
             ast::StmtKind::Break | ast::StmtKind::Continue => {
                 let is_break = matches!(s.kind, ast::StmtKind::Break);
-                if self.ctx.last().unwrap().loops == 0 {
+                if self.ctx.last().unwrap().loops.is_empty() {
                     let word = if is_break { "break" } else { "continue" };
                     self.error(s.span, format!("`{word}` outside of a loop"));
                     return;
@@ -613,18 +793,41 @@ impl<'a> Lowerer<'a> {
                     Some(v) => self.expr(v, out),
                     None => lit(Lit::Unit, s.span),
                 };
+                let v = self.checked_return_value(v, s.span, out);
                 let st = self.stmt(s.span, StmtKind::Return(v));
                 out.push(st);
             }
             ast::StmtKind::Observe { value, from } => {
-                let v = self.expr(value, out);
-                let d = from.as_ref().map(|d| self.expr(d, out));
+                let mut exprs = vec![value];
+                exprs.extend(from.as_ref());
+                let mut values = self.operands(&exprs, out).into_iter();
+                let v = values.next().unwrap();
+                let d = values.next();
                 let st = self.stmt(s.span, StmtKind::Observe { value: v, from: d });
                 out.push(st);
             }
             ast::StmtKind::Report { value, by, label } => self.report(value, by.as_ref(), label, s.span, out),
             ast::StmtKind::Expr(e) => self.expr_stmt(e, out),
         }
+    }
+
+    /// With a declared return type, store the value and check it first.
+    fn checked_return_value(&mut self, value: Expr, span: Span, out: &mut Vec<Stmt>) -> Expr {
+        let Some(ty) = self.ctx.last().unwrap().ret.clone() else {
+            return value;
+        };
+        let t = self.temp(span);
+        let set = self.stmt(
+            span,
+            StmtKind::Set {
+                place: Place::slot(t),
+                value,
+            },
+        );
+        out.push(set);
+        let st = self.check(t, &ty, span);
+        out.push(st);
+        slot(t, span)
     }
 
     fn scoped_block(&mut self, block: &ast::Block) -> Block {
@@ -792,13 +995,22 @@ impl<'a> Lowerer<'a> {
                 return;
             }
         }
-        let v = self.expr(value, out);
-        let Some(place) = self.place(target, out, "assign to") else {
-            return;
-        };
         let kind = match op {
-            ast::AssignOp::Set => StmtKind::Set { place, value: v },
-            ast::AssignOp::Draw => StmtKind::Draw { place, dist: v },
+            ast::AssignOp::Set | ast::AssignOp::Draw => {
+                let mut v = self.expr(value, out);
+                let mut hoisted = Vec::new();
+                let Some(place) = self.place(target, &mut hoisted, "assign to") else {
+                    return;
+                };
+                let later = self.later(&hoisted);
+                self.stabilize(&mut v, later, out);
+                out.extend(hoisted);
+                if op == ast::AssignOp::Set {
+                    StmtKind::Set { place, value: v }
+                } else {
+                    StmtKind::Draw { place, dist: v }
+                }
+            }
             ast::AssignOp::Add | ast::AssignOp::Sub | ast::AssignOp::Mul | ast::AssignOp::Div => {
                 let bin = match op {
                     ast::AssignOp::Add => BinOp::Add,
@@ -806,15 +1018,40 @@ impl<'a> Lowerer<'a> {
                     ast::AssignOp::Mul => BinOp::Mul,
                     _ => BinOp::Div,
                 };
-                let current = place_read(&place, target.span);
+                let Some(mut place) = self.place(target, out, "assign to") else {
+                    return;
+                };
+                let mut hoisted = Vec::new();
+                let v = self.expr(value, &mut hoisted);
+                // Read the place (and fix its indices) before the value's
+                // statements run.
+                let later = self.later(&hoisted);
+                for elem in &mut place.path {
+                    if let PathElem::Index(i) = elem {
+                        self.stabilize(i, later, out);
+                    }
+                }
+                let mut current = place_read(&place, target.span);
+                self.stabilize(&mut current, later, out);
+                out.extend(hoisted);
                 StmtKind::Set {
                     place,
                     value: binary(bin, current, v, span),
                 }
             }
         };
+        let assigned = match &kind {
+            StmtKind::Set { place, .. } | StmtKind::Draw { place, .. } if place.path.is_empty() => Some(place.slot),
+            _ => None,
+        };
         let st = self.stmt(span, kind);
         out.push(st);
+        if let (Some(slot_id), ast::ExprKind::Name(name)) = (assigned, &target.kind) {
+            if let Some(ty) = self.lookup(name).and_then(|b| b.ty) {
+                let st = self.check(slot_id, &ty, span);
+                out.push(st);
+            }
+        }
     }
 
     /// Resolve an assignable place rooted at a mutable local variable.
@@ -829,7 +1066,7 @@ impl<'a> Lowerer<'a> {
                     .iter()
                     .rev()
                     .find_map(|s| s.get(name))
-                    .copied();
+                    .cloned();
                 match local {
                     Some(b) if b.mutable => Some(Place::slot(b.slot)),
                     Some(b) if b.captured => {
@@ -902,7 +1139,11 @@ impl<'a> Lowerer<'a> {
         out.push(set_items);
         out.push(set_index);
 
-        self.cur().loops += 1;
+        let var = match &pattern.kind {
+            ast::PatternKind::Name(name) => Some(name.clone()),
+            _ => None,
+        };
+        self.cur().loops.push(LoopKind::For(var));
         self.push_scope();
         let mut inner = Vec::new();
         let len = builtin(Builtin::Len, vec![slot(items, span)], span);
@@ -933,11 +1174,12 @@ impl<'a> Lowerer<'a> {
         let body = self.scoped_block(body);
         inner.extend(body.stmts);
         self.pop_scope();
-        self.cur().loops -= 1;
+        self.cur().loops.pop();
         let lp = self.stmt(
             span,
             StmtKind::Loop {
                 body: Block { stmts: inner },
+                bounded: true,
             },
         );
         out.push(lp);
@@ -956,20 +1198,29 @@ impl<'a> Lowerer<'a> {
                 .help("return the value from the function and report it where it's called");
             return;
         }
-        if by.is_none() && self.ctx[0].loops > 0 {
+        if by.is_none() && !self.ctx[0].loops.is_empty() {
             self.error(span, "a `report` inside a loop needs `by`")
                 .help("add a key that says which iteration each value belongs to, like `report x by month`");
             return;
         }
-        let v = self.expr(value, out);
-        let key = by.map(|k| self.expr(k, out));
+        let mut exprs = vec![value];
+        exprs.extend(by);
+        let mut values = self.operands(&exprs, out).into_iter();
+        let v = values.next().unwrap();
+        let key = values.next();
         let site = self.reports.len() as u32;
+        let kind = match (self.ctx[0].loops.last(), by.map(|k| &k.kind)) {
+            (None, _) => ReportKind::Once,
+            (Some(LoopKind::For(Some(var))), Some(ast::ExprKind::Name(key))) if key == var => ReportKind::PerKey,
+            _ => ReportKind::PerVisit,
+        };
         self.reports.push(ReportSite {
             label: match label {
                 Some((text, _)) => text.clone(),
                 None => self.text(value.span),
             },
             key_label: by.map(|k| self.text(k.span)),
+            kind,
             span,
         });
         let st = self.stmt(span, StmtKind::Report { site, value: v, key });
@@ -1104,10 +1355,12 @@ impl<'a> Lowerer<'a> {
     fn chance_into(&mut self, arms: &[ast::ChanceArm], dest: Option<SlotId>, span: Span, out: &mut Vec<Stmt>) {
         let mut ir_arms = Vec::new();
         let mut otherwise = None;
+        let weights: Vec<&ast::Expr> = arms.iter().filter_map(|a| a.weight.as_ref()).collect();
+        let mut weights = self.operands(&weights, out).into_iter();
         for (i, arm) in arms.iter().enumerate() {
             match &arm.weight {
-                Some(w) => {
-                    let weight = self.expr(w, out);
+                Some(_) => {
+                    let weight = weights.next().unwrap();
                     let body = self.branch_body(&arm.body, dest);
                     ir_arms.push((weight, body));
                 }
@@ -1147,7 +1400,7 @@ impl<'a> Lowerer<'a> {
             scrutinee.span,
             StmtKind::Set {
                 place: Place::slot(subject),
-                value: v,
+                value: builtin(Builtin::Settled, vec![v], scrutinee.span),
             },
         );
         out.push(st);
@@ -1187,7 +1440,7 @@ impl<'a> Lowerer<'a> {
             span,
             StmtKind::Set {
                 place: Place::slot(matched),
-                value: lit(Lit::Prob(0.0), span),
+                value: lit(Lit::Bool(false), span),
             },
         );
         out.push(init);
@@ -1199,7 +1452,7 @@ impl<'a> Lowerer<'a> {
                 arm.span,
                 StmtKind::Set {
                     place: Place::slot(matched),
-                    value: lit(Lit::Prob(1.0), arm.span),
+                    value: lit(Lit::Bool(true), arm.span),
                 },
             );
             let mut body = vec![mark];
@@ -1255,7 +1508,7 @@ impl<'a> Lowerer<'a> {
     fn pattern_test(&mut self, pattern: &ast::Pattern, value: &Expr, binds: &mut Vec<Stmt>) -> Expr {
         let span = pattern.span;
         match &pattern.kind {
-            ast::PatternKind::Wildcard => lit(Lit::Prob(1.0), span),
+            ast::PatternKind::Wildcard => lit(Lit::Bool(true), span),
             ast::PatternKind::Name(name) => {
                 if let Some(variant) = self.variant(name, span) {
                     return binary(BinOp::Eq, value.clone(), lit(variant, span), span);
@@ -1269,7 +1522,7 @@ impl<'a> Lowerer<'a> {
                     },
                 );
                 binds.push(st);
-                lit(Lit::Prob(1.0), span)
+                lit(Lit::Bool(true), span)
             }
             ast::PatternKind::Literal(e) => {
                 let mut scratch = Vec::new();
@@ -1313,6 +1566,84 @@ impl<'a> Lowerer<'a> {
 
     // ── Expressions ──────────────────────────────────────────────────────
 
+    /// Lower operands left to right (docs/semantics.md, section 4). When an
+    /// operand's lowering produces statements, the operands before it are
+    /// first saved in temporaries, so they keep the values they had when they
+    /// were evaluated.
+    fn operands(&mut self, exprs: &[&ast::Expr], out: &mut Vec<Stmt>) -> Vec<Expr> {
+        self.operands_after(Vec::new(), exprs, out)
+    }
+
+    /// Like `operands`, after some operands that are already lowered.
+    fn operands_after(&mut self, mut values: Vec<Expr>, exprs: &[&ast::Expr], out: &mut Vec<Stmt>) -> Vec<Expr> {
+        for e in exprs {
+            let mut hoisted = Vec::new();
+            let v = self.expr(e, &mut hoisted);
+            let later = self.later(&hoisted);
+            for prev in values.iter_mut() {
+                self.stabilize(prev, later, out);
+            }
+            out.extend(hoisted);
+            values.push(v);
+        }
+        values
+    }
+
+    fn later(&self, stmts: &[Stmt]) -> Later {
+        Later {
+            any: !stmts.is_empty(),
+            assigns: self.assigns_variables(stmts),
+        }
+    }
+
+    /// Whether statements may assign a program variable (not just
+    /// temporaries). Calls can't: functions only assign their own variables.
+    fn assigns_variables(&self, stmts: &[Stmt]) -> bool {
+        let func = &self.funcs[self.cur_func() as usize];
+        let is_temp = |slot: SlotId| func.slots[slot as usize].name == TEMP;
+        fn any(stmts: &[Stmt], is_temp: &dyn Fn(SlotId) -> bool) -> bool {
+            stmts.iter().any(|s| match &s.kind {
+                StmtKind::Set { place, .. } | StmtKind::Draw { place, .. } | StmtKind::Take { place, .. } => {
+                    !is_temp(place.slot)
+                }
+                StmtKind::If { then, otherwise, .. } => any(&then.stmts, is_temp) || any(&otherwise.stmts, is_temp),
+                StmtKind::Chance { arms, otherwise, .. } => {
+                    arms.iter().any(|(_, b)| any(&b.stmts, is_temp))
+                        || otherwise.as_ref().is_some_and(|b| any(&b.stmts, is_temp))
+                }
+                StmtKind::Loop { body, .. } => any(&body.stmts, is_temp),
+                _ => false,
+            })
+        }
+        any(stmts, &is_temp)
+    }
+
+    /// Evaluate `e` into a temporary now, before the `later` statements,
+    /// unless that can't make a difference. A variable needs it only if the
+    /// statements assign variables. Any other computation needs it whenever
+    /// there are statements: it can fail, print or run `simulate`, and the
+    /// statements can split worlds, rule them out, or fail first.
+    fn stabilize(&mut self, e: &mut Expr, later: Later, out: &mut Vec<Stmt>) {
+        let stable = match &e.kind {
+            ExprKind::Lit(_) => true,
+            ExprKind::Slot(s) => !later.assigns || self.funcs[self.cur_func() as usize].slots[*s as usize].name == TEMP,
+            _ => !later.any,
+        };
+        if stable {
+            return;
+        }
+        let t = self.temp(e.span);
+        let st = self.stmt(
+            e.span,
+            StmtKind::Set {
+                place: Place::slot(t),
+                value: e.clone(),
+            },
+        );
+        out.push(st);
+        *e = slot(t, e.span);
+    }
+
     /// Lower `e` and store its value in `dest`.
     fn expr_into(&mut self, e: &ast::Expr, dest: SlotId, out: &mut Vec<Stmt>) {
         match &e.kind {
@@ -1351,13 +1682,21 @@ impl<'a> Lowerer<'a> {
                 count: *count,
                 sides: *sides,
             }),
-            ast::ExprKind::Bool(b) => ExprKind::Lit(Lit::Prob(if *b { 1.0 } else { 0.0 })),
+            ast::ExprKind::Bool(b) => ExprKind::Lit(Lit::Bool(*b)),
             ast::ExprKind::Str(segments) => {
+                let inner: Vec<&ast::Expr> = segments
+                    .iter()
+                    .filter_map(|seg| match seg {
+                        ast::StrSegment::Expr(e) => Some(e),
+                        ast::StrSegment::Lit(_) => None,
+                    })
+                    .collect();
+                let mut values = self.operands(&inner, out).into_iter();
                 let mut parts = Vec::new();
                 for seg in segments {
                     match seg {
                         ast::StrSegment::Lit(text) => parts.push(InterpPart::Lit(text.clone())),
-                        ast::StrSegment::Expr(inner) => parts.push(InterpPart::Expr(self.expr(inner, out))),
+                        ast::StrSegment::Expr(_) => parts.push(InterpPart::Expr(values.next().unwrap())),
                     }
                 }
                 match parts.as_slice() {
@@ -1367,17 +1706,19 @@ impl<'a> Lowerer<'a> {
                 }
             }
             ast::ExprKind::Name(name) => return self.name(name, span),
-            ast::ExprKind::List(items) => ExprKind::List(items.iter().map(|i| self.expr(i, out)).collect()),
-            ast::ExprKind::Map(entries) => ExprKind::Map(
-                entries
-                    .iter()
-                    .map(|(k, v)| {
-                        let k = self.expr(k, out);
-                        let v = self.expr(v, out);
-                        (k, v)
-                    })
-                    .collect(),
-            ),
+            ast::ExprKind::List(items) => {
+                let items: Vec<&ast::Expr> = items.iter().collect();
+                ExprKind::List(self.operands(&items, out))
+            }
+            ast::ExprKind::Map(entries) => {
+                let flat: Vec<&ast::Expr> = entries.iter().flat_map(|(k, v)| [k, v]).collect();
+                let mut values = self.operands(&flat, out).into_iter();
+                let mut pairs = Vec::with_capacity(entries.len());
+                while let (Some(k), Some(v)) = (values.next(), values.next()) {
+                    pairs.push((k, v));
+                }
+                ExprKind::Map(pairs)
+            }
             ast::ExprKind::Record { name, fields } => self.record(name.as_ref(), fields, span, out),
             ast::ExprKind::Unary { op, expr } => ExprKind::Unary(*op, Box::new(self.expr(expr, out))),
             ast::ExprKind::Binary { op, lhs, rhs } => return self.binary(*op, lhs, rhs, span, out),
@@ -1402,12 +1743,15 @@ impl<'a> Lowerer<'a> {
                 ExprKind::Field(Box::new(self.expr(expr, out)), name.name.clone())
             }
             ast::ExprKind::Index { expr, index } => {
-                ExprKind::Index(Box::new(self.expr(expr, out)), Box::new(self.expr(index, out)))
+                let mut values = self.operands(&[expr, index], out).into_iter();
+                let (base, i) = (values.next().unwrap(), values.next().unwrap());
+                ExprKind::Index(Box::new(base), Box::new(i))
             }
             ast::ExprKind::With { expr, fields } => {
                 let base = self.expr(expr, out);
-                let fields = self.fields(fields, out);
-                ExprKind::With(Box::new(base), fields)
+                let mut values = self.fields_after(vec![base], fields, out);
+                let base = values.remove(0).1;
+                ExprKind::With(Box::new(base), values)
             }
             ast::ExprKind::Lambda { params, body } => return self.lambda(params, body, span),
             ast::ExprKind::Simulate(block) => return self.simulate(block, span),
@@ -1445,17 +1789,35 @@ impl<'a> Lowerer<'a> {
     }
 
     fn fields(&mut self, fields: &[ast::Field], out: &mut Vec<Stmt>) -> Vec<(String, Expr)> {
-        let mut result: Vec<(String, Expr)> = Vec::new();
+        self.fields_after(Vec::new(), fields, out)
+    }
+
+    /// Lower record fields in order, after already-lowered operands (which
+    /// come back first in the result, with empty names).
+    fn fields_after(&mut self, before: Vec<Expr>, fields: &[ast::Field], out: &mut Vec<Stmt>) -> Vec<(String, Expr)> {
+        let mut names: Vec<String> = Vec::new();
+        let mut exprs: Vec<&ast::Expr> = Vec::new();
         for field in fields {
-            if result.iter().any(|(n, _)| *n == field.name.name) {
+            if names.contains(&field.name.name) {
                 self.error(
                     field.name.span,
                     format!("the field `{}` appears twice", field.name.name),
                 );
                 continue;
             }
-            let v = self.expr(&field.value, out);
-            result.push((field.name.name.clone(), v));
+            names.push(field.name.name.clone());
+            exprs.push(&field.value);
+        }
+        let n_before = before.len();
+        let values = self.operands_after(before, &exprs, out);
+        let mut result: Vec<(String, Expr)> = Vec::with_capacity(values.len());
+        for (i, v) in values.into_iter().enumerate() {
+            let name = if i < n_before {
+                String::new()
+            } else {
+                names[i - n_before].clone()
+            };
+            result.push((name, v));
         }
         result
     }
@@ -1542,7 +1904,8 @@ impl<'a> Lowerer<'a> {
             out.push(st);
             return slot(t, span);
         }
-        let r = self.expr(rhs, out);
+        let mut values = self.operands_after(vec![l], &[rhs], out).into_iter();
+        let (l, r) = (values.next().unwrap(), values.next().unwrap());
         if op == BinOp::To {
             return builtin(Builtin::To, vec![l, r], span);
         }
@@ -1561,8 +1924,9 @@ impl<'a> Lowerer<'a> {
         }
         // Calling a closure value.
         let f = self.expr(callee, out);
-        let args = self.positional_args(args, out);
-        self.hoist_call(Callee::Value(f), args, span, out)
+        let mut values = self.positional_args(vec![f], args, out);
+        let f = values.remove(0);
+        self.hoist_call(Callee::Value(f), values, span, out)
     }
 
     fn method(
@@ -1600,8 +1964,7 @@ impl<'a> Lowerer<'a> {
         let Some(place) = self.place(receiver, out, &format!("`{}` to", name.name)) else {
             return lit(Lit::Unit, span);
         };
-        let mut all = vec![place_read(&place, receiver.span)];
-        all.extend(self.positional_args(args, out));
+        let all = self.positional_args(vec![place_read(&place, receiver.span)], args, out);
         self.check_arity(b, all.len(), span);
         let current = place_read(&place, receiver.span);
         if b == Builtin::Pop {
@@ -1648,7 +2011,7 @@ impl<'a> Lowerer<'a> {
             values.push(self.expr(r, out));
         }
         if let Some(&func) = self.fn_by_name.get(&name.name) {
-            values.extend(self.positional_args(args, out));
+            let values = self.positional_args(values, args, out);
             let caller = self.cur_func();
             self.funcs[caller as usize].calls.insert(func);
             let n_params = self.fn_param_count(func);
@@ -1676,17 +2039,12 @@ impl<'a> Lowerer<'a> {
             );
         }
         if let Some(b) = Builtin::from_name(&name.name) {
-            let mut named = Vec::new();
-            for arg in args {
-                let v = self.expr(&arg.value, out);
-                match &arg.name {
-                    Some(n) => named.push((n.name.clone(), v)),
-                    None => values.push(v),
-                }
-            }
-            if !named.is_empty() {
+            if args.iter().any(|a| a.name.is_some()) {
                 self.error(span, format!("`{}` doesn't take named arguments", name.name));
             }
+            let exprs: Vec<&ast::Expr> = args.iter().map(|a| &a.value).collect();
+            let values = self.operands_after(values, &exprs, out);
+            let named = Vec::new();
             self.check_arity(b, values.len(), span);
             return Expr {
                 kind: ExprKind::Builtin {
@@ -1735,15 +2093,15 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn positional_args(&mut self, args: &[ast::Arg], out: &mut Vec<Stmt>) -> Vec<Expr> {
-        args.iter()
-            .map(|arg| {
-                if let Some(n) = &arg.name {
-                    self.error(n.span, "only built-in functions take named arguments");
-                }
-                self.expr(&arg.value, out)
-            })
-            .collect()
+    /// Lower positional arguments in order, after already-lowered operands.
+    fn positional_args(&mut self, before: Vec<Expr>, args: &[ast::Arg], out: &mut Vec<Stmt>) -> Vec<Expr> {
+        for arg in args {
+            if let Some(n) = &arg.name {
+                self.error(n.span, "only built-in functions take named arguments");
+            }
+        }
+        let exprs: Vec<&ast::Expr> = args.iter().map(|a| &a.value).collect();
+        self.operands_after(before, &exprs, out)
     }
 
     fn hoist_call(&mut self, callee: Callee, args: Vec<Expr>, span: Span, out: &mut Vec<Stmt>) -> Expr {
@@ -1767,7 +2125,8 @@ impl<'a> Lowerer<'a> {
         self.ctx.push(Ctx {
             func: id,
             scopes: vec![FxHashMap::default()],
-            loops: 0,
+            loops: Vec::new(),
+            ret: None,
         });
         for p in params {
             self.declare(&p.name, p.span, false);
@@ -1797,7 +2156,8 @@ impl<'a> Lowerer<'a> {
         self.ctx.push(Ctx {
             func: id,
             scopes: vec![FxHashMap::default()],
-            loops: 0,
+            loops: Vec::new(),
+            ret: None,
         });
         let mut stmts = Vec::new();
         self.push_scope();
@@ -1922,9 +2282,10 @@ impl<'a> Lowerer<'a> {
                 captures: f.captures,
                 slots: f.slots,
                 body: f.body,
+                effects: Effects::default(),
             })
             .collect();
-        let program = Program {
+        let mut program = Program {
             functions,
             reports: self.reports,
             records: self.records,
@@ -1932,7 +2293,9 @@ impl<'a> Lowerer<'a> {
             settings: self.settings,
             stmt_count: self.next_stmt,
         };
-        (program, self.diags)
+        let mut diags = self.diags;
+        diags.extend(crate::effects::analyze(&mut program, self.src));
+        (program, diags)
     }
 }
 
@@ -1985,7 +2348,7 @@ fn visit_stmt(stmt: &mut Stmt, f: &mut impl FnMut(&mut CallSite)) {
                 visit_block(b, f);
             }
         }
-        StmtKind::Loop { body } => visit_block(body, f),
+        StmtKind::Loop { body, .. } => visit_block(body, f),
         StmtKind::Return(e) => visit_expr(e, f),
         StmtKind::Observe { value, from } => {
             visit_expr(value, f);
@@ -1999,7 +2362,7 @@ fn visit_stmt(stmt: &mut Stmt, f: &mut impl FnMut(&mut CallSite)) {
                 visit_expr(k, f);
             }
         }
-        StmtKind::Break | StmtKind::Continue | StmtKind::Fail { .. } => {}
+        StmtKind::Break | StmtKind::Continue | StmtKind::Fail { .. } | StmtKind::Check { .. } => {}
     }
 }
 

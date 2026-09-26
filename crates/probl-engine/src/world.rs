@@ -1,27 +1,30 @@
 //! Worlds, and merging the ones that have become identical.
 
 use crate::value::Value;
+use crate::weight::Weight;
 use probl_sema::SlotSet;
 use rustc_hash::{FxHashMap, FxHasher};
 use std::hash::{Hash, Hasher};
 
 /// One possible state of the program: the variables of the current frame,
-/// and how likely it is.
+/// and how likely it is (including every observation so far).
 #[derive(Clone, Debug)]
 pub struct World {
     pub slots: Vec<Value>,
-    pub weight: f64,
+    pub weight: Weight,
+    /// When sampling, the run this world is (docs/semantics.md, section 14).
+    pub run: u32,
 }
 
 impl World {
     pub fn scaled(mut self, factor: f64) -> World {
-        self.weight *= factor;
+        self.weight = self.weight.scale(factor);
         self
     }
 }
 
-pub fn total_weight(worlds: &[World]) -> f64 {
-    worlds.iter().map(|w| w.weight).sum()
+pub fn total_weight(worlds: &[World]) -> Weight {
+    Weight::sum(worlds.iter().map(|w| w.weight))
 }
 
 /// Worlds leaving a statement, grouped by how they left it.
@@ -32,7 +35,7 @@ pub struct Flow {
     pub broke: Vec<World>,
     pub continued: Vec<World>,
     /// Left the function: the returned value and the world's weight.
-    pub returned: Vec<(Value, f64)>,
+    pub returned: Vec<(Value, Weight)>,
 }
 
 impl Flow {
@@ -51,8 +54,8 @@ impl Flow {
     }
 }
 
-/// Clear the slots that aren't live, then merge worlds that are now equal,
-/// adding up their weights. The order of first appearance is kept.
+/// Clear the slots that aren't live; then, if `enabled`, merge worlds that are
+/// now equal, adding up their weights. The order of first appearance is kept.
 pub fn merge(worlds: Vec<World>, live: &SlotSet, enabled: bool) -> Vec<World> {
     let mut worlds = worlds;
     for w in &mut worlds {
@@ -83,8 +86,8 @@ pub fn merge(worlds: Vec<World>, live: &SlotSet, enabled: bool) -> Vec<World> {
 }
 
 /// Merge (value, weight) pairs with equal values.
-pub fn merge_values(pairs: Vec<(Value, f64)>) -> Vec<(Value, f64)> {
-    let mut out: Vec<(Value, f64)> = Vec::with_capacity(pairs.len());
+pub fn merge_values(pairs: Vec<(Value, Weight)>) -> Vec<(Value, Weight)> {
+    let mut out: Vec<(Value, Weight)> = Vec::with_capacity(pairs.len());
     let mut index: FxHashMap<Value, usize> = FxHashMap::default();
     for (v, w) in pairs {
         match index.get(&v) {

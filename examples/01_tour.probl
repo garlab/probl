@@ -1,7 +1,7 @@
 # A tour of Probl: conditions are probabilities, and every branch runs.
 # Run it with:  probl run examples/01_tour.probl
 
-@mode exact
+@mode enumerate
 
 # ── 1. A condition is a probability ─────────────────────────────────────
 # This `if` does not pick a branch. It splits the world in two: one where
@@ -20,14 +20,14 @@ report die + die      # two rolls: 2..12, most often 7
 let r ~ d6            # one roll: six worlds, with r = 1, 2, ..., 6
 report r + r          # the same roll twice: 2, 4, ..., 12
 
-# ── 4. Chances and facts ────────────────────────────────────────────────
-let rain = 30%
-let late = 20%
+# ── 4. Probabilities and events ─────────────────────────────────────────
+# A probability is just a number. To combine events with `and` and `or`,
+# draw them first: each drawn event is a fact, true or false in each world.
+let rain ~ bernoulli(30%)     # true in 30% of worlds, false in 70%
+let late ~ bernoulli(20%)
 report rain and late          # two independent events: 6%
 report rain or late           # 44%
-
-let raining ~ rain            # settle it: true in 30% of worlds, false in 70%
-report raining and raining    # one fact checked twice: 30%, not 9%
+report rain and rain          # one event checked twice: 30%, not 9%
 
 # ── 5. Loops run until every world has left them ────────────────────────
 var rolls = 1
@@ -46,13 +46,18 @@ repeat 1000 {
 report pos as "random walk after 1,000 steps"
 
 # ── 7. Evidence re-weights the worlds (Bayes' rule) ─────────────────────
-let sick ~ 1%                                 # 1 in 100 people has the disease
-let positive = if sick { 95% } else { 8% }    # chance that their test is positive
-observe positive                              # ...and the test was positive
-report sick as "sick, given a positive test"
+# `simulate` runs a separate model and returns its distribution. Its
+# observations only condition that model, so they can come after the
+# reports above.
+let diagnosis = simulate {
+  let sick ~ bernoulli(1%)                    # 1 in 100 people has the disease
+  observe if sick { 95% } else { 8% }         # a positive test: 95% of the sick, 8% of the rest
+  sick
+}
+report diagnosis as "sick, given a positive test"
 
 # ── Output ──────────────────────────────────────────────────────────────
-# exact · evidence 8.87% · unresolved < 1e-12
+# enumerated · unresolved < 1e-12
 #
 # weather                             sun 70.00% · rain 30.00%
 # 2d6 rolls 10+                       16.67%
@@ -61,7 +66,7 @@ report sick as "sick, given a positive test"
 # r + r                               mean 7.00 · sd 3.42 · 5% 2 · median 6 · 95% 12 · 2 █ █ █ █ █ █ 12
 # rain and late                       6.00%
 # rain or late                        44.00%
-# raining and raining                 30.00%
+# rain and rain                       30.00%
 # rolls until a six                   mean 6.00 · sd 5.48 · 5% 1 · median 4 · 95% 17
 # random walk after 1,000 steps       mean 0.00 · sd 31.62 · 5% -52 · median 0 · 95% 52
 # sick, given a positive test         10.71%

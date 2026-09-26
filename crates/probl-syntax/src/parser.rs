@@ -19,8 +19,18 @@ pub fn parse_program(src: &str) -> (Program, Vec<Diagnostic>) {
 
 /// Parse a single expression (used for string interpolation and the REPL).
 pub fn parse_expr(src: &str, base: u32) -> (Option<Expr>, Vec<Diagnostic>) {
+    parse_nested_expr(src, base, 0)
+}
+
+/// How deeply expressions, blocks and patterns may nest. Deeper programs
+/// would risk overflowing the stack of the recursive parser and of the passes
+/// after it.
+pub const MAX_NESTING: u32 = 200;
+
+fn parse_nested_expr(src: &str, base: u32, depth: u32) -> (Option<Expr>, Vec<Diagnostic>) {
     let (tokens, mut diags) = lex(src, base);
     let mut parser = Parser::new(tokens);
+    parser.depth = depth;
     let expr = parser.expr().ok();
     if expr.is_some() && !parser.at(&Tok::Eof) {
         let tok = parser.peek().clone();
@@ -54,6 +64,8 @@ struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     diags: Vec<Diagnostic>,
+    /// Current nesting of expressions, blocks and patterns.
+    depth: u32,
     /// Set while parsing the header of `if`, `while`, `for`, `repeat` and
     /// `match`, where `{` starts the body rather than a record.
     restricted: bool,
@@ -65,6 +77,7 @@ impl Parser {
             tokens,
             pos: 0,
             diags: Vec::new(),
+            depth: 0,
             restricted: false,
         }
     }
@@ -195,6 +208,21 @@ impl Parser {
             }
             self.bump();
         }
+    }
+
+    /// Run `f` one level deeper, or fail if the program nests too deeply.
+    fn nested<T>(&mut self, f: impl FnOnce(&mut Parser) -> PResult<T>) -> PResult<T> {
+        if self.depth >= MAX_NESTING {
+            let span = self.span();
+            self.error(span, "this is nested too deeply").help(format!(
+                "expressions, blocks and patterns can nest at most {MAX_NESTING} levels"
+            ));
+            return Err(Failed);
+        }
+        self.depth += 1;
+        let result = f(self);
+        self.depth -= 1;
+        result
     }
 
     fn with_restriction<T>(&mut self, restricted: bool, f: impl FnOnce(&mut Parser) -> T) -> T {
@@ -403,6 +431,10 @@ impl Parser {
     // ── Statements ───────────────────────────────────────────────────────
 
     fn block(&mut self) -> PResult<Block> {
+        self.nested(|p| p.block_inner())
+    }
+
+    fn block_inner(&mut self) -> PResult<Block> {
         let lo = self.expect(&Tok::LBrace, "to start a block")?;
         self.with_restriction(false, |p| {
             let mut stmts = Vec::new();
@@ -595,6 +627,10 @@ impl Parser {
     // ── Patterns ─────────────────────────────────────────────────────────
 
     fn pattern(&mut self) -> PResult<Pattern> {
+        self.nested(|p| p.pattern_inner())
+    }
+
+    fn pattern_inner(&mut self) -> PResult<Pattern> {
         let first = self.pattern_alt()?;
         if !self.at(&Tok::Pipe) {
             return Ok(first);
@@ -715,6 +751,10 @@ impl Parser {
     }
 
     fn expr_bp(&mut self, min: u8) -> PResult<Expr> {
+        self.nested(|p| p.expr_bp_inner(min))
+    }
+
+    fn expr_bp_inner(&mut self, min: u8) -> PResult<Expr> {
         let lo = self.span();
         let mut lhs = match self.peek() {
             Tok::Not => {
@@ -1042,7 +1082,7 @@ impl Parser {
             match part {
                 StrPart::Lit(text) => segments.push(StrSegment::Lit(text)),
                 StrPart::Expr { src, offset } => {
-                    let (expr, mut diags) = parse_expr(&src, offset);
+                    let (expr, mut diags) = parse_nested_expr(&src, offset, self.depth + 1);
                     self.diags.append(&mut diags);
                     if let Some(expr) = expr {
                         segments.push(StrSegment::Expr(expr));
@@ -1121,7 +1161,7 @@ impl Parser {
         }
         let otherwise = if self.eat(&Tok::Else) {
             if self.at(&Tok::If) {
-                Some(Box::new(self.if_expr()?))
+                Some(Box::new(self.nested(|p| p.if_expr())?))
             } else {
                 let block = self.block()?;
                 Some(Box::new(Expr {

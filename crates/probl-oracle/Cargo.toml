@@ -1,0 +1,17 @@
+[package]
+name = "probl-oracle"
+description = "A small, independent reference interpreter used to check the Probl engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+probl-syntax.workspace = true
+num-bigint.workspace = true
+num-rational.workspace = true
+num-traits.workspace = true
+
+[dev-dependencies]
+probl-sema.workspace = true
+probl-engine.workspace = true

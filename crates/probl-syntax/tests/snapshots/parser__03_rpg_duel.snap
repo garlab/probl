@@ -2,7 +2,7 @@
 source: crates/probl-syntax/tests/parser.rs
 expression: tree
 ---
-(@mode exact)
+(@mode enumerate)
 (type Fighter {hp: int, ac: int, to_hit: int, dice: dist[int], bonus: int})
 (let hero = (record Fighter (hp 12) (ac 16) (to_hit 5) (dice 1d8) (bonus 3)))
 (let monster = (record Fighter (hp 7) (ac 15) (to_hit 4) (dice 1d6) (bonus 2)))

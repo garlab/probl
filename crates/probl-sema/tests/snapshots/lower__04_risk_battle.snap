@@ -11,7 +11,7 @@ fn#0 the top level ()
       defend_3 ~ roll(min(2, defenders_1), 1d6)    [live: attackers_0 defenders_1 attack_2 defend_3]
       $4 = $iter_items((..< 0 min(len(attack_2), len(defend_3))))    [live: attackers_0 defenders_1 attack_2 defend_3 $4]
       $5 = 0    [live: attackers_0 defenders_1 attack_2 defend_3 $4 $5]
-      loop {    [live at head: attackers_0 defenders_1 attack_2 defend_3 $4 $5]
+      loop (bounded) {    [live at head: attackers_0 defenders_1 attack_2 defend_3 $4 $5]
         if (>= $5 len($4)) {
           break    [live: attackers_0 defenders_1 attack_2 defend_3 $4 $5]
         }

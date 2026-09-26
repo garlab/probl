@@ -85,6 +85,7 @@ builtins! {
     Pop = "pop", 1..=1, Lift, true;
     Take = "take", 1..=1, Raw, true;
     // Distributions
+    Bernoulli = "bernoulli", 1..=1, Lift, true;
     OneOf = "one_of", 1..=1, Lift, true;
     Binomial = "binomial", 2..=2, Lift, true;
     Poisson = "poisson", 1..=1, Lift, true;
@@ -99,6 +100,7 @@ builtins! {
     Exponential = "exponential", 1..=1, Lift, true;
     Triangular = "triangular", 3..=3, Lift, true;
     Pert = "pert", 3..=3, Lift, true;
+    NormalRange = "normal_range", 2..=2, Lift, true;
     Mixture = "mixture", 1..=1, Raw, true;
     Truncate = "truncate", 3..=3, Raw, true;
     Bins = "bins", 2..=2, Raw, true;
@@ -137,6 +139,8 @@ builtins! {
     IsTrue = "$is_true", 1..=1, Raw, false;
     /// 100% if the value is a list of the given length (list patterns).
     IsListOfLen = "$is_list_of_len", 2..=2, Raw, false;
+    /// Checks that a `match` subject is a settled value, not a distribution.
+    Settled = "$settled", 1..=1, Raw, false;
     /// The last element of a list (for `pop`).
     Last = "$last", 1..=1, Raw, false;
     /// A list without its last element (for `pop`).

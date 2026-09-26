@@ -1,26 +1,27 @@
 //! Built-in functions that don't need the interpreter.
 
+use crate::continuous::{Family, Mixture, Part};
 use crate::dates;
-use crate::dist::Dist;
+use crate::dist::{Budget, Counts, Dist};
 use crate::error::{OpError, OpResult};
-use crate::ops::{self, article, as_index, equals, to_chance};
-use crate::value::{Value, fmt_float, prob};
+use crate::ops::{self, article, as_index, equals, range_len, to_prob};
+use crate::value::{Value, fmt_float};
 use probl_sema::Builtin;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Call a built-in on plain (non-distribution) arguments.
-pub fn call_plain(b: Builtin, args: &[Value]) -> OpResult<Value> {
+pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Value> {
     use Builtin as B;
     let a = |i: usize| &args[i];
     match b {
-        B::Min | B::Max => min_max(args, b == B::Max),
+        B::Min | B::Max => min_max(args, b == B::Max, budget),
         B::Abs => num1(a(0), "abs", |x| x.abs(), |i| i.checked_abs()),
         B::Floor => to_int(a(0), f64::floor),
         B::Ceil => to_int(a(0), f64::ceil),
         B::Round => to_int(a(0), f64::round),
         B::Sqrt => float1(a(0), "sqrt", |x| (x >= 0.0).then(|| x.sqrt())),
-        B::Exp => float1(a(0), "exp", |x| Some(x.exp())),
+        B::Exp => float1(a(0), "exp", |x| Some(x.exp()).filter(|y| y.is_finite())),
         B::Ln => float1(a(0), "ln", |x| (x > 0.0).then(|| x.ln())),
         B::Log10 => float1(a(0), "log10", |x| (x > 0.0).then(|| x.log10())),
         B::Clamp => {
@@ -54,21 +55,12 @@ pub fn call_plain(b: Builtin, args: &[Value]) -> OpResult<Value> {
             let parts: Vec<String> = items.iter().map(|v| v.to_string()).collect();
             Ok(Value::str(&parts.join(&sep)))
         }
-        B::Len => len(a(0)).map(|n| Value::Int(n as i64)),
-        B::Sum => sum(a(0)),
-        B::Count if args.len() == 1 => len(a(0)).map(|n| Value::Int(n as i64)),
+        B::Len => len(a(0)),
+        B::Sum => sum(a(0), budget),
+        B::Count if args.len() == 1 => len(a(0)),
         B::Sort | B::SortDesc => {
-            let mut items = items(a(0), b.name())?;
-            let mut err = None;
-            items.sort_by(|x, y| {
-                ops::compare(x, y).unwrap_or_else(|e| {
-                    err.get_or_insert(e);
-                    std::cmp::Ordering::Equal
-                })
-            });
-            if let Some(e) = err {
-                return Err(e);
-            }
+            let mut items = items(a(0), b.name(), budget)?;
+            sort(&mut items)?;
             if b == B::SortDesc {
                 items.reverse();
             }
@@ -77,7 +69,7 @@ pub fn call_plain(b: Builtin, args: &[Value]) -> OpResult<Value> {
         B::Reverse => match a(0) {
             Value::Str(s) => Ok(Value::str(&s.chars().rev().collect::<String>())),
             v => {
-                let mut items = items(v, "reverse")?;
+                let mut items = items(v, "reverse", budget)?;
                 items.reverse();
                 Ok(Value::list(items))
             }
@@ -92,10 +84,10 @@ pub fn call_plain(b: Builtin, args: &[Value]) -> OpResult<Value> {
             v => Err(expected("a map", v, "values")),
         },
         B::Get => get(a(0), a(1), args.get(2)),
-        B::Contains => ops::contains(a(0), a(1)).map(prob),
-        B::Highest | B::Lowest => extremes(a(0), args.get(1), b == B::Highest),
+        B::Contains => ops::contains(a(0), a(1)).map(Value::Bool),
+        B::Highest | B::Lowest => extremes(a(0), args.get(1), b == B::Highest, budget),
         B::Enumerate => {
-            let items = items(a(0), "enumerate")?;
+            let items = items(a(0), "enumerate", budget)?;
             Ok(Value::list(
                 items
                     .into_iter()
@@ -105,17 +97,19 @@ pub fn call_plain(b: Builtin, args: &[Value]) -> OpResult<Value> {
             ))
         }
         B::Zip => {
-            let (xs, ys) = (items(a(0), "zip")?, items(a(1), "zip")?);
+            let (xs, ys) = (items(a(0), "zip", budget)?, items(a(1), "zip", budget)?);
             Ok(Value::list(
                 xs.into_iter().zip(ys).map(|(x, y)| Value::list(vec![x, y])).collect(),
             ))
         }
         B::Push => {
-            let mut items = list(a(0), "push")?.to_vec();
+            let items = list(a(0), "push")?;
+            budget.collection(items.len() as u128 + 1)?;
+            let mut items = items.to_vec();
             items.push(a(1).clone());
             Ok(Value::list(items))
         }
-        B::Insert => insert(a(0), a(1), a(2)),
+        B::Insert => insert(a(0), a(1), a(2), budget),
         B::Remove => remove(a(0), a(1)),
         B::Pop => Err(
             OpError::new("`pop` changes a list, so call it as a method on a variable")
@@ -133,60 +127,49 @@ pub fn call_plain(b: Builtin, args: &[Value]) -> OpResult<Value> {
             let n = items.len().saturating_sub(1);
             Ok(Value::list(items[..n].to_vec()))
         }
-        B::OneOf => one_of(a(0)),
-        B::Binomial => {
-            let n = whole(a(0), "binomial's number of trials")?;
-            if n < 0 {
-                return Err(OpError::new("binomial needs a number of trials of 0 or more"));
-            }
-            Ok(Dist::binomial(n as u64, to_chance(a(1))?).into_value())
-        }
-        B::Poisson => {
-            let rate = number(a(0), "poisson")?;
-            if rate < 0.0 || !rate.is_finite() {
-                return Err(OpError::new("poisson needs a rate of 0 or more"));
-            }
-            Ok(Dist::poisson(rate).into_value())
-        }
-        B::Geometric => {
-            let p = to_chance(a(0))?;
-            if p <= 0.0 {
-                return Err(OpError::new("geometric needs a chance of success above 0%"));
-            }
-            Ok(Dist::geometric(p).into_value())
+        B::Bernoulli => Ok(Dist::bernoulli(to_prob(a(0))?).into_value()),
+        B::OneOf => one_of(a(0), budget),
+        B::Binomial | B::Poisson | B::Geometric => {
+            let counts = counts(b, args)?.expect("called with plain arguments");
+            Ok(counts.list(budget)?.into_value())
         }
         B::Bag => bag(a(0)),
-        B::Normal
-        | B::Lognormal
-        | B::Uniform
-        | B::Beta
-        | B::Gamma
-        | B::Exponential
-        | B::Triangular
-        | B::Pert
-        | B::To => {
-            let name = if b == B::To {
-                "`a to b` estimates".to_string()
-            } else {
-                format!("`{}`", b.name())
-            };
-            Err(
-                OpError::unsupported(format!("{name} (continuous distributions) aren't implemented yet"))
-                    .help("they arrive with sample mode in v0.2"),
-            )
-        }
-        B::Mixture | B::Truncate | B::Bins | B::Pdf | B::Today => {
+        B::Normal => continuous(Family::normal(number(a(0), "normal")?, number(a(1), "normal")?)),
+        B::Lognormal => continuous(Family::lognormal(
+            number(a(0), "lognormal")?,
+            number(a(1), "lognormal")?,
+        )),
+        B::Uniform => continuous(Family::uniform(number(a(0), "uniform")?, number(a(1), "uniform")?)),
+        B::Beta => continuous(Family::beta(number(a(0), "beta")?, number(a(1), "beta")?)),
+        B::Gamma => continuous(Family::gamma(number(a(0), "gamma")?, number(a(1), "gamma")?)),
+        B::Exponential => continuous(Family::exponential(number(a(0), "exponential")?)),
+        B::Triangular => continuous(Family::triangular(
+            number(a(0), "triangular")?,
+            number(a(1), "triangular")?,
+            number(a(2), "triangular")?,
+        )),
+        B::Pert => continuous(Family::pert(
+            number(a(0), "pert")?,
+            number(a(1), "pert")?,
+            number(a(2), "pert")?,
+        )),
+        B::NormalRange => continuous(Family::normal_range(
+            number(a(0), "normal_range")?,
+            number(a(1), "normal_range")?,
+        )),
+        B::To => continuous(Family::estimate(number(a(0), "to")?, number(a(1), "to")?)),
+        B::Mixture | B::Truncate | B::Bins | B::Today => {
             Err(OpError::unsupported(format!("`{}` isn't implemented yet", b.name())))
         }
         B::Odds => {
-            let p = to_chance(a(0))?;
+            let p = to_prob(a(0))?;
             if p >= 1.0 {
                 return Err(OpError::new("the odds of a certain event are infinite"));
             }
             Ok(Value::Float(p / (1.0 - p)))
         }
         B::Logit => {
-            let p = to_chance(a(0))?;
+            let p = to_prob(a(0))?;
             if p <= 0.0 || p >= 1.0 {
                 return Err(OpError::new("logit needs a probability strictly between 0% and 100%"));
             }
@@ -202,59 +185,81 @@ pub fn call_plain(b: Builtin, args: &[Value]) -> OpResult<Value> {
         B::Days => to_int(a(0), f64::round),
         B::Weeks => {
             let n = number(a(0), "weeks")?;
-            Ok(Value::Int((n * 7.0).round() as i64))
+            to_int(&Value::Float(n * 7.0), f64::round)
         }
         B::AddWorkdays => match a(0) {
-            Value::Date(d) => Ok(Value::Date(dates::add_workdays(*d, whole(a(1), "add_workdays")?))),
+            Value::Date(d) => {
+                let n = whole(a(1), "add_workdays")?;
+                budget.work(n.unsigned_abs())?;
+                Ok(Value::Date(dates::add_workdays(*d, n)))
+            }
             v => Err(expected("a date", v, "add_workdays")),
         },
         B::Weekday => match a(0) {
             Value::Date(d) => Ok(Value::str(dates::WEEKDAYS[dates::weekday(*d) as usize])),
             v => Err(expected("a date", v, "weekday")),
         },
-        B::IsFalse => Ok(prob(ops::is_certain(a(0), false))),
-        B::IsTrue => Ok(prob(ops::is_certain(a(0), true))),
-        B::IsListOfLen => Ok(prob(
+        B::IsFalse => Ok(Value::Bool(ops::is_certain(a(0), false))),
+        B::IsTrue => Ok(Value::Bool(ops::is_certain(a(0), true))),
+        B::IsListOfLen => Ok(Value::Bool(
             matches!((a(0), a(1)), (Value::List(items), Value::Int(n)) if items.len() as i64 == *n),
         )),
-        B::Count | B::Map | B::Filter | B::Reduce | B::Print | B::Roll | B::Take | B::IterItems | B::RepeatCount => {
+        B::Count | B::Map | B::Filter | B::Reduce | B::Print | B::Roll | B::Take => {
             unreachable!("`{}` is handled by the interpreter", b.name())
         }
-        B::P | B::Mean | B::Sd | B::Variance | B::Median | B::Quantile | B::Support | B::Cdf | B::Pmf => {
-            unreachable!("`{}` takes distributions as they are", b.name())
-        }
+        B::P
+        | B::Mean
+        | B::Sd
+        | B::Variance
+        | B::Median
+        | B::Quantile
+        | B::Support
+        | B::Cdf
+        | B::Pmf
+        | B::IterItems
+        | B::RepeatCount
+        | B::Pdf
+        | B::Settled => unreachable!("`{}` takes distributions as they are", b.name()),
     }
 }
 
 /// Built-ins that receive distributions whole.
-pub fn call_raw(b: Builtin, args: &[Value]) -> OpResult<Value> {
+pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Value> {
     use Builtin as B;
     let v = &args[0];
+    if matches!(
+        b,
+        B::Mean | B::Variance | B::Sd | B::Median | B::Quantile | B::Cdf | B::Pdf | B::Pmf | B::Support
+    ) && continuous_parts(v)
+    {
+        return continuous_query(b, args);
+    }
     match b {
-        B::P => Ok(Value::Prob(to_chance(v).map_err(|_| {
-            OpError::new(format!("P needs a condition, found {}", article(&v.kind()))).help("for example `P(d6 > 4)`")
-        })?)),
+        B::P => probability_of(v),
+        B::Pdf => Err(OpError::new("pdf needs a continuous distribution")
+            .help("for a distribution whose outcomes can be listed, use `pmf`")),
         B::Mean => numeric_dist(v, "mean").map(|d| Value::Float(d.mean().unwrap())),
         B::Variance => numeric_dist(v, "variance").map(|d| Value::Float(d.variance().unwrap())),
         B::Sd => numeric_dist(v, "sd").map(|d| Value::Float(d.variance().unwrap().sqrt())),
         B::Median => Ok(as_dist(v).quantile(0.5).unwrap()),
         B::Quantile => {
-            let q = to_chance(&args[1])?;
+            let q = to_prob(&args[1])?;
             Ok(as_dist(v).quantile(q).unwrap())
         }
-        B::Support => Ok(Value::list(
-            as_dist(v).outcomes.iter().map(|(x, _)| x.clone()).collect(),
-        )),
+        B::Support => {
+            let d = as_dist(v);
+            budget.collection(d.outcomes.len() as u128)?;
+            Ok(Value::list(d.outcomes.iter().map(|(x, _)| x.clone()).collect()))
+        }
         B::Cdf => {
             let d = as_dist(v);
-            let total = d.total();
             let mut p = 0.0;
             for (x, w) in &d.outcomes {
                 if ops::compare(x, &args[1])?.is_le() {
                     p += w;
                 }
             }
-            Ok(Value::Prob(p / total))
+            Ok(Value::Prob(p))
         }
         B::Pmf => {
             let d = as_dist(v);
@@ -266,20 +271,160 @@ pub fn call_raw(b: Builtin, args: &[Value]) -> OpResult<Value> {
                 .sum();
             Ok(Value::Prob(p))
         }
-        B::IterItems => iter_items(v),
+        B::IterItems => iter_items(v, budget),
         B::RepeatCount => match v {
             Value::Int(n) if *n >= 0 => Ok(Value::Int(*n)),
             Value::Int(_) => Err(OpError::new("`repeat` needs a count of 0 or more")),
-            Value::Float(f) if f.fract() == 0.0 && *f >= 0.0 => Ok(Value::Int(*f as i64)),
-            Value::Dist(_) => Err(OpError::new(format!("`repeat` needs a number, not a {}", v.kind()))
+            Value::Float(f) if f.fract() == 0.0 && *f >= 0.0 && *f < 9.2e18 => Ok(Value::Int(*f as i64)),
+            v if v.is_uncertain() => Err(OpError::new(format!("`repeat` needs a number, not a {}", v.kind()))
                 .help("draw a value first, like `let n ~ d6`, then `repeat n { … }`")),
             other => Err(OpError::new(format!(
                 "`repeat` needs a whole number, found {}",
                 article(&other.kind())
             ))),
         },
-        // Internal helpers that take their argument as it is.
-        _ => call_plain(b, args),
+        B::Settled => match v {
+            v if v.is_uncertain() => Err(
+                OpError::new(format!("`match` needs a settled value, not a {}", v.kind()))
+                    .help("draw a value first, like `let x ~ d6`, and match on `x`"),
+            ),
+            other => Ok(other.clone()),
+        },
+        // Internal helpers that take their arguments as they are.
+        _ => call_plain(b, args, budget),
+    }
+}
+
+/// `P(x)`: the probability of a fact, of a distribution of facts, or a
+/// probability itself.
+fn probability_of(v: &Value) -> OpResult<Value> {
+    match v {
+        Value::Bool(b) => Ok(Value::Prob(if *b { 1.0 } else { 0.0 })),
+        Value::Prob(_) | Value::Float(_) => to_prob(v).map(Value::Prob),
+        Value::Dist(d) => match d.truth() {
+            Some((yes, _)) => Ok(Value::Prob(yes)),
+            None => Err(OpError::new(format!("P needs a condition, found a {}", v.kind()))
+                .help("compare it to get a condition, like `P(d6 > 4)`")),
+        },
+        Value::Continuous(_) => Err(OpError::new(format!("P needs a condition, found a {}", v.kind()))
+            .help("compare it with a number, like `P(x > 5)`")),
+        other => Err(
+            OpError::new(format!("P needs a condition, found {}", article(&other.kind())))
+                .help("for example `P(d6 > 4)`"),
+        ),
+    }
+}
+
+/// The parameters of `binomial`, `poisson` or `geometric`, checked; `None`
+/// for another built-in, or when an argument is a distribution.
+pub fn counts(b: Builtin, args: &[Value]) -> OpResult<Option<Counts>> {
+    use Builtin as B;
+    if args.iter().any(Value::is_uncertain) {
+        return Ok(None);
+    }
+    Ok(Some(match b {
+        B::Binomial => {
+            let n = whole(&args[0], "binomial's number of trials")?;
+            if n < 0 {
+                return Err(OpError::new("binomial needs a number of trials of 0 or more"));
+            }
+            Counts::Binomial {
+                n: n as u64,
+                p: to_prob(&args[1])?,
+            }
+        }
+        B::Poisson => {
+            let rate = number(&args[0], "poisson")?;
+            if rate < 0.0 || !rate.is_finite() {
+                return Err(OpError::new("poisson needs a rate of 0 or more"));
+            }
+            if rate > 1e15 {
+                return Err(OpError::new("poisson's rate is too large to count exactly")
+                    .help("above 10¹⁵, use a normal distribution with the same mean and variance"));
+            }
+            Counts::Poisson { rate }
+        }
+        B::Geometric => {
+            let p = to_prob(&args[0])?;
+            if p <= 0.0 {
+                return Err(OpError::new("geometric needs a chance of success above 0%"));
+            }
+            Counts::Geometric { p }
+        }
+        _ => return Ok(None),
+    }))
+}
+
+fn continuous(family: OpResult<Family>) -> OpResult<Value> {
+    family.map(|f| Value::Continuous(Arc::new(f)))
+}
+
+/// Whether a value is, or mixes in, a continuous distribution.
+fn continuous_parts(v: &Value) -> bool {
+    match v {
+        Value::Continuous(_) => true,
+        Value::Dist(d) => d.outcomes.iter().any(|(x, _)| matches!(x, Value::Continuous(_))),
+        _ => false,
+    }
+}
+
+/// Questions about a continuous distribution, or a mixture that includes
+/// one, answered from the formulas (docs/semantics.md, section 13).
+fn continuous_query(b: Builtin, args: &[Value]) -> OpResult<Value> {
+    use Builtin as B;
+    let parts = match &args[0] {
+        Value::Continuous(f) => vec![(Part::Continuous(**f), 1.0)],
+        Value::Dist(d) => d
+            .outcomes
+            .iter()
+            .map(|(x, p)| {
+                let part = match x {
+                    Value::Continuous(f) => Part::Continuous(**f),
+                    other => Part::Point(number(other, b.name())?),
+                };
+                Ok((part, *p))
+            })
+            .collect::<OpResult<Vec<_>>>()?,
+        _ => unreachable!("checked by `continuous_parts`"),
+    };
+    let m = Mixture { parts };
+    match b {
+        B::Mean => Ok(Value::Float(m.mean())),
+        B::Variance => Ok(Value::Float(m.variance())),
+        B::Sd => Ok(Value::Float(m.variance().sqrt())),
+        B::Median => Ok(Value::Float(m.quantile(0.5))),
+        B::Quantile => Ok(Value::Float(m.quantile(to_prob(&args[1])?))),
+        B::Cdf => Ok(Value::Prob(m.cdf(number(&args[1], "cdf")?))),
+        B::Pmf => {
+            let x = number(&args[1], "pmf")?;
+            let total: f64 = m.parts.iter().map(|(_, p)| p).sum();
+            let at: f64 = m
+                .parts
+                .iter()
+                .filter(|(part, _)| matches!(part, Part::Point(v) if *v == x))
+                .map(|(_, p)| p)
+                .sum();
+            Ok(Value::Prob(at / total))
+        }
+        B::Pdf => {
+            let x = number(&args[1], "pdf")?;
+            let mut density = 0.0;
+            for (part, p) in &m.parts {
+                match part {
+                    Part::Continuous(f) => density += p * f.pdf(x),
+                    Part::Point(_) => {
+                        return Err(OpError::new(
+                            "pdf needs a continuous distribution, without single values mixed in",
+                        ));
+                    }
+                }
+            }
+            Ok(Value::Float(density))
+        }
+        _ => Err(OpError::new(format!(
+            "`{}` needs a distribution whose outcomes can be listed, not a continuous one",
+            b.name()
+        ))),
     }
 }
 
@@ -301,19 +446,23 @@ fn numeric_dist(v: &Value, what: &str) -> OpResult<Dist> {
     Ok(d)
 }
 
-fn iter_items(v: &Value) -> OpResult<Value> {
+fn iter_items(v: &Value, budget: &mut Budget) -> OpResult<Value> {
     match v {
         Value::List(_) | Value::Range(..) => Ok(v.clone()),
         Value::Map(m) => Ok(Value::list(
             m.iter().map(|(k, x)| Value::list(vec![k.clone(), x.clone()])).collect(),
         )),
-        Value::Bag(b) => Ok(Value::list(
-            b.iter()
-                .flat_map(|(k, n)| std::iter::repeat_n(k.clone(), *n as usize))
-                .collect(),
-        )),
+        Value::Bag(b) => {
+            let n: u128 = b.values().map(|n| *n as u128).sum();
+            budget.collection(n)?;
+            Ok(Value::list(
+                b.iter()
+                    .flat_map(|(k, n)| std::iter::repeat_n(k.clone(), *n as usize))
+                    .collect(),
+            ))
+        }
         Value::Str(s) => Ok(Value::list(s.chars().map(|c| Value::str(&c.to_string())).collect())),
-        Value::Dist(_) => Err(OpError::new(format!("can't loop over a {}", v.kind()))
+        v if v.is_uncertain() => Err(OpError::new(format!("can't loop over a {}", v.kind()))
             .help("draw a value first with `~`, or loop over `support(…)`")),
         other => Err(OpError::new(format!("can't loop over {}", article(&other.kind())))),
     }
@@ -324,13 +473,19 @@ fn expected(what: &str, v: &Value, func: &str) -> OpError {
 }
 
 fn number(v: &Value, func: &str) -> OpResult<f64> {
-    v.as_f64().ok_or_else(|| expected("a number", v, func))
+    match v {
+        Value::Bool(_) => Err(expected("a number", v, func)),
+        Value::Continuous(_) => {
+            Err(expected("a number", v, func).help("draw a value first, like `let x ~ normal(0, 1)`"))
+        }
+        _ => v.as_f64().ok_or_else(|| expected("a number", v, func)),
+    }
 }
 
 fn whole(v: &Value, what: &str) -> OpResult<i64> {
     match v {
         Value::Int(i) => Ok(*i),
-        Value::Float(f) if f.fract() == 0.0 => Ok(*f as i64),
+        Value::Float(f) if f.fract() == 0.0 && f.abs() < 9.2e18 => Ok(*f as i64),
         other => Err(OpError::new(format!(
             "{what} must be a whole number, not {}",
             article(&other.kind())
@@ -352,13 +507,28 @@ fn list<'a>(v: &'a Value, func: &str) -> OpResult<&'a [Value]> {
     }
 }
 
-/// The elements of a list-like value.
-fn items(v: &Value, func: &str) -> OpResult<Vec<Value>> {
+/// The elements of a list-like value, checking that a range isn't too long
+/// to spell out.
+pub fn items(v: &Value, func: &str, budget: &mut Budget) -> OpResult<Vec<Value>> {
     match v {
         Value::List(items) => Ok((**items).clone()),
-        Value::Range(lo, hi) => Ok((*lo..=*hi).map(Value::Int).collect()),
+        Value::Range(lo, hi) => {
+            budget.collection(range_len(*lo, *hi))?;
+            Ok((*lo..=*hi).map(Value::Int).collect())
+        }
         other => Err(expected("a list", other, func)),
     }
+}
+
+fn sort(items: &mut [Value]) -> OpResult<()> {
+    let mut err = None;
+    items.sort_by(|x, y| {
+        ops::compare(x, y).unwrap_or_else(|e| {
+            err.get_or_insert(e);
+            std::cmp::Ordering::Equal
+        })
+    });
+    err.map_or(Ok(()), Err)
 }
 
 fn num1(v: &Value, func: &str, f: fn(f64) -> f64, i: fn(i64) -> Option<i64>) -> OpResult<Value> {
@@ -380,9 +550,7 @@ fn to_int(v: &Value, f: fn(f64) -> f64) -> OpResult<Value> {
     match v {
         Value::Int(i) => Ok(Value::Int(*i)),
         other => {
-            let x = other
-                .as_f64()
-                .ok_or_else(|| OpError::new(format!("expected a number, found {}", article(&other.kind()))))?;
+            let x = number(other, "rounding")?;
             let r = f(x);
             if !r.is_finite() || r.abs() > 9.2e18 {
                 return Err(OpError::new(format!("{} is too large to be an int", fmt_float(x))));
@@ -392,10 +560,17 @@ fn to_int(v: &Value, f: fn(f64) -> f64) -> OpResult<Value> {
     }
 }
 
-fn min_max(args: &[Value], want_max: bool) -> OpResult<Value> {
+fn min_max(args: &[Value], want_max: bool, budget: &mut Budget) -> OpResult<Value> {
+    let name = if want_max { "max" } else { "min" };
     let values: Vec<Value> = if let [single] = args {
         match single {
-            Value::List(_) | Value::Range(..) => items(single, if want_max { "max" } else { "min" })?,
+            Value::Range(lo, hi) => {
+                if hi < lo {
+                    return Err(OpError::new(format!("`{name}` of an empty range")));
+                }
+                return Ok(Value::Int(if want_max { *hi } else { *lo }));
+            }
+            Value::List(_) => items(single, name, budget)?,
             other => vec![other.clone()],
         }
     } else {
@@ -415,25 +590,28 @@ fn min_max(args: &[Value], want_max: bool) -> OpResult<Value> {
             }
         });
     }
-    best.ok_or_else(|| OpError::new(format!("`{}` of an empty list", if want_max { "max" } else { "min" })))
+    best.ok_or_else(|| OpError::new(format!("`{name}` of an empty list")))
 }
 
-fn len(v: &Value) -> OpResult<usize> {
-    Ok(match v {
-        Value::List(items) => items.len(),
-        Value::Str(s) => s.chars().count(),
-        Value::Map(m) => m.len(),
-        Value::Bag(b) => b.values().sum::<u64>() as usize,
-        Value::Range(lo, hi) => (hi - lo + 1).max(0) as usize,
+fn len(v: &Value) -> OpResult<Value> {
+    let n: u128 = match v {
+        Value::List(items) => items.len() as u128,
+        Value::Str(s) => s.chars().count() as u128,
+        Value::Map(m) => m.len() as u128,
+        Value::Bag(b) => b.values().map(|n| *n as u128).sum(),
+        Value::Range(lo, hi) => range_len(*lo, *hi),
         other => return Err(expected("a collection", other, "len")),
-    })
+    };
+    i64::try_from(n)
+        .map(Value::Int)
+        .map_err(|_| OpError::new("the length is too large to be an int"))
 }
 
-fn sum(v: &Value) -> OpResult<Value> {
-    let items = items(v, "sum")?;
+fn sum(v: &Value, budget: &mut Budget) -> OpResult<Value> {
+    let items = items(v, "sum", budget)?;
     let mut acc = Value::Int(0);
     for x in &items {
-        acc = ops::binary(probl_syntax::ast::BinOp::Add, &acc, x)?;
+        acc = ops::binary(probl_syntax::ast::BinOp::Add, &acc, x, budget)?;
     }
     Ok(acc)
 }
@@ -448,7 +626,7 @@ fn get(coll: &Value, key: &Value, default: Option<&Value>) -> OpResult<Value> {
             Value::Int(i) if *i >= 0 && (*i as usize) < items.len() => Some(items[*i as usize].clone()),
             _ => None,
         },
-        Value::Bag(b) => Some(Value::Int(b.get(key).copied().unwrap_or(0) as i64)),
+        Value::Bag(b) => Some(Value::Int(b.get(key).copied().unwrap_or(0).min(i64::MAX as u64) as i64)),
         other => return Err(expected("a map or a list", other, "get")),
     };
     match (found, default) {
@@ -460,18 +638,9 @@ fn get(coll: &Value, key: &Value, default: Option<&Value>) -> OpResult<Value> {
     }
 }
 
-fn extremes(v: &Value, n: Option<&Value>, highest: bool) -> OpResult<Value> {
-    let mut items = items(v, if highest { "highest" } else { "lowest" })?;
-    let mut err = None;
-    items.sort_by(|x, y| {
-        ops::compare(x, y).unwrap_or_else(|e| {
-            err.get_or_insert(e);
-            std::cmp::Ordering::Equal
-        })
-    });
-    if let Some(e) = err {
-        return Err(e);
-    }
+fn extremes(v: &Value, n: Option<&Value>, highest: bool, budget: &mut Budget) -> OpResult<Value> {
+    let mut items = items(v, if highest { "highest" } else { "lowest" }, budget)?;
+    sort(&mut items)?;
     if highest {
         items.reverse();
     }
@@ -485,15 +654,17 @@ fn extremes(v: &Value, n: Option<&Value>, highest: bool) -> OpResult<Value> {
     }
 }
 
-fn insert(coll: &Value, a: &Value, b: &Value) -> OpResult<Value> {
+fn insert(coll: &Value, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
     match coll {
         Value::List(items) => {
+            budget.collection(items.len() as u128 + 1)?;
             let mut items = (**items).clone();
-            let i = as_index(a, items.len() + 1)?;
+            let i = as_index(a, items.len() as u128 + 1)? as usize;
             items.insert(i, b.clone());
             Ok(Value::list(items))
         }
         Value::Map(m) => {
+            budget.collection(m.len() as u128 + 1)?;
             let mut m = (**m).clone();
             m.insert(a.clone(), b.clone());
             Ok(Value::Map(Arc::new(m)))
@@ -506,7 +677,7 @@ fn remove(coll: &Value, key: &Value) -> OpResult<Value> {
     match coll {
         Value::List(items) => {
             let mut items = (**items).clone();
-            let i = as_index(key, items.len())?;
+            let i = as_index(key, items.len() as u128)? as usize;
             items.remove(i);
             Ok(Value::list(items))
         }
@@ -530,15 +701,28 @@ fn remove(coll: &Value, key: &Value) -> OpResult<Value> {
     }
 }
 
-fn one_of(v: &Value) -> OpResult<Value> {
+/// A choice among options. Options that are distributions are mixed in, so
+/// that a value drawn from the result is settled (docs/semantics.md, section 2).
+fn one_of(v: &Value, budget: &mut Budget) -> OpResult<Value> {
     match v {
-        Value::List(items) if !items.is_empty() => Ok(Dist::uniform((**items).clone()).into_value()),
-        Value::Range(lo, hi) if hi >= lo => Ok(Dist::uniform((*lo..=*hi).map(Value::Int).collect()).into_value()),
+        Value::List(items) if !items.is_empty() => {
+            budget.outcomes(items.len() as u128)?;
+            let p = 1.0 / items.len() as f64;
+            ops::combine(items.iter().map(|x| (x.clone(), p)).collect(), 0.0, budget)
+        }
+        Value::Range(lo, hi) if hi >= lo => {
+            budget.outcomes(range_len(*lo, *hi))?;
+            Ok(Dist::uniform((*lo..=*hi).map(Value::Int).collect()).into_value())
+        }
         Value::Map(m) if !m.is_empty() => {
             let all_probs = m.values().all(|w| matches!(w, Value::Prob(_)));
             let mut pairs = Vec::new();
             for (k, w) in m.iter() {
-                let w = w.as_f64().filter(|w| *w >= 0.0).ok_or_else(|| {
+                let w = match w {
+                    Value::Bool(_) => None,
+                    _ => w.as_f64().filter(|w| *w >= 0.0 && w.is_finite()),
+                }
+                .ok_or_else(|| {
                     OpError::new(format!(
                         "one_of needs weights that are numbers of 0 or more, found {w:?}"
                     ))
@@ -556,18 +740,15 @@ fn one_of(v: &Value) -> OpResult<Value> {
                 ))
                 .help("use plain numbers for relative weights, like [\"a\": 3, \"b\": 1]"));
             }
-            Ok(Dist::from_pairs(pairs.into_iter().map(|(k, w)| (k, w / total)).collect(), 0.0).into_value())
+            ops::combine(pairs.into_iter().map(|(k, w)| (k, w / total)).collect(), 0.0, budget)
         }
         Value::Bag(b) => {
-            let total: u64 = b.values().sum();
+            let total: u128 = b.values().map(|n| *n as u128).sum();
             if total == 0 {
                 return Err(OpError::new("the bag is empty"));
             }
-            Ok(Dist::from_pairs(
-                b.iter().map(|(k, n)| (k.clone(), *n as f64 / total as f64)).collect(),
-                0.0,
-            )
-            .into_value())
+            let pairs = b.iter().map(|(k, n)| (k.clone(), *n as f64 / total as f64)).collect();
+            ops::combine(pairs, 0.0, budget)
         }
         Value::List(_) | Value::Range(..) | Value::Map(_) => Err(OpError::new("one_of needs at least one option")),
         other => Err(expected("a list, range, map or bag", other, "one_of")),

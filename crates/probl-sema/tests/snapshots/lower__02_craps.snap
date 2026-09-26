@@ -4,17 +4,17 @@ expression: ir(&src)
 ---
 fn#0 the top level ()
   come_out_0 ~ 2d6    [live: come_out_0]
-  win_1 = 0%    [live: come_out_0 win_1]
+  win_1 = false    [live: come_out_0 win_1]
   rolls_2 = 1    [live: come_out_0 win_1 rolls_2]
   if (in come_out_0 [7, 11]) {
-    win_1 = 100%    [live: win_1 rolls_2]
+    win_1 = true    [live: win_1 rolls_2]
   } else {
     if (not in come_out_0 [2, 3, 12]) {
       loop {    [live at head: come_out_0 win_1 rolls_2]
         rolls_2 = (+ rolls_2 1)    [live: come_out_0 win_1 rolls_2]
         r_3 ~ 2d6    [live: come_out_0 win_1 rolls_2 r_3]
         if (== r_3 come_out_0) {
-          win_1 = 100%    [live: win_1 rolls_2]
+          win_1 = true    [live: win_1 rolls_2]
           break    [live: come_out_0 win_1 rolls_2 r_3]
         }
         if (== r_3 7) {

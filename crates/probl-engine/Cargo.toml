@@ -9,3 +9,4 @@ rust-version.workspace = true
 probl-syntax.workspace = true
 probl-sema.workspace = true
 rustc-hash.workspace = true
+libm.workspace = true

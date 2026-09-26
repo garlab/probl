@@ -2,7 +2,7 @@
 source: crates/probl-syntax/tests/parser.rs
 expression: tree
 ---
-(@mode exact)
+(@mode enumerate)
 (let jumps = [1: 38, 4: 14, 9: 31, 21: 42, 28: 84, 36: 44, 51: 67, 71: 91, 80: 100, 16: 6, 47: 26, 49: 11, 56: 53, 62: 19, 64: 60, 87: 24, 93: 73, 95: 75, 98: 78])
 (fn race () -> int (block (var square = 0) (var turns = 0) (while (< square 100) (block (+= turns 1) (let roll ~ 1d6) (let target = (+ square roll)) (if (<= target 100) (block (= square (.get jumps target target)))))) turns))
 (let game = (simulate (block (call race))))

@@ -1,11 +1,14 @@
 //! The `probl` command-line tool.
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use probl_engine::Options;
+use probl_sema::ir::Mode;
 use probl_syntax::{Diagnostic, SourceFile, render_all};
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Parser)]
 #[command(
@@ -18,20 +21,78 @@ struct Cli {
     command: Command,
 }
 
+#[derive(Clone, Copy, PartialEq, ValueEnum)]
+enum ModeArg {
+    Enumerate,
+    Sample,
+}
+
+/// What the command line asks for, over the program's `@mode`.
+struct ModeChoice {
+    mode: Option<ModeArg>,
+    runs: Option<u64>,
+    seed: Option<u64>,
+}
+
+impl ModeChoice {
+    fn resolve(&self, program: &Mode) -> Option<Mode> {
+        let sample =
+            self.mode == Some(ModeArg::Sample) || (self.mode.is_none() && (self.runs.is_some() || self.seed.is_some()));
+        if self.mode == Some(ModeArg::Enumerate) {
+            return Some(Mode::Enumerate);
+        }
+        if !sample {
+            return None;
+        }
+        let (runs, seed) = match program {
+            Mode::Sample { runs, seed } => (*runs, *seed),
+            _ => (10_000, 0),
+        };
+        Some(Mode::Sample {
+            runs: self.runs.unwrap_or(runs),
+            seed: self.seed.unwrap_or(seed),
+        })
+    }
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Run a program and print its reports.
     Run {
         file: PathBuf,
-        /// Also print probabilities as fractions, like 244/495.
+        /// Also print the simplest fraction near each probability, like ≈ 244/495 (a hint, not a proof).
         #[arg(long)]
         fractions: bool,
-        /// Stop loops once the worlds still inside weigh less than this.
+        /// Stop `while` and `loop` once the worlds still inside weigh less than this share of what entered.
         #[arg(long)]
         epsilon: Option<f64>,
         /// Print how much work the engine did.
         #[arg(long)]
         stats: bool,
+        /// Enumerate or sample, whatever the program's `@mode` says.
+        #[arg(long, value_enum)]
+        mode: Option<ModeArg>,
+        /// When sampling: the number of runs (implies `--mode sample`).
+        #[arg(long)]
+        runs: Option<u64>,
+        /// When sampling: the seed of the random numbers (implies `--mode sample`).
+        #[arg(long)]
+        seed: Option<u64>,
+        /// Stop the run after this many seconds.
+        #[arg(long)]
+        timeout: Option<f64>,
+        /// The most worlds a statement may produce.
+        #[arg(long)]
+        max_worlds: Option<usize>,
+        /// The most work (world-steps and outcomes computed) the run may do.
+        #[arg(long)]
+        max_work: Option<u64>,
+        /// Stack size of the engine thread, in MiB (for checking the engine).
+        #[arg(long, hide = true)]
+        stack_mb: Option<usize>,
+        /// Nested-call limit (for checking the engine).
+        #[arg(long, hide = true)]
+        max_depth: Option<usize>,
         /// Don't merge identical worlds (for checking the engine).
         #[arg(long, hide = true)]
         no_merge: bool,
@@ -56,16 +117,46 @@ fn main() -> ExitCode {
             fractions,
             epsilon,
             stats,
+            mode,
+            runs,
+            seed,
+            timeout,
+            max_worlds,
+            max_work,
+            stack_mb,
+            max_depth,
             no_merge,
             no_memo,
         } => {
-            let options = Options {
+            let mut options = Options {
                 merge: !no_merge,
                 memoize: !no_memo,
                 epsilon,
                 fractions,
+                ..Options::default()
             };
-            run_file(&file, &options, stats)
+            if let Some(n) = max_worlds {
+                options.limits.max_worlds = n;
+            }
+            if let Some(n) = max_work {
+                options.limits.max_work = n;
+            }
+            if let Some(mb) = stack_mb {
+                options.limits.stack_size = mb * 1024 * 1024;
+            }
+            if let Some(d) = max_depth {
+                options.limits.max_call_depth = d;
+            }
+            if let Some(seconds) = timeout {
+                let cancel = Arc::new(AtomicBool::new(false));
+                options.cancel = Some(cancel.clone());
+                let duration = std::time::Duration::from_secs_f64(seconds.max(0.0));
+                std::thread::spawn(move || {
+                    std::thread::sleep(duration);
+                    cancel.store(true, Ordering::Relaxed);
+                });
+            }
+            run_file(&file, &mut options, stats, &ModeChoice { mode, runs, seed })
         }
         Command::Check { file } => check_file(&file),
         Command::Repl => repl(),
@@ -93,7 +184,7 @@ fn report_diagnostics(diags: &[Diagnostic], file: &SourceFile) {
     }
 }
 
-fn run_file(path: &PathBuf, options: &Options, stats: bool) -> ExitCode {
+fn run_file(path: &PathBuf, options: &mut Options, stats: bool, choice: &ModeChoice) -> ExitCode {
     let Some(file) = read(path) else {
         return ExitCode::FAILURE;
     };
@@ -102,6 +193,7 @@ fn run_file(path: &PathBuf, options: &Options, stats: bool) -> ExitCode {
     let Some(program) = program else {
         return ExitCode::FAILURE;
     };
+    options.mode = choice.resolve(&program.settings.mode);
     let mut print = |line: &str| println!("{line}");
     match probl_engine::run(&program, options, &mut print) {
         Ok(outcome) => {
@@ -117,6 +209,9 @@ fn run_file(path: &PathBuf, options: &Options, stats: bool) -> ExitCode {
         }
         Err(e) => {
             eprint!("{}", e.to_diagnostic().render(&file, color()));
+            if e.kind == probl_engine::ErrorKind::Internal {
+                return ExitCode::from(70);
+            }
             ExitCode::FAILURE
         }
     }

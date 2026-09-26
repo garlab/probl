@@ -2,7 +2,7 @@
 source: crates/probl-syntax/tests/parser.rs
 expression: tree
 ---
-(@mode exact)
+(@mode enumerate)
 (var attackers = 10)
 (var defenders = 8)
 (while (and (> attackers 1) (> defenders 0)) (block (let attack ~ (call roll (call min 3 (- attackers 1)) 1d6)) (let defend ~ (call roll (call min 2 defenders) 1d6)) (for i (..< 0 (call min (.len attack) (.len defend))) (block (if (> (index attack i) (index defend i)) (block (-= defenders 1)) (block (-= attackers 1)))))))

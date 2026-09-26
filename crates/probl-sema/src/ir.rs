@@ -40,7 +40,8 @@ pub struct Settings {
     pub mode: Mode,
     /// Where `@mode` was set, for error messages.
     pub mode_span: Option<Span>,
-    /// Loops stop once the worlds still inside weigh less than this.
+    /// Unbounded loops stop once the weight still inside is less than this
+    /// fraction of the weight that entered.
     pub epsilon: f64,
     pub max_iterations: u64,
     pub max_worlds: usize,
@@ -61,7 +62,7 @@ impl Default for Settings {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Mode {
     Auto,
-    Exact,
+    Enumerate,
     Beam { worlds: u64 },
     Sample { runs: u64, seed: u64 },
     Particles { runs: u64, seed: u64 },
@@ -71,7 +72,7 @@ impl Mode {
     pub fn name(&self) -> &'static str {
         match self {
             Mode::Auto => "auto",
-            Mode::Exact => "exact",
+            Mode::Enumerate => "enumerate",
             Mode::Beam { .. } => "beam",
             Mode::Sample { .. } => "sample",
             Mode::Particles { .. } => "particles",
@@ -84,7 +85,20 @@ pub struct ReportSite {
     pub label: String,
     /// Source text of the `by` expression.
     pub key_label: Option<String>,
+    pub kind: ReportKind,
     pub span: Span,
+}
+
+/// How often one world can reach a report (see docs/semantics.md, section 9).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReportKind {
+    /// Outside loops: at most once per world.
+    Once,
+    /// In a loop, keyed by the innermost `for` loop's variable: at most once
+    /// per world and key.
+    PerKey,
+    /// In a loop with any other key: every visit counts.
+    PerVisit,
 }
 
 #[derive(Clone, Debug)]
@@ -120,6 +134,17 @@ pub struct Function {
     pub captures: Vec<Capture>,
     pub slots: Vec<SlotInfo>,
     pub body: Block,
+    pub effects: Effects,
+}
+
+/// What running a function can do besides computing its result, including
+/// through the functions it calls.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Effects {
+    /// Runs `observe` (outside any `simulate` block).
+    pub observes: bool,
+    /// Calls `print`. Such functions aren't memoized.
+    pub prints: bool,
 }
 
 impl Function {
@@ -196,8 +221,12 @@ pub enum StmtKind {
         otherwise: Option<Block>,
         exhaustive: bool,
     },
+    /// Repeats until every world has left through `break` or `return`.
+    /// Unbounded loops (`while`, `loop`) stop early once the weight still
+    /// inside is negligible; bounded ones (`for`, `repeat`) never do.
     Loop {
         body: Block,
+        bounded: bool,
     },
     Break,
     Continue,
@@ -215,6 +244,60 @@ pub enum StmtKind {
     Fail {
         message: String,
     },
+    /// Check that a variable's value matches its declared type.
+    Check {
+        slot: SlotId,
+        ty: TypeSpec,
+    },
+}
+
+/// A declared type, checked when a value is stored.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TypeSpec {
+    Int,
+    Float,
+    Prob,
+    Bool,
+    Str,
+    Date,
+    Unit,
+    Function,
+    List(Box<TypeSpec>),
+    Map(Box<TypeSpec>, Box<TypeSpec>),
+    Bag(Box<TypeSpec>),
+    Dist(Box<TypeSpec>),
+    Record(u32),
+    Enum(u32),
+    AnonRecord(Vec<(String, TypeSpec)>),
+}
+
+impl TypeSpec {
+    /// How the type is written in source.
+    pub fn describe(&self, program: &Program) -> String {
+        match self {
+            TypeSpec::Int => "int".into(),
+            TypeSpec::Float => "float".into(),
+            TypeSpec::Prob => "prob".into(),
+            TypeSpec::Bool => "bool".into(),
+            TypeSpec::Str => "str".into(),
+            TypeSpec::Date => "date".into(),
+            TypeSpec::Unit => "()".into(),
+            TypeSpec::Function => "fn".into(),
+            TypeSpec::List(t) => format!("list[{}]", t.describe(program)),
+            TypeSpec::Map(k, v) => format!("map[{}, {}]", k.describe(program), v.describe(program)),
+            TypeSpec::Bag(t) => format!("bag[{}]", t.describe(program)),
+            TypeSpec::Dist(t) => format!("dist[{}]", t.describe(program)),
+            TypeSpec::Record(r) => program.records[*r as usize].name.clone(),
+            TypeSpec::Enum(e) => program.enums[*e as usize].name.clone(),
+            TypeSpec::AnonRecord(fields) => {
+                let fields: Vec<String> = fields
+                    .iter()
+                    .map(|(n, t)| format!("{n}: {}", t.describe(program)))
+                    .collect();
+                format!("{{ {} }}", fields.join(", "))
+            }
+        }
+    }
 }
 
 /// A variable, optionally followed by fields and indices: `a.b[i]`.
@@ -295,6 +378,7 @@ pub enum InterpPart {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Lit {
     Unit,
+    Bool(bool),
     Int(i64),
     Float(f64),
     Prob(f64),

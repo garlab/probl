@@ -2,7 +2,7 @@
 source: crates/probl-syntax/tests/parser.rs
 expression: tree
 ---
-(@mode exact)
+(@mode enumerate)
 (let come_out ~ 2d6)
 (var win = false)
 (var rolls = 1)

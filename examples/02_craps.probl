@@ -4,7 +4,7 @@
 # becomes the "point": keep rolling until the point comes up again (win) or
 # a 7 does (lose).
 
-@mode exact
+@mode enumerate
 
 let come_out ~ 2d6            # eleven worlds, one per total
 var win = false
@@ -25,7 +25,7 @@ report win                    # `probl run --fractions` also shows it as 244/495
 report rolls as "rolls per bet"
 
 # ── Output ──────────────────────────────────────────────────────────────
-# exact · unresolved < 1e-12
+# enumerated · unresolved < 1e-12
 #
 # win              49.29%
 # rolls per bet    mean 3.38 · sd 3.00 · 5% 1 · median 2 · 95% 9

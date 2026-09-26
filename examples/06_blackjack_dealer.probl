@@ -1,7 +1,7 @@
 # Blackjack: how does the dealer's hand end, depending on the up-card?
 # One deck, dealer stands on all 17s, cards dealt without replacement.
 
-@mode exact
+@mode enumerate
 
 # Card values: 2 to 9, 10 for tens and face cards (16 of them), 11 for aces.
 var deck = bag([2: 4, 3: 4, 4: 4, 5: 4, 6: 4, 7: 4, 8: 4, 9: 4, 10: 16, 11: 4])
@@ -28,7 +28,7 @@ report result by up as "dealer's final hand, by up-card (11 = ace)"
 report total > 21 as "dealer busts"
 
 # ── Output ──────────────────────────────────────────────────────────────
-# exact
+# enumerated
 #
 # dealer's final hand, by up-card (11 = ace)
 #   up       17       18       19       20       21     bust

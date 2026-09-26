@@ -6,6 +6,7 @@
 //! merge); the language's `==` lives in [`crate::ops`] and compares numbers
 //! across types.
 
+use crate::continuous::Family;
 use crate::dist::Dist;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -18,9 +19,11 @@ pub enum Value {
     /// A slot with no value: not assigned yet, or cleared because it's dead.
     Dead,
     Unit,
+    /// A fact: true or false in a world.
+    Bool(bool),
     Int(i64),
     Float(f64),
-    /// A probability: the type of conditions. `true` and `false` are 1 and 0.
+    /// A probability: a number from 0 to 1. It's a parameter, not an event.
     Prob(f64),
     Str(Arc<str>),
     List(Arc<Vec<Value>>),
@@ -32,6 +35,8 @@ pub enum Value {
     Record(Arc<Record>),
     Enum(Arc<EnumValue>),
     Dist(Arc<Dist>),
+    /// A continuous distribution (docs/semantics.md, section 13).
+    Continuous(Arc<Family>),
     Closure(Arc<Closure>),
     /// Days since 1970-01-01.
     Date(i32),
@@ -67,13 +72,6 @@ pub struct Closure {
     pub captured: Vec<Value>,
 }
 
-pub const TRUE: Value = Value::Prob(1.0);
-pub const FALSE: Value = Value::Prob(0.0);
-
-pub fn prob(b: bool) -> Value {
-    if b { TRUE } else { FALSE }
-}
-
 impl Value {
     pub fn str(s: &str) -> Value {
         Value::Str(Arc::from(s))
@@ -88,6 +86,7 @@ impl Value {
         match self {
             Value::Dead => "nothing".into(),
             Value::Unit => "()".into(),
+            Value::Bool(_) => "bool".into(),
             Value::Int(_) => "int".into(),
             Value::Float(_) => "float".into(),
             Value::Prob(_) => "prob".into(),
@@ -101,17 +100,27 @@ impl Value {
                 None => "record".into(),
             },
             Value::Enum(_) => "enum".into(),
+            Value::Dist(d) if d.outcomes.iter().any(|(v, _)| matches!(v, Value::Continuous(_))) => {
+                "mixture of distributions".into()
+            }
             Value::Dist(d) => match d.outcomes.first() {
                 Some((v, _)) => format!("distribution over {}", plural_kind(&v.kind())),
                 None => "distribution".into(),
             },
+            Value::Continuous(f) => format!("{} distribution", f.name()),
             Value::Closure(_) => "function".into(),
             Value::Date(_) => "date".into(),
         }
     }
 
+    /// A distribution with outcomes that can be listed.
     pub fn is_dist(&self) -> bool {
         matches!(self, Value::Dist(_))
+    }
+
+    /// Any distribution, including continuous ones: not a settled value.
+    pub fn is_uncertain(&self) -> bool {
+        matches!(self, Value::Dist(_) | Value::Continuous(_))
     }
 
     /// Numbers as f64: ints, floats and probabilities.
@@ -128,17 +137,19 @@ impl Value {
         match self {
             Value::Dead => 0,
             Value::Unit => 1,
-            Value::Int(_) | Value::Float(_) | Value::Prob(_) => 2,
-            Value::Str(_) => 3,
-            Value::Date(_) => 4,
-            Value::Enum(_) => 5,
-            Value::List(_) => 6,
-            Value::Range(..) => 7,
-            Value::Map(_) => 8,
-            Value::Bag(_) => 9,
-            Value::Record(_) => 10,
-            Value::Dist(_) => 11,
-            Value::Closure(_) => 12,
+            Value::Bool(_) => 2,
+            Value::Int(_) | Value::Float(_) | Value::Prob(_) => 3,
+            Value::Str(_) => 4,
+            Value::Date(_) => 5,
+            Value::Enum(_) => 6,
+            Value::List(_) => 7,
+            Value::Range(..) => 8,
+            Value::Map(_) => 9,
+            Value::Bag(_) => 10,
+            Value::Record(_) => 11,
+            Value::Dist(_) => 12,
+            Value::Closure(_) => 13,
+            Value::Continuous(_) => 14,
         }
     }
 
@@ -160,6 +171,11 @@ fn plural_kind(kind: &str) -> String {
     }
 }
 
+/// What identifies a continuous distribution: its family and parameters.
+fn family_key(f: &Family) -> (&'static str, Vec<u64>) {
+    (f.name(), f.params().into_iter().map(float_key).collect())
+}
+
 /// Float bits with 0.0 and -0.0 merged and a single NaN.
 fn float_key(f: f64) -> u64 {
     if f == 0.0 {
@@ -175,6 +191,7 @@ impl PartialEq for Value {
     fn eq(&self, other: &Value) -> bool {
         match (self, other) {
             (Value::Dead, Value::Dead) | (Value::Unit, Value::Unit) => true,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Float(a), Value::Float(b)) | (Value::Prob(a), Value::Prob(b)) => float_key(*a) == float_key(*b),
             (Value::Str(a), Value::Str(b)) => a == b,
@@ -187,6 +204,7 @@ impl PartialEq for Value {
             (Value::Dist(a), Value::Dist(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::Closure(a), Value::Closure(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::Date(a), Value::Date(b)) => a == b,
+            (Value::Continuous(a), Value::Continuous(b)) => family_key(a) == family_key(b),
             _ => false,
         }
     }
@@ -199,6 +217,7 @@ impl Hash for Value {
         std::mem::discriminant(self).hash(state);
         match self {
             Value::Dead | Value::Unit => {}
+            Value::Bool(b) => b.hash(state),
             Value::Int(i) => i.hash(state),
             Value::Float(f) | Value::Prob(f) => float_key(*f).hash(state),
             Value::Str(s) => s.hash(state),
@@ -211,6 +230,7 @@ impl Hash for Value {
             Value::Dist(d) => d.hash(state),
             Value::Closure(c) => c.hash(state),
             Value::Date(d) => d.hash(state),
+            Value::Continuous(f) => family_key(f).hash(state),
         }
     }
 }
@@ -223,7 +243,8 @@ impl Ord for Value {
         }
         match (self, other) {
             (Value::Int(a), Value::Int(b)) => a.cmp(b),
-            (a, b) if ra == 2 => {
+            (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+            (a, b) if ra == 3 => {
                 // Numbers compare by value, then by kind so the order stays total.
                 let (x, y) = (a.as_f64().unwrap(), b.as_f64().unwrap());
                 x.total_cmp(&y)
@@ -240,6 +261,7 @@ impl Ord for Value {
             (Value::Record(a), Value::Record(b)) => a.cmp(b),
             (Value::Dist(a), Value::Dist(b)) => a.cmp(b),
             (Value::Closure(a), Value::Closure(b)) => a.cmp(b),
+            (Value::Continuous(a), Value::Continuous(b)) => family_key(a).cmp(&family_key(b)),
             _ => Ordering::Equal,
         }
     }
@@ -301,8 +323,7 @@ fn write_value(v: &Value, f: &mut fmt::Formatter<'_>, nested: bool) -> fmt::Resu
         Value::Unit => write!(f, "()"),
         Value::Int(i) => write!(f, "{i}"),
         Value::Float(x) => write!(f, "{}", fmt_float(*x)),
-        Value::Prob(p) if *p == 1.0 => write!(f, "true"),
-        Value::Prob(p) if *p == 0.0 => write!(f, "false"),
+        Value::Bool(b) => write!(f, "{b}"),
         Value::Prob(p) => write!(f, "{}", fmt_prob(*p)),
         Value::Str(s) if nested => write!(f, "{s:?}"),
         Value::Str(s) => write!(f, "{s}"),
@@ -375,5 +396,6 @@ fn write_value(v: &Value, f: &mut fmt::Formatter<'_>, nested: bool) -> fmt::Resu
         }
         Value::Closure(_) => write!(f, "<function>"),
         Value::Date(d) => write!(f, "{}", crate::dates::format(*d)),
+        Value::Continuous(family) => write!(f, "{family}"),
     }
 }

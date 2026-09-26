@@ -1,0 +1,13 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: "errors(\"@mode exact\\nreport 1\")"
+---
+Error: `@mode exact` is now called `@mode enumerate`
+   ╭─[ test.probl:1:1 ]
+   │
+ 1 │ @mode exact
+   │ ─────┬─────  
+   │      ╰─────── here
+   │ 
+   │ Note: enumeration follows every branch, but its answers are floating-point and loops may be cut short, so it isn't called exact
+───╯

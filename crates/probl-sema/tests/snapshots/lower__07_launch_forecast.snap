@@ -10,7 +10,7 @@ fn#0 the top level ()
   customers_4 = 0    [live: price_0 churn_1 market_2 signups_3 customers_4]
   $5 = $iter_items((.. 1 18))    [live: price_0 churn_1 market_2 signups_3 customers_4 $5]
   $6 = 0    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6]
-  loop {    [live at head: price_0 churn_1 market_2 signups_3 customers_4 $5 $6]
+  loop (bounded) {    [live at head: price_0 churn_1 market_2 signups_3 customers_4 $5 $6]
     if (>= $6 len($5)) {
       break    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6]
     }
@@ -22,7 +22,7 @@ fn#0 the top level ()
     report (* customers_4 price_0) by month_7 as "MRR ($)"    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6]
     $10 = call fn#1 next_month(market_2)    [live: price_0 churn_1 signups_3 customers_4 $5 $6 $10]
     market_2 = $10    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6]
-    $12 = market_2    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6 $12]
+    $12 = $settled(market_2)    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6 $12]
     if (== $12 Market.Boom) {
       $11 = to(8%, 20%)    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6 $11]
     } else {
@@ -30,7 +30,7 @@ fn#0 the top level ()
         $11 = to(1%, 6%)    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6 $11]
       } else {
         if (== $12 Market.Slump) {
-          $11 = to((- 8%), 0%)    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6 $11]
+          $11 = normal_range((- 8%), 0%)    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6 $11]
         } else {
           fail "no arm of this `match` matches the value of `market`"    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6 $11]
         }
@@ -41,7 +41,8 @@ fn#0 the top level ()
   }
   report (>= (* customers_4 price_0) 100000) as "MRR ≥ $100k after 18 months"    [live: ]
 fn#1 next_month (m_0)
-  $2 = m_0    [live: $2]
+  check m_0: Market    [live: m_0]
+  $2 = $settled(m_0)    [live: $2]
   if (== $2 Market.Boom) {
     chance (value) {
       70% => {
@@ -85,4 +86,6 @@ fn#1 next_month (m_0)
       }
     }
   }
-  return $1    [live: ]
+  $3 = $1    [live: $3]
+  check $3: Market    [live: $3]
+  return $3    [live: ]

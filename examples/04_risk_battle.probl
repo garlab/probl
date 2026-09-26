@@ -1,6 +1,6 @@
 # Risk: 10 attacking armies against 8 defenders, fought to the end.
 
-@mode exact
+@mode enumerate
 
 var attackers = 10
 var defenders = 8
@@ -24,7 +24,7 @@ report defenders == 0 as "attacker conquers"
 report attackers - 1 as "armies left to move in"
 
 # ── Output ──────────────────────────────────────────────────────────────
-# exact
+# enumerated
 #
 # attacker conquers         64.64%
 # armies left to move in    mean 3.05 · sd 2.78 · 5% 0 · median 3 · 95% 8 · 0 █▁▂▃▃▃▃▂▂▁ 9
