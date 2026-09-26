@@ -5,7 +5,7 @@
 ## Summary
 
 1. **Parallel sampling batches first.** Every sampled forecast takes 0.5–2.6 s on one core, and runs are independent. Running example 07's runs as 8 processes takes 0.27 s instead of 1.77 s (6.6×). This is the cheapest large win, and it meets the plan's target for example 07 (under 2 s on 8 cores) several times over. *Done: 6–8× on 12 cores ([below](#since-parallel-batches)).*
-2. **Then cheaper merging, and moving draws to their first use.** Enumeration hits a wall when states are large or many facts stay live together: blackjack from a real deck takes 5.2 s and 952 MB, and a 20-component reliability model 1.4 s and 847 MB. Merging (hashing and comparing world states) takes 34–70% of that time; caching the hashes of collections cuts most of it. Separately, moving each draw to just before its first use turns the reliability model's 1,048,576 worlds into 256, with the same answer. *Cheaper merging is done: 1.4–2.9× for enumeration ([below](#since-cheaper-merging)).*
+2. **Then cheaper merging, and moving draws to their first use.** Enumeration hits a wall when states are large or many facts stay live together: blackjack from a real deck takes 5.2 s and 952 MB, and a 20-component reliability model 1.4 s and 847 MB. Merging (hashing and comparing world states) takes 34–70% of that time; caching the hashes of collections cuts most of it. Separately, moving each draw to just before its first use turns the reliability model's 1,048,576 worlds into 256, with the same answer. *Both are done: cheaper merging makes enumeration 1.4–2.9× faster ([below](#since-cheaper-merging)), and moving draws takes the reliability model from 1.2 s to 0.6 ms ([below](#since-moving-draws)).*
 3. **Then better inference for evidence-heavy forecasts.** Weighting runs by the evidence (likelihood weighting) degrades as data accumulates: an A/B test's 100,000 runs are worth 852 after 30 days of data, 467 after 60 and 211 after 120, and it gets exponentially worse with more unknown parameters. Forecasts with real data need conjugate updates, MCMC or particles; each needs its contract specified first (audit D4).
 4. **Not now:** symbolic inference, persistent collections and a bytecode interpreter. No benchmark is limited by what they'd fix, or a cheaper change fixes it first. Markov-chain solving would make cyclic loops exact and allow recursion to the same call, but no model is slow because of them.
 
@@ -148,6 +148,28 @@ The oracle, and the engine with merging on and off, still agree on 5,000 generat
 | examples/06_blackjack_dealer | 14 ms | 7 ms (2.0×) |
 
 What's left in `blackjack_deck` is mostly the cost of worlds themselves: copying, dropping and allocating them takes about a quarter of the time. Merging still spends 16% in its hash table (up to 700,000 worlds at once), and 8% comparing the decks of worlds that turn out equal, which has to be exact. `reliability` barely changed, since none of its million worlds merge: moving draws to their first use is what fixes it. `snakes_three` still runs out of time.
+
+## Since: moving draws
+
+A compiler pass (`crates/probl-sema/src/draws.rs`) now moves each `let x ~ D` down its block, to just before the first statement that reads or writes `x`.
+
+It only moves draws of distributions written out: dice, `bernoulli` of a probability, and `one_of` a list of values. Those can't fail, read no variable and add up to 1. So the pass can move them past more than the sketch above allowed:
+- **Observations** multiply weights in either order.
+- **Reports** add up the same weights.
+- **Calls** that don't use `x` do the same thing in every world the draw would have split.
+
+No weight, error or unresolved bound changes. A draw stops only at:
+- a statement that uses `x`;
+- anything that prints, since output is once per world;
+- anything that can leave the block early.
+
+A type-annotated draw moves with its check.
+
+| model | before | after |
+|---|--:|--:|
+| benches/reliability | 1.23 s · 1,048,576 worlds · 8,388,607 world-steps · 762 MB | 0.55 ms · 256 worlds · 1,643 world-steps · 384 KB |
+
+The other models already draw where they use the values: only craps' first roll moved, past two assignments. The oracle, which interprets the source directly, agrees with the engine on 20,000 generated programs, and sampling is still calibrated.
 
 ## Smaller findings
 

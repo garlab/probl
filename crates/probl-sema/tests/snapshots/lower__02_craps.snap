@@ -3,9 +3,9 @@ source: crates/probl-sema/tests/lower.rs
 expression: ir(&src)
 ---
 fn#0 the top level ()
-  come_out_0 ~ 2d6    [live: come_out_0]
-  win_1 = false    [live: come_out_0 win_1]
-  rolls_2 = 1    [live: come_out_0 win_1 rolls_2]
+  win_1 = false    [live: win_1]
+  rolls_2 = 1    [live: win_1 rolls_2]
+  come_out_0 ~ 2d6    [live: come_out_0 win_1 rolls_2]
   if (in come_out_0 [7, 11]) {
     win_1 = true    [live: win_1 rolls_2]
   } else {

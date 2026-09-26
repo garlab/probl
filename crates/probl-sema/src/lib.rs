@@ -3,6 +3,7 @@
 
 pub mod builtins;
 pub mod data;
+mod draws;
 pub mod effects;
 pub mod ir;
 pub mod liveness;

@@ -255,3 +255,80 @@ fn record_types_can_refer_to_each_other() {
     let e = errors("type A = { b: B }\ntype B = { a: A }");
     assert!(e.contains("every `A` would contain another `A`"), "{e}");
 }
+
+/// Whether `parts` appear in `text` in this order.
+#[track_caller]
+fn in_order(text: &str, parts: &[&str]) {
+    let mut at = 0;
+    for part in parts {
+        match text[at..].find(part) {
+            Some(i) => at += i + part.len(),
+            None => panic!("{part:?} isn't where expected in:\n{text}"),
+        }
+    }
+}
+
+#[test]
+fn draws_move_to_their_first_use() {
+    // Past draws, assignments, observations, reports, loops and calls that
+    // don't use the variable; with its type check.
+    let text = ir("fn twice(n) { n * 2 }\n\
+                   let a: int ~ d6\n\
+                   let b ~ bernoulli(90%)\n\
+                   let c ~ one_of([\"x\", \"y\"])\n\
+                   observe b\n\
+                   let d = twice(3)\n\
+                   var n = 0\n\
+                   repeat 2 { n += 1 }\n\
+                   report c\n\
+                   report a + d + n");
+    in_order(
+        &text,
+        &[
+            "b_1 ~",
+            "observe b_1",
+            "c_2 ~",
+            "report c_2",
+            "a_0 ~ 1d6",
+            "check a_0",
+            "report",
+        ],
+    );
+}
+
+#[test]
+fn draws_stay_before_what_they_cant_pass() {
+    // A use, even inside a branch or a lambda.
+    in_order(
+        &ir("let a ~ d6\nlet b = 1\nif b > 0 { report a as \"a\" }"),
+        &["b_1 =", "a_0 ~", "if"],
+    );
+    in_order(
+        &ir("let a ~ d6\nlet b = 1\nlet f = x -> x + a\nreport f(b)"),
+        &["b_1 =", "a_0 ~", "f_2 ="],
+    );
+    // Printing, directly or in a function: output is per world.
+    in_order(&ir("let a ~ d6\nprint(\"hi\")\nreport a"), &["a_0 ~", "print"]);
+    in_order(
+        &ir("fn f() { print(\"hi\")\n1 }\nlet a ~ d6\nlet y = f()\nreport a + y"),
+        &["a_0 ~", "call"],
+    );
+    // Leaving the block early.
+    in_order(
+        &ir("var n = 0\nloop {\n  let a ~ d6\n  if n > 3 { break }\n  n += a\n}"),
+        &["a_1 ~", "break"],
+    );
+    // Distributions that read variables, can fail, or aren't written out.
+    in_order(
+        &ir("let p = 50%\nlet a ~ bernoulli(p)\nlet b ~ d6\nreport b\nreport a"),
+        &["a_1 ~", "b_2 ~"],
+    );
+    in_order(
+        &ir("let a ~ bernoulli(1 / 3)\nlet b ~ d6\nreport b\nreport a"),
+        &["a_0 ~", "b_1 ~"],
+    );
+    in_order(
+        &ir("let a ~ 200d100\nlet b ~ d6\nreport b\nreport a"),
+        &["a_0 ~", "b_1 ~"],
+    );
+}

@@ -2560,6 +2560,7 @@ impl<'a> Lowerer<'a> {
         };
         let mut diags = self.diags;
         diags.extend(crate::effects::analyze(&mut program, self.src));
+        crate::draws::move_draws(&mut program);
         (program, diags)
     }
 }

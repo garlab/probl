@@ -169,6 +169,8 @@ The analysis also gives, for every statement, the slots that die in it: read or 
 
 Merging hashes the live slots of every world at every join point, although most collections haven't changed since the last one. So lists, maps, bags and records keep their hash once computed, and forget it when they change. Hashing a world costs a step per slot instead of one per element, and collections with different hashes are unequal without comparing them. Bags are sorted vectors, which compare fastest. A bag's hash is a sum over its entries, so `take` updates it without going through the rest of the bag.
 
+A compiler pass moves each draw of a distribution written out (dice, `bernoulli` of a probability, `one_of` a list of values) down its block, to just before the first statement that uses its variable. A model that draws every component's state first then splits worlds only when a statement needs them, after the facts combined earlier have died and merged. Such draws can't fail and add up to 1, so moving them changes nothing but the number of worlds. They stop at anything that prints or can leave the block (docs/benchmarks.md, "Since: moving draws").
+
 Merging helps only when histories stop mattering. Two refinements come later: hoisting values that are the same in every world out of the worlds, and hash-consing large values.
 
 ### 3.8 Distributions
@@ -330,8 +332,7 @@ Still open:
 
 ## 9. Next steps
 
-The order the benchmarks recommend (docs/benchmarks.md). The first two are done: parallel sampling batches (6–8× for sampled models on 12 cores) and cheaper merging (1.4–2.9× for enumeration). So is reading data ([reading data](data-input.md)). v0.2 still needs an estimate of the evidence.
+The order the benchmarks recommend (docs/benchmarks.md). The first three are done: parallel sampling batches (6–8× for sampled models on 12 cores), cheaper merging (1.4–2.9× for enumeration), and moving draws to their first use (the reliability model follows 256 worlds instead of 2²⁰). So is reading data ([reading data](data-input.md)). v0.2 still needs an estimate of the evidence.
 
-1. **Moving draws to their first use**, a compiler pass: 1,048,576 worlds become 256 in the reliability benchmark.
-2. **Better inference for evidence-heavy forecasts**: specify, then build, conjugate updates and a general method (Metropolis–Hastings over a run's choices, or particles with rejuvenation), with the audit's D4 checklist. Likelihood weighting's effective sample size falls from 852 to 211 as an A/B test's data grows from 30 to 120 days. Now that models can read real data, this matters more.
-3. **Markov-chain solving**, for exact cyclic loops and recursion to the same call.
+1. **Better inference for evidence-heavy forecasts**: specify, then build, conjugate updates and a general method (Metropolis–Hastings over a run's choices, or particles with rejuvenation), with the audit's D4 checklist. Likelihood weighting's effective sample size falls from 852 to 211 as an A/B test's data grows from 30 to 120 days. Now that models can read real data, this matters more.
+2. **Markov-chain solving**, for exact cyclic loops and recursion to the same call.

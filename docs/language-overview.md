@@ -50,7 +50,7 @@ Everything else follows from these five rules.
 1. **Branching follows every possibility.** `if c { A } else { B }` runs A in worlds weighted by the probability p that `c` holds, and B weighted by 1 − p. A condition can be a fact (`hp > 0`), a probability (`30%`) or an uncertain fact (`d20 + 5 >= 15`).
 2. **A program is a set of weighted worlds.** Inside one world, every variable holds a single ordinary value. The uncertainty is in how many worlds there are and how much each one weighs.
 3. **`~` settles a value; `=` keeps a distribution.** `let r ~ 2d6` gives `r` one number per world: a fact. `let d = 2d6` names the distribution itself, and every use of `d` is a fresh, independent roll.
-4. **Identical worlds merge.** When branches rejoin, worlds with the same state combine, ignoring variables that will never be read again. Merging changes nothing but rounding.
+4. **Identical worlds merge.** When branches rejoin, worlds with the same state combine, ignoring variables that will never be read again. Merging changes nothing but rounding. Draws of distributions written out, like `let pump ~ bernoulli(95%)`, are taken just before their first use, so drawing everything at the top of a model costs nothing.
 5. **Output looks across worlds.** `report` prints distributions over all worlds, and `observe` conditions them on evidence. Code running inside a world only ever sees that world.
 
 ## 3. Syntax tour

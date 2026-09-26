@@ -77,6 +77,18 @@ pub fn analyze(program: &mut Program, src: &str) -> Vec<Diagnostic> {
     checker.errors.into_values().collect()
 }
 
+/// Whether running `s` may print: itself, or through what it calls. Needs
+/// the functions' effects, which `analyze` fills in.
+pub(crate) fn may_print(s: &Stmt, functions: &[Function]) -> bool {
+    let mut d = Direct::default();
+    d.stmt(s);
+    let lambda_prints = functions.iter().any(|f| f.kind == FnKind::Lambda && f.effects.prints);
+    d.prints
+        || d.calls.iter().any(|&g| functions[g as usize].effects.prints)
+        || d.simulates.iter().any(|&c| functions[c as usize].effects.prints)
+        || (d.calls_closures && lambda_prints)
+}
+
 /// What a function body does itself.
 #[derive(Default)]
 struct Direct {
