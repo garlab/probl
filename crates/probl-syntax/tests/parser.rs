@@ -21,7 +21,11 @@ fn parse_errors(src: &str) -> String {
 #[test]
 fn all_examples_parse() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
-    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
+    let mut paths: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "probl"))
+        .collect();
     paths.sort();
     assert!(paths.len() >= 9);
     for path in paths {

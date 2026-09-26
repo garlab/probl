@@ -1,6 +1,6 @@
 # Probl reference semantics
 
-> Version 0.2, September 2026. This document is normative for the engine. Where it disagrees with the [language overview](language-overview.md), this document wins. It resolves findings D1–D3, I1 and I2 of the [project audit](project-audit.md). Continuous distributions (D6) and basic sampling (D4) are in sections 13 and 14; what is still open, such as particles and solving recursive equations (D5), is listed in section 15.
+> Version 0.2, September 2026. This document is normative for the engine. Where it disagrees with the [language overview](language-overview.md), this document wins. It resolves findings D1–D3, I1 and I2 of the [project audit](project-audit.md). Continuous distributions (D6) and basic sampling (D4) are in sections 13 and 14, and data read from files in section 15; what is still open, such as particles and solving recursive equations (D5), is listed in section 16.
 
 ## 1. Values and types
 
@@ -190,7 +190,15 @@ Anything else, such as arithmetic (`normal(0, 1) * 2`) or comparing two continuo
 
 Sampling doesn't estimate the evidence yet. If every run is ruled out, it's an error: the evidence is impossible, or too unlikely for this number of runs.
 
-## 15. Not specified yet
+## 15. Data
+
+`let name: T = read(path)` binds data read from outside the program, such as a CSV or JSON file ([reading data](data-input.md)).
+
+- **Before running.** The data is read before the program runs, as a value of the declared type `T`. Data that doesn't fit `T` is an error, and the program doesn't run.
+- **A constant.** The value is the same in every world and every run, as if it had been written in the program. Reading it splits nothing and weighs nothing: it isn't evidence. To condition on data, `observe` it.
+- **Part of the input.** The same program, data and seed give the same output.
+
+## 16. Not specified yet
 
 - **Particles, beam search and merged runs** (audit D4): how merged samples keep their statistical bookkeeping, and when particles resample.
 - **Nested estimates** (D4): `simulate` blocks that must be sampled, and how their error affects decisions.

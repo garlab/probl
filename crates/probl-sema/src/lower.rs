@@ -95,6 +95,9 @@ struct Lowerer<'a> {
     variants: FxHashMap<String, Variant>,
     globals: FxHashMap<String, Binding>,
     reports: Vec<ReportSite>,
+    inputs: Vec<Input>,
+    /// Where standard input is read, if it is: only once.
+    stdin: Option<Span>,
     settings: Settings,
     next_stmt: u32,
     ctx: Vec<Ctx>,
@@ -114,6 +117,8 @@ impl<'a> Lowerer<'a> {
             variants: FxHashMap::default(),
             globals: FxHashMap::default(),
             reports: Vec::new(),
+            inputs: Vec::new(),
+            stdin: None,
             settings: Settings::default(),
             next_stmt: 0,
             ctx: Vec::new(),
@@ -410,6 +415,7 @@ impl<'a> Lowerer<'a> {
                 .filter(|b| b.is_public())
                 .map(|b| b.name().to_string()),
         );
+        names.push("read".to_string());
         names
     }
 
@@ -431,6 +437,7 @@ impl<'a> Lowerer<'a> {
 
         // Declarations first, so they can be used before they're defined.
         let mut fn_decls = Vec::new();
+        let mut type_decls = Vec::new();
         for item in &program.items {
             match item {
                 ast::Item::Fn(decl) => {
@@ -439,7 +446,7 @@ impl<'a> Lowerer<'a> {
                         self.error(decl.name.span, format!("the function `{name}` is defined twice"));
                         continue;
                     }
-                    if Builtin::from_name(name).is_some() {
+                    if Builtin::from_name(name).is_some() || name == "read" {
                         self.warning(
                             decl.name.span,
                             format!("`{name}` hides the built-in function of the same name"),
@@ -450,7 +457,11 @@ impl<'a> Lowerer<'a> {
                     self.fn_by_name.insert(name.clone(), id);
                     fn_decls.push((id, decl));
                 }
-                ast::Item::Type(decl) => self.type_decl(decl),
+                ast::Item::Type(decl) => {
+                    if let Some(id) = self.type_decl(decl) {
+                        type_decls.push((id, decl));
+                    }
+                }
                 ast::Item::Enum(decl) => self.enum_decl(decl),
                 ast::Item::Import(import) => {
                     self.error(import.span, "`import` isn't supported yet");
@@ -458,6 +469,11 @@ impl<'a> Lowerer<'a> {
                 ast::Item::Stmt(_) => {}
             }
         }
+        // Fields' types, once every type's name is known.
+        for (id, decl) in type_decls {
+            self.record_fields(id, decl);
+        }
+        self.check_record_cycles();
 
         // The top level.
         self.ctx.push(Ctx {
@@ -566,30 +582,92 @@ impl<'a> Lowerer<'a> {
         );
     }
 
-    fn type_decl(&mut self, decl: &ast::TypeDecl) {
+    /// Register a record type's name; its fields come later, once every
+    /// type's name is known (`record_fields`).
+    fn type_decl(&mut self, decl: &ast::TypeDecl) -> Option<u32> {
         let name = &decl.name.name;
         if self.record_by_name.contains_key(name) || self.enum_by_name.contains_key(name) {
             self.error(decl.name.span, format!("the type `{name}` is defined twice"));
-            return;
+            return None;
         }
-        let ast::TypeExpr::Record { fields, .. } = &decl.ty else {
+        if !matches!(decl.ty, ast::TypeExpr::Record { .. }) {
             self.error(decl.span, "only record types can be declared for now")
                 .help("write the fields in braces: `type Point = { x: int, y: int }`");
-            return;
-        };
-        let mut names = Vec::new();
-        for (field, _) in fields {
-            if names.contains(&field.name) {
-                self.error(field.span, format!("the field `{}` appears twice", field.name));
-            }
-            names.push(field.name.clone());
+            return None;
         }
-        self.record_by_name.insert(name.clone(), self.records.len() as u32);
+        let id = self.records.len() as u32;
+        self.record_by_name.insert(name.clone(), id);
         self.records.push(RecordType {
             name: name.clone(),
-            fields: names,
-            span: decl.span,
+            fields: Vec::new(),
+            span: decl.name.span,
         });
+        Some(id)
+    }
+
+    /// Resolve a record type's fields and their types.
+    fn record_fields(&mut self, id: u32, decl: &ast::TypeDecl) {
+        let ast::TypeExpr::Record { fields, .. } = &decl.ty else {
+            return;
+        };
+        let mut resolved: Vec<RecordField> = Vec::new();
+        for (field, ty) in fields {
+            if resolved.iter().any(|f| f.name == field.name) {
+                self.error(field.span, format!("the field `{}` appears twice", field.name));
+                continue;
+            }
+            // An unknown type has been reported; the program won't run.
+            let ty = self.type_spec(ty).unwrap_or(TypeSpec::Unit);
+            resolved.push(RecordField {
+                name: field.name.clone(),
+                ty,
+                span: field.span,
+            });
+        }
+        self.records[id as usize].fields = resolved;
+    }
+
+    /// A record type that contains itself, other than inside a list, map or
+    /// bag, has no values: each would contain another one forever.
+    fn check_record_cycles(&mut self) {
+        fn needs(ty: &TypeSpec, out: &mut Vec<u32>) {
+            match ty {
+                TypeSpec::Record(r) => out.push(*r),
+                TypeSpec::Dist(t) => needs(t, out),
+                TypeSpec::AnonRecord(fields) => fields.iter().for_each(|(_, t)| needs(t, out)),
+                _ => {}
+            }
+        }
+        let edges: Vec<Vec<u32>> = self
+            .records
+            .iter()
+            .map(|r| {
+                let mut out = Vec::new();
+                r.fields.iter().for_each(|f| needs(&f.ty, &mut out));
+                out
+            })
+            .collect();
+        for start in 0..self.records.len() {
+            let mut seen = vec![false; self.records.len()];
+            let mut stack = edges[start].clone();
+            let mut cyclic = false;
+            while let Some(r) = stack.pop() {
+                if r as usize == start {
+                    cyclic = true;
+                    break;
+                }
+                if !std::mem::replace(&mut seen[r as usize], true) {
+                    stack.extend(&edges[r as usize]);
+                }
+            }
+            if cyclic {
+                let (name, span) = (self.records[start].name.clone(), self.records[start].span);
+                self.error(span, format!("every `{name}` would contain another `{name}`, forever"))
+                    .help(format!(
+                        "hold the inner ones in a list, which can be empty, like `parts: list[{name}]`"
+                    ));
+            }
+        }
     }
 
     fn enum_decl(&mut self, decl: &ast::EnumDecl) {
@@ -663,6 +741,10 @@ impl<'a> Lowerer<'a> {
                 value,
                 ty,
             } => {
+                if let Some(args) = self.read_call(value) {
+                    self.read_binding(*mutable, pattern, *op, ty.as_ref(), args, value.span, s.span, out);
+                    return;
+                }
                 let spec = ty.as_ref().and_then(|t| self.type_spec(t));
                 if let Some(spec) = &spec {
                     if *op == ast::BindOp::Assign {
@@ -917,6 +999,176 @@ impl<'a> Lowerer<'a> {
                 self.bind_pattern(pattern, slot(t, span), mutable, out);
             }
         }
+    }
+
+    /// The arguments of `read(…)`, if `value` is a call to it.
+    fn read_call<'e>(&self, value: &'e ast::Expr) -> Option<&'e [ast::Arg]> {
+        match &value.kind {
+            ast::ExprKind::Call { callee, args }
+                if matches!(&callee.kind, ast::ExprKind::Name(n) if n == "read")
+                    && !self.fn_by_name.contains_key("read") =>
+            {
+                Some(args)
+            }
+            _ => None,
+        }
+    }
+
+    /// `let name: T = read("path")`: add an input to the program's manifest
+    /// and bind its value (docs/data-input.md). After an error, the variable
+    /// is still declared, so that its uses don't fail too.
+    #[allow(clippy::too_many_arguments)]
+    fn read_binding(
+        &mut self,
+        mutable: bool,
+        pattern: &ast::Pattern,
+        op: ast::BindOp,
+        ty: Option<&ast::TypeExpr>,
+        args: &[ast::Arg],
+        call: Span,
+        span: Span,
+        out: &mut Vec<Stmt>,
+    ) {
+        let ast::PatternKind::Name(name) = &pattern.kind else {
+            self.error(
+                pattern.span,
+                "data is bound to a variable name, like `let rows: list[Row] = read(…)`",
+            );
+            return;
+        };
+        let input = self.read_input(name, op, ty, args, call);
+        let dest = self.declare(name, pattern.span, mutable);
+        let value = match input {
+            Some(input) => {
+                self.set_declared_type(name, &input.ty);
+                self.inputs.push(input);
+                ExprKind::Input(self.inputs.len() as u32 - 1)
+            }
+            None => ExprKind::Lit(Lit::Unit),
+        };
+        let st = self.stmt(
+            span,
+            StmtKind::Set {
+                place: Place::slot(dest),
+                value: Expr {
+                    kind: value,
+                    span: call,
+                },
+            },
+        );
+        out.push(st);
+    }
+
+    /// Check a `read` and describe what it reads.
+    fn read_input(
+        &mut self,
+        name: &str,
+        op: ast::BindOp,
+        ty: Option<&ast::TypeExpr>,
+        args: &[ast::Arg],
+        call: Span,
+    ) -> Option<Input> {
+        let mut ok = true;
+        if !self.at_top_level() {
+            self.error(call, "`read` must be at the top level of the program")
+                .help("data is read once, before the program runs: read it at the top, and use the variable here");
+            ok = false;
+        }
+        if op == ast::BindOp::Draw {
+            self.error(call, "data is a value, so it's bound with `=`, not `~`");
+            ok = false;
+        }
+        // One path, written out, and an optional format.
+        let literal = |e: &ast::Expr| match &e.kind {
+            ast::ExprKind::Str(parts) => parts
+                .iter()
+                .map(|p| match p {
+                    ast::StrSegment::Lit(s) => Some(s.as_str()),
+                    ast::StrSegment::Expr(_) => None,
+                })
+                .collect::<Option<String>>(),
+            _ => None,
+        };
+        let (mut path, mut format) = (None, None);
+        for arg in args {
+            match &arg.name {
+                None if path.is_none() => path = Some(&arg.value),
+                None => {
+                    self.error(arg.value.span, "`read` takes one path");
+                    ok = false;
+                }
+                Some(n) if n.name == "format" && format.is_none() => format = Some(&arg.value),
+                Some(n) => {
+                    self.error(n.span, format!("`read` has no argument `{}`", n.name))
+                        .help("it takes a path, and a `format:` when the path's extension doesn't say");
+                    ok = false;
+                }
+            }
+        }
+        let Some(path_expr) = path else {
+            self.error(call, "`read` needs the path of the data, like `read(\"rows.csv\")`");
+            return None;
+        };
+        let Some(path) = literal(path_expr).filter(|p| !p.is_empty()) else {
+            self.error(path_expr.span, "the path must be written out, as a string")
+                .help("the data is read before the program runs, so the path can't be computed");
+            return None;
+        };
+        let format = match format {
+            Some(f) => match literal(f).as_deref().and_then(DataFormat::from_name) {
+                Some(format) => format,
+                None => {
+                    self.error(f.span, "the format is \"csv\", \"json\" or \"lines\"");
+                    return None;
+                }
+            },
+            None => match DataFormat::from_path(&path) {
+                Some(format) => format,
+                None => {
+                    self.error(
+                        path_expr.span,
+                        format!("can't tell the format of `{path}` from its name"),
+                    )
+                    .help(format!(
+                        "say it, like `read(\"{path}\", format: \"csv\")`: the formats are csv, json and lines"
+                    ));
+                    return None;
+                }
+            },
+        };
+        if path == "-" {
+            if self.stdin.is_some() {
+                self.error(call, "standard input can only be read once")
+                    .help("read it into one variable, and use that variable");
+                ok = false;
+            }
+            self.stdin = Some(call);
+        }
+        let Some(ty) = ty else {
+            let example = match format {
+                DataFormat::Csv => "list[Row]",
+                DataFormat::Json => "Settings",
+                DataFormat::Lines => "list[int]",
+            };
+            self.error(call, format!("say what the data is: `let {name}: {example} = read(…)`"))
+                .help("the type decides how the data is read; `probl schema FILE` suggests one");
+            return None;
+        };
+        let spec = self.type_spec(ty)?;
+        for problem in crate::data::check(&spec, format, &self.records, &self.enums) {
+            let d = self.error(problem.at.unwrap_or(type_span(ty)), problem.message);
+            if let Some(help) = problem.help {
+                d.help(help);
+            }
+            ok = false;
+        }
+        ok.then(|| Input {
+            name: name.to_string(),
+            path,
+            format,
+            ty: spec,
+            span: call,
+        })
     }
 
     /// Bind an irrefutable pattern (a name, `_`, or a list of those).
@@ -1840,7 +2092,11 @@ impl<'a> Lowerer<'a> {
             self.error(name.span, format!("unknown record type `{}`", name.name));
             return ExprKind::Lit(Lit::Unit);
         };
-        let declared = self.records[ty as usize].fields.clone();
+        let declared: Vec<String> = self.records[ty as usize]
+            .fields
+            .iter()
+            .map(|f| f.name.clone())
+            .collect();
         for (field, _) in &lowered {
             if !declared.contains(field) {
                 let at = fields.iter().find(|f| f.name.name == *field).unwrap().name.span;
@@ -2037,6 +2293,14 @@ impl<'a> Lowerer<'a> {
                 span,
                 out,
             );
+        }
+        if name.name == "read" {
+            self.error(
+                span,
+                "`read` must be the whole value of a `let` with a type, at the top level",
+            )
+            .help("like `let rows: list[Row] = read(\"rows.csv\")`: the data is read before the program runs");
+            return lit(Lit::Unit, span);
         }
         if let Some(b) = Builtin::from_name(&name.name) {
             if args.iter().any(|a| a.name.is_some()) {
@@ -2290,6 +2554,7 @@ impl<'a> Lowerer<'a> {
             reports: self.reports,
             records: self.records,
             enums: self.enums,
+            inputs: self.inputs,
             settings: self.settings,
             stmt_count: self.next_stmt,
         };
@@ -2376,7 +2641,7 @@ fn visit_place(place: &mut Place, f: &mut impl FnMut(&mut CallSite)) {
 
 fn visit_expr(expr: &mut Expr, f: &mut impl FnMut(&mut CallSite)) {
     match &mut expr.kind {
-        ExprKind::Lit(_) | ExprKind::Slot(_) => {}
+        ExprKind::Lit(_) | ExprKind::Slot(_) | ExprKind::Input(_) => {}
         ExprKind::Unary(_, e) | ExprKind::Field(e, _) => visit_expr(e, f),
         ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => {
             visit_expr(a, f);
@@ -2408,6 +2673,16 @@ fn visit_expr(expr: &mut Expr, f: &mut impl FnMut(&mut CallSite)) {
 }
 
 // ── Small constructors ───────────────────────────────────────────────────
+
+fn type_span(t: &ast::TypeExpr) -> Span {
+    match t {
+        ast::TypeExpr::Named { name, args } => match args.last() {
+            Some(last) => name.span.to(type_span(last)),
+            None => name.span,
+        },
+        ast::TypeExpr::Record { span, .. } => *span,
+    }
+}
 
 fn lit(l: Lit, span: Span) -> Expr {
     Expr {

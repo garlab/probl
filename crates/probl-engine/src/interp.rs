@@ -113,6 +113,8 @@ pub struct Engine<'p> {
     record_names: Vec<Arc<str>>,
     enum_values: Vec<Vec<Value>>,
     print: &'p mut (dyn FnMut(&str) + Send),
+    /// The values of the program's inputs (`read`).
+    inputs: &'p [Value],
     /// Bytes printed, counting the batches printed before this one.
     printed: usize,
     /// When sampling a batch: what it printed, kept to be printed in batch
@@ -131,6 +133,7 @@ impl<'p> Engine<'p> {
         prog: &'p Program,
         live: &'p Liveness,
         config: Config,
+        inputs: &'p [Value],
         print: &'p mut (dyn FnMut(&str) + Send),
     ) -> Engine<'p> {
         let sampler = config.sample_seed.map(Rng::new);
@@ -162,6 +165,7 @@ impl<'p> Engine<'p> {
                 })
                 .collect(),
             print,
+            inputs,
             printed: 0,
             lines: None,
             stats: Stats::default(),
@@ -824,7 +828,13 @@ impl<'p> Engine<'p> {
             }),
             (TypeSpec::Dist(t), Value::Continuous(_)) => matches!(**t, TypeSpec::Float | TypeSpec::Prob),
             (TypeSpec::Record(r), Value::Record(rec)) => {
-                rec.ty.as_deref() == Some(self.prog.records[*r as usize].name.as_str())
+                let declared = &self.prog.records[*r as usize];
+                rec.ty.as_deref() == Some(declared.name.as_str())
+                    && rec.fields.len() == declared.fields.len()
+                    && declared
+                        .fields
+                        .iter()
+                        .all(|f| rec.get(&f.name).is_some_and(|x| self.conforms(x, &f.ty)))
             }
             (TypeSpec::Enum(e), Value::Enum(x)) => x.ty == *e,
             (TypeSpec::AnonRecord(fields), Value::Record(rec)) => {
@@ -1141,6 +1151,7 @@ impl<'p> Engine<'p> {
                 }
                 Ok(Value::str(&text))
             }
+            ExprKind::Input(i) => Ok(self.inputs[*i as usize].clone()),
         }
     }
 

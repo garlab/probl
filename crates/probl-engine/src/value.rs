@@ -292,6 +292,47 @@ impl Value {
         Value::Record(Arc::new(Hashed::new(record)))
     }
 
+    /// A copy that shares no collection or string with the original. Values
+    /// are shared through reference counts: threads that all read the same
+    /// data would compete for those, so each sampling thread takes a copy.
+    pub fn unshared(&self) -> Value {
+        self.unshared_with(&mut rustc_hash::FxHashMap::default())
+    }
+
+    /// `names` keeps the copy's names (record types, fields, variants) shared
+    /// within the copy.
+    fn unshared_with(&self, names: &mut rustc_hash::FxHashMap<String, Arc<str>>) -> Value {
+        fn name(names: &mut rustc_hash::FxHashMap<String, Arc<str>>, n: &str) -> Arc<str> {
+            names.entry(n.to_string()).or_insert_with(|| Arc::from(n)).clone()
+        }
+        match self {
+            Value::Str(s) => Value::str(s),
+            Value::Enum(e) => Value::Enum(Arc::new(EnumValue {
+                name: name(names, &e.name),
+                ..(**e).clone()
+            })),
+            Value::Record(r) => {
+                let ty = r.ty.as_deref().map(|t| name(names, t));
+                let mut fields = Vec::with_capacity(r.fields.len());
+                for (n, v) in &r.fields {
+                    fields.push((name(names, n), v.unshared_with(names)));
+                }
+                Value::record(Record { ty, fields })
+            }
+            Value::List(items) => Value::list(items.iter().map(|x| x.unshared_with(names)).collect()),
+            Value::Map(m) => Value::map(
+                m.iter()
+                    .map(|(k, v)| (k.unshared_with(names), v.unshared_with(names)))
+                    .collect(),
+            ),
+            Value::Bag(b) => Value::multiset(Multiset {
+                entries: b.entries.iter().map(|(v, n)| (v.unshared_with(names), *n)).collect(),
+                sum: b.sum,
+            }),
+            other => other.clone(),
+        }
+    }
+
     /// The kind of value, as named in error messages.
     pub fn kind(&self) -> String {
         match self {
@@ -652,6 +693,29 @@ mod tests {
         // Moving a count from one value to another changes the hash.
         assert_ne!(bag(&[(1, 2), (2, 3)]).sum, bag(&[(1, 3), (2, 2)]).sum);
         assert_ne!(bag(&[(1, 1)]).sum, bag(&[(2, 1)]).sum);
+    }
+
+    #[test]
+    fn an_unshared_copy_is_equal_and_separate() {
+        let row = Value::record(Record {
+            ty: Some(Arc::from("Day")),
+            fields: vec![(Arc::from("n"), Value::Int(1)), (Arc::from("s"), Value::str("x"))],
+        });
+        let original = Value::list(vec![row.clone(), row]);
+        let copy = original.unshared();
+        assert_eq!(copy, original);
+        let (Value::List(a), Value::List(b)) = (&original, &copy) else {
+            panic!()
+        };
+        assert!(!Arc::ptr_eq(a, b));
+        let (Value::Record(x), Value::Record(y)) = (&a[0], &b[0]) else {
+            panic!()
+        };
+        assert!(!Arc::ptr_eq(x, y));
+        // Names are shared within the copy, not with the original.
+        let Value::Record(y2) = &b[1] else { panic!() };
+        assert!(Arc::ptr_eq(&y.fields[0].0, &y2.fields[0].0));
+        assert!(!Arc::ptr_eq(&x.fields[0].0, &y.fields[0].0));
     }
 
     #[test]

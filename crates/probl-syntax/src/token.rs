@@ -104,6 +104,21 @@ pub struct Token {
     pub span: Span,
 }
 
+/// Whether `text` can be a name in a program: ASCII letters, digits and
+/// `_`, not starting with a digit, and neither a keyword nor a die like `d6`.
+pub fn is_name(text: &str) -> bool {
+    let is_die = text
+        .strip_prefix('d')
+        .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()));
+    text.bytes()
+        .next()
+        .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+        && text.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && text != "_"
+        && !is_die
+        && keyword(text).is_none()
+}
+
 pub fn keyword(word: &str) -> Option<Tok> {
     Some(match word {
         "and" => Tok::And,

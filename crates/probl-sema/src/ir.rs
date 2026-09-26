@@ -24,9 +24,35 @@ pub struct Program {
     pub reports: Vec<ReportSite>,
     pub records: Vec<RecordType>,
     pub enums: Vec<EnumType>,
+    /// The data the program reads: whoever runs it loads these first.
+    pub inputs: Vec<Input>,
     pub settings: Settings,
     /// Number of statements; statement ids are `0..stmt_count`.
     pub stmt_count: u32,
+}
+
+/// Data a program reads, `let name: T = read("path")` (docs/data-input.md).
+/// The program's list of these is its manifest: whoever runs the program
+/// loads each input before running it, and the engine only sees the values.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Input {
+    /// The variable it's bound to, which identifies it.
+    pub name: String,
+    /// As written: relative to the program's file, or `-` for standard
+    /// input. What it means is up to whoever loads it.
+    pub path: String,
+    pub format: DataFormat,
+    /// What the data is read as.
+    pub ty: TypeSpec,
+    /// The `read(…)` call.
+    pub span: Span,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DataFormat {
+    Csv,
+    Json,
+    Lines,
 }
 
 impl Program {
@@ -105,7 +131,14 @@ pub enum ReportKind {
 pub struct RecordType {
     pub name: String,
     /// In declaration order.
-    pub fields: Vec<String>,
+    pub fields: Vec<RecordField>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub struct RecordField {
+    pub name: String,
+    pub ty: TypeSpec,
     pub span: Span,
 }
 
@@ -274,6 +307,12 @@ pub enum TypeSpec {
 impl TypeSpec {
     /// How the type is written in source.
     pub fn describe(&self, program: &Program) -> String {
+        self.describe_in(&program.records, &program.enums)
+    }
+
+    /// How the type is written in source, given the program's types.
+    pub fn describe_in(&self, records: &[RecordType], enums: &[EnumType]) -> String {
+        let program = (records, enums);
         match self {
             TypeSpec::Int => "int".into(),
             TypeSpec::Float => "float".into(),
@@ -283,16 +322,20 @@ impl TypeSpec {
             TypeSpec::Date => "date".into(),
             TypeSpec::Unit => "()".into(),
             TypeSpec::Function => "fn".into(),
-            TypeSpec::List(t) => format!("list[{}]", t.describe(program)),
-            TypeSpec::Map(k, v) => format!("map[{}, {}]", k.describe(program), v.describe(program)),
-            TypeSpec::Bag(t) => format!("bag[{}]", t.describe(program)),
-            TypeSpec::Dist(t) => format!("dist[{}]", t.describe(program)),
-            TypeSpec::Record(r) => program.records[*r as usize].name.clone(),
-            TypeSpec::Enum(e) => program.enums[*e as usize].name.clone(),
+            TypeSpec::List(t) => format!("list[{}]", t.describe_in(program.0, program.1)),
+            TypeSpec::Map(k, v) => format!(
+                "map[{}, {}]",
+                k.describe_in(program.0, program.1),
+                v.describe_in(program.0, program.1)
+            ),
+            TypeSpec::Bag(t) => format!("bag[{}]", t.describe_in(program.0, program.1)),
+            TypeSpec::Dist(t) => format!("dist[{}]", t.describe_in(program.0, program.1)),
+            TypeSpec::Record(r) => program.0[*r as usize].name.clone(),
+            TypeSpec::Enum(e) => program.1[*e as usize].name.clone(),
             TypeSpec::AnonRecord(fields) => {
                 let fields: Vec<String> = fields
                     .iter()
-                    .map(|(n, t)| format!("{n}: {}", t.describe(program)))
+                    .map(|(n, t)| format!("{n}: {}", t.describe_in(program.0, program.1)))
                     .collect();
                 format!("{{ {} }}", fields.join(", "))
             }
@@ -367,6 +410,8 @@ pub enum ExprKind {
         capture_args: Vec<SlotId>,
     },
     Interp(Vec<InterpPart>),
+    /// The value of the program's input with this number (`read`).
+    Input(u32),
 }
 
 #[derive(Clone, Debug)]

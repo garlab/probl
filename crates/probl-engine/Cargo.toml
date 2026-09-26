@@ -10,3 +10,7 @@ probl-syntax.workspace = true
 probl-sema.workspace = true
 rustc-hash.workspace = true
 libm.workspace = true
+csv.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true

@@ -17,6 +17,10 @@ clap = { version = "4", features = ["derive"] }
 insta = "1"
 libtest-mimic = "0.8"
 libm = "0.2"
+csv = "1"
+serde = "1"
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+sha2 = "0.10"
 num-bigint = "0.4"
 num-rational = { version = "0.4", default-features = false, features = ["num-bigint", "std"] }
 num-traits = "0.2"

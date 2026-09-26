@@ -14,6 +14,8 @@
 //! worlds. Runs stop after a time limit, so models that explode say so
 //! instead of hanging.
 
+use probl_cli::LocalFiles;
+use probl_engine::data::{self, InputLimits, Inputs, Snapshots};
 use probl_engine::{Limits, Options, Outcome};
 use probl_sema::ir::Program;
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -84,15 +86,17 @@ struct Run {
 }
 
 /// How the models are run.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Settings {
     /// One timed run each, instead of five.
     quick: bool,
     /// The most threads that sample at once (all the cores by default).
     threads: Option<usize>,
+    /// The model's data, read once before the runs.
+    inputs: Option<Arc<Inputs>>,
 }
 
-fn run_once(program: &Program, settings: Settings, merge: bool, limit: Duration) -> Run {
+fn run_once(program: &Program, settings: &Settings, merge: bool, limit: Duration) -> Run {
     let cancel = Arc::new(AtomicBool::new(false));
     let mut limits = Limits::default();
     if let Some(n) = settings.threads {
@@ -102,6 +106,7 @@ fn run_once(program: &Program, settings: Settings, merge: bool, limit: Duration)
         merge,
         cancel: Some(cancel.clone()),
         limits,
+        inputs: settings.inputs.clone(),
         ..Options::default()
     };
     // A watchdog cancels the run at the time limit.
@@ -137,7 +142,7 @@ struct Measured {
     unmerged: Option<Result<(Duration, u64), String>>,
 }
 
-fn measure(name: &str, program: &Program, settings: Settings) -> Measured {
+fn measure(name: &str, program: &Program, settings: &Settings) -> Measured {
     let enumerated = !matches!(program.settings.mode, probl_sema::ir::Mode::Sample { .. });
     // The heap is counted in a run of its own, which isn't timed: counting
     // slows allocation down, much more so when threads allocate at once.
@@ -301,12 +306,13 @@ fn row(m: &Measured) -> String {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let settings = Settings {
+    let mut settings = Settings {
         quick: args.iter().any(|a| a == "--quick"),
         threads: args.iter().find_map(|a| a.strip_prefix("--threads=")).map(|n| {
             n.parse()
                 .unwrap_or_else(|_| panic!("--threads= needs a number, not {n:?}"))
         }),
+        inputs: None,
     };
     let filter: Vec<String> = args.into_iter().filter(|a| !a.starts_with("--")).collect();
     println!(
@@ -320,7 +326,16 @@ fn main() {
             println!("| {name} | | | | | | | | | **doesn't compile** |");
             continue;
         };
-        let m = measure(&name, &program, settings);
+        let mut files = LocalFiles::next_to(&path, None);
+        let limits = InputLimits::default();
+        settings.inputs = match data::load(&program, &mut files, &mut Snapshots::default(), &limits, None) {
+            Ok(inputs) => Some(Arc::new(inputs)),
+            Err(e) => {
+                println!("| {name} | | | | | | | | | **can't read its data: {}** |", e.message);
+                continue;
+            }
+        };
+        let m = measure(&name, &program, &settings);
         println!("{}", row(&m));
     }
 }

@@ -2,6 +2,7 @@
 //! liveness analysis.
 
 pub mod builtins;
+pub mod data;
 pub mod effects;
 pub mod ir;
 pub mod liveness;

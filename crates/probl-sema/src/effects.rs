@@ -162,7 +162,7 @@ impl Direct {
 
     fn expr(&mut self, e: &Expr) {
         match &e.kind {
-            ExprKind::Lit(_) | ExprKind::Slot(_) | ExprKind::Closure { .. } => {}
+            ExprKind::Lit(_) | ExprKind::Slot(_) | ExprKind::Closure { .. } | ExprKind::Input(_) => {}
             ExprKind::Unary(_, x) | ExprKind::Field(x, _) => self.expr(x),
             ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => {
                 self.expr(a);

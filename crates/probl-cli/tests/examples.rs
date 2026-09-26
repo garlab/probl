@@ -8,9 +8,12 @@
 //! feature fails, and so does a listed example that starts working.
 
 use libtest_mimic::{Arguments, Failed, Trial};
+use probl_cli::LocalFiles;
+use probl_engine::data::{self, InputLimits, Snapshots};
 use probl_engine::{ErrorKind, Options};
 use probl_syntax::{SourceFile, render_all};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Examples waiting for features that aren't implemented yet.
 const PENDING: &[&str] = &[];
@@ -63,7 +66,7 @@ fn trial(path: PathBuf) -> Trial {
     let name = path.file_stem().unwrap().to_string_lossy().to_string();
     let src = std::fs::read_to_string(&path).unwrap();
     let file = SourceFile::new(path.display().to_string(), src.clone());
-    let result = run(&file);
+    let result = run(&file, &path);
     let listed = PENDING.contains(&name.as_str());
     let pending = listed && matches!(result, Run::Pending(_));
     Trial::test(name, move || {
@@ -83,13 +86,29 @@ fn trial(path: PathBuf) -> Trial {
     .with_ignored_flag(pending)
 }
 
-fn run(file: &SourceFile) -> Run {
+fn run(file: &SourceFile, path: &Path) -> Run {
     let (program, diags) = probl_sema::compile(&file.text);
     let Some(program) = program else {
         return Run::Error(render_all(&diags, file, false));
     };
+    // Data next to the example, as `probl run` reads it.
+    let mut files = LocalFiles::next_to(path, None);
+    let inputs = data::load(
+        &program,
+        &mut files,
+        &mut Snapshots::default(),
+        &InputLimits::default(),
+        None,
+    );
+    let options = match inputs {
+        Ok(inputs) => Options {
+            inputs: Some(Arc::new(inputs)),
+            ..Options::default()
+        },
+        Err(e) => return Run::Error(e.to_diagnostic().render(file, false)),
+    };
     let mut print = |_: &str| {};
-    match probl_engine::run(&program, &Options::default(), &mut print) {
+    match probl_engine::run(&program, &options, &mut print) {
         Ok(outcome) => Run::Output(outcome.output),
         Err(e) if e.kind == ErrorKind::Unsupported => Run::Pending(e.message),
         Err(e) => Run::Error(e.to_diagnostic().render(file, false)),

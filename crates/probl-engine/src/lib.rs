@@ -3,6 +3,7 @@
 
 pub mod builtins;
 pub mod continuous;
+pub mod data;
 pub mod dates;
 pub mod dist;
 pub mod error;
@@ -29,6 +30,7 @@ use std::collections::BTreeMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
+use value::Value;
 
 /// Upper bounds set by whoever runs a program. A program's `@max_worlds` and
 /// `@max_iterations` can lower them, never raise them.
@@ -92,6 +94,9 @@ pub struct Options {
     pub cancel: Option<Arc<AtomicBool>>,
     /// Overrides the program's `@mode`.
     pub mode: Option<Mode>,
+    /// The program's data, loaded with [`data::load`]. A program that reads
+    /// data can't run without it.
+    pub inputs: Option<Arc<data::Inputs>>,
 }
 
 impl Default for Options {
@@ -104,6 +109,7 @@ impl Default for Options {
             limits: Limits::default(),
             cancel: None,
             mode: None,
+            inputs: None,
         }
     }
 }
@@ -121,6 +127,8 @@ pub struct Outcome {
     pub reports: Vec<Sink>,
     /// When sampling: how.
     pub sample: Option<Sampled>,
+    /// The data the program read, if any.
+    pub data: Vec<data::SourceInfo>,
 }
 
 /// How a program was sampled (docs/semantics.md, section 14).
@@ -227,11 +235,12 @@ fn run_here(
         sample_seed: sample.map(|(_, seed)| seed),
     };
     let epsilon = config.epsilon;
+    let inputs = inputs(program, options)?;
     let live = probl_sema::analyze(program);
     if let Some((runs, seed)) = sample {
         return sampled(program, &live, config, options, print, runs, seed);
     }
-    let mut engine = interp::Engine::new(program, &live, config, print);
+    let mut engine = interp::Engine::new(program, &live, config, inputs, print);
     let finished = engine.run_main()?;
     let unresolved = engine.unresolved;
 
@@ -296,7 +305,27 @@ fn run_here(
         evidence,
         reports: std::mem::take(&mut engine.sinks),
         sample: None,
+        data: sources(options),
     })
+}
+
+/// The values of the program's inputs: loaded, and loaded for it.
+fn inputs<'a>(program: &Program, options: &'a Options) -> Result<&'a [Value], RuntimeError> {
+    let Some(first) = program.inputs.first() else {
+        return Ok(&[]);
+    };
+    match &options.inputs {
+        Some(inputs) if inputs.fit(program) => Ok(inputs.values()),
+        Some(_) => Err(internal("the data was loaded for a different program".to_string())),
+        None => Err(
+            RuntimeError::new(first.span, "the program reads data, which wasn't loaded")
+                .with_help("load it with `probl_engine::data::load` before running the program"),
+        ),
+    }
+}
+
+fn sources(options: &Options) -> Vec<data::SourceInfo> {
+    options.inputs.as_ref().map_or_else(Vec::new, |i| i.sources().to_vec())
 }
 
 /// What the batches produced so far, added up in batch order.
@@ -359,6 +388,7 @@ fn run_batches(
 ) -> Result<Combined, RuntimeError> {
     let batches = runs.div_ceil(interp::BATCH);
     let threads = (options.limits.max_threads.max(1) as u64).min(batches);
+    let inputs = inputs(program, options)?;
     // How far past the batch being combined the threads may go: it bounds
     // the finished batches waiting in memory.
     let ahead = 2 * threads;
@@ -390,7 +420,14 @@ fn run_batches(
             let (combined_upto, caught_up) = (&combined_upto, &caught_up);
             let worker = move || {
                 let mut ignore = |_: &str| {};
-                let mut engine = interp::Engine::new(program, live, config.clone(), &mut ignore);
+                // The data, copied: threads sharing it would all touch its
+                // reference counts, and slow each other down.
+                let copied: Vec<Value> = if threads > 1 {
+                    inputs.iter().map(Value::unshared).collect()
+                } else {
+                    inputs.to_vec()
+                };
+                let mut engine = interp::Engine::new(program, live, config.clone(), &copied, &mut ignore);
                 loop {
                     let index = next.fetch_add(1, Ordering::Relaxed);
                     if index >= batches {
@@ -528,5 +565,6 @@ fn sampled(
             weight: totals.weight,
             squares: totals.squares,
         }),
+        data: sources(options),
     })
 }

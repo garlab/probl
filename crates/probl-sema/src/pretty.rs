@@ -263,6 +263,10 @@ impl Printer<'_> {
                     .collect();
                 format!("str({})", parts.join(" "))
             }
+            ExprKind::Input(i) => {
+                let input = &self.p.inputs[*i as usize];
+                format!("read#{i}({:?}, {})", input.path, input.format.name())
+            }
         }
     }
 }

@@ -34,12 +34,15 @@ cargo run --release -p probl-cli -- run examples/02_craps.probl
 cargo run --release -p probl-cli -- run examples/02_craps.probl --fractions   # ≈ 244/495
 cargo run --release -p probl-cli -- run examples/07_launch_forecast.probl      # sampled
 cargo run --release -p probl-cli -- run examples/02_craps.probl --runs 100000  # sampled too
+cargo run --release -p probl-cli -- run examples/08_signup_forecast.probl      # reads examples/data/pilot.csv
+cargo run --release -p probl-cli -- schema examples/data/pilot.csv            # a type to read it with
 cargo run --release -p probl-cli -- repl
 cargo test --all
 ```
 
 - [Language overview](docs/language-overview.md): the model, the syntax, and a tour of the language
 - [Reference semantics](docs/semantics.md): the precise rules the engine follows
+- [Reading data](docs/data-input.md): CSV, JSON and lines, read with declared types, and its [design review](docs/data-input-review.md)
 - [Implementation plan](docs/implementation-plan.md): status, architecture, phases, testing and risks
 - [Project audit](docs/project-audit.md): the review that led to the reference semantics
 - [Benchmarks](docs/benchmarks.md): realistic models, what they cost, and what to build next (`cargo run --release -p probl-bench`)

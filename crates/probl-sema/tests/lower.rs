@@ -21,7 +21,11 @@ fn errors(src: &str) -> String {
 #[test]
 fn all_examples_lower() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
-    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
+    let mut paths: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "probl"))
+        .collect();
     paths.sort();
     for path in paths {
         let src = std::fs::read_to_string(&path).unwrap();
@@ -166,4 +170,88 @@ fn slots_die_where_they_are_last_used() {
             vec!["b"],      // report b
         ]
     );
+}
+
+#[test]
+fn read_is_checked_when_compiling() {
+    let fails = |src: &str, expected: &str| {
+        let e = errors(src);
+        assert!(e.contains(expected), "{expected:?} isn't in:\n{e}");
+    };
+    // Where, and how.
+    fails(
+        "fn f() { let x: list[int] = read(\"a.txt\")\nx }",
+        "must be at the top level",
+    );
+    fails(
+        "if true { let x: list[int] = read(\"a.txt\") }",
+        "must be at the top level",
+    );
+    fails(
+        "report len(read(\"a.txt\"))",
+        "must be the whole value of a `let` with a type",
+    );
+    fails(
+        "let x = read(\"a.csv\")",
+        "say what the data is: `let x: list[Row] = read(…)`",
+    );
+    fails("let x: list[int] ~ read(\"a.txt\")", "bound with `=`, not `~`");
+    fails(
+        "let m = \"a\"\nlet x: list[int] = read(\"{m}.txt\")",
+        "the path must be written out",
+    );
+    fails(
+        "let x: list[int] = read(\"a.xlsx\")",
+        "can't tell the format of `a.xlsx`",
+    );
+    fails("let x: list[int] = read(\"a.dat\", format: \"xml\")", "the format is");
+    fails(
+        "let x: list[int] = read(\"a.txt\", sep: \";\")",
+        "`read` has no argument `sep`",
+    );
+    fails(
+        "let x: list[int] = read(\"-\")\nlet y: list[int] = read(\"-\")",
+        "standard input can only be read once",
+    );
+    // What each format reads as.
+    fails(
+        "let x: list[int] = read(\"a.csv\")",
+        "a CSV file reads as a list of records",
+    );
+    fails(
+        "type R = { tags: list[str] }\nlet x: list[R] = read(\"a.csv\")",
+        "a CSV cell holds a single value, but `tags` is a `list[str]`",
+    );
+    fails(
+        "let x: list[list[int]] = read(\"a.txt\")",
+        "lines read as a list of single values",
+    );
+    fails(
+        "let m: map[{ a: int }, int] = read(\"a.json\")",
+        "a map read from JSON has text keys",
+    );
+    // Types data can't have, even deep in named types: the error is at the field.
+    let e =
+        errors("type Inner = { d: dist[int] }\ntype Outer = { inner: list[Inner] }\nlet x: Outer = read(\"a.json\")");
+    assert!(
+        e.contains("data can't be a distribution") && e.contains("test.probl:1:"),
+        "{e}"
+    );
+    // Two fields that would match the same column.
+    let e = errors("type Row = { ab: int, a_b: int }\nlet rows: list[Row] = read(\"rows.csv\")");
+    assert!(
+        e.contains("the fields `ab` and `a_b` would match the same names in the data"),
+        "{e}"
+    );
+}
+
+#[test]
+fn record_types_can_refer_to_each_other() {
+    // In any order, and to themselves through a collection.
+    ir("type A = { b: B }\ntype B = { n: int, more: list[A] }\nlet x: A = read(\"a.json\")\nreport x.b.n");
+    ir("fn read(x) { x }\nreport read(1)");
+    let e = errors("type Tree = { left: Tree, right: list[Tree] }");
+    assert!(e.contains("every `Tree` would contain another `Tree`, forever"), "{e}");
+    let e = errors("type A = { b: B }\ntype B = { a: A }");
+    assert!(e.contains("every `A` would contain another `A`"), "{e}");
 }

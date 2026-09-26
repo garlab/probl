@@ -169,7 +169,17 @@ let tougher = hero with { hp: 20 }       # a copy with some fields changed
 
 The built-in types are `bool`, `int`, `float`, `prob`, `str`, `date`, `list[T]`, `map[K, V]`, `bag[T]` and `dist[T]`, plus records and enums. Note `dice: dist[int]`: distributions are ordinary values you can store, pass and return.
 
-Probl is statically typed, with inference: every expression's type is known before the program runs, but you rarely write one. Annotations are optional, and checked when they're there: `let p: prob = "high"` is an error. Data read from a file is the exception, since nothing in the program says what the file contains. For data, the type is required ([proposal](data-input.md)). Until the type checker arrives in v0.3, annotations are checked as the program runs.
+Probl is statically typed, with inference: every expression's type is known before the program runs, but you rarely write one. Annotations are optional, and checked when they're there: `let p: prob = "high"` is an error. Data read from a file is the exception, since nothing in the program says what the file contains, so for data the type is required. Until the type checker arrives in v0.3, annotations are checked as the program runs.
+
+### Data
+
+```probl
+type Day = { day: date, visitors: int, signups: int }
+let pilot: list[Day] = read("data/pilot.csv")      # next to the program
+let counts: list[int] = read("-")                  # standard input, one value per line
+```
+
+`read` loads CSV (as a list of records), JSON (as any type data can have) and plain lines. The declared type decides how the data is read. Fields match columns and keys ignoring case and punctuation, and unused columns are ignored. Data that doesn't fit the type is an error before the program runs, with the line it's on. The data is read once, and is the same in every world and every run. `probl schema FILE` suggests a type. The details are in [reading data](data-input.md).
 
 Three of these types describe uncertainty, and keeping them apart is what lets `and` and `or` mean what they say:
 
@@ -340,6 +350,8 @@ probl run model.probl --mode sample --runs 100000 --seed 3   # sample, whatever 
 probl run model.probl --threads 2                            # sample on at most 2 cores
 probl run model.probl --timeout 10                           # stop after 10 seconds
 probl check model.probl                                      # parse and check without running
+probl check --data model.probl                               # and check its data
+probl schema data.csv                                        # suggest a type to read a file with
 probl repl
 ```
 

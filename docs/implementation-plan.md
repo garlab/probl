@@ -47,7 +47,7 @@ The implementation differs from the original plan in a few places, each delibera
 - Reproducible runs: the same program, seed and version give the same output on any machine and with any number of threads.
 - Safe to run untrusted models inside a host's limits.
 
-**Out of scope for now:** gradient-based inference (HMC, variational inference), GPUs, general I/O (files, network), concurrency, a foreign-function interface and a package manager.
+**Out of scope for now:** gradient-based inference (HMC, variational inference), GPUs, general I/O beyond reading data files, concurrency, a foreign-function interface and a package manager.
 
 ## 2. Technology
 
@@ -226,6 +226,7 @@ The effort ranges assume one developer working full time, and they are 90% confi
 - Done: continuous families with pdf, cdf, quantile and sampling; `a to b`, `normal_range`, `pert`, `triangular`; `observe … from` with densities; `--mode`, `--runs` and `--seed`.
 - **Exit reached:** examples 07 to 09 match their reference outputs within tolerance, and every sampler passes its statistical tests.
 - Done: parallel batches, each with a random stream of its own. The output is the same with any number of threads, and sampled models run 6–8× faster on 12 cores (docs/benchmarks.md).
+- Done: reading data from files and stdin: CSV, JSON and lines, with declared types that decide how the data is read, `probl schema`, host limits and resolvers ([reading data](data-input.md)). Record types keep their fields' types.
 - Left before the release: an estimate of the evidence (log-evidence with densities).
 - Only if benchmarks call for them, each with its contract first: arithmetic on continuous distributions, merged sampling, particles, beam, nested estimates, and an `auto` mode that says what it chose.
 
@@ -273,6 +274,14 @@ The forecast made when the plan was first written, by running [`examples/09_road
 - **Snapshots.** The AST and the IR of every example.
 - **Sampling against enumeration.** For generated programs, every estimate sampling prints (probabilities, means, reach) must be within six standard errors of the exact value from enumeration, and across all of them the standard errors must be calibrated: few estimates more than four standard errors off, and a mean squared z-score near 1. In the mean, each z counts as at most 4. An estimate whose standard error comes from the few runs that matter (a rare event, or a few heavy weights) can be dozens of standard errors off, and one of them would otherwise dwarf the rest; the count beyond 4 bounds them instead. On 2,272 programs and 9,320 estimates, the mean was 0.94, with 2 beyond 4. `PROBL_SAMPLING_CASES` runs more.
 - **Threads.** Sampled programs give the same output, the same printed lines and the same first error on 1, 2, 3 and 8 threads, and the threads share the work budget.
+- **Data.** The readers are tested on:
+  - every type and error;
+  - collisions, limits, cancellation, refusing hosts and failing streams;
+  - snapshots, and the command line;
+  - round trips of random tables written as CSV, JSON and lines;
+  - mutated files, which must never make them panic (`PROBL_DATA_CASES` runs more).
+
+  Example 08 reads its data from a CSV file ([reading data](data-input.md#tests)).
 - **Samplers.** Kolmogorov–Smirnov tests for every continuous family, chi-square tests for the direct count samplers, and closed-form checks of CDFs, quantiles and densities. `probl-engine/tests/sampling.rs` covers the rules of semantics §13–14.
 - **Sampled examples.** Examples 07–09 are compared with outputs from an independent reference simulation, token by token: estimates within five standard errors, other numbers within 4%, dates within three days. The comparator has its own test.
 - **Benchmarks.** `cargo run --release -p probl-bench` runs the models in `benches/` and `examples/` and prints their time, worlds, world-steps, calls, peak heap, and cost without merging; `cargo test` checks that they compile. They aren't run in the test suite (they take about 3½ minutes), and nothing tracks them over time yet.
@@ -321,9 +330,8 @@ Still open:
 
 ## 9. Next steps
 
-The order the benchmarks recommend (docs/benchmarks.md). The first two are done: parallel sampling batches (6–8× for sampled models on 12 cores) and cheaper merging (1.4–2.9× for enumeration). v0.2 still needs an estimate of the evidence.
+The order the benchmarks recommend (docs/benchmarks.md). The first two are done: parallel sampling batches (6–8× for sampled models on 12 cores) and cheaper merging (1.4–2.9× for enumeration). So is reading data ([reading data](data-input.md)). v0.2 still needs an estimate of the evidence.
 
 1. **Moving draws to their first use**, a compiler pass: 1,048,576 worlds become 256 in the reliability benchmark.
-2. **Better inference for evidence-heavy forecasts**: specify, then build, conjugate updates and a general method (Metropolis–Hastings over a run's choices, or particles with rejuvenation), with the audit's D4 checklist. Likelihood weighting's effective sample size falls from 852 to 211 as an A/B test's data grows from 30 to 120 days.
-3. **Reading data from files and stdin**: CSV, JSON and lines, with declared types, as proposed in [docs/data-input.md](data-input.md).
-4. **Markov-chain solving**, for exact cyclic loops and recursion to the same call.
+2. **Better inference for evidence-heavy forecasts**: specify, then build, conjugate updates and a general method (Metropolis–Hastings over a run's choices, or particles with rejuvenation), with the audit's D4 checklist. Likelihood weighting's effective sample size falls from 852 to 211 as an A/B test's data grows from 30 to 120 days. Now that models can read real data, this matters more.
+3. **Markov-chain solving**, for exact cyclic loops and recursion to the same call.
