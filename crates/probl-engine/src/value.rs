@@ -8,11 +8,14 @@
 
 use crate::continuous::Family;
 use crate::dist::Dist;
+use rustc_hash::FxHasher;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering as Atomic};
 
 #[derive(Clone)]
 pub enum Value {
@@ -26,13 +29,13 @@ pub enum Value {
     /// A probability: a number from 0 to 1. It's a parameter, not an event.
     Prob(f64),
     Str(Arc<str>),
-    List(Arc<Vec<Value>>),
-    Map(Arc<BTreeMap<Value, Value>>),
+    List(Arc<Hashed<Vec<Value>>>),
+    Map(Arc<Hashed<BTreeMap<Value, Value>>>),
     /// A multiset: value → count.
-    Bag(Arc<BTreeMap<Value, u64>>),
+    Bag(Arc<Hashed<Multiset>>),
     /// Integers from `.0` to `.1`, both included.
     Range(i64, i64),
-    Record(Arc<Record>),
+    Record(Arc<Hashed<Record>>),
     Enum(Arc<EnumValue>),
     Dist(Arc<Dist>),
     /// A continuous distribution (docs/semantics.md, section 13).
@@ -40,6 +43,198 @@ pub enum Value {
     Closure(Arc<Closure>),
     /// Days since 1970-01-01.
     Date(i32),
+}
+
+/// A collection, and its hash once computed. Worlds are hashed whenever
+/// they merge, and most of their collections haven't changed since the last
+/// time: each is hashed once. Changing a collection (through `DerefMut`)
+/// forgets its hash, and collections with different hashes are unequal
+/// without comparing them.
+pub struct Hashed<T> {
+    /// 0 until computed.
+    hash: AtomicU64,
+    value: T,
+}
+
+impl<T> Hashed<T> {
+    pub fn new(value: T) -> Hashed<T> {
+        Hashed {
+            hash: AtomicU64::new(0),
+            value,
+        }
+    }
+
+    fn known_hash(&self) -> u64 {
+        self.hash.load(Atomic::Relaxed)
+    }
+}
+
+impl<T: Hash> Hashed<T> {
+    /// The collection's hash: computed the first time, then kept.
+    pub fn hash_code(&self) -> u64 {
+        let known = self.known_hash();
+        if known != 0 {
+            return known;
+        }
+        let mut hasher = FxHasher::default();
+        self.value.hash(&mut hasher);
+        let h = hasher.finish().max(1);
+        self.hash.store(h, Atomic::Relaxed);
+        h
+    }
+}
+
+impl<T> Deref for Hashed<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.value
+    }
+}
+
+impl<T> DerefMut for Hashed<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        *self.hash.get_mut() = 0;
+        &mut self.value
+    }
+}
+
+impl<T: Clone> Clone for Hashed<T> {
+    fn clone(&self) -> Hashed<T> {
+        Hashed {
+            hash: AtomicU64::new(self.known_hash()),
+            value: self.value.clone(),
+        }
+    }
+}
+
+impl<T: PartialEq> PartialEq for Hashed<T> {
+    fn eq(&self, other: &Hashed<T>) -> bool {
+        let (a, b) = (self.known_hash(), other.known_hash());
+        (a == 0 || b == 0 || a == b) && self.value == other.value
+    }
+}
+
+impl<T: Eq> Eq for Hashed<T> {}
+
+impl<T: Hash> Hash for Hashed<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.hash_code());
+    }
+}
+
+impl<T: Ord> PartialOrd for Hashed<T> {
+    fn partial_cmp(&self, other: &Hashed<T>) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T: Ord> Ord for Hashed<T> {
+    fn cmp(&self, other: &Hashed<T>) -> Ordering {
+        self.value.cmp(&other.value)
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for Hashed<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
+/// A bag's contents: each distinct value, sorted, and how many times it's
+/// in the bag (never zero). A sorted vector rather than a map: bags are
+/// small, copied whenever they change, and compared each time worlds merge,
+/// which is fastest in contiguous memory.
+#[derive(Clone, Debug, Default)]
+pub struct Multiset {
+    entries: Vec<(Value, u64)>,
+    /// The sum of the entries' hashes, which is the bag's hash: taking a
+    /// value out updates it without going through the other entries.
+    sum: u64,
+}
+
+/// One entry's share of a bag's hash. Mixed thoroughly, so that bags with
+/// counts moved from one value to another don't sum to the same hash.
+fn entry_hash(v: &Value, n: u64) -> u64 {
+    let mut hasher = FxHasher::default();
+    v.hash(&mut hasher);
+    n.hash(&mut hasher);
+    crate::continuous::mix(hasher.finish())
+}
+
+impl Multiset {
+    /// From counts, leaving out zeros.
+    pub fn new(counts: BTreeMap<Value, u64>) -> Multiset {
+        let entries: Vec<(Value, u64)> = counts.into_iter().filter(|(_, n)| *n > 0).collect();
+        let sum = entries
+            .iter()
+            .fold(0u64, |sum, (v, n)| sum.wrapping_add(entry_hash(v, *n)));
+        Multiset { entries, sum }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&Value, &u64)> + Clone {
+        self.entries.iter().map(|(v, n)| (v, n))
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &Value> + Clone {
+        self.entries.iter().map(|(v, _)| v)
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &u64> + Clone {
+        self.entries.iter().map(|(_, n)| n)
+    }
+
+    /// How many times `v` is in the bag, if it is.
+    pub fn get(&self, v: &Value) -> Option<&u64> {
+        let i = self.entries.binary_search_by(|(k, _)| k.cmp(v)).ok()?;
+        Some(&self.entries[i].1)
+    }
+
+    /// The bag without one of its `i`-th distinct value.
+    pub fn without_nth(&self, i: usize) -> Multiset {
+        let mut entries = self.entries.clone();
+        let (v, n) = (&self.entries[i].0, self.entries[i].1);
+        let mut sum = self.sum.wrapping_sub(entry_hash(v, n));
+        if n > 1 {
+            entries[i].1 = n - 1;
+            sum = sum.wrapping_add(entry_hash(v, n - 1));
+        } else {
+            entries.remove(i);
+        }
+        Multiset { entries, sum }
+    }
+
+    /// The bag without one `v`, if it has one.
+    pub fn without(&self, v: &Value) -> Option<Multiset> {
+        let i = self.entries.binary_search_by(|(k, _)| k.cmp(v)).ok()?;
+        Some(self.without_nth(i))
+    }
+}
+
+impl PartialEq for Multiset {
+    fn eq(&self, other: &Multiset) -> bool {
+        self.sum == other.sum && self.entries == other.entries
+    }
+}
+
+impl Eq for Multiset {}
+
+impl Hash for Multiset {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.sum);
+    }
+}
+
+impl PartialOrd for Multiset {
+    fn partial_cmp(&self, other: &Multiset) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Multiset {
+    fn cmp(&self, other: &Multiset) -> Ordering {
+        self.entries.cmp(&other.entries)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -78,7 +273,23 @@ impl Value {
     }
 
     pub fn list(items: Vec<Value>) -> Value {
-        Value::List(Arc::new(items))
+        Value::List(Arc::new(Hashed::new(items)))
+    }
+
+    pub fn map(entries: BTreeMap<Value, Value>) -> Value {
+        Value::Map(Arc::new(Hashed::new(entries)))
+    }
+
+    pub fn bag(counts: BTreeMap<Value, u64>) -> Value {
+        Value::multiset(Multiset::new(counts))
+    }
+
+    pub fn multiset(contents: Multiset) -> Value {
+        Value::Bag(Arc::new(Hashed::new(contents)))
+    }
+
+    pub fn record(record: Record) -> Value {
+        Value::Record(Arc::new(Hashed::new(record)))
     }
 
     /// The kind of value, as named in error messages.
@@ -188,50 +399,71 @@ fn float_key(f: f64) -> u64 {
 }
 
 impl PartialEq for Value {
+    /// Worlds are compared slot by slot, and most slots hold small values:
+    /// those are compared here, inlined, and the rest out of line.
+    #[inline]
     fn eq(&self, other: &Value) -> bool {
         match (self, other) {
-            (Value::Dead, Value::Dead) | (Value::Unit, Value::Unit) => true,
-            (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Int(a), Value::Int(b)) => a == b,
-            (Value::Float(a), Value::Float(b)) | (Value::Prob(a), Value::Prob(b)) => float_key(*a) == float_key(*b),
-            (Value::Str(a), Value::Str(b)) => a == b,
-            (Value::List(a), Value::List(b)) => Arc::ptr_eq(a, b) || a == b,
-            (Value::Map(a), Value::Map(b)) => Arc::ptr_eq(a, b) || a == b,
-            (Value::Bag(a), Value::Bag(b)) => Arc::ptr_eq(a, b) || a == b,
-            (Value::Range(a, b), Value::Range(c, d)) => a == c && b == d,
-            (Value::Record(a), Value::Record(b)) => Arc::ptr_eq(a, b) || a == b,
-            (Value::Enum(a), Value::Enum(b)) => a.ty == b.ty && a.variant == b.variant,
-            (Value::Dist(a), Value::Dist(b)) => Arc::ptr_eq(a, b) || a == b,
-            (Value::Closure(a), Value::Closure(b)) => Arc::ptr_eq(a, b) || a == b,
-            (Value::Date(a), Value::Date(b)) => a == b,
-            (Value::Continuous(a), Value::Continuous(b)) => family_key(a) == family_key(b),
-            _ => false,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Dead, Value::Dead) => true,
+            _ => eq_other(self, other),
         }
+    }
+}
+
+#[inline(never)]
+fn eq_other(x: &Value, y: &Value) -> bool {
+    match (x, y) {
+        (Value::Unit, Value::Unit) => true,
+        (Value::Float(a), Value::Float(b)) | (Value::Prob(a), Value::Prob(b)) => float_key(*a) == float_key(*b),
+        (Value::Str(a), Value::Str(b)) => a == b,
+        (Value::List(a), Value::List(b)) => Arc::ptr_eq(a, b) || a == b,
+        (Value::Map(a), Value::Map(b)) => Arc::ptr_eq(a, b) || a == b,
+        (Value::Bag(a), Value::Bag(b)) => Arc::ptr_eq(a, b) || a == b,
+        (Value::Range(a, b), Value::Range(c, d)) => a == c && b == d,
+        (Value::Record(a), Value::Record(b)) => Arc::ptr_eq(a, b) || a == b,
+        (Value::Enum(a), Value::Enum(b)) => a.ty == b.ty && a.variant == b.variant,
+        (Value::Dist(a), Value::Dist(b)) => Arc::ptr_eq(a, b) || a == b,
+        (Value::Closure(a), Value::Closure(b)) => Arc::ptr_eq(a, b) || a == b,
+        (Value::Date(a), Value::Date(b)) => a == b,
+        (Value::Continuous(a), Value::Continuous(b)) => family_key(a) == family_key(b),
+        _ => false,
     }
 }
 
 impl Eq for Value {}
 
 impl Hash for Value {
+    /// Like equality: small values inlined, the rest out of line.
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
             Value::Dead | Value::Unit => {}
             Value::Bool(b) => b.hash(state),
             Value::Int(i) => i.hash(state),
-            Value::Float(f) | Value::Prob(f) => float_key(*f).hash(state),
-            Value::Str(s) => s.hash(state),
-            Value::List(items) => items.hash(state),
-            Value::Map(m) => m.hash(state),
-            Value::Bag(b) => b.hash(state),
-            Value::Range(a, b) => (a, b).hash(state),
-            Value::Record(r) => r.hash(state),
-            Value::Enum(e) => (e.ty, e.variant).hash(state),
-            Value::Dist(d) => d.hash(state),
-            Value::Closure(c) => c.hash(state),
-            Value::Date(d) => d.hash(state),
-            Value::Continuous(f) => family_key(f).hash(state),
+            other => hash_other(other, state),
         }
+    }
+}
+
+#[inline(never)]
+fn hash_other<H: Hasher>(value: &Value, state: &mut H) {
+    match value {
+        Value::Dead | Value::Unit | Value::Bool(_) | Value::Int(_) => {}
+        Value::Float(f) | Value::Prob(f) => float_key(*f).hash(state),
+        Value::Str(s) => s.hash(state),
+        Value::List(items) => items.hash(state),
+        Value::Map(m) => m.hash(state),
+        Value::Bag(b) => b.hash(state),
+        Value::Range(a, b) => (a, b).hash(state),
+        Value::Record(r) => r.hash(state),
+        Value::Enum(e) => (e.ty, e.variant).hash(state),
+        Value::Dist(d) => d.hash(state),
+        Value::Closure(c) => c.hash(state),
+        Value::Date(d) => d.hash(state),
+        Value::Continuous(f) => family_key(f).hash(state),
     }
 }
 
@@ -397,5 +629,41 @@ fn write_value(v: &Value, f: &mut fmt::Formatter<'_>, nested: bool) -> fmt::Resu
         Value::Closure(_) => write!(f, "<function>"),
         Value::Date(d) => write!(f, "{}", crate::dates::format(*d)),
         Value::Continuous(family) => write!(f, "{family}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bag(counts: &[(i64, u64)]) -> Multiset {
+        Multiset::new(counts.iter().map(|&(v, n)| (Value::Int(v), n)).collect())
+    }
+
+    #[test]
+    fn a_bag_keeps_its_hash_up_to_date() {
+        let full = bag(&[(1, 2), (2, 1), (3, 4)]);
+        // Taking values out in any order gives the bag built directly.
+        let taken = full.without(&Value::Int(3)).unwrap().without(&Value::Int(2)).unwrap();
+        let direct = bag(&[(1, 2), (3, 3)]);
+        assert_eq!(taken, direct);
+        assert_eq!(taken.sum, direct.sum);
+        assert!(taken.without(&Value::Int(2)).is_none());
+        // Moving a count from one value to another changes the hash.
+        assert_ne!(bag(&[(1, 2), (2, 3)]).sum, bag(&[(1, 3), (2, 2)]).sum);
+        assert_ne!(bag(&[(1, 1)]).sum, bag(&[(2, 1)]).sum);
+    }
+
+    #[test]
+    fn a_changed_collection_forgets_its_hash() {
+        let mut list = Hashed::new(vec![Value::Int(1)]);
+        let before = list.hash_code();
+        list.push(Value::Int(2));
+        assert_ne!(list.hash_code(), before);
+        assert_eq!(
+            list.hash_code(),
+            Hashed::new(vec![Value::Int(1), Value::Int(2)]).hash_code()
+        );
+        assert_ne!(list, Hashed::new(vec![Value::Int(1)]));
     }
 }

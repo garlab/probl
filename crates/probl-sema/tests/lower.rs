@@ -136,3 +136,34 @@ fn effects_decide_memoization() {
     assert!(!effects("quiet").prints && !effects("quiet").observes);
     assert!(effects("looks").observes && !effects("looks").prints);
 }
+
+#[test]
+fn slots_die_where_they_are_last_used() {
+    let src = "let a ~ d6\nlet unused = a * 2\nif a > 3 { report true }\nlet b = a + 1\nreport b";
+    let (program, _) = compile(src);
+    let program = program.expect("compiles");
+    let liveness = analyze(&program);
+    let main = program.main();
+    // What dies in each top-level statement, by name.
+    let dies: Vec<Vec<&str>> = main
+        .body
+        .stmts
+        .iter()
+        .map(|stmt| {
+            liveness.dies[stmt.id as usize]
+                .iter()
+                .map(|&s| main.slots[s as usize].name.as_str())
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        dies,
+        [
+            vec![],         // a ~ d6: read later
+            vec!["unused"], // written, never read
+            vec![],         // the `if` reads a, which is read later
+            vec!["a"],      // b = a + 1: the last read of a
+            vec!["b"],      // report b
+        ]
+    );
+}

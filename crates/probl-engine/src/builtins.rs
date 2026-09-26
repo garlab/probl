@@ -511,7 +511,7 @@ fn list<'a>(v: &'a Value, func: &str) -> OpResult<&'a [Value]> {
 /// to spell out.
 pub fn items(v: &Value, func: &str, budget: &mut Budget) -> OpResult<Vec<Value>> {
     match v {
-        Value::List(items) => Ok((**items).clone()),
+        Value::List(items) => Ok(items.to_vec()),
         Value::Range(lo, hi) => {
             budget.collection(range_len(*lo, *hi))?;
             Ok((*lo..=*hi).map(Value::Int).collect())
@@ -658,16 +658,16 @@ fn insert(coll: &Value, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<V
     match coll {
         Value::List(items) => {
             budget.collection(items.len() as u128 + 1)?;
-            let mut items = (**items).clone();
+            let mut items = items.to_vec();
             let i = as_index(a, items.len() as u128 + 1)? as usize;
             items.insert(i, b.clone());
             Ok(Value::list(items))
         }
         Value::Map(m) => {
             budget.collection(m.len() as u128 + 1)?;
-            let mut m = (**m).clone();
+            let mut m = BTreeMap::clone(m);
             m.insert(a.clone(), b.clone());
-            Ok(Value::Map(Arc::new(m)))
+            Ok(Value::map(m))
         }
         other => Err(expected("a list or a map", other, "insert")),
     }
@@ -676,27 +676,20 @@ fn insert(coll: &Value, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<V
 fn remove(coll: &Value, key: &Value) -> OpResult<Value> {
     match coll {
         Value::List(items) => {
-            let mut items = (**items).clone();
+            let mut items = items.to_vec();
             let i = as_index(key, items.len() as u128)? as usize;
             items.remove(i);
             Ok(Value::list(items))
         }
         Value::Map(m) => {
-            let mut m = (**m).clone();
+            let mut m = BTreeMap::clone(m);
             m.remove(key);
-            Ok(Value::Map(Arc::new(m)))
+            Ok(Value::map(m))
         }
-        Value::Bag(b) => {
-            let mut b = (**b).clone();
-            match b.get_mut(key) {
-                Some(n) if *n > 1 => *n -= 1,
-                Some(_) => {
-                    b.remove(key);
-                }
-                None => return Err(OpError::new(format!("{key:?} isn't in the bag"))),
-            }
-            Ok(Value::Bag(Arc::new(b)))
-        }
+        Value::Bag(b) => match b.without(key) {
+            Some(rest) => Ok(Value::multiset(rest)),
+            None => Err(OpError::new(format!("{key:?} isn't in the bag"))),
+        },
         other => Err(expected("a list, map or bag", other, "remove")),
     }
 }
@@ -780,5 +773,5 @@ fn bag(v: &Value) -> OpResult<Value> {
         }
         other => return Err(expected("a map of counts or a list", other, "bag")),
     }
-    Ok(Value::Bag(Arc::new(counts)))
+    Ok(Value::bag(counts))
 }

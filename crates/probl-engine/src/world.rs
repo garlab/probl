@@ -3,7 +3,9 @@
 use crate::value::Value;
 use crate::weight::Weight;
 use probl_sema::SlotSet;
+use probl_sema::ir::SlotId;
 use rustc_hash::{FxHashMap, FxHasher};
+use std::collections::hash_map::Entry;
 use std::hash::{Hash, Hasher};
 
 /// One possible state of the program: the variables of the current frame,
@@ -54,32 +56,74 @@ impl Flow {
     }
 }
 
-/// Clear the slots that aren't live; then, if `enabled`, merge worlds that are
-/// now equal, adding up their weights. The order of first appearance is kept.
-pub fn merge(worlds: Vec<World>, live: &SlotSet, enabled: bool) -> Vec<World> {
-    let mut worlds = worlds;
-    for w in &mut worlds {
-        for (i, slot) in w.slots.iter_mut().enumerate() {
-            if !live.contains(i as u32) && !matches!(slot, Value::Dead) {
-                *slot = Value::Dead;
-            }
+/// Clear these slots: nobody will read them again.
+pub fn clear(worlds: &mut [World], slots: &[SlotId]) {
+    if slots.is_empty() {
+        return;
+    }
+    for w in worlds {
+        for &s in slots {
+            w.slots[s as usize] = Value::Dead;
         }
     }
+}
+
+/// Clear every slot that isn't live, in worlds that jumped (with `break` or
+/// `continue`) past statements that would have cleared some of them.
+pub fn clear_dead(worlds: &mut [World], live: &SlotSet) {
+    let Some(n) = worlds.first().map(|w| w.slots.len()) else {
+        return;
+    };
+    let dead: Vec<SlotId> = live.iter_missing(n).collect();
+    clear(worlds, &dead);
+}
+
+/// If `enabled`, merge the worlds that agree on the live slots, adding up
+/// their weights, and keeping the order of first appearance. Dead slots
+/// don't matter, cleared or not.
+pub fn merge(worlds: Vec<World>, live: &SlotSet, enabled: bool) -> Vec<World> {
     if !enabled || worlds.len() < 2 {
         return worlds;
     }
+    let n = worlds[0].slots.len();
+    let live: Vec<usize> = live.iter().map(|s| s as usize).filter(|&s| s < n).collect();
     let mut out: Vec<World> = Vec::with_capacity(worlds.len());
-    let mut index: FxHashMap<u64, Vec<usize>> = FxHashMap::default();
+    // The first world kept with each hash, and after each world, the next
+    // one with the same hash (only when different worlds' hashes collide).
+    let mut first: FxHashMap<u64, usize> = FxHashMap::with_capacity_and_hasher(worlds.len(), Default::default());
+    let mut next: Vec<usize> = Vec::with_capacity(worlds.len());
+    const NONE: usize = usize::MAX;
     for w in worlds {
         let mut hasher = FxHasher::default();
-        w.slots.hash(&mut hasher);
-        let h = hasher.finish();
-        let bucket = index.entry(h).or_default();
-        if let Some(&i) = bucket.iter().find(|&&i| out[i].slots == w.slots) {
-            out[i].weight += w.weight;
-        } else {
-            bucket.push(out.len());
-            out.push(w);
+        for &i in &live {
+            w.slots[i].hash(&mut hasher);
+        }
+        let same = |kept: &World| live.iter().all(|&i| kept.slots[i] == w.slots[i]);
+        let found = match first.entry(hasher.finish()) {
+            Entry::Vacant(entry) => {
+                entry.insert(out.len());
+                None
+            }
+            Entry::Occupied(entry) => {
+                let mut i = *entry.get();
+                loop {
+                    if same(&out[i]) {
+                        break Some(i);
+                    }
+                    if next[i] == NONE {
+                        next[i] = out.len();
+                        break None;
+                    }
+                    i = next[i];
+                }
+            }
+        };
+        match found {
+            Some(i) => out[i].weight += w.weight,
+            None => {
+                next.push(NONE);
+                out.push(w);
+            }
         }
     }
     out
@@ -99,4 +143,37 @@ pub fn merge_values(pairs: Vec<(Value, Weight)>) -> Vec<(Value, Weight)> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn world(slots: Vec<Value>) -> World {
+        World {
+            slots,
+            weight: Weight::ONE,
+            run: 0,
+        }
+    }
+
+    #[test]
+    fn worlds_merge_on_their_live_slots() {
+        let mut live = SlotSet::with_capacity(3);
+        live.insert(0);
+        // Slot 1 is dead: worlds that differ only there are the same world.
+        let worlds = vec![
+            world(vec![Value::Int(1), Value::Int(7), Value::Dead]),
+            world(vec![Value::Int(2), Value::Int(7), Value::Dead]),
+            world(vec![Value::Int(1), Value::list(vec![Value::Int(8)]), Value::Dead]),
+        ];
+        let mut merged = merge(worlds, &live, true);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].slots[0], Value::Int(1));
+        assert_eq!(merged[0].weight.to_f64(), 2.0);
+        assert_eq!(merged[1].weight.to_f64(), 1.0);
+        clear_dead(&mut merged, &live);
+        assert!(merged.iter().all(|w| w.slots[1] == Value::Dead));
+        assert_eq!(merged[1].slots[0], Value::Int(2));
+    }
 }

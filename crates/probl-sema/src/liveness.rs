@@ -49,16 +49,44 @@ impl SlotSet {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = SlotId> + '_ {
-        self.words.iter().enumerate().flat_map(|(w, &bits)| {
-            (0..64)
-                .filter(move |b| bits & (1 << b) != 0)
-                .map(move |b| (w * 64 + b) as SlotId)
+        self.words
+            .iter()
+            .enumerate()
+            .flat_map(|(w, &bits)| Bits(bits).map(move |b| (w * 64) as SlotId + b))
+    }
+
+    /// The slots below `n` that aren't in the set.
+    pub fn iter_missing(&self, n: usize) -> impl Iterator<Item = SlotId> + '_ {
+        (0..n.div_ceil(64)).flat_map(move |w| {
+            let present = self.words.get(w).copied().unwrap_or(0);
+            let below = if n - w * 64 >= 64 {
+                u64::MAX
+            } else {
+                (1 << (n - w * 64)) - 1
+            };
+            Bits(!present & below).map(move |b| (w * 64) as SlotId + b)
         })
     }
 
     fn same(&self, other: &SlotSet) -> bool {
         let n = self.words.len().max(other.words.len());
         (0..n).all(|i| self.words.get(i).copied().unwrap_or(0) == other.words.get(i).copied().unwrap_or(0))
+    }
+}
+
+/// The positions of the bits set in a word, lowest first.
+struct Bits(u64);
+
+impl Iterator for Bits {
+    type Item = SlotId;
+
+    fn next(&mut self) -> Option<SlotId> {
+        if self.0 == 0 {
+            return None;
+        }
+        let b = self.0.trailing_zeros();
+        self.0 &= self.0 - 1;
+        Some(b)
     }
 }
 
@@ -69,6 +97,11 @@ pub struct Liveness {
     pub after: Vec<SlotSet>,
     /// For `Loop` statements: slots live at the start of each iteration.
     pub loop_head: Vec<SlotSet>,
+    /// The slots that die in each statement: live before it or written by
+    /// it, and not live after it. A slot can't die anywhere else, so
+    /// clearing these after each statement frees every value nobody will
+    /// read, except in worlds that jump out with `break` or `continue`.
+    pub dies: Vec<Vec<SlotId>>,
 }
 
 pub fn analyze(program: &Program) -> Liveness {
@@ -76,6 +109,7 @@ pub fn analyze(program: &Program) -> Liveness {
     let mut liveness = Liveness {
         after: vec![SlotSet::default(); n],
         loop_head: vec![SlotSet::default(); n],
+        dies: vec![Vec::new(); n],
     };
     for func in &program.functions {
         let size = func.n_slots();
@@ -108,8 +142,15 @@ struct Pass<'a> {
 impl Pass<'_> {
     fn block(&mut self, block: &Block, mut live: SlotSet, lc: &LoopCtx) -> SlotSet {
         for stmt in block.stmts.iter().rev() {
-            self.live.after[stmt.id as usize] = live.clone();
-            live = self.stmt(stmt, live, lc);
+            let before = self.stmt(stmt, live.clone(), lc);
+            let mut touched = before.clone();
+            if let Some(slot) = written(stmt) {
+                touched.insert(slot);
+            }
+            let id = stmt.id as usize;
+            self.live.dies[id] = touched.iter().filter(|&s| !live.contains(s)).collect();
+            self.live.after[id] = live;
+            live = before;
         }
         live
     }
@@ -217,6 +258,15 @@ impl Pass<'_> {
     }
 }
 
+/// The variable a statement assigns, if any.
+fn written(stmt: &Stmt) -> Option<SlotId> {
+    match &stmt.kind {
+        StmtKind::Set { place, .. } | StmtKind::Draw { place, .. } | StmtKind::Take { place, .. } => Some(place.slot),
+        StmtKind::Call { dest, .. } => Some(dest.slot),
+        _ => None,
+    }
+}
+
 /// Writing to a whole variable kills it; writing into part of it doesn't.
 fn define(place: &Place, live: &mut SlotSet) {
     if place.path.is_empty() {
@@ -266,5 +316,26 @@ fn uses(expr: &Expr, live: &mut SlotSet) {
                 uses(e, live)
             }
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sets_list_their_members_and_the_rest() {
+        let mut set = SlotSet::with_capacity(130);
+        for s in [0, 3, 63, 64, 129] {
+            set.insert(s);
+        }
+        assert_eq!(set.iter().collect::<Vec<_>>(), [0, 3, 63, 64, 129]);
+        let missing: Vec<SlotId> = set.iter_missing(131).collect();
+        assert_eq!(missing.len(), 131 - 5);
+        assert!(missing.iter().all(|&s| !set.contains(s)));
+        assert_eq!(missing.last(), Some(&130));
+        assert_eq!(set.iter_missing(3).collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(SlotSet::default().iter_missing(2).collect::<Vec<_>>(), [0, 1]);
+        assert_eq!(set.iter_missing(0).count(), 0);
     }
 }

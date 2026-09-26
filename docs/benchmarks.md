@@ -5,7 +5,7 @@
 ## Summary
 
 1. **Parallel sampling batches first.** Every sampled forecast takes 0.5–2.6 s on one core, and runs are independent. Running example 07's runs as 8 processes takes 0.27 s instead of 1.77 s (6.6×). This is the cheapest large win, and it meets the plan's target for example 07 (under 2 s on 8 cores) several times over. *Done: 6–8× on 12 cores ([below](#since-parallel-batches)).*
-2. **Then cheaper merging, and moving draws to their first use.** Enumeration hits a wall when states are large or many facts stay live together: blackjack from a real deck takes 5.2 s and 952 MB, and a 20-component reliability model 1.4 s and 847 MB. Merging (hashing and comparing world states) takes 34–70% of that time; caching the hashes of collections cuts most of it. Separately, moving each draw to just before its first use turns the reliability model's 1,048,576 worlds into 256, with the same answer.
+2. **Then cheaper merging, and moving draws to their first use.** Enumeration hits a wall when states are large or many facts stay live together: blackjack from a real deck takes 5.2 s and 952 MB, and a 20-component reliability model 1.4 s and 847 MB. Merging (hashing and comparing world states) takes 34–70% of that time; caching the hashes of collections cuts most of it. Separately, moving each draw to just before its first use turns the reliability model's 1,048,576 worlds into 256, with the same answer. *Cheaper merging is done: 1.4–2.9× for enumeration ([below](#since-cheaper-merging)).*
 3. **Then better inference for evidence-heavy forecasts.** Weighting runs by the evidence (likelihood weighting) degrades as data accumulates: an A/B test's 100,000 runs are worth 852 after 30 days of data, 467 after 60 and 211 after 120, and it gets exponentially worse with more unknown parameters. Forecasts with real data need conjugate updates, MCMC or particles; each needs its contract specified first (audit D4).
 4. **Not now:** symbolic inference, persistent collections and a bytecode interpreter. No benchmark is limited by what they'd fix, or a cheaper change fixes it first. Markov-chain solving would make cyclic loops exact and allow recursion to the same call, but no model is slow because of them.
 
@@ -122,6 +122,32 @@ Sampling now runs its batches of 1,000 runs on every core. Each batch has a rand
 | examples/09_roadmap | 100,000 | 553 ms | 82 ms (6.7×) | 75 ms (7.4×) |
 
 One thread is as fast as before. The M2 Pro has 8 performance and 4 efficiency cores, so the last four threads add less than the first eight. A model can't use more threads than it has batches: `epidemic` and `inventory` have 10, which take two rounds on 8 threads. Peak heap grows with the threads, since each has an engine and a batch of its own: example 07 takes 55 MB on 12 threads instead of 10 MB.
+
+## Since: cheaper merging
+
+Merging now works like this:
+
+- **Live slots only.** It hashes and compares only the slots that may still be read.
+- **Cached hashes.** Lists, maps, bags and records keep their hash once computed, and forget it when they change.
+- **Clearing where slots die.** Each statement clears the slots that die in it, which liveness works out, instead of every join testing every slot. Values are freed sooner, so peak memory went down too.
+- **Cheaper internals.** The merge index no longer allocates per world, and comparing and hashing small values is inlined.
+- **Bags as sorted vectors,** whose hash `take` updates without rehashing the bag.
+
+The oracle, and the engine with merging on and off, still agree on 5,000 generated programs. Enumerated models, on the same machine:
+
+| model | before | after |
+|---|--:|--:|
+| benches/blackjack_deck | 5.01 s, 952 MB | 2.55 s (2.0×), 818 MB |
+| benches/board_game | 171 ms | 124 ms (1.4×) |
+| benches/reliability | 1.41 s, 847 MB | 1.23 s (1.15×), 762 MB |
+| benches/regimes | 665 µs | 289 µs (2.3×) |
+| examples/01_tour | 329 ms | 159 ms (2.1×) |
+| examples/03_rpg_duel | 808 ms | 276 ms (2.9×) |
+| examples/04_risk_battle | 52 ms | 36 ms (1.4×) |
+| examples/05_snakes_and_ladders | 235 ms | 97 ms (2.4×) |
+| examples/06_blackjack_dealer | 14 ms | 7 ms (2.0×) |
+
+What's left in `blackjack_deck` is mostly the cost of worlds themselves: copying, dropping and allocating them takes about a quarter of the time. Merging still spends 16% in its hash table (up to 700,000 worlds at once), and 8% comparing the decks of worlds that turn out equal, which has to be exact. `reliability` barely changed, since none of its million worlds merge: moving draws to their first use is what fixes it. `snakes_three` still runs out of time.
 
 ## Smaller findings
 

@@ -163,7 +163,11 @@ What exists is the simplest sampler, specified first (semantics §14). A batch o
 
 ### 3.7 Liveness and merging
 
-A standard backward liveness analysis on the IR gives, for every join point, the slots that may still be read. Dead slots are overwritten with `Value::Dead`, so worlds that differ only in stale variables become identical. In Risk, the dice pools die at the end of each round, and 56 × 21 dice outcomes collapse back to a few (attackers, defenders) pairs. In snakes and ladders, `roll` dies at once, so a game is a walk over at most 100 squares.
+A standard backward liveness analysis on the IR gives, for every join point, the slots that may still be read. Worlds merge when they agree on those, so worlds that differ only in stale variables are the same world. In Risk, the dice pools die at the end of each round, and 56 × 21 dice outcomes collapse back to a few (attackers, defenders) pairs. In snakes and ladders, `roll` dies at once, so a game is a walk over at most 100 squares.
+
+The analysis also gives, for every statement, the slots that die in it: read or written there, and never read again. They're cleared (set to `Value::Dead`) after the statement, which frees their values at once. Worlds that jump out with `break` or `continue` skip some of those statements, so they're cleared of every dead slot where they land.
+
+Merging hashes the live slots of every world at every join point, although most collections haven't changed since the last one. So lists, maps, bags and records keep their hash once computed, and forget it when they change. Hashing a world costs a step per slot instead of one per element, and collections with different hashes are unequal without comparing them. Bags are sorted vectors, which compare fastest. A bag's hash is a sum over its entries, so `take` updates it without going through the rest of the bag.
 
 Merging helps only when histories stop mattering. Two refinements come later: hoisting values that are the same in every world out of the worlds, and hash-consing large values.
 
@@ -315,10 +319,9 @@ Still open:
 
 ## 9. Next steps
 
-The order the benchmarks recommend (docs/benchmarks.md). The first recommendation, parallel sampling batches, is done: 6–8× for sampled models on 12 cores. v0.2 still needs an estimate of the evidence.
+The order the benchmarks recommend (docs/benchmarks.md). The first two are done: parallel sampling batches (6–8× for sampled models on 12 cores) and cheaper merging (1.4–2.9× for enumeration). v0.2 still needs an estimate of the evidence.
 
-1. **Cheaper merging**: cached hashes for collections, and precomputed dead slots. Merging takes 34–70% of the time in state-heavy enumeration.
-2. **Moving draws to their first use**, a compiler pass: 1,048,576 worlds become 256 in the reliability benchmark.
-3. **Better inference for evidence-heavy forecasts**: specify, then build, conjugate updates and a general method (Metropolis–Hastings over a run's choices, or particles with rejuvenation), with the audit's D4 checklist. Likelihood weighting's effective sample size falls from 852 to 211 as an A/B test's data grows from 30 to 120 days.
-4. **Reading data from files and stdin**, as proposed in [docs/data-input.md](data-input.md), once its open questions are settled.
-5. **Markov-chain solving**, for exact cyclic loops and recursion to the same call.
+1. **Moving draws to their first use**, a compiler pass: 1,048,576 worlds become 256 in the reliability benchmark.
+2. **Better inference for evidence-heavy forecasts**: specify, then build, conjugate updates and a general method (Metropolis–Hastings over a run's choices, or particles with rejuvenation), with the audit's D4 checklist. Likelihood weighting's effective sample size falls from 852 to 211 as an A/B test's data grows from 30 to 120 days.
+3. **Reading data from files and stdin**, as proposed in [docs/data-input.md](data-input.md), once its open questions are settled.
+4. **Markov-chain solving**, for exact cyclic loops and recursion to the same call.

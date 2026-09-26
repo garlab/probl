@@ -14,7 +14,7 @@ use crate::ops::{self, Truth};
 use crate::report::Sink;
 use crate::value::{Closure, Value, fmt_prob};
 use crate::weight::Weight;
-use crate::world::{Flow, World, merge, merge_values, total_weight};
+use crate::world::{Flow, World, clear, clear_dead, merge, merge_values, total_weight};
 use probl_sema::builtins::Lifting;
 use probl_sema::ir::*;
 use probl_sema::{Builtin, Liveness};
@@ -348,6 +348,7 @@ impl<'p> Engine<'p> {
             let input = std::mem::take(&mut flow.next);
             let out = self.exec_stmt(f, stmt, input)?;
             flow.next = out.next;
+            clear(&mut flow.next, &self.live.dies[stmt.id as usize]);
             flow.broke.extend(out.broke);
             flow.continued.extend(out.continued);
             flow.returned.extend(out.returned);
@@ -412,18 +413,13 @@ impl<'p> Engine<'p> {
                         if self.sampler.is_some() && chosen != Some(i) {
                             continue;
                         }
-                        let mut rest = (**cards).clone();
-                        if *count > 1 {
-                            *rest.get_mut(card).unwrap() -= 1;
-                        } else {
-                            rest.remove(card);
-                        }
+                        let rest = cards.without_nth(i);
                         let mut nw = if self.sampler.is_some() {
                             w.clone()
                         } else {
                             w.clone().scaled(*count as f64 / total as f64)
                         };
-                        self.assign(f, bag, Value::Bag(Arc::new(rest)), &mut nw, span)?;
+                        self.assign(f, bag, Value::multiset(rest), &mut nw, span)?;
                         self.assign(f, place, card.clone(), &mut nw, span)?;
                         out.push(nw);
                     }
@@ -735,7 +731,9 @@ impl<'p> Engine<'p> {
                 ))
                 .with_help("check that every world can leave the loop"));
             }
-            let flow = self.exec_block(f, body, inside)?;
+            let mut flow = self.exec_block(f, body, inside)?;
+            clear_dead(&mut flow.broke, &live.after[stmt.id as usize]);
+            clear_dead(&mut flow.continued, &live.loop_head[stmt.id as usize]);
             out.next.extend(flow.broke);
             out.returned.extend(flow.returned);
             let mut again = flow.next;
@@ -1095,7 +1093,7 @@ impl<'p> Engine<'p> {
                     let value = self.eval(f, v, w)?;
                     map.insert(key, value);
                 }
-                Ok(Value::Map(Arc::new(map)))
+                Ok(Value::map(map))
             }
             ExprKind::Record { ty, fields } => {
                 let mut values = Vec::with_capacity(fields.len());

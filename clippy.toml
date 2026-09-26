@@ -1,0 +1,4 @@
+# `Hashed` keeps a collection's hash in an atomic once computed. It never
+# changes what the collection hashes or compares as, so values containing
+# it are fine as keys of maps and sets.
+ignore-interior-mutability = ["probl_engine::value::Hashed"]

@@ -314,7 +314,7 @@ fn add(a: &Value, b: &Value) -> OpResult<Value> {
     match (a, b) {
         (Value::Str(x), Value::Str(y)) => Ok(Value::str(&format!("{x}{y}"))),
         (Value::List(x), Value::List(y)) => {
-            let mut items = (**x).clone();
+            let mut items = x.to_vec();
             items.extend(y.iter().cloned());
             Ok(Value::list(items))
         }
@@ -648,7 +648,7 @@ pub fn as_index(i: &Value, len: u128) -> OpResult<u128> {
 
 pub fn make_record(ty: Option<Arc<str>>, mut fields: Vec<(Arc<str>, Value)>) -> Value {
     fields.sort_by(|a, b| a.0.cmp(&b.0));
-    Value::Record(Arc::new(Record { ty, fields }))
+    Value::record(Record { ty, fields })
 }
 
 pub fn with_fields(base: &Value, updates: &[(Arc<str>, Value)]) -> OpResult<Value> {
@@ -658,7 +658,7 @@ pub fn with_fields(base: &Value, updates: &[(Arc<str>, Value)]) -> OpResult<Valu
             article(&base.kind())
         )));
     };
-    let mut r = (**r).clone();
+    let mut r = Record::clone(r);
     for (name, v) in updates {
         match r.get_mut(name) {
             Some(slot) => *slot = v.clone(),
@@ -667,7 +667,7 @@ pub fn with_fields(base: &Value, updates: &[(Arc<str>, Value)]) -> OpResult<Valu
             }
         }
     }
-    Ok(Value::Record(Arc::new(r)))
+    Ok(Value::record(r))
 }
 
 pub fn enum_value(ty: u32, variant: u32, name: &str) -> Value {
