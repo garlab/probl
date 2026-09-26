@@ -1,0 +1,12 @@
+[package]
+name = "probl-bench"
+description = "Runs the benchmark models in benches/ and examples/ and prints what they cost"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+probl-syntax.workspace = true
+probl-sema.workspace = true
+probl-engine.workspace = true

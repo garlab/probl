@@ -1,0 +1,37 @@
+# A Monopoly-like board: 40 squares, two dice, "go to jail" on square 30,
+# three doubles in a row send you to jail, and jail holds you for up to
+# three turns unless you roll doubles. Where are you after 100 turns?
+#
+# Stresses: long horizons over a few hundred states (merging), dice pairs.
+
+@mode enumerate
+
+var pos = 0
+var doubles = 0      # doubles rolled in a row
+var jail = 0         # turns left in jail
+repeat 100 {
+  let a ~ d6
+  let b ~ d6
+  if jail > 0 {
+    jail -= 1
+    if a == b or jail == 0 {
+      jail = 0
+      pos = (pos + a + b) mod 40
+    }
+  } else {
+    doubles = if a == b { doubles + 1 } else { 0 }
+    if doubles == 3 {
+      pos = 10
+      jail = 3
+      doubles = 0
+    } else {
+      pos = (pos + a + b) mod 40
+      if pos == 30 {
+        pos = 10
+        jail = 3
+      }
+    }
+  }
+}
+report pos as "square after 100 turns"
+report jail > 0 as "in jail"

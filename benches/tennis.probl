@@ -1,0 +1,70 @@
+# Tennis: a best-of-three-sets match played point by point. Deuce and
+# tie-breaks are loops with no fixed end, and every game is the same
+# function of the server's chance of winning a point.
+#
+# Stresses: loops that cycle (absorbing Markov chains), memoized calls.
+
+@mode enumerate
+
+let a_serve = 64%    # chance that A wins a point on A's serve
+let b_serve = 62%    # chance that B wins a point on B's serve
+
+# A game: whether the server wins it.
+fn game(p) {
+  var s = 0
+  var r = 0
+  while max(s, r) < 4 or abs(s - r) < 2 {
+    if p { s += 1 } else { r += 1 }
+    if s == r and s > 3 { s = 3; r = 3 }       # deuce, again
+  }
+  s > r
+}
+
+# A tie-break: whether A wins it. A serves the first point, then each
+# player serves two.
+fn tiebreak() {
+  var a = 0
+  var b = 0
+  var point = 0
+  while max(a, b) < 7 or abs(a - b) < 2 {
+    let a_serving = ((point + 1) div 2) mod 2 == 0
+    if a_serving {
+      if a_serve { a += 1 } else { b += 1 }
+    } else {
+      if b_serve { b += 1 } else { a += 1 }
+    }
+    point += 1
+    if a == b and a > 6 { a = 6; b = 6; point = 12 + point mod 4 }
+  }
+  a > b
+}
+
+# A set: whether A wins it, and how many games it took. A serves first.
+fn set() {
+  var a = 0
+  var b = 0
+  var a_serves = true
+  while not ((max(a, b) >= 6 and abs(a - b) >= 2) or max(a, b) == 7) {
+    if a == 6 and b == 6 {
+      if tiebreak() { a = 7 } else { b = 7 }
+    } else if a_serves {
+      if game(a_serve) { a += 1 } else { b += 1 }
+    } else {
+      if game(b_serve) { b += 1 } else { a += 1 }
+    }
+    a_serves = not a_serves
+  }
+  { won: a > b, games: a + b }
+}
+
+var a_sets = 0
+var b_sets = 0
+var games = 0
+while a_sets < 2 and b_sets < 2 {
+  let s = set()
+  if s.won { a_sets += 1 } else { b_sets += 1 }
+  games += s.games
+}
+report a_sets == 2 as "A wins the match"
+report a_sets + b_sets as "sets played"
+report games as "games played"

@@ -1,0 +1,27 @@
+# A shop's stock over a year: uncertain daily demand, a reorder rule with a
+# three-day lead time, and lost sales when the shelf is empty.
+#
+# Stresses: long loops in every sampled run (interpreter speed), lists.
+
+@mode sample(runs: 10_000, seed: 1)
+
+let demand_rate ~ 15 to 25       # units sold per day, on average: uncertain
+var stock = 120
+var pipeline = [0, 0, 0]         # orders arriving in 1, 2 and 3 days
+var lost = 0
+var sold = 0
+for day in 1..365 {
+  stock += pipeline[0]
+  pipeline = [pipeline[1], pipeline[2], 0]
+  let demand ~ poisson(demand_rate)
+  let sale = min(demand, stock)
+  sold += sale
+  lost += demand - sale
+  stock -= sale
+  if stock + pipeline[0] + pipeline[1] < 60 {
+    pipeline[2] = 150
+  }
+}
+report lost as "units of lost sales in a year"
+report lost * 50 > sold as "more than 2% of demand lost"
+report stock as "stock at the end of the year"

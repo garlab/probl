@@ -1,0 +1,45 @@
+# The water system of reliability.probl, computed stage by stage: each
+# stage's components are drawn, combined, and then never read again, so
+# worlds merge on the stages' results.
+#
+# Stresses: nothing much. The same answer as reliability.probl, for comparison.
+
+@mode enumerate
+
+fn power() {
+  let feed1 ~ bernoulli(99%)
+  let feed2 ~ bernoulli(92%)
+  let switch1 ~ bernoulli(99%)
+  feed1 or (feed2 and switch1)
+}
+
+fn pumping() {
+  let pump1 ~ bernoulli(95%)
+  let pump2 ~ bernoulli(95%)
+  let pump3 ~ bernoulli(90%)
+  let valve1 ~ bernoulli(98%)
+  let valve2 ~ bernoulli(98%)
+  let valve3 ~ bernoulli(97%)
+  let valve4 ~ bernoulli(97%)
+  (pump1 and valve1) or (pump2 and valve2) or (pump3 and valve3 and valve4)
+}
+
+fn either(p, q) {
+  let a ~ bernoulli(p)
+  let b ~ bernoulli(q)
+  a or b
+}
+
+fn control() {
+  let sensor1 ~ bernoulli(93%)
+  let sensor2 ~ bernoulli(93%)
+  let sensor3 ~ bernoulli(93%)
+  let sensing = (sensor1 and sensor2) or (sensor1 and sensor3) or (sensor2 and sensor3)
+  let control1 ~ bernoulli(99%)
+  let control2 ~ bernoulli(97%)
+  control1 or (control2 and sensing)
+}
+
+let works = power() and pumping() and either(96%, 96%) and either(99.5%, 99.5%) and control()
+let main_line ~ bernoulli(99.9%)
+report works and main_line as "system works"

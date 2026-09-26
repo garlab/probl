@@ -1,0 +1,44 @@
+# Market regimes: a hidden state (boom, steady, slump) switches from month
+# to month, and each month's sales growth is observed as down, flat or up.
+# Given five years of it, what state is the market in now, and how will
+# next month go?
+#
+# Stresses: a long chain of evidence. Merging turns enumeration into the
+# forward algorithm: three states per month instead of 3⁶⁰ paths.
+
+@mode enumerate
+
+enum Market { Boom, Steady, Slump }
+
+fn next_month(m: Market) -> Market {
+  match m {
+    Boom   => chance { 85% => Boom, 12% => Steady, else => Slump }
+    Steady => chance { 8% => Boom, 84% => Steady, else => Slump }
+    Slump  => chance { 3% => Boom, 17% => Steady, else => Slump }
+  }
+}
+
+# Growth each month: 0 down, 1 flat, 2 up.
+fn growth(m: Market) {
+  match m {
+    Boom   => one_of([0: 5%, 1: 20%, 2: 75%])
+    Steady => one_of([0: 20%, 1: 55%, 2: 25%])
+    Slump  => one_of([0: 70%, 1: 25%, 2: 5%])
+  }
+}
+
+let observed = [
+  2, 2, 1, 2, 2, 2, 1, 2, 2, 1, 1, 1, 2, 1, 1, 0, 1, 1, 1, 2,
+  1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 2, 1, 1, 2, 2, 2, 1,
+  2, 2, 2, 1, 2, 2, 1, 1, 1, 1, 0, 1, 1, 2, 1, 1, 1, 0, 1, 1,
+]
+
+var market ~ one_of([Boom: 25%, Steady: 50%, Slump: 25%])
+for g in observed {
+  market = next_month(market)
+  observe g from growth(market)
+}
+report market as "market now"
+let coming = next_month(market)
+let next ~ growth(coming)
+report next as "growth next month (0 down, 1 flat, 2 up)"

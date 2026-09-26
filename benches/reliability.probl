@@ -1,0 +1,38 @@
+# Reliability of a water system: 20 components, each working with its own
+# probability. Written the natural way: every component's state is drawn
+# first, and the system's is worked out at the end.
+#
+# Stresses: many independent facts that stay live together, so worlds can't
+# merge: 2²⁰ of them. See reliability_staged.probl for the same model
+# computed stage by stage.
+
+@mode enumerate
+
+let pump1 ~ bernoulli(95%)
+let pump2 ~ bernoulli(95%)
+let pump3 ~ bernoulli(90%)
+let valve1 ~ bernoulli(98%)
+let valve2 ~ bernoulli(98%)
+let valve3 ~ bernoulli(97%)
+let valve4 ~ bernoulli(97%)
+let feed1 ~ bernoulli(99%)
+let feed2 ~ bernoulli(92%)
+let switch1 ~ bernoulli(99%)
+let filter1 ~ bernoulli(96%)
+let filter2 ~ bernoulli(96%)
+let tank1 ~ bernoulli(99.5%)
+let tank2 ~ bernoulli(99.5%)
+let sensor1 ~ bernoulli(93%)
+let sensor2 ~ bernoulli(93%)
+let sensor3 ~ bernoulli(93%)
+let control1 ~ bernoulli(99%)
+let control2 ~ bernoulli(97%)
+let main_line ~ bernoulli(99.9%)
+
+let power = feed1 or (feed2 and switch1)
+let pumping = (pump1 and valve1) or (pump2 and valve2) or (pump3 and valve3 and valve4)
+let filtering = filter1 or filter2
+let storage = tank1 or tank2
+let sensing = (sensor1 and sensor2) or (sensor1 and sensor3) or (sensor2 and sensor3)
+let control = control1 or (control2 and sensing)
+report power and pumping and filtering and storage and control and main_line as "system works"

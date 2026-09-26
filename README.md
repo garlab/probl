@@ -42,4 +42,5 @@ cargo test --all
 - [Reference semantics](docs/semantics.md): the precise rules the engine follows
 - [Implementation plan](docs/implementation-plan.md): status, architecture, phases, testing and risks
 - [Project audit](docs/project-audit.md): the review that led to the reference semantics
+- [Benchmarks](docs/benchmarks.md): realistic models, what they cost, and what to build next (`cargo run --release -p probl-bench`)
 - [Examples](examples/): nine sample programs with their expected output, from a tour of the language to a revenue forecast

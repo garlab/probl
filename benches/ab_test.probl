@@ -1,0 +1,24 @@
+# An A/B test: two versions of a sign-up page, 400 visitors a day each for
+# 30 days. Which converts better, and by how much?
+#
+# Stresses: evidence-heavy sampling. Every run draws the two rates from the
+# prior and is weighted by how well they explain 60 days of data: most
+# weights are tiny, and the effective sample size collapses.
+
+@mode sample(runs: 100_000, seed: 1)
+
+let a ~ beta(2, 50)
+let b ~ beta(2, 50)
+let visitors = 400
+let a_signups = [12, 9, 15, 11, 10, 13, 8, 12, 14, 10, 11, 9, 13, 12, 10,
+                 11, 14, 9, 10, 12, 13, 11, 10, 12, 9, 11, 13, 10, 12, 11]
+let b_signups = [14, 12, 16, 13, 11, 15, 12, 14, 13, 16, 12, 11, 15, 14, 13,
+                 12, 15, 13, 14, 12, 16, 13, 12, 14, 15, 13, 12, 14, 13, 15]
+for k in a_signups {
+  observe k from binomial(visitors, a)
+}
+for k in b_signups {
+  observe k from binomial(visitors, b)
+}
+report b > a as "B converts better"
+report (b - a) / a * 100 as "B's lift over A (%)"

@@ -1,0 +1,32 @@
+# Yahtzee: going for five of a kind in one turn. Roll five dice, keep the
+# most common face (the highest, on a tie), and reroll the others, twice.
+#
+# Stresses: dice pools (sorted lists of dice), higher-order functions.
+
+@mode enumerate
+
+# The most common face in a roll, and how many dice show it.
+fn best(dice) {
+  var face = 0
+  var most = 0
+  for f in 1..6 {
+    let n = count(dice, x -> x == f)
+    if n >= most {
+      face = f
+      most = n
+    }
+  }
+  { face: face, count: most }
+}
+
+let first ~ roll(5, d6)
+var kept = best(first)
+repeat 2 {
+  if kept.count < 5 {
+    let rest ~ roll(5 - kept.count, d6)
+    let face = kept.face
+    kept = { face: face, count: kept.count + count(rest, x -> x == face) }
+  }
+}
+report kept.count == 5 as "yahtzee"
+report kept.count as "dice showing the kept face"

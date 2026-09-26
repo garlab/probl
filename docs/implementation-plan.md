@@ -4,14 +4,13 @@
 
 ## 0. Status
 
-The engine enumerates and samples. All nine examples run: 01–06 print their documented output exactly, as checked against independent calculations, and the sampled 07–09 agree with an independent reference simulation within their sampling error. The audit of commit `a37c0b6` found that several of the language's promises weren't well defined, and that the tests couldn't catch it. Its first four recommended steps are done:
+The engine enumerates and samples. All nine examples run: 01–06 print their documented output exactly, as checked against independent calculations, and the sampled 07–09 agree with an independent reference simulation within their sampling error. The audit of commit `a37c0b6` found that several of the language's promises weren't well defined, and that the tests couldn't catch it. All five of its recommended steps are done:
 
 1. **Reference semantics.** [docs/semantics.md](semantics.md) is normative for the engine: types and event identity, evaluation order, calls versus `simulate`, evidence, reports, termination and approximation, and resource limits.
 2. **Lowering and the numerical contract.** Operands are evaluated left to right, effects decide what can be memoized, weights can't underflow, and fractions are labelled as approximations.
 3. **Budgets, crashes and an independent oracle.** The host sets limits that a program can only lower, panics become internal errors, and a second, deliberately naive interpreter checks the engine on generated programs.
 4. **Basic sampling, with verified estimates and uncertainty.** The estimators were specified first (semantics §14): independent runs weighted by the evidence, self-normalized estimates with delta-method standard errors, and the effective sample size. Continuous distributions came with them (§13). Sampling is checked against enumeration on generated programs, and its standard errors are calibrated. Merged runs, particles, beam search and nested estimates wait for their own contracts.
-
-What's left of the audit's order is step 5: benchmarks of realistic models, to choose what to build next.
+5. **Benchmarks.** Twelve realistic game and forecast models, run with the examples by `probl-bench`, chose what comes next: [docs/benchmarks.md](benchmarks.md) has the measurements, profiles and reasons, and §9 the resulting order.
 
 How each finding was answered:
 
@@ -34,7 +33,7 @@ The implementation differs from the original plan in a few places, each delibera
 - **Distributions live in the engine crate** (`dist.rs` and `continuous.rs`), not a separate `probl-dist`.
 - **Random numbers and samplers are written by hand** (xoshiro256++, Box–Muller, Marsaglia–Tsang, inversion), with `libm` for the special functions, instead of `rand` and `statrs`: a seed must give the same numbers on every platform and in every version of the dependencies. They're tested against their distributions with Kolmogorov–Smirnov and chi-square tests.
 - **Weights are `f64` with an extended exponent** (`Weight`), not a generic parameter. Exact rational weights were dropped: they would have made `--fractions` a proof only for programs without loops or observations of floats, which is too narrow to promise (audit I1). If exact answers come back, it will be for an explicitly supported subset.
-- **Collections are `Arc`-shared and copied on write**, not `im` persistent structures. That's enough for the examples; persistent collections wait for a benchmark that needs them.
+- **Collections are `Arc`-shared and copied on write**, not `im` persistent structures. No benchmark spends significant time copying collections (docs/benchmarks.md), so persistent collections wait for one that does.
 - **The engine thread's stack is 64 MiB**, with a call-depth limit of 500. Replacing recursion in the interpreter with an explicit stack waits for a model that needs deeper calls.
 
 ## 1. Scope
@@ -232,11 +231,10 @@ The effort ranges assume one developer working full time, and they are 90% confi
 
 ### Phase 7: reach (open-ended), v0.4 and later
 
-- Benchmarks of realistic game and forecast models, to choose among the next items (audit, step 5).
-- Solving finite-state loops and recursions as absorbing Markov chains, instead of unrolling them (D5).
+- Solving finite-state loops and recursions as absorbing Markov chains, instead of unrolling them (D5): for exactness and for recursion that returns to the same call, since no benchmark is slow because of them.
 - A WebAssembly build and a browser playground; Python bindings.
-- Performance: a bytecode VM that runs each instruction over all worlds at once, hash-consing, persistent collections, a parallel enumerator.
-- Research track: compiling to decision diagrams for exact inference (as the Dice language does), and reports conditioned on later evidence (smoothing).
+- Performance, if benchmarks call for it after the work in §9: a bytecode VM that runs each instruction over all worlds at once, persistent collections, a parallel enumerator.
+- Research track: compiling to decision diagrams for exact inference (as the Dice language does), and reports conditioned on later evidence (smoothing). The benchmarks' blow-ups are fixed more cheaply by moving draws, or need sampling.
 
 ### Forecast
 
@@ -263,12 +261,12 @@ The forecast made when the plan was first written, by running [`examples/09_road
 - **Sampling against enumeration.** For generated programs, every estimate sampling prints (probabilities, means, reach) must be within six standard errors of the exact value from enumeration, and across all of them the standard errors must be calibrated: few estimates more than four standard errors off, and a mean squared z-score near 1. On 2,271 programs and 9,316 estimates it was 0.99. `PROBL_SAMPLING_CASES` runs more.
 - **Samplers.** Kolmogorov–Smirnov tests for every continuous family, chi-square tests for the direct count samplers, and closed-form checks of CDFs, quantiles and densities. `probl-engine/tests/sampling.rs` covers the rules of semantics §13–14.
 - **Sampled examples.** Examples 07–09 are compared with outputs from an independent reference simulation, token by token: estimates within five standard errors, other numbers within 4%, dates within three days. The comparator has its own test.
-- **Planned:** `criterion` benchmarks tracking worlds per second, merge ratio and peak world count.
+- **Benchmarks.** `cargo run --release -p probl-bench` runs the models in `benches/` and `examples/` and prints their time, worlds, world-steps, calls, peak heap, and cost without merging; `cargo test` checks that they compile. They aren't run in the test suite (they take about 3½ minutes), and nothing tracks them over time yet.
 
 ## 6. Performance targets
 
 - Enumeration: examples 02 to 06 each finish in under one second on a laptop, and craps in under 50 ms. (Met.)
-- Sample mode: example 07 (50,000 runs × 18 months) finishes in under two seconds on eight cores. (It takes 2.3 seconds on one core; parallel batches should meet the target.)
+- Sample mode: example 07 (50,000 runs × 18 months) finishes in under two seconds on eight cores. (It takes 1.8 seconds on one core; the same runs as 8 processes take 0.27 seconds, which is what parallel batches should reach.)
 - If a target is missed by more than 10×, the vectorized VM from phase 7 moves earlier.
 
 ## 7. Risks
@@ -307,6 +305,11 @@ Still open:
 
 ## 9. Next steps
 
-1. Write benchmarks from realistic game and forecast models (the audit's step 5), before choosing between Markov-chain solving, a faster interpreter, parallel batches and persistent collections.
-2. Finish v0.2: parallel batches with a stream per batch, and an estimate of the evidence.
-3. Specify the next inference methods before building any (particles, beam search, nested estimates), with the audit's D4 checklist.
+The order the benchmarks recommend (docs/benchmarks.md):
+
+1. **Parallel sampling batches**, with a random stream per batch: about 6.6× for sampled models on 8 cores. Then finish v0.2 with an estimate of the evidence.
+2. **Cheaper merging**: cached hashes for collections, and precomputed dead slots. Merging takes 34–70% of the time in state-heavy enumeration.
+3. **Moving draws to their first use**, a compiler pass: 1,048,576 worlds become 256 in the reliability benchmark.
+4. **Better inference for evidence-heavy forecasts**: specify, then build, conjugate updates and a general method (Metropolis–Hastings over a run's choices, or particles with rejuvenation), with the audit's D4 checklist. Likelihood weighting's effective sample size falls from 852 to 211 as an A/B test's data grows from 30 to 120 days.
+5. **Reading data from files and stdin**, as proposed in [docs/data-input.md](data-input.md), once its open questions are settled.
+6. **Markov-chain solving**, for exact cyclic loops and recursion to the same call.

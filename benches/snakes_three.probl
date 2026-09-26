@@ -1,0 +1,33 @@
+# Snakes and ladders for three players, written the natural way: the board
+# state is every player's square. Example 05 avoids this by racing each
+# player separately; here the three positions keep worlds apart.
+#
+# Stresses: state explosion (up to 100³ positions), unbounded loops.
+
+@mode enumerate
+
+let jumps = [
+   1: 38,  4: 14,  9: 31, 21: 42, 28: 84, 36: 44, 51: 67, 71: 91, 80: 100,
+  16:  6, 47: 26, 49: 11, 56: 53, 62: 19, 64: 60, 87: 24, 93: 73, 95: 75, 98: 78,
+]
+
+fn step(square) {
+  let r ~ d6
+  let target = square + r
+  if target <= 100 { jumps.get(target, target) } else { square }
+}
+
+var squares = [0, 0, 0]
+var winner = -1
+var turns = 0
+while winner < 0 {
+  turns += 1
+  for p in 0..2 {
+    if winner < 0 {
+      squares[p] = step(squares[p])
+      if squares[p] == 100 { winner = p }
+    }
+  }
+}
+report winner as "winner (0 moves first)"
+report turns as "rounds played"
