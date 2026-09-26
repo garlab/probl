@@ -188,7 +188,12 @@ Anything else, such as arithmetic (`normal(0, 1) * 2`) or comparing two continuo
 - A report's **reach** is the weight of the runs that reached it, divided by the weight of all runs.
 - The **effective sample size** (Σ wᵢ)² / Σ wᵢ² is printed when observations made the weights unequal. It says how many equally weighted runs the estimates are worth; when it's small, the estimates and their standard errors are unreliable.
 
-Sampling doesn't estimate the evidence yet. If every run is ruled out, it's an error: the evidence is impossible, or too unlikely for this number of runs.
+**Evidence.** When the program observes, the evidence (section 7) is estimated by the average final weight of the runs, Ẑ = Σ wᵢ / n, counting the runs ruled out as 0. Ẑ is unbiased. Its standard error, relative to Ẑ, is √((n / ESS − 1) / (n − 1)), where ESS is the effective sample size.
+
+- **Probabilities only.** When every observation is of a probability (facts, and values of discrete distributions), Ẑ estimates the probability of the evidence. It's printed like enumeration's, with its standard error: `evidence 3.24% ± 0.05%`. Below 0.01%, it's printed in scientific notation with its relative error: `evidence 1.23e-14 (± 0.6%)`.
+- **Densities.** An observation of a continuous value multiplies by a density (section 13), so then Ẑ estimates a density, whose scale depends on the units. It's printed as its natural logarithm, whose standard error is Ẑ's relative one: `log evidence -42.31 ± 0.01`. The difference between two models' log evidence on the same data is the logarithm of their Bayes factor.
+
+When few runs carry the weight (a small effective sample size), this estimate is unreliable too, and more often too low than too high. If every run is ruled out, it's an error: the evidence is impossible, or too unlikely for this number of runs.
 
 ## 15. Data
 
@@ -202,7 +207,6 @@ Sampling doesn't estimate the evidence yet. If every run is ruled out, it's an e
 
 - **Particles, beam search and merged runs** (audit D4): how merged samples keep their statistical bookkeeping, and when particles resample.
 - **Nested estimates** (D4): `simulate` blocks that must be sampled, and how their error affects decisions.
-- **Evidence estimates** (D3): the evidence when sampling, and log-evidence for densities.
 - **Arithmetic on continuous distributions**, beyond comparing them with numbers.
 - **Recursion that returns to the same call, when enumerating** (D5): currently an error; solving such systems as Markov chains is future work.
 - **Reports that update with later evidence** (filtering and smoothing).

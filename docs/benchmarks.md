@@ -176,5 +176,5 @@ The other models already draw where they use the values: only craps' first roll 
 - `poisson` draws in sampled runs recompute `lgamma` at the mode every time (14% of `inventory`); caching it for the last rate is a small fix.
 - A sampled report of a continuous quantity keeps every distinct value for exact quantiles: 25 MB for example 08's 200,000 runs. A quantile sketch would bound it.
 - The effective sample size is the right warning for likelihood weighting, but at a few hundred its standard errors are unreliable too (the semantics says so). A warning in the output when it's small would help.
-- Tiny evidence is printed as a percentage in scientific notation (`evidence 2.9e-23%`); plain scientific notation, `2.9e-25`, would read better.
+- Tiny evidence is printed as a percentage in scientific notation (`evidence 2.9e-23%`); plain scientific notation, `2.9e-25`, would read better. *Done: it's `evidence 2.92e-25` now, and sampling prints its estimate the same way.*
 - A local variable can hide a built-in function (a `count` variable made `count(…)` fail in `yahtzee` with "can't call an int"). A warning, or a better error, would help.

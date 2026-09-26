@@ -288,3 +288,44 @@ fn threads_share_the_work_budget() {
     let (plenty, _) = on_threads(&src, 8, steps * 4);
     assert!(plenty.is_ok());
 }
+
+#[test]
+fn the_evidence_is_estimated() {
+    // Probabilities: two dice, P(x > 4 and y = 6) = 1/18.
+    let src = "@mode sample(runs: 50_000, seed: 5)\nlet x ~ d6\nobserve x > 4\nlet y ~ d6\nobserve y == 6\nreport x";
+    let out = outcome(src);
+    let info = out.sample.as_ref().unwrap();
+    let z = out.evidence.unwrap().to_f64();
+    within((z, z * info.evidence_se), 1.0 / 18.0, 5.0);
+    assert!(!info.densities);
+    assert!(
+        out.output.starts_with("sample · 50,000 runs · seed 5 · evidence 5."),
+        "{}",
+        out.output
+    );
+    assert!(out.output.contains("% ± 0.1"), "{}", out.output);
+    // Densities: a normal prior and a normal observation; the observation's
+    // marginal is normal(0, √2), so the log evidence is -1.5²/4 - ln(4π)/2.
+    let src = "@mode sample(runs: 50_000, seed: 5)\nlet mu ~ normal(0, 1)\nobserve 1.5 from normal(mu, 1)\nreport mu";
+    let out = outcome(src);
+    let info = out.sample.as_ref().unwrap();
+    assert!(info.densities);
+    let ln_z = out.evidence.unwrap().log10() * std::f64::consts::LN_10;
+    within(
+        (ln_z, info.evidence_se),
+        -1.5f64.powi(2) / 4.0 - (4.0 * std::f64::consts::PI).ln() / 2.0,
+        5.0,
+    );
+    assert!(out.output.contains("· log evidence -1.8"), "{}", out.output);
+    // Tiny evidence is written in scientific notation, with a relative error.
+    let src = "@mode sample(runs: 20_000, seed: 5)\nlet x ~ d6\nrepeat 20 { observe 10% }\nreport x";
+    let out = output(src);
+    assert!(out.contains("evidence 1.00e-20 (± 0.00%)"), "{out}");
+    // No evidence without observations.
+    let out = outcome("@mode sample(runs: 1_000, seed: 5)\nlet x ~ d6\nreport x");
+    assert!(
+        out.evidence.is_none() && !out.output.contains("evidence"),
+        "{}",
+        out.output
+    );
+}

@@ -221,7 +221,7 @@ The effort ranges assume one developer working full time, and they are 90% confi
 - The oracle, the program generator and fuzzing; regression tests for every confirmed probe.
 - **Exit reached:** the oracle and the engine agree on 50,000 generated programs (36,356 compared value by value, 12,192 rejected by both, the rest too big for the oracle), and 30,000 fuzzed programs never crash.
 
-### Phase 4: sampling and continuous distributions, release v0.2 "Forecasts" (mostly done)
+### Phase 4: sampling and continuous distributions, release v0.2 "Forecasts" (done)
 
 - Done: the estimators, specified first (semantics §14): independent runs, likelihood weighting, standard errors, the effective sample size; `simulate` enumerated inside runs.
 - Done: independent sampling, checked against enumeration on generated programs with fixed seeds, including the calibration of its standard errors.
@@ -229,7 +229,8 @@ The effort ranges assume one developer working full time, and they are 90% confi
 - **Exit reached:** examples 07 to 09 match their reference outputs within tolerance, and every sampler passes its statistical tests.
 - Done: parallel batches, each with a random stream of its own. The output is the same with any number of threads, and sampled models run 6–8× faster on 12 cores (docs/benchmarks.md).
 - Done: reading data from files and stdin: CSV, JSON and lines, with declared types that decide how the data is read, `probl schema`, host limits and resolvers ([reading data](data-input.md)). Record types keep their fields' types.
-- Left before the release: an estimate of the evidence (log-evidence with densities).
+- Done: the evidence when sampling (semantics §14): the average final weight, with its standard error from the effective sample size, or its logarithm when an observation uses a density. It's checked against enumeration's exact evidence, standard errors included.
+- **Exit reached:** everything planned for v0.2 is built; releasing it is a matter of packaging.
 - Only if benchmarks call for them, each with its contract first: arithmetic on continuous distributions, merged sampling, particles, beam, nested estimates, and an `auto` mode that says what it chose.
 
 ### Phase 5: inspection (2–4 weeks)
@@ -332,7 +333,7 @@ Still open:
 
 ## 9. Next steps
 
-The order the benchmarks recommend (docs/benchmarks.md). The first three are done: parallel sampling batches (6–8× for sampled models on 12 cores), cheaper merging (1.4–2.9× for enumeration), and moving draws to their first use (the reliability model follows 256 worlds instead of 2²⁰). So is reading data ([reading data](data-input.md)). v0.2 still needs an estimate of the evidence.
+The order the benchmarks recommend (docs/benchmarks.md). The first three are done: parallel sampling batches (6–8× for sampled models on 12 cores), cheaper merging (1.4–2.9× for enumeration), and moving draws to their first use (the reliability model follows 256 worlds instead of 2²⁰). So are reading data ([reading data](data-input.md)) and the evidence when sampling, which completes v0.2.
 
 1. **Better inference for evidence-heavy forecasts**: specify, then build, conjugate updates and a general method (Metropolis–Hastings over a run's choices, or particles with rejuvenation), with the audit's D4 checklist. Likelihood weighting's effective sample size falls from 852 to 211 as an A/B test's data grows from 30 to 120 days. Now that models can read real data, this matters more.
 2. **Markov-chain solving**, for exact cyclic loops and recursion to the same call.

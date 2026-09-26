@@ -142,6 +142,12 @@ pub struct Sampled {
     pub weight: Weight,
     /// Σ w².
     pub squares: Weight,
+    /// The standard error of the evidence estimate (`Outcome::evidence`),
+    /// relative to it.
+    pub evidence_se: f64,
+    /// Whether an observation used a density, which makes the evidence a
+    /// density too.
+    pub densities: bool,
 }
 
 /// Run a program. `print` receives the output of `print(…)` as it happens.
@@ -280,7 +286,7 @@ fn run_here(
                 report::pct(hi, plain)
             ));
         } else if z.to_f64() < 0.0001 {
-            header.push_str(&format!(" · evidence {}", interp::fmt_weight(z)));
+            header.push_str(&format!(" · evidence {}", scientific(z)));
         } else {
             header.push_str(&format!(" · evidence {}", report::pct(z.to_f64(), plain)));
         }
@@ -309,6 +315,57 @@ fn run_here(
     })
 }
 
+/// A weight too small for a percentage, in scientific notation: `2.9e-25`.
+fn scientific(w: Weight) -> String {
+    let l = w.log10();
+    let exponent = l.floor();
+    let mantissa = 10f64.powf(l - exponent);
+    // Rounding the mantissa can make it 10.0.
+    let (mantissa, exponent) = if format!("{mantissa:.2}") == "10.00" {
+        (1.0, exponent + 1.0)
+    } else {
+        (mantissa, exponent)
+    };
+    format!("{mantissa:.2}e{exponent}")
+}
+
+/// The sampled estimate of the evidence, for the summary line (section 14):
+/// a probability, or the logarithm of a density.
+fn evidence_estimate(z: Weight, relative_se: f64, densities: bool) -> String {
+    let known = relative_se.is_finite();
+    if densities {
+        let ln = z.log10() * std::f64::consts::LN_10;
+        if !known {
+            return format!("log evidence {ln:.2}");
+        }
+        let decimals = if relative_se > 0.0 {
+            (-relative_se.log10().floor()).clamp(2.0, 6.0) as usize
+        } else {
+            2
+        };
+        return format!("log evidence {ln:.decimals$} ± {relative_se:.decimals$}");
+    }
+    let x = z.to_f64();
+    if x >= 1e-4 {
+        return match known {
+            true => format!("evidence {}", report::estimate(x, x * relative_se)),
+            false => format!("evidence {}", value::fmt_prob(x)),
+        };
+    }
+    if !known {
+        return format!("evidence {}", scientific(z));
+    }
+    let pct = relative_se * 100.0;
+    let decimals = if pct >= 10.0 {
+        0
+    } else if pct >= 1.0 {
+        1
+    } else {
+        2
+    };
+    format!("evidence {} (± {pct:.decimals$}%)", scientific(z))
+}
+
 /// The values of the program's inputs: loaded, and loaded for it.
 fn inputs<'a>(program: &Program, options: &'a Options) -> Result<&'a [Value], RuntimeError> {
     let Some(first) = program.inputs.first() else {
@@ -333,6 +390,7 @@ struct Combined {
     sinks: Vec<Sink>,
     totals: interp::SampleTotals,
     observed: bool,
+    densities: bool,
     unresolved: Weight,
     last_ruling_out: Option<Span>,
     stats: Stats,
@@ -347,6 +405,7 @@ impl Combined {
                 squares: Weight::ZERO,
             },
             observed: false,
+            densities: false,
             unresolved: Weight::ZERO,
             last_ruling_out: None,
             stats: Stats::default(),
@@ -360,6 +419,7 @@ impl Combined {
         self.totals.weight += batch.totals.weight;
         self.totals.squares += batch.totals.squares;
         self.observed |= batch.observed;
+        self.densities |= batch.densities;
         self.unresolved += batch.unresolved;
         self.last_ruling_out = batch.last_ruling_out.or(self.last_ruling_out);
         self.stats.peak_worlds = self.stats.peak_worlds.max(batch.stats.peak_worlds);
@@ -527,7 +587,20 @@ fn sampled(
     }
     let effective = (totals.weight * totals.weight).ratio(totals.squares);
     let mut header = format!("sample · {} runs · seed {seed}", report::thousands(runs as i64));
+    // The evidence: the average final weight, and its standard error
+    // relative to it (section 14).
+    let evidence = totals.weight.scale(1.0 / runs as f64);
+    let n = runs as f64;
+    let evidence_se = if runs > 1 {
+        ((n / effective - 1.0).max(0.0) / (n - 1.0)).sqrt()
+    } else {
+        f64::NAN
+    };
     if engine.observed {
+        header.push_str(&format!(
+            " · {}",
+            evidence_estimate(evidence, evidence_se, engine.densities)
+        ));
         header.push_str(&format!(
             " · effective sample size {}",
             report::thousands(effective.round() as i64)
@@ -556,7 +629,7 @@ fn sampled(
         output,
         stats: engine.stats.clone(),
         unresolved,
-        evidence: None,
+        evidence: engine.observed.then_some(evidence),
         reports: std::mem::take(&mut engine.sinks),
         sample: Some(Sampled {
             runs,
@@ -564,6 +637,8 @@ fn sampled(
             effective,
             weight: totals.weight,
             squares: totals.squares,
+            evidence_se,
+            densities: engine.densities,
         }),
         data: sources(options),
     })

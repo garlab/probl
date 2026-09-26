@@ -24,7 +24,7 @@ report next_month >= 400 as "at least 400 sign-ups"
 # effective sample size: how many equally weighted runs those amount to.
 
 # ── Output (sampled: expect small differences in the last digits) ───────
-# sample · 200,000 runs · seed 7 · effective sample size 30,933
+# sample · 200,000 runs · seed 7 · evidence 3.60e-15 (± 0.52%) · effective sample size 30,933
 #
 # conversion rate (%)      mean 3.39 · sd 0.30 · 5% 2.90 · median 3.38 · 95% 3.91
 # sign-ups next month      mean 398 · sd 75 · 5% 288 · median 392 · 95% 530

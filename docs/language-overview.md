@@ -359,8 +359,10 @@ The output always starts with a line saying how the numbers were computed, so an
 
 ```
 enumerated · evidence 8.87% · unresolved < 1e-12
-sample · 50,000 runs · seed 11 · effective sample size 50,000
+sample · 200,000 runs · seed 7 · evidence 3.61e-15 (± 0.52%) · effective sample size 31,244
 ```
+
+When the program observes, the line gives the evidence: the probability of all the observations. Sampling estimates it, with its standard error. When an observation uses a density (`observe 1.5 from normal(mu, 1)`), it gives the evidence's logarithm (`log evidence -1.825 ± 0.003`), which compares models: the difference of two models' log evidence on the same data is the logarithm of their Bayes factor.
 
 Sampling uses every core by default. The runs go in batches of 1,000 with random numbers of their own, combined in order, so the output is the same on any number of cores.
 

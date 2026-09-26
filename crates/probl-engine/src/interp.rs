@@ -65,6 +65,7 @@ pub struct Batch {
     pub sinks: Vec<Sink>,
     pub totals: SampleTotals,
     pub observed: bool,
+    pub densities: bool,
     pub unresolved: Weight,
     pub last_ruling_out: Option<Span>,
     pub stats: Stats,
@@ -105,6 +106,9 @@ pub struct Engine<'p> {
     pub unresolved: Weight,
     /// Whether the current inference scope has run `observe`.
     pub observed: bool,
+    /// Whether it has observed a value with a density, which makes the
+    /// evidence a density too (docs/semantics.md, section 14).
+    pub densities: bool,
     /// The last observation that ruled out a world, for impossible evidence.
     pub last_ruling_out: Option<Span>,
     pub sinks: Vec<Sink>,
@@ -147,6 +151,7 @@ impl<'p> Engine<'p> {
             depth: 0,
             unresolved: Weight::ZERO,
             observed: false,
+            densities: false,
             last_ruling_out: None,
             sinks: vec![Sink::default(); prog.reports.len()],
             dice: FxHashMap::default(),
@@ -196,6 +201,7 @@ impl<'p> Engine<'p> {
         self.sampler = Some(rng);
         self.sinks = vec![Sink::default(); self.prog.reports.len()];
         self.observed = false;
+        self.densities = false;
         self.unresolved = Weight::ZERO;
         self.last_ruling_out = None;
         self.stats = Stats::default();
@@ -232,6 +238,7 @@ impl<'p> Engine<'p> {
             sinks: std::mem::take(&mut self.sinks),
             totals,
             observed: self.observed,
+            densities: self.densities,
             unresolved: self.unresolved,
             last_ruling_out: self.last_ruling_out,
             stats: std::mem::take(&mut self.stats),
@@ -624,6 +631,7 @@ impl<'p> Engine<'p> {
                                 }
                                 _ => {
                                     let dist = self.eval(f, d, &w)?;
+                                    self.densities |= is_density(&dist);
                                     likelihood(&dist, &v, self.sampler.is_some()).map_err(|e| e.at(span))?
                                 }
                             }
@@ -947,6 +955,7 @@ impl<'p> Engine<'p> {
     /// normalized distribution (docs/semantics.md, section 8).
     fn simulate(&mut self, func: FnId, key: Vec<Value>, span: Span) -> Result<Value> {
         let saved_observed = self.observed;
+        let saved_densities = self.densities;
         // Enumerated, even when sampling (section 14).
         let sampler = self.sampler.take();
         self.nested += sampler.is_some() as usize;
@@ -955,6 +964,7 @@ impl<'p> Engine<'p> {
         self.sampler = sampler;
         // Observations inside `simulate` condition its result only.
         self.observed = saved_observed;
+        self.densities = saved_densities;
         let result = result?;
         let resolved = Weight::sum(result.outcomes.iter().map(|(_, w)| *w));
         if resolved.is_zero() {
@@ -1376,6 +1386,15 @@ fn update(target: &mut Value, keys: &[PathKey], v: Value) -> OpResult<()> {
 /// The probability of observing `v` from `d`, and the probability that is
 /// missing from `d` (so the true value may be up to that much higher). When
 /// sampling, a continuous `d` gives its density instead (section 13).
+/// Whether observing a value from `d` uses a density.
+fn is_density(d: &Value) -> bool {
+    match d {
+        Value::Continuous(_) => true,
+        Value::Dist(dist) => dist.outcomes.iter().any(|(x, _)| matches!(x, Value::Continuous(_))),
+        _ => false,
+    }
+}
+
 fn likelihood(d: &Value, v: &Value, sampling: bool) -> OpResult<(f64, f64)> {
     let continuous = match d {
         Value::Continuous(f) => Some(vec![(**f, 1.0)]),

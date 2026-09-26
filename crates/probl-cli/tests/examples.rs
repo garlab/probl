@@ -207,6 +207,8 @@ fn agree(expected: &str, actual: &str) -> Result<(), String> {
             (Some(sx), Some(sy)) => 5.0 * sx.max(sy) + 0.05,
             // A standard error: a loose check.
             _ if i >= 1 && e[i - 1] == "±" => (0.5 * nx.abs().max(ny.abs())).max(0.1),
+            // In scientific notation, relative to the number.
+            _ if x.contains('e') || y.contains('e') => 0.04 * nx.abs().max(ny.abs()),
             _ => (0.04 * nx.abs().max(ny.abs())).max(0.05),
         };
         if (nx - ny).abs() > tolerance {
@@ -216,9 +218,13 @@ fn agree(expected: &str, actual: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// A number as printed: `1,234`, `-0.5`, `33.0%`.
+/// A number as printed: `1,234`, `-0.5`, `33.0%`, `(± 0.5%)`.
 fn number(s: &str) -> Option<f64> {
-    s.trim_end_matches('%').replace(',', "").parse().ok()
+    s.trim_matches(['(', ')'])
+        .trim_end_matches('%')
+        .replace(',', "")
+        .parse()
+        .ok()
 }
 
 /// A date as a day count, roughly (only differences matter).

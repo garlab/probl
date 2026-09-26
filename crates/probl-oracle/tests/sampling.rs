@@ -43,6 +43,8 @@ struct Scores {
     /// The program being compared, and the estimates furthest off so far.
     seed: u64,
     worst: Vec<(f64, String)>,
+    /// The evidence's z-scores alone.
+    evidence: Vec<f64>,
 }
 
 impl Scores {
@@ -93,6 +95,25 @@ fn numeric(dist: &[(Value, f64)]) -> Option<(f64, f64)> {
 fn compare(program: &Program, exact: &Outcome, sampled: &Outcome, scores: &mut Scores) -> Result<(), String> {
     let info = sampled.sample.as_ref().expect("sampled");
     let z_exact = exact.evidence.unwrap_or(Weight::ONE);
+    // The evidence, relative to the exact one (section 14). Its standard
+    // error comes from the weights sampled, and nothing bounds it from the
+    // exact distribution, as for the reports: with runs worth fewer than
+    // 100, which section 14 calls unreliable, it isn't checked.
+    if let (Some(z), Some(estimate)) = (exact.evidence, sampled.evidence) {
+        let r = estimate.ratio(z);
+        let se = r * info.evidence_se;
+        if se > 0.0 && info.effective >= 100.0 {
+            scores.check(
+                "the evidence, relative to the exact one",
+                1.0,
+                r,
+                se,
+                0.0,
+                info.effective,
+            )?;
+            scores.evidence.push((r - 1.0) / se);
+        }
+    }
     for (i, (site, (e, s))) in program
         .reports
         .iter()
@@ -211,10 +232,13 @@ fn sampling_agrees_with_enumeration() {
     // of z², so that one of them can't hide how the others do.
     let far = scores.z.iter().filter(|z| z.abs() > 4.0).count();
     let mean_square = scores.z.iter().map(|z| z.clamp(-4.0, 4.0).powi(2)).sum::<f64>() / scores.z.len().max(1) as f64;
+    let evidence_square =
+        scores.evidence.iter().map(|z| z.clamp(-4.0, 4.0).powi(2)).sum::<f64>() / scores.evidence.len().max(1) as f64;
     eprintln!(
-        "{checked} programs checked, {skipped} skipped; {} estimates compared; {} z-scores, mean z² {mean_square:.2}, {far} beyond 4",
+        "{checked} programs checked, {skipped} skipped; {} estimates compared; {} z-scores, mean z² {mean_square:.2}, {far} beyond 4; of those, {} for the evidence, mean z² {evidence_square:.2}",
         scores.compared,
-        scores.z.len()
+        scores.z.len(),
+        scores.evidence.len()
     );
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
     scores.worst.sort_by(|a, b| b.0.total_cmp(&a.0));
