@@ -247,7 +247,7 @@ fn random_loop(rng: &mut Rng) -> String {
             0 => format!("  {v} = ({v} + {k}) mod {m}"),
             1 => format!("  {v} = if {p}% {{ ({v} + {k}) mod {m} }} else {{ {v} }}"),
             2 => format!("  if a == b {{ observe {p}% }}"),
-            3 => format!("  if {p}% and {v} == {} {{ break }}", pick(m)),
+            3 => format!("  if bernoulli({p}%) and {v} == {} {{ break }}", pick(m)),
             4 => format!("  if {v} == {} {{ continue }}", pick(m)),
             5 => format!("  {v} = chance {{ {p}% => 0, else => {} }}", pick(3)),
             6 => format!(

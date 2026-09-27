@@ -200,6 +200,8 @@ Without merging, both now finish: solving tells states apart itself. Nothing els
 
 Hashing the states costs nothing measurable. A loop that ends once in 10⁹ rounds, which unrolling couldn't finish, takes microseconds.
 
+Recursion that comes back to the same call now works too (semantics §6). Such a call is solved by rounds, with every call in the cycle run at most once per round. A recursive tennis game takes 35 rounds and gives the loop's 81.26%. Exploding dice take 15 rounds.
+
 ## Smaller findings
 
 - `poisson` draws in sampled runs recompute `lgamma` at the mode every time (14% of `inventory`); caching it for the last rate is a small fix.

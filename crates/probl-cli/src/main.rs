@@ -314,11 +314,21 @@ fn run_file(path: &PathBuf, options: &mut Options, limits: &InputLimits, stats: 
                     "stats: peak {} worlds · {} world-steps · {} calls ({} reused)",
                     s.peak_worlds, s.world_steps, s.calls, s.memo_hits
                 );
+                let count = |n: u64, one: &str, many: &str| {
+                    format!("{} {}", thousands(n as i64), if n == 1 { one } else { many })
+                };
                 if s.solved_loops > 0 {
                     line.push_str(&format!(
-                        " · {} loops solved ({} states)",
-                        thousands(s.solved_loops as i64),
-                        thousands(s.chain_states as i64)
+                        " · {} solved ({})",
+                        count(s.solved_loops, "loop", "loops"),
+                        count(s.chain_states, "state", "states")
+                    ));
+                }
+                if s.solved_calls > 0 {
+                    line.push_str(&format!(
+                        " · {} solved ({})",
+                        count(s.solved_calls, "recursive call", "recursive calls"),
+                        count(s.call_rounds, "round", "rounds")
                     ));
                 }
                 eprintln!("{line}");

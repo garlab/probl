@@ -1,6 +1,6 @@
 # Probl reference semantics
 
-> Version 0.2, September 2026. This document is normative for the engine. Where it disagrees with the [language overview](language-overview.md), this document wins. It resolves findings D1–D3, I1 and I2 of the [project audit](project-audit.md). Continuous distributions (D6) and sampling (D4), with exact updates for conjugate priors, are in sections 13 and 14, and data read from files in section 15; what is still open, such as particles and solving recursive equations (D5), is listed in section 16.
+> Version 0.2, September 2026. This document is normative for the engine. Where it disagrees with the [language overview](language-overview.md), this document wins. It resolves findings D1–D3, I1 and I2 of the [project audit](project-audit.md). Continuous distributions (D6) and sampling (D4), with exact updates for conjugate priors, are in sections 13 and 14, and data read from files in section 15; loops and recursion that cycle are solved as in sections 6 and 10 (D5); what is still open, such as particles, is listed in section 16.
 
 ## 1. Values and types
 
@@ -93,6 +93,14 @@ Weights are unnormalized: they include every observation so far. Nothing is norm
 A function may read any variable in scope; the values are copied in when it's called. It may assign only its own variables. A call runs the function's body as a set of worlds of its own and returns the distribution of results, **unnormalized**: splits and observations inside the function become part of the caller's weights. An ordinary call is not an inference boundary.
 
 Because a function's result depends only on its arguments and the values it reads, the engine may compute it once and reuse it (memoization) when enumerating. It does so only when the function has no debug output: a function that calls `print`, directly or through other functions, runs every time it's called. When sampling, every call runs (section 14).
+
+**Recursion.** When enumerating, a call can come back to itself while it's running: the same function, with the same arguments, directly or through other calls. An example is `fn f() { if 50% { 1 } else { f() } }`. Its result is then the least solution of what the calls say about each other, found by iteration:
+- **Rounds.** In the first round, a call that comes back gets nothing: all of its weight waits. In each later round, it gets the results of the round before.
+- **Stopping.** The outermost call that another call came back to runs again, round after round, with everything it calls. It stops once the weight still waiting is below ε (section 10), and that weight is unresolved, as for an unrolled loop.
+- **Calls that never return.** If a round leaves as much weight waiting as the round before, part of the call never returns, and that's an error.
+- **Print.** A function that prints can't come back to itself. It would print once per round.
+
+When sampling, each run follows its own path, however deep (section 14).
 
 `print` is debug output, not part of the model. It prints once for each world that executes it; worlds that have merged count once, so the number of lines depends on how the engine merges.
 
@@ -235,5 +243,4 @@ When few runs carry the weight (a small effective sample size), this estimate is
 - **A general method for models that aren't conjugate**, such as MCMC: its target, its moves and its report estimators ([inference proposal](inference-proposal.md), section 2).
 - **Nested estimates** (D4): `simulate` blocks that must be sampled, and how their error affects decisions.
 - **Arithmetic on continuous distributions**, beyond comparing them with numbers.
-- **Recursion that returns to the same call, when enumerating** (D5): currently an error; solving such systems as Markov chains is future work.
 - **Reports that update with later evidence** (filtering and smoothing).

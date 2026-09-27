@@ -160,8 +160,9 @@ fn simulate_is_enumerated_when_sampling() {
 
 #[test]
 fn a_sampled_call_may_return_to_itself() {
+    // Enumerating solves it by iteration, and sampling follows each run.
     let f = "fn tries() { if 50% { 1 } else { 1 + tries() } }\nreport tries()";
-    assert!(error(f).contains("calls itself with the same arguments"));
+    assert!((mean(f) - 2.0).abs() < 1e-9);
     within(
         sampled_mean(&format!("@mode sample(runs: 20_000, seed: 4)\n{f}")),
         2.0,

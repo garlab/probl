@@ -39,6 +39,10 @@ pub struct Stats {
     /// Loops solved as Markov chains, and their states (section 10).
     pub solved_loops: u64,
     pub chain_states: u64,
+    /// Calls that came back to themselves, solved by iteration, and the
+    /// rounds that took (section 6).
+    pub solved_calls: u64,
+    pub call_rounds: u64,
     /// When sampling: what happened to each variable whose draws may be
     /// delayed (`Conjugacy::variables`).
     pub updates: Vec<Updates>,
@@ -65,6 +69,8 @@ impl Stats {
         self.memo_hits += other.memo_hits;
         self.solved_loops += other.solved_loops;
         self.chain_states += other.chain_states;
+        self.solved_calls += other.solved_calls;
+        self.call_rounds += other.call_rounds;
         if self.updates.len() < other.updates.len() {
             self.updates.resize(other.updates.len(), Updates::default());
         }
@@ -135,7 +141,7 @@ pub struct SampleTotals {
 }
 
 /// The distribution of a function's return value, unnormalized.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CallResult {
     pub outcomes: Vec<(Value, Weight)>,
     /// Weight the call left unresolved.
@@ -144,6 +150,54 @@ pub struct CallResult {
     pub lost: Weight,
     /// Whether the call ran `observe` (outside any `simulate`).
     pub observed: bool,
+    /// The part of `unresolved` waiting on calls that came back to
+    /// themselves and are still being solved (section 6), for each by its
+    /// depth in the stack. A result waiting on one isn't final.
+    pub pending: Vec<(usize, Weight)>,
+}
+
+impl CallResult {
+    /// The result of a call that came back to itself, before the first
+    /// round: nothing resolved, all of it waiting on that call.
+    fn waiting(depth: usize) -> CallResult {
+        CallResult {
+            outcomes: Vec::new(),
+            unresolved: Weight::ONE,
+            lost: Weight::ZERO,
+            observed: false,
+            pending: vec![(depth, Weight::ONE)],
+        }
+    }
+
+    /// Take out the weight waiting on the call at `depth`.
+    fn take_pending(&mut self, depth: usize) -> Weight {
+        match self.pending.iter().position(|&(d, _)| d == depth) {
+            Some(i) => self.pending.remove(i).1,
+            None => Weight::ZERO,
+        }
+    }
+}
+
+/// A call's result so far, while the call it waits on is being solved
+/// (section 6).
+struct Approx {
+    result: Arc<CallResult>,
+    /// The depth of that call, and its frame and round when this was worked
+    /// out. It stands for the call as long as that frame runs, and can be
+    /// reused as it is until that frame's next round.
+    head: usize,
+    frame: u64,
+    round: u64,
+}
+
+/// Add `weight` times what's waiting in `from` to `into`.
+fn add_pending(into: &mut Vec<(usize, Weight)>, from: &[(usize, Weight)], weight: Weight) {
+    for &(depth, w) in from {
+        match into.iter_mut().find(|(d, _)| *d == depth) {
+            Some((_, total)) => *total += weight * w,
+            None => into.push((depth, weight * w)),
+        }
+    }
 }
 
 type CallKey = (FnId, Vec<Value>);
@@ -156,7 +210,18 @@ pub struct Engine<'p> {
     config: Config,
     budget: Budget,
     memo: FxHashMap<CallKey, Arc<CallResult>>,
-    active: FxHashSet<CallKey>,
+    /// The calls running, with their depth in the stack.
+    active: FxHashMap<CallKey, usize>,
+    /// Results so far of calls that wait on a call being solved by
+    /// iteration (section 6).
+    approx: FxHashMap<CallKey, Approx>,
+    /// For each depth in the stack: the frame running there, and its round,
+    /// each a number never used before.
+    frames_at: Vec<u64>,
+    rounds_at: Vec<u64>,
+    last_number: u64,
+    /// Weight waiting on calls being solved, in the current call.
+    pending: Vec<(usize, Weight)>,
     depth: usize,
     /// Weight left unaccounted for (loops cut short, truncated tails).
     pub unresolved: Weight,
@@ -214,7 +279,12 @@ impl<'p> Engine<'p> {
             budget: config.budget.clone(),
             config,
             memo: FxHashMap::default(),
-            active: FxHashSet::default(),
+            active: FxHashMap::default(),
+            approx: FxHashMap::default(),
+            frames_at: Vec::new(),
+            rounds_at: Vec::new(),
+            last_number: 0,
+            pending: Vec::new(),
             depth: 0,
             unresolved: Weight::ZERO,
             lost: Weight::ZERO,
@@ -687,6 +757,7 @@ impl<'p> Engine<'p> {
                     let result = self.call(func, key, span)?;
                     self.unresolved += w.weight * result.unresolved;
                     self.lost += w.weight * result.lost;
+                    add_pending(&mut self.pending, &result.pending, w.weight);
                     let last = result.outcomes.len().saturating_sub(1);
                     let mut w = Some(w);
                     for (i, (v, p)) in result.outcomes.iter().enumerate() {
@@ -1082,9 +1153,17 @@ impl<'p> Engine<'p> {
         let mut exits: Vec<Vec<World>> = Vec::new();
         let mut returns: Vec<Vec<(Value, Weight)>> = Vec::new();
         let mut unresolved: Vec<Weight> = Vec::new();
+        // A body that uses a call's result so far can't be solved as a chain:
+        // that result changes from round to round.
+        let saved_pending = std::mem::take(&mut self.pending);
         let mut k = 0;
         while k < states.len() {
+            if !self.pending.is_empty() {
+                self.pending = saved_pending;
+                return Ok(None);
+            }
             if states.len() > self.config.max_chain_states {
+                self.pending = saved_pending;
                 self.too_large.insert(stmt.id);
                 return Ok(None);
             }
@@ -1114,6 +1193,7 @@ impl<'p> Engine<'p> {
                 if p == 0.0 {
                     // Too small for the chain's arithmetic.
                     self.too_large.insert(stmt.id);
+                    self.pending = saved_pending;
                     return Ok(None);
                 }
                 let j = intern(w.slots, &mut states);
@@ -1127,6 +1207,11 @@ impl<'p> Engine<'p> {
             returns.push(flow.returned);
             unresolved.push(left);
             k += 1;
+        }
+        let waiting = !self.pending.is_empty();
+        self.pending = saved_pending;
+        if waiting {
+            return Ok(None);
         }
         start.resize(states.len(), 0.0);
         let mut steps = MAX_ELIMINATION;
@@ -1287,6 +1372,13 @@ impl<'p> Engine<'p> {
     /// distribution of its result. Results are memoized unless the function
     /// prints: its behaviour depends only on its arguments and the outside
     /// values it reads, which are all in `key`.
+    ///
+    /// When enumerating, a call can come back to itself: the same function,
+    /// with the same arguments, while it's still running. Its result is then
+    /// solved by iteration (section 6). The call that comes back gets the
+    /// result so far, which starts with nothing resolved, and the call it
+    /// came back to runs again with each new result, until the weight still
+    /// waiting on it is below ε (`run_call`).
     fn call(&mut self, func: FnId, key: Vec<Value>, span: Span) -> Result<Arc<CallResult>> {
         self.stats.calls += 1;
         let prog = self.prog;
@@ -1302,21 +1394,39 @@ impl<'p> Engine<'p> {
                 return Ok(r.clone());
             }
         }
-        if !sampling && self.active.contains(&call_key) {
-            let args: Vec<String> = call_key.1[..fun.n_params as usize]
-                .iter()
-                .map(|v| format!("{v:?}"))
-                .collect();
-            return Err(RuntimeError::new(
-                span,
-                format!(
-                    "`{}({})` calls itself with the same arguments",
-                    fun.name,
-                    args.join(", ")
-                ),
-            )
-            .with_note("enumeration can't solve recursion that loops back to the same call yet")
-            .with_help("write it as a loop instead"));
+        if !sampling {
+            if let Some(&depth) = self.active.get(&call_key) {
+                if fun.effects.prints {
+                    return Err(RuntimeError::new(
+                        span,
+                        format!("`{}` comes back to itself, and prints", describe_call(fun, &call_key.1)),
+                    )
+                    .with_note("a call that comes back to itself runs several times, until its result settles, and would print each time")
+                    .with_help("remove the `print`, or print the result where the call is made"));
+                }
+                let so_far = match self.approx.get(&call_key) {
+                    Some(a) if self.frames_at.get(a.head) == Some(&a.frame) => a.result.clone(),
+                    _ => {
+                        let result = Arc::new(CallResult::waiting(depth));
+                        let approx = Approx {
+                            result: result.clone(),
+                            head: depth,
+                            frame: self.frames_at[depth],
+                            round: self.rounds_at[depth],
+                        };
+                        self.approx.insert(call_key, approx);
+                        result
+                    }
+                };
+                return Ok(so_far);
+            }
+            // Worked out already, in this round of the call it waits on.
+            if let Some(a) = self.approx.get(&call_key) {
+                if self.frames_at.get(a.head) == Some(&a.frame) && self.rounds_at.get(a.head) == Some(&a.round) {
+                    self.stats.memo_hits += 1;
+                    return Ok(a.result.clone());
+                }
+            }
         }
         if self.depth >= self.config.max_call_depth {
             return Err(RuntimeError::limit(
@@ -1333,49 +1443,183 @@ impl<'p> Engine<'p> {
         for (cap, v) in fun.captures.iter().zip(&call_key.1[n..]) {
             slots[cap.slot as usize] = v.clone();
         }
+        let depth = self.depth + 1;
         if !sampling {
-            self.active.insert(call_key.clone());
+            self.active.insert(call_key.clone(), depth);
+            if self.frames_at.len() <= depth {
+                self.frames_at.resize(depth + 1, 0);
+                self.rounds_at.resize(depth + 1, 0);
+            }
+            self.last_number += 1;
+            self.frames_at[depth] = self.last_number;
         }
-        let saved_unresolved = std::mem::replace(&mut self.unresolved, Weight::ZERO);
-        let saved_lost = std::mem::replace(&mut self.lost, Weight::ZERO);
-        let saved_observed = std::mem::replace(&mut self.observed, false);
-        self.depth += 1;
-        let flow = self.exec_block(
-            func,
-            &fun.body,
-            vec![World {
-                slots,
-                weight: Weight::ONE,
-                run: 0,
-            }],
-        );
-        self.depth -= 1;
-        let unresolved = std::mem::replace(&mut self.unresolved, saved_unresolved);
-        let lost = std::mem::replace(&mut self.lost, saved_lost);
-        let observed = std::mem::replace(&mut self.observed, saved_observed);
-        self.observed |= observed;
+        let result = self.run_call(func, &call_key, slots, depth, span);
         if !sampling {
             self.active.remove(&call_key);
+            // Results that waited on this frame no longer stand for anything.
+            self.frames_at[depth] = 0;
         }
-        let flow = flow.map_err(|e| match fun.kind {
-            FnKind::Named => e.with_note(format!("in a call to `{}`", fun.name)),
-            FnKind::Simulate => e.with_note("inside a `simulate` block"),
-            FnKind::Lambda => e.with_note("inside a lambda"),
-            FnKind::Main => e,
-        })?;
-        let result = Arc::new(CallResult {
-            outcomes: merge_values(flow.returned),
-            unresolved,
-            lost,
-            observed,
-        });
-        if memoizable {
+        let result = result?;
+        // A result still waiting on a call being solved isn't final.
+        if memoizable && result.pending.is_empty() {
             if self.memo.len() >= self.config.max_cached_calls {
                 self.memo.clear();
             }
             self.memo.insert(call_key, result.clone());
         }
         Ok(result)
+    }
+
+    /// Run a call's body from `slots`, at `depth` in the stack, and return
+    /// its result (section 6).
+    ///
+    /// If the call came back to itself, and waits on no call further down
+    /// the stack, it's solved here: round after round, each using the result
+    /// of the round before, until the weight still waiting on it is below ε.
+    /// That weight stays unresolved. If it waits on a call further down,
+    /// it's part of that call's solving instead: what waits on it waits on
+    /// that call, and its result stands for it until that call's next round.
+    fn run_call(
+        &mut self,
+        func: FnId,
+        call_key: &CallKey,
+        slots: Vec<Value>,
+        depth: usize,
+        span: Span,
+    ) -> Result<Arc<CallResult>> {
+        let fun = &self.prog.functions[func as usize];
+        let sampling = self.sampler.is_some();
+        let mut rounds: u64 = 0;
+        let mut before = f64::INFINITY;
+        loop {
+            if !sampling {
+                self.last_number += 1;
+                self.rounds_at[depth] = self.last_number;
+            }
+            let saved_unresolved = std::mem::replace(&mut self.unresolved, Weight::ZERO);
+            let saved_lost = std::mem::replace(&mut self.lost, Weight::ZERO);
+            let saved_observed = std::mem::replace(&mut self.observed, false);
+            let saved_pending = std::mem::take(&mut self.pending);
+            self.depth += 1;
+            let flow = self.exec_block(
+                func,
+                &fun.body,
+                vec![World {
+                    slots: slots.clone(),
+                    weight: Weight::ONE,
+                    run: 0,
+                }],
+            );
+            self.depth -= 1;
+            let unresolved = std::mem::replace(&mut self.unresolved, saved_unresolved);
+            let lost = std::mem::replace(&mut self.lost, saved_lost);
+            let observed = std::mem::replace(&mut self.observed, saved_observed);
+            let pending = std::mem::replace(&mut self.pending, saved_pending);
+            self.observed |= observed;
+            let flow = flow.map_err(|e| match fun.kind {
+                FnKind::Named => e.with_note(format!("in a call to `{}`", fun.name)),
+                FnKind::Simulate => e.with_note("inside a `simulate` block"),
+                FnKind::Lambda => e.with_note("inside a lambda"),
+                FnKind::Main => e,
+            })?;
+            let mut result = CallResult {
+                outcomes: merge_values(flow.returned),
+                unresolved,
+                lost,
+                observed,
+                pending,
+            };
+            if let Some(head) = result.pending.iter().map(|&(d, _)| d).filter(|&d| d < depth).min() {
+                // Part of the solving of the call at `head`.
+                let waiting = Weight::sum(result.pending.iter().map(|&(_, w)| w));
+                result.pending = vec![(head, waiting)];
+                let result = Arc::new(result);
+                let approx = Approx {
+                    result: result.clone(),
+                    head,
+                    frame: self.frames_at[head],
+                    round: self.rounds_at[head],
+                };
+                self.approx.insert(call_key.clone(), approx);
+                return Ok(result);
+            }
+            let waiting = result.take_pending(depth);
+            if waiting.is_zero() {
+                return Ok(Arc::new(result));
+            }
+            // It came back to itself: solved here.
+            if rounds == 0 {
+                self.stats.solved_calls += 1;
+            }
+            let w = waiting.to_f64();
+            if w <= self.config.epsilon {
+                self.settle(depth);
+                return Ok(Arc::new(result));
+            }
+            rounds += 1;
+            self.stats.call_rounds += 1;
+            if w >= before {
+                return Err(RuntimeError::new(
+                    span,
+                    format!(
+                        "`{}` never returns for some of its worlds",
+                        describe_call(fun, &call_key.1)
+                    ),
+                )
+                .with_note(format!("{} of its weight keeps coming back to it", fmt_prob(w)))
+                .with_help("check that the recursion can end"));
+            }
+            if rounds >= self.config.max_iterations {
+                return Err(RuntimeError::limit(
+                    span,
+                    format!(
+                        "`{}` came back to itself {} times without settling",
+                        describe_call(fun, &call_key.1),
+                        self.config.max_iterations
+                    ),
+                )
+                .with_note(format!("{} of its weight is still waiting on it", fmt_prob(w)))
+                .with_help("check that the recursion can end, or raise `@epsilon`"));
+            }
+            before = w;
+            result.pending.push((depth, waiting));
+            let approx = Approx {
+                result: Arc::new(result),
+                head: depth,
+                frame: self.frames_at[depth],
+                round: self.rounds_at[depth],
+            };
+            self.approx.insert(call_key.clone(), approx);
+        }
+    }
+
+    /// The call at `depth` is solved: the results that waited on it, from
+    /// its last round, are final too if the weight still waiting in them is
+    /// below ε. The others are dropped.
+    fn settle(&mut self, depth: usize) {
+        let frame = self.frames_at[depth];
+        let epsilon = self.config.epsilon;
+        let settled: Vec<(CallKey, CallResult)> = self
+            .approx
+            .iter()
+            .filter(|(_, a)| a.head == depth && a.frame == frame)
+            .filter(|(_, a)| a.result.pending.iter().all(|&(_, w)| w.to_f64() <= epsilon))
+            .map(|(key, a)| {
+                let mut result = (*a.result).clone();
+                // What's still waiting stays unresolved.
+                result.pending.clear();
+                (key.clone(), result)
+            })
+            .collect();
+        self.approx.retain(|_, a| a.head != depth);
+        if !self.config.memoizing {
+            return;
+        }
+        for (key, result) in settled {
+            if !self.active.contains_key(&key) && !self.prog.functions[key.0 as usize].effects.prints {
+                self.memo.insert(key, Arc::new(result));
+            }
+        }
     }
 
     /// `simulate { … }`: run a block as a separate model and return its
@@ -1393,6 +1637,12 @@ impl<'p> Engine<'p> {
         self.observed = saved_observed;
         self.densities = saved_densities;
         let result = result?;
+        if !result.pending.is_empty() {
+            return Err(OpError::unsupported(
+                "a `simulate` block that comes back to a call still running isn't supported yet",
+            )
+            .at(span));
+        }
         let resolved = Weight::sum(result.outcomes.iter().map(|(_, w)| *w));
         if resolved.is_zero() {
             let message = if result.unresolved.is_zero() {
@@ -1426,6 +1676,12 @@ impl<'p> Engine<'p> {
         let mut key = args;
         key.extend(c.captured.iter().cloned());
         let result = self.call(c.func, key, span)?;
+        if !result.pending.is_empty() {
+            return Err(OpError::unsupported(format!(
+                "a function given to `{what}` that comes back to a call still running isn't supported yet"
+            ))
+            .at(span));
+        }
         match result.outcomes.as_slice() {
             [(v, p)] if (p.to_f64() - 1.0).abs() < 1e-12 && result.unresolved.is_zero() => Ok(v.clone()),
             _ => Err(RuntimeError::new(
@@ -1760,6 +2016,12 @@ impl<'p> Engine<'p> {
             _ => unreachable!(),
         }
     }
+}
+
+/// A call as written: `f(3, true)`.
+fn describe_call(fun: &Function, key: &[Value]) -> String {
+    let args: Vec<String> = key[..fun.n_params as usize].iter().map(|v| format!("{v:?}")).collect();
+    format!("{}({})", fun.name, args.join(", "))
 }
 
 /// The error when `print` at `span` goes over the output limit.

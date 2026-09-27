@@ -136,6 +136,19 @@ A loop with an uncertain condition runs until every world has left it. Some loop
 
 `for` and `repeat` always run to the end.
 
+Recursion works the same way. A function can call itself, even with the same arguments, as in "roll again on a 6":
+
+```probl
+fn explode() -> int {
+  let r ~ d6
+  if r == 6 { return 6 + explode() }
+  return r
+}
+report explode()          # mean 4.20 · … · a 7 is a 6 then a 1: 2.78%
+```
+
+Probl works out such a call by rounds, each using the previous round's result, until the weight still waiting is below ε. A call that can never return is an error.
+
 ```probl
 var rolls = 1
 while d6 != 6 {        # a fresh roll each time: 5/6 chance of going round again

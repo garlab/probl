@@ -256,7 +256,7 @@ fn declared_types_are_checked() {
 fn runtime_errors() {
     assert!(error("let x ~ d6\nreport 10 / (x - x)").contains("division by zero"));
     assert!(error("let xs = [1, 2]\nreport xs[2]").contains("out of range"));
-    assert!(error("fn f(x) { if 50% { f(x) } else { x } }\nreport f(1)").contains("calls itself"));
+    assert!(error("fn f(x) { f(x) }\nreport f(1)").contains("`f(1)` never returns for some of its worlds"));
     assert!(error("report if 3 { 1 } else { 2 }").contains("a probability or a fact"));
     assert!(error("for i in 1..d6 { }").contains("range"));
     assert!(error("let w = chance { 60% => 1, 30% => 2 }\nreport w").contains("no `else`"));
