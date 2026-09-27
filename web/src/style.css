@@ -5,7 +5,9 @@
   --text: #1d1f22;
   --faint: #8a8f98;
   --line: #dddbd3;
-  --active: #f3f1ea;
+  /* The cursor's line: translucent, since CodeMirror draws a selection
+     behind the text. Over --editor, it's #f3f1ea. */
+  --active: rgba(195, 185, 150, 0.2);
   --selection: #d7e4f7;
   --accent: #2458c6;
   --accent-text: #ffffff;
@@ -32,7 +34,7 @@
     --text: #e3e5e8;
     --faint: #7d838d;
     --line: #33373e;
-    --active: #262a30;
+    --active: rgba(59, 65, 74, 0.3); /* #262a30 over --editor */
     --selection: #2f4466;
     --accent: #6d9cf2;
     --accent-text: #0f1726;

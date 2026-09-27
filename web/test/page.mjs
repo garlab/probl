@@ -349,8 +349,9 @@ try {
   const linked = await becomes(editor, (src) => window.playground.getSource() === src, craps);
   expect(linked, 'a link in the guide opens its example');
 
-  // The cursor stands out from the editor's background, light and dark.
-  // (Firefox can't be switched from here, so it checks the one it has.)
+  // The cursor stands out from the editor's background, light and dark,
+  // and so does a selection. (Firefox can't be switched from here, so it
+  // checks the one it has.)
   for (const value of firefox ? [null] : ['light', 'dark']) {
     if (value) await editor.emulateMediaFeatures([{ name: 'prefers-color-scheme', value }]);
     const { scheme, ratio } = await editor.evaluate(() => {
@@ -370,6 +371,25 @@ try {
       };
     });
     expect(ratio >= 4.5, `the cursor shows against the ${scheme} background`, `contrast ${ratio.toFixed(1)}`);
+
+    // A selection on the cursor's line isn't hidden: CodeMirror draws it
+    // behind the text, so nothing over it may be opaque.
+    const covered = await editor.evaluate(async () => {
+      const { view } = window.playground;
+      const line = view.state.doc.line(5);
+      view.dispatch({ selection: { anchor: line.from + 4, head: line.from + 8 } });
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const at = view.coordsAtPos(line.from + 5);
+      const stack = document.elementsFromPoint(at.left + 2, (at.top + at.bottom) / 2);
+      const selection = stack.findIndex((e) => e.classList.contains('cm-selectionBackground'));
+      if (selection < 0) return ['no selection drawn'];
+      const alpha = (color) => (color.startsWith('rgba') ? parseFloat(color.split(',')[3]) : 1);
+      return stack
+        .slice(0, selection)
+        .filter((e) => alpha(getComputedStyle(e).backgroundColor) > 0.5)
+        .map((e) => e.className);
+    });
+    expect(covered.length === 0, `a selection on the cursor’s line shows (${scheme})`, covered.join('\n'));
   }
 
   // On a phone, the guide's long lines scroll by themselves, not the page.
