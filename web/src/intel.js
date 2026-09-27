@@ -7,7 +7,7 @@
 import { closeCompletion, completionStatus, selectedCompletion } from '@codemirror/autocomplete';
 import { syntaxTree } from '@codemirror/language';
 import { Prec, StateEffect, StateField } from '@codemirror/state';
-import { Decoration, EditorView, hoverTooltip, keymap } from '@codemirror/view';
+import { Decoration, EditorView, ViewPlugin, hoverTooltip, keymap, showTooltip } from '@codemirror/view';
 
 /** New symbols from the compiler, for the document as it is now. */
 export const setSymbols = StateEffect.define();
@@ -61,6 +61,85 @@ function definitionAt(state, pos) {
 function inText(state, pos, side) {
   const { name } = syntaxTree(state).resolveInner(pos, side);
   return name === 'comment' || name === 'string';
+}
+
+/** The call whose arguments `pos` is among: `{name, from, paren, index,
+ * method}`, with where its function's name and its `(` are, which argument
+ * (from 0), and whether it's called as a method, `xs.f(y)`. Brackets and
+ * commas in strings and comments don't count. */
+function callAt(state, pos) {
+  const start = Math.max(0, pos - 2000);
+  const text = state.sliceDoc(start, pos);
+  const skipped = [];
+  syntaxTree(state).iterate({
+    from: start,
+    to: pos,
+    enter: (node) => {
+      if (node.name === 'comment' || node.name === 'string') skipped.push([node.from, node.to]);
+    },
+  });
+  let depth = 0;
+  let index = 0;
+  for (let i = pos - 1, s = skipped.length - 1; i >= start; i -= 1) {
+    while (s >= 0 && skipped[s][0] > i) s -= 1;
+    if (s >= 0 && i < skipped[s][1]) {
+      i = skipped[s][0];
+      continue;
+    }
+    const c = text[i - start];
+    if (c === ')' || c === ']' || c === '}') depth += 1;
+    else if (c === ',' && depth === 0) index += 1;
+    else if (c === '(' || c === '[' || c === '{') {
+      if (depth > 0) {
+        depth -= 1;
+        continue;
+      }
+      const name = c === '(' && /([A-Za-z_]\w*)\s*$/.exec(text.slice(0, i - start));
+      if (!name) return null;
+      const from = i - name[0].length;
+      return { name: name[1], from, paren: i, index, method: state.sliceDoc(from - 1, from) === '.' };
+    }
+  }
+  return null;
+}
+
+/** Where a signature's parameters are, for its call of `name`:
+ * `binomial(n: int, p: prob) -> dist[int]` has `n: int` and `p: prob`.
+ * `method` says whether it's written as one, like `xs.push(x)`. */
+function parametersOf(signature, name) {
+  const at = signature.search(new RegExp(`\\b${name}\\(`));
+  if (at < 0) return null;
+  const params = [];
+  const add = (from, to) => {
+    while (signature[from] === ' ') from += 1;
+    if (to > from) params.push([from, to]);
+  };
+  let from = at + name.length + 1;
+  let depth = 0;
+  for (let i = from; i < signature.length; i += 1) {
+    const c = signature[i];
+    if (c === '(' || c === '[' || c === '{') depth += 1;
+    else if ((c === ')' || c === ']' || c === '}') && depth > 0) depth -= 1;
+    else if (c === ',' && depth === 0) {
+      add(from, i);
+      from = i + 1;
+    } else if (c === ')') {
+      add(from, i);
+      return { params, method: signature[at - 1] === '.' };
+    }
+  }
+  return null;
+}
+
+/** Whether the person just typed one of `chars`. */
+function typedOneOf(tr, chars) {
+  let found = false;
+  if (tr.isUserEvent('input.type')) {
+    tr.changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
+      found ||= [...chars].some((c) => inserted.toString().includes(c));
+    });
+  }
+  return found;
 }
 
 /** The identifier around `pos`. */
@@ -304,6 +383,107 @@ export function intelligence(docs, names, showReference) {
     );
   });
 
+  // ── A call's signature, while its arguments are typed ──
+  // It shows when `(` or `,` is typed, or with Cmd-Shift-Space or
+  // Ctrl-Shift-Space, and stays while the cursor is among that call's
+  // arguments, until Escape.
+  const askSignature = StateEffect.define();
+  const hideSignature = StateEffect.define();
+
+  /** What to show for a call: its signature, which parameter the argument
+   * is, and the function's documentation. */
+  function signatureFor(state, call) {
+    const symbols = state.field(symbolsField, false);
+    const own = symbols?.definitions.find((d) => d.kind === 'function' && !d.gone && d.name === call.name);
+    const entry = own ? { signature: own.detail.replace(/^fn\s+/, ''), summary: own.doc } : builtins.get(call.name);
+    const parsed = entry && parametersOf(entry.signature, call.name);
+    if (!parsed) return null;
+    // `xs.f(y)` is `f(xs, y)`: the first argument is before the dot.
+    let index = call.index + (call.method && !parsed.method ? 1 : 0);
+    if (index >= parsed.params.length) {
+      index = parsed.params.findIndex(([a, b]) => entry.signature.slice(a, b) === '…');
+    }
+    return { ...call, signature: entry.signature, doc: entry.summary, param: parsed.params[index] ?? null };
+  }
+
+  // A call whose function isn't known yet, perhaps declared since the last
+  // check, is `pending` until the checker's names come.
+  const signature = StateField.define({
+    create: () => null,
+    update(value, tr) {
+      if (tr.effects.some((e) => e.is(hideSignature))) return null;
+      const asked = tr.effects.some((e) => e.is(askSignature));
+      const named = value?.pending && tr.effects.some((e) => e.is(setSymbols));
+      if (!tr.docChanged && !tr.selection && !asked && !named) return value;
+      const { main } = tr.state.selection;
+      const call = main.empty ? callAt(tr.state, main.head) : null;
+      if (!call) return null;
+      const kept = value !== null && tr.changes.mapPos(value.paren) === call.paren;
+      if (!kept && !asked && !typedOneOf(tr, '(,')) return null;
+      const same = kept && value.index === call.index && value.paren === call.paren && value.name === call.name;
+      if (same && !value.pending) return value;
+      return signatureFor(tr.state, call) ?? { ...call, pending: true };
+    },
+    provide: (field) =>
+      showTooltip.from(field, (shown) =>
+        shown && !shown.pending
+          ? {
+              pos: shown.from,
+              above: true,
+              create: () => {
+                const dom = card({ doc: shown.doc });
+                dom.classList.add('cm-probl-signature-help');
+                const code = document.createElement('code');
+                code.className = 'cm-probl-signature';
+                if (shown.param) {
+                  const [a, b] = shown.param;
+                  const current = document.createElement('b');
+                  current.textContent = shown.signature.slice(a, b);
+                  code.append(shown.signature.slice(0, a), current, shown.signature.slice(b));
+                } else {
+                  code.textContent = shown.signature;
+                }
+                dom.prepend(code);
+                return { dom };
+              },
+            }
+          : null,
+      ),
+  });
+  const namesForSignature = ViewPlugin.define((view) => {
+    let asked = null;
+    return {
+      update(update) {
+        const shown = update.state.field(signature);
+        if (!shown?.pending || shown.paren === asked) return;
+        asked = shown.paren;
+        const source = update.state.doc.toString();
+        names(source).then((symbols) => {
+          if (symbols && view.state.doc.toString() === source) view.dispatch({ effects: setSymbols.of(symbols) });
+        });
+      },
+    };
+  });
+  // Before the completion list's keys: its Escape also cancels a list still
+  // being worked out, just after typing, so it would take the key while
+  // nothing shows. A list that shows closes first.
+  const signatureKeys = Prec.highest(
+    keymap.of([
+      {
+        key: 'Mod-Shift-Space',
+        run: (view) => (view.dispatch({ effects: askSignature.of(null) }), true),
+      },
+      {
+        key: 'Escape',
+        run: (view) => {
+          if (!view.state.field(signature) || completionStatus(view.state) === 'active') return false;
+          view.dispatch({ effects: hideSignature.of(null) });
+          return true;
+        },
+      },
+    ]),
+  );
+
   // Enter takes a completion only when that changes something: with the
   // whole name typed, it starts a new line.
   const smartEnter = Prec.highest(
@@ -326,6 +506,9 @@ export function intelligence(docs, names, showReference) {
     extensions: [
       smartEnter,
       symbolsField,
+      signature,
+      namesForSignature,
+      signatureKeys,
       hover,
       link,
       highlights,

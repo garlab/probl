@@ -201,6 +201,7 @@ button.link { font: inherit; color: var(--accent); background: none; border: non
 /* Hovering and completing in the editor. */
 .cm-probl-card { padding: 6px 10px; max-width: 460px; font: 13.5px/1.45 system-ui, sans-serif; }
 .cm-probl-signature { display: block; font-family: var(--mono); font-size: 13px; white-space: pre-wrap; }
+.cm-probl-signature-help b { color: var(--accent); }
 .cm-probl-what { color: var(--faint); font-size: 12px; margin-top: 2px; }
 .cm-probl-doc { margin-top: 5px; white-space: pre-wrap; }
 .cm-tooltip.cm-completionInfo { padding: 0; }

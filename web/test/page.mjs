@@ -415,6 +415,43 @@ try {
   const lingering = await texts('.cm-probl-same');
   expect(lingering.length === 0, 'a replaced program’s names don’t linger', lingering.join(', '));
 
+  // While a call's arguments are typed, its signature shows, with the
+  // parameter being typed in bold.
+  const own = 'fn total(days: int, rate: float) -> float {\n  return days * rate\n}\n';
+  await editor.evaluate((src) => window.playground.setSource(src), own);
+  await cursor(own.length);
+  const signatureHelp = async (expected) => {
+    await becomes(editor, (shown) => !!document.querySelector('.cm-probl-signature-help') === shown, expected, 2000);
+    return editor.evaluate(() => {
+      const help = document.querySelector('.cm-probl-signature-help');
+      if (!help) return null;
+      return { signature: help.querySelector('.cm-probl-signature').textContent, current: help.querySelector('b')?.textContent };
+    });
+  };
+  await editor.keyboard.type('let k ~ binomial(');
+  let help = await signatureHelp(true);
+  expect(
+    help?.signature.startsWith('binomial(') && help.current === 'n: int',
+    'typing a call shows its signature',
+    JSON.stringify(help),
+  );
+  await editor.keyboard.type('10, ');
+  help = await signatureHelp(true);
+  expect(help?.current === 'p: prob', 'which follows the argument being typed', JSON.stringify(help));
+  await editor.keyboard.type('50%)');
+  help = await signatureHelp(false);
+  expect(help === null, 'and goes when the call is closed', JSON.stringify(help));
+  await editor.keyboard.type('\nreport total(1, ');
+  help = await signatureHelp(true);
+  expect(
+    help?.signature === 'total(days: int, rate: float) -> float' && help.current === 'rate: float',
+    'the program’s own functions show theirs',
+    JSON.stringify(help),
+  );
+  await editor.keyboard.press('Escape');
+  help = await signatureHelp(false);
+  expect(help === null, 'Escape hides it', JSON.stringify(help));
+
   // The tabs: each shows its pane alone.
   const showTab = (name) => editor.evaluate((name) => document.querySelector(`[data-pane="${name}"]`).click(), name);
   await showTab('reference');

@@ -215,6 +215,9 @@ Beside the output are two more tabs: the language overview as a **guide**, and a
     - It asks the checker about the program as it is, so a name declared a moment ago is offered.
     - It stays quiet while you name something new, after `let`, `var`, `fn`, `type`, `enum` or `for`.
     - Enter takes a completion only when that changes the text. With the whole name typed, Enter starts a new line.
+  - **Signature help:** while a call's arguments are typed, its signature shows above it, with the parameter being typed in bold, and the function's documentation. It works for built-ins and the program's own functions, including ones declared since the last check.
+    - It shows when `(` or `,` is typed, or with Cmd-Shift-Space or Ctrl-Shift-Space.
+    - It goes with Escape, or when the cursor leaves the call.
   - **Indentation:** a line inside brackets is one level in from the line that opened them, and a closing bracket goes back out to that line's level.
 - **The reference** documents every public built-in and keyword, from `probl_sema::docs`, and can be searched. A test fails if a built-in has no documentation.
 - **The guide** is `docs/language-overview.md`, rendered when the page is built:
@@ -223,7 +226,7 @@ Beside the output are two more tabs: the language overview as a **guide**, and a
 - **Sizes:** the guide is 49 KB, or 16 KB compressed, and loads when first shown. The page's script grew by 8 KB, to 414 KB.
 - **Tested:**
   - the names natively, in `probl-sema/tests/symbols.rs` and the API's tests;
-  - in headless Chrome and Firefox: hover, going to definitions, highlights, completion and indentation as a person types, the tabs, the reference's search, the guide's programs and links, the cursor against light and dark backgrounds, and the page's width on a phone.
+  - in headless Chrome and Firefox: hover, going to definitions, highlights, completion, signature help and indentation as a person types, the tabs, the reference's search, the guide's programs and links, the cursor against light and dark backgrounds, and the page's width on a phone.
 
 ## Open questions
 
