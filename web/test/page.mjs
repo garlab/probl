@@ -335,6 +335,17 @@ try {
   );
   await editor.keyboard.press('Escape');
 
+  // A replaced program's names don't linger, even while the new one
+  // doesn't parse.
+  await editor.evaluate(() => window.playground.setSource('let a = 1\nreport a'));
+  await cursor(17);
+  await becomes(editor, () => document.querySelectorAll('.cm-probl-same').length === 2);
+  await editor.evaluate(() => window.playground.setSource('let b = ('));
+  await cursor(5);
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  const lingering = await texts('.cm-probl-same');
+  expect(lingering.length === 0, 'a replaced program’s names don’t linger', lingering.join(', '));
+
   // The tabs: each shows its pane alone.
   const showTab = (name) => editor.evaluate((name) => document.querySelector(`[data-pane="${name}"]`).click(), name);
   await showTab('reference');

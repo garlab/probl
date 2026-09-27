@@ -27,14 +27,20 @@ export const symbolsField = StateField.define({
 
 function mapSymbols(symbols, changes) {
   const at = (pos, assoc = -1) => changes.mapPos(pos, assoc);
+  // A name whose own text was edited, or replaced with the rest of the
+  // program, is unknown until the next check. Scopes and functions, which
+  // contain the edits, follow them.
+  const edited = (from, to) => changes.touchesRange(from, to) !== false;
+  const definitions = symbols.definitions.map((d) =>
+    edited(d.from, d.to)
+      ? { ...d, from: -1, to: -1, scope: [-1, -1], gone: true }
+      : { ...d, from: at(d.from), to: at(d.to, 1), scope: [at(d.scope[0]), at(d.scope[1], 1)] },
+  );
   return {
-    definitions: symbols.definitions.map((d) => ({
-      ...d,
-      from: at(d.from),
-      to: at(d.to, 1),
-      scope: [at(d.scope[0]), at(d.scope[1], 1)],
-    })),
-    references: symbols.references.map(([from, to, def]) => [at(from), at(to, 1), def]),
+    definitions,
+    references: symbols.references
+      .filter(([from, to, def]) => !edited(from, to) && !definitions[def].gone)
+      .map(([from, to, def]) => [at(from), at(to, 1), def]),
     functions: symbols.functions.map(([from, to]) => [at(from), at(to, 1)]),
   };
 }
@@ -165,7 +171,7 @@ export function intelligence(docs, names) {
     if (/\b(let|var|fn|type|enum|for)\s+$|\bfn\s+\w+\s*\((.*,)?\s*$/.test(before)) return null;
     // The names as the program is now: the last check may be older.
     const symbols = (await names(context.state.doc.toString())) ?? context.state.field(symbolsField, false);
-    const definitions = symbols?.definitions ?? [];
+    const definitions = (symbols?.definitions ?? []).filter((d) => !d.gone);
     const options = [];
     const seen = new Set();
     const add = (option) => {
