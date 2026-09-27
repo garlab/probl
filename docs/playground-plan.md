@@ -56,12 +56,13 @@ web/                   new: the page, as static files
 
 Programs, options and results cross as JSON strings, so the interface stays small and independent of the binding tool:
 
-- **`check(source)`** gives the diagnostics: severity, message, span, line and column, notes, help, and the text as the command line renders it.
+- **`check(source)`** gives the diagnostics: severity, message, span, line and column, notes, help, and the text as the command line renders it. It also gives the program's names, for the editor (see [the guide and the editor, as built](#the-guide-and-the-editor-as-built)).
 - **`run(source, options, on_print, on_progress)`** gives the output, or the error with its span.
   - **Options:** mode, runs, seed, exact updates.
   - **Callbacks:** `on_print` receives what `print` prints, and `on_progress` how many runs are done, after each batch.
   - **Limits:** the playground sets them, not the page.
 - **`examples()`** gives the bundled examples with their data files.
+- **`docs()`** gives the reference: every built-in and keyword, with its signature and a summary.
 
 The API is plain Rust around `probl_sema::compile` and `probl_engine::run_on_this_thread`, so its tests run natively with `cargo test`. The module exports it as plain functions, and a small loader passes the text through the module's memory (see [Phase 1, as built](#phase-1-as-built)).
 
@@ -140,7 +141,7 @@ So the slowest examples would take 2–4 seconds in the browser, with a progress
    - charts of distributions and fan charts of `by` reports, which need the structured output (`--format json`) planned for phase 5 (3–5 days);
    - the data tab (1–2 days);
    - parallel workers (3–5 days);
-   - runnable code blocks in the language overview (1–2 days).
+   - runnable code blocks in the language overview: done, in the guide (see [below](#the-guide-and-the-editor-as-built)).
 
 ## Risks
 
@@ -193,6 +194,26 @@ So the slowest examples would take 2–4 seconds in the browser, with a progress
   - **Clicks in tests:** headless Firefox doesn't always deliver WebDriver clicks to a page that just loaded, so the tests press buttons through the DOM.
 
 Left: hosting and continuous integration (phase 3, which needs a remote), and the later items in phase 4.
+
+## The guide and the editor, as built
+
+Beside the output are two more tabs: the language overview as a **guide**, and a **reference** for the built-in functions and keywords. The editor knows the program as the compiler does.
+
+- **The program's names.** The compiler records where each name is declared and used as it lowers the program (`probl_sema::symbols`). So the editor resolves names exactly as the compiler does: shadowing, a function's own variables, and the top-level variables functions can use. `check` gives them with the diagnostics. While the program doesn't parse, the last names stay, following the edits.
+- **Fields** lead to their record when that's certain, since a field is found by name when the program runs. In a record written with its type, like `Day { visitors: 10 }`, it is. Elsewhere, like `day.visitors`, it is when only one record type has a field of that name and no record without a type does.
+- **In the editor:**
+  - **Hover** a name to see its declaration, what it is, its line, and the comments above it or at the end of its line. Hover a built-in or a keyword for its documentation. Words in comments and strings aren't names.
+  - **Go to a definition** with Cmd-click or Ctrl-click, or F12. While the key is down, the name under the mouse is underlined as a link.
+  - **The name under the cursor** is highlighted, with each of its uses.
+  - **Completion** comes as you type, or with Ctrl-Space. It offers the names in scope first, nearest first, then the built-ins and keywords, with documentation beside the list. After an enum's name and a dot it offers the enum's variants; after any other dot, fields, and functions as methods.
+- **The reference** documents every public built-in and keyword, from `probl_sema::docs`, and can be searched. A test fails if a built-in has no documentation.
+- **The guide** is `docs/language-overview.md`, rendered when the page is built:
+  - 12 of its 20 Probl blocks are complete programs, as the module itself checks them. Each has a button that runs it in the editor.
+  - Its links to the examples open them. Links to the other documents are left as text.
+- **Sizes:** the guide is 49 KB, or 16 KB compressed, and loads when first shown. The page's script grew by 8 KB, to 414 KB.
+- **Tested:**
+  - the names natively, in `probl-sema/tests/symbols.rs` and the API's tests;
+  - in headless Chrome and Firefox: hover, going to definitions, highlights, completion, the tabs, the reference's search, the guide's programs and links, and the page's width on a phone.
 
 ## Open questions
 

@@ -1,0 +1,442 @@
+//! Documentation of the built-in functions and the keywords: what an editor
+//! shows on hover and when completing, and the playground's reference.
+
+use crate::Builtin;
+
+/// How something is used, and what it does, in a sentence or two.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Doc {
+    /// Like `binomial(n: int, p: prob) -> dist[int]`.
+    pub signature: &'static str,
+    pub summary: &'static str,
+}
+
+const fn doc(signature: &'static str, summary: &'static str) -> Option<Doc> {
+    Some(Doc { signature, summary })
+}
+
+/// The group a public built-in belongs to, as the reference lists them.
+pub fn category(b: Builtin) -> &'static str {
+    use Builtin as B;
+    match b {
+        B::Min | B::Max | B::Abs | B::Floor | B::Ceil | B::Round | B::Sqrt | B::Exp | B::Ln | B::Log10 | B::Clamp => {
+            "Math"
+        }
+        B::Str | B::Upper | B::Lower | B::Split | B::Join | B::Print => "Text",
+        B::Len
+        | B::Sum
+        | B::Count
+        | B::Map
+        | B::Filter
+        | B::Reduce
+        | B::Sort
+        | B::SortDesc
+        | B::Reverse
+        | B::Keys
+        | B::Values
+        | B::Get
+        | B::Contains
+        | B::Highest
+        | B::Lowest
+        | B::Enumerate
+        | B::Zip
+        | B::Push
+        | B::Insert
+        | B::Remove
+        | B::Pop
+        | B::Take => "Collections",
+        B::Bernoulli
+        | B::OneOf
+        | B::Binomial
+        | B::Poisson
+        | B::Geometric
+        | B::Roll
+        | B::Bag
+        | B::Normal
+        | B::Lognormal
+        | B::Uniform
+        | B::Beta
+        | B::Gamma
+        | B::Exponential
+        | B::Triangular
+        | B::Pert
+        | B::NormalRange
+        | B::Mixture
+        | B::Truncate
+        | B::Bins
+        | B::To => "Distributions",
+        B::P
+        | B::Mean
+        | B::Sd
+        | B::Variance
+        | B::Median
+        | B::Quantile
+        | B::Support
+        | B::Cdf
+        | B::Pmf
+        | B::Pdf
+        | B::Odds
+        | B::Logit
+        | B::InvLogit => "Questions about distributions",
+        B::Date | B::Today | B::Days | B::Weeks | B::AddWorkdays | B::Weekday => "Dates",
+        B::IterItems
+        | B::RepeatCount
+        | B::IsFalse
+        | B::IsTrue
+        | B::IsListOfLen
+        | B::Settled
+        | B::Last
+        | B::DropLast => "Internal",
+    }
+}
+
+/// The documentation of a built-in function; `None` for the internal helpers
+/// programs can't call.
+pub fn builtin(b: Builtin) -> Option<Doc> {
+    use Builtin as B;
+    match b {
+        // Math
+        B::Min => doc(
+            "min(a, b, …) or min(xs)",
+            "The smallest of its arguments, or of a list or range's items.",
+        ),
+        B::Max => doc(
+            "max(a, b, …) or max(xs)",
+            "The largest of its arguments, or of a list or range's items.",
+        ),
+        B::Abs => doc("abs(x)", "The absolute value. An int stays an int."),
+        B::Floor => doc("floor(x) -> int", "`x` rounded down, as an int."),
+        B::Ceil => doc("ceil(x) -> int", "`x` rounded up, as an int."),
+        B::Round => doc(
+            "round(x) -> int",
+            "`x` rounded to the nearest int, halves away from zero.",
+        ),
+        B::Sqrt => doc("sqrt(x) -> float", "The square root. It's an error below 0."),
+        B::Exp => doc("exp(x) -> float", "e to the power `x`."),
+        B::Ln => doc("ln(x) -> float", "The natural logarithm. `x` must be above 0."),
+        B::Log10 => doc("log10(x) -> float", "The base-10 logarithm. `x` must be above 0."),
+        B::Clamp => doc("clamp(x, lo, hi)", "`x`, kept between `lo` and `hi`."),
+        // Text
+        B::Str => doc("str(x) -> str", "`x` as text, as `print` shows it."),
+        B::Upper => doc("upper(s: str) -> str", "The text in capitals."),
+        B::Lower => doc("lower(s: str) -> str", "The text in lowercase."),
+        B::Split => doc(
+            "split(s: str, sep: str) -> list[str]",
+            "The text cut at each `sep`. With `\"\"` as `sep`, its characters.",
+        ),
+        B::Join => doc(
+            "join(xs: list, sep: str) -> str",
+            "The items as text, with `sep` between them.",
+        ),
+        B::Print => doc(
+            "print(a, b, …)",
+            "Debug output: prints its arguments, separated by spaces, once for each world that runs it, with the world's weight in brackets when it isn't 100%. A function that prints runs every time it's called.",
+        ),
+        // Collections
+        B::Len => doc(
+            "len(xs) -> int",
+            "How many items a list, map, range or bag has (repeats count), or how many characters a string has.",
+        ),
+        B::Sum => doc("sum(xs: list)", "The items added up; 0 for an empty list."),
+        B::Count => doc(
+            "count(xs) -> int or count(xs, test) -> int",
+            "How many items there are, or how many pass `test`: `count(rolls, r -> r == 6)`.",
+        ),
+        B::Map => doc(
+            "map(xs: list, f) -> list",
+            "`f` applied to each item: `map(xs, x -> x * 2)`, or `xs.map(x -> x * 2)`. The function can't draw or branch on chances.",
+        ),
+        B::Filter => doc(
+            "filter(xs: list, test) -> list",
+            "The items for which `test` is true: `filter(xs, x -> x > 0)`.",
+        ),
+        B::Reduce => doc(
+            "reduce(xs: list, start, f)",
+            "The items combined one by one, starting from `start`: `reduce(xs, 0, (total, x) -> total + x)`.",
+        ),
+        B::Sort => doc("sort(xs: list) -> list", "The items, smallest first."),
+        B::SortDesc => doc("sort_desc(xs: list) -> list", "The items, largest first."),
+        B::Reverse => doc("reverse(xs)", "A list's items in reverse order, or a string backwards."),
+        B::Keys => doc("keys(m) -> list", "A map's keys, or a bag's distinct items, in order."),
+        B::Values => doc("values(m: map) -> list", "A map's values, in the order of their keys."),
+        B::Get => doc(
+            "get(m, key) or get(m, key, default)",
+            "A map's value for `key`, a list's item at index `key` (from 0), or how many times `key` is in a bag. Without `default`, a missing key is an error.",
+        ),
+        B::Contains => doc(
+            "contains(xs, x) -> bool",
+            "Whether a list, range or bag holds `x`, a map has the key `x`, or a string contains the text `x`. `x in xs` is the same.",
+        ),
+        B::Highest => doc(
+            "highest(xs: list) or highest(xs: list, n: int) -> list",
+            "The largest item, or the `n` largest, largest first: `roll(4, d6).highest(3)`.",
+        ),
+        B::Lowest => doc(
+            "lowest(xs: list) or lowest(xs: list, n: int) -> list",
+            "The smallest item, or the `n` smallest, smallest first.",
+        ),
+        B::Enumerate => doc(
+            "enumerate(xs: list) -> list",
+            "`[index, item]` pairs, counting from 0: `for [i, x] in enumerate(xs) { … }`.",
+        ),
+        B::Zip => doc(
+            "zip(xs: list, ys: list) -> list",
+            "`[x, y]` pairs of items at the same index, as many as the shorter list has.",
+        ),
+        B::Push => doc("xs.push(x)", "Adds `x` at the end of the list variable `xs`."),
+        B::Insert => doc(
+            "xs.insert(i, x)",
+            "Inserts `x` at index `i` of the list variable `xs`, or sets the key `i` to `x` in a map.",
+        ),
+        B::Remove => doc(
+            "xs.remove(i)",
+            "Removes the item at index `i` of a list, the key `i` of a map, or one `i` from a bag.",
+        ),
+        B::Pop => doc(
+            "let last = xs.pop()",
+            "Removes the last item of the list variable `xs`, and gives it.",
+        ),
+        B::Take => doc(
+            "let card ~ deck.take()",
+            "Draws an item from the bag variable `deck` without replacement: one world per distinct item, weighted by how many there are.",
+        ),
+        // Distributions
+        B::Bernoulli => doc(
+            "bernoulli(p: prob) -> dist[bool]",
+            "`true` with probability `p`: `let rain ~ bernoulli(30%)` is a fact, true in 30% of the worlds.",
+        ),
+        B::OneOf => doc(
+            "one_of(options) -> dist",
+            "One of the options: equally likely from a list or a range (`one_of(1..6)`), or weighted from a map, like `one_of([Boom: 20%, Steady: 80%])`. Percentages must add up to 100%; plain numbers are relative weights.",
+        ),
+        B::Binomial => doc(
+            "binomial(n: int, p: prob) -> dist[int]",
+            "The number of successes in `n` independent trials, each with probability `p`.",
+        ),
+        B::Poisson => doc(
+            "poisson(rate: float) -> dist[int]",
+            "A count of events that happen independently, `rate` on average.",
+        ),
+        B::Geometric => doc(
+            "geometric(p: prob) -> dist[int]",
+            "The number of tries up to and including the first success, each with probability `p`.",
+        ),
+        B::Roll => doc(
+            "roll(n: int, die) -> dist[list[int]]",
+            "`n` dice, sorted from highest to lowest: `let dice ~ roll(4, d6)`.",
+        ),
+        B::Bag => doc(
+            "bag(counts) -> bag",
+            "Items to draw without replacement, with `take`: `bag([\"ace\": 4, \"king\": 4])`, or from a list.",
+        ),
+        B::Normal => doc(
+            "normal(mean: float, sd: float) -> dist[float]",
+            "The normal distribution.",
+        ),
+        B::Lognormal => doc(
+            "lognormal(mu: float, sigma: float) -> dist[float]",
+            "The distribution whose logarithm is `normal(mu, sigma)`. For an estimate, `a to b` is easier.",
+        ),
+        B::Uniform => doc(
+            "uniform(lo: float, hi: float) -> dist[float]",
+            "Every value from `lo` to `hi` equally likely.",
+        ),
+        B::Beta => doc(
+            "beta(a: float, b: float) -> dist[prob]",
+            "A distribution of probabilities, such as an unknown rate. Observing counts of it updates it exactly when sampling.",
+        ),
+        B::Gamma => doc(
+            "gamma(shape: float, scale: float) -> dist[float]",
+            "A distribution of positive numbers, such as an unknown rate of events: its mean is `shape × scale`.",
+        ),
+        B::Exponential => doc(
+            "exponential(rate: float) -> dist[float]",
+            "The time until an event that happens at `rate` per unit of time: its mean is `1 / rate`.",
+        ),
+        B::Triangular => doc(
+            "triangular(lo, mode, hi) -> dist[float]",
+            "From `lo` to `hi`, most likely at `mode`, with straight sides.",
+        ),
+        B::Pert => doc(
+            "pert(lo, mode, hi) -> dist[float]",
+            "From `lo` to `hi`, most likely at `mode`, smoother than `triangular`: a beta distribution stretched over the range.",
+        ),
+        B::NormalRange => doc(
+            "normal_range(lo: float, hi: float) -> dist[float]",
+            "The normal distribution with a 90% chance of falling between `lo` and `hi`. Unlike `lo to hi`, it can be negative.",
+        ),
+        B::Mixture => doc("mixture(…)", "Not implemented yet."),
+        B::Truncate => doc("truncate(d, lo, hi)", "Not implemented yet."),
+        B::Bins => doc("bins(d, n)", "Not implemented yet."),
+        B::To => doc(
+            "a to b",
+            "An estimate: 90% confident it's between `a` and `b`, as a lognormal, so both must be above 0.",
+        ),
+        // Questions about distributions
+        B::P => doc(
+            "P(c) -> prob",
+            "The probability that a fact, or a distribution of facts, is true: `P(d6 > 4)`.",
+        ),
+        B::Mean => doc("mean(d) -> float", "The mean of a distribution."),
+        B::Sd => doc("sd(d) -> float", "The standard deviation of a distribution."),
+        B::Variance => doc("variance(d) -> float", "The variance of a distribution."),
+        B::Median => doc("median(d)", "The value with half the distribution at or below it."),
+        B::Quantile => doc(
+            "quantile(d, q: prob)",
+            "The smallest value with a share `q` of the distribution at or below it: `quantile(d, 95%)`.",
+        ),
+        B::Support => doc("support(d) -> list", "The outcomes a distribution can have, in order."),
+        B::Cdf => doc(
+            "cdf(d, x) -> prob",
+            "The probability that the distribution is at most `x`.",
+        ),
+        B::Pmf => doc(
+            "pmf(d, x) -> prob",
+            "The probability that the distribution is exactly `x`.",
+        ),
+        B::Pdf => doc("pdf(d, x) -> float", "The density of a continuous distribution at `x`."),
+        B::Odds => doc("odds(p: prob) -> float", "`p / (1 − p)`: 75% is 3 to 1."),
+        B::Logit => doc(
+            "logit(p: prob) -> float",
+            "The logarithm of the odds, `ln(p / (1 − p))`.",
+        ),
+        B::InvLogit => doc(
+            "inv_logit(x: float) -> prob",
+            "The probability whose logit is `x`: `1 / (1 + e^−x)`.",
+        ),
+        // Dates
+        B::Date => doc(
+            "date(s: str) -> date",
+            "A date from its ISO form: `date(\"2027-01-31\")`.",
+        ),
+        B::Today => doc("today() -> date", "Not implemented yet."),
+        B::Days => doc(
+            "days(n) -> int",
+            "`n` days, rounded to a whole number, to add to or subtract from a date: `start + days(3)`.",
+        ),
+        B::Weeks => doc("weeks(n) -> int", "`n` weeks, as a whole number of days."),
+        B::AddWorkdays => doc(
+            "add_workdays(d: date, n: int) -> date",
+            "The date `n` working days, Monday to Friday, after `d` (before it for a negative `n`).",
+        ),
+        B::Weekday => doc(
+            "weekday(d: date) -> str",
+            "The day of the week: `\"Monday\"` to `\"Sunday\"`.",
+        ),
+        B::IterItems
+        | B::RepeatCount
+        | B::IsFalse
+        | B::IsTrue
+        | B::IsListOfLen
+        | B::Settled
+        | B::Last
+        | B::DropLast => None,
+    }
+}
+
+/// `read`, which isn't a built-in function: it's how a program's data comes
+/// in, before it runs.
+pub const READ: Doc = Doc {
+    signature: "let rows: list[Row] = read(\"data.csv\")",
+    summary: "Reads data from a file: CSV, JSON or lines, with the declared type deciding how. `read(\"-\")` reads standard input. The data is the same in every world and every run.",
+};
+
+/// The keywords, and the words that act as keywords in their places.
+pub const KEYWORDS: &[&str] = &[
+    "let", "var", "fn", "return", "if", "else", "for", "in", "while", "loop", "repeat", "break", "continue", "match",
+    "chance", "observe", "from", "report", "by", "as", "simulate", "type", "enum", "with", "and", "or", "not", "div",
+    "mod", "to", "true", "false", "import",
+];
+
+pub fn keyword(word: &str) -> Option<Doc> {
+    match word {
+        "let" => doc(
+            "let x = e or let x ~ D",
+            "Declares a variable. `=` gives it a value; `~` draws it from a distribution, one world per outcome: `let roll ~ d20`.",
+        ),
+        "var" => doc(
+            "var x = e",
+            "Declares a variable that can change, with `=`, `+=` or `~`. A function can only change its own variables.",
+        ),
+        "fn" => doc(
+            "fn name(a, b: int) -> int { … }",
+            "Defines a function. Its result is its last expression, or what `return` gives. Calling it can split the caller's world. When enumerating, a result is reused for inputs it has already seen.",
+        ),
+        "return" => doc("return e", "Leaves the function with this result."),
+        "if" | "else" => doc(
+            "if c { … } else { … }",
+            "Runs a branch. When `c` is a probability or an uncertain fact, like `30%` or `d20 >= 15`, both branches run, in worlds weighted by its chance.",
+        ),
+        "for" | "in" => doc(
+            "for x in xs { … }",
+            "Runs the body once per item of a list, range, map (as `[key, value]` pairs), bag or string. `x in xs` also says whether `xs` holds `x`.",
+        ),
+        "while" => doc(
+            "while c { … }",
+            "Repeats while `c` holds, in each world, until every world has left. If the worlds come back to states they were in, it's solved exactly; otherwise it stops once what's left weighs less than ε.",
+        ),
+        "loop" => doc(
+            "loop { … }",
+            "Repeats until the body leaves with `break` or `return`, like `while true`.",
+        ),
+        "repeat" => doc("repeat n { … }", "Runs the body `n` times."),
+        "break" => doc("break", "Leaves the innermost loop."),
+        "continue" => doc("continue", "Goes on with the innermost loop's next round."),
+        "match" => doc(
+            "match x { pattern => … }",
+            "Runs the first arm whose pattern fits `x`: a value, a variant, a list like `[a, b]`, a name that takes any value, or `_`. `if` adds a guard.",
+        ),
+        "chance" => doc(
+            "chance { 60% => …, 30% => …, else => … }",
+            "Weighted branches: each runs in a world weighted by its chance, and `else` gets the rest.",
+        ),
+        "observe" | "from" => doc(
+            "observe c or observe v from D",
+            "Evidence: weighs each world by how likely it makes what was seen, the chance of `c`, or of `D` giving `v`. Reports then describe the worlds that fit it.",
+        ),
+        "report" | "by" | "as" => doc(
+            "report e by key as \"label\"",
+            "Adds `e` to the output: the chance of a fact, the distribution of a value, or one row per `key`. Only at the top level, after the observations.",
+        ),
+        "simulate" => doc(
+            "simulate { … }",
+            "Runs a block as a model of its own, and gives the distribution of its result, normalized, without splitting the current world.",
+        ),
+        "type" => doc(
+            "type Name = { field: type, … }",
+            "Declares a record type: `Name { field: value }` makes one.",
+        ),
+        "enum" => doc("enum Name { A, B, C }", "Declares a type whose values are these names."),
+        "with" => doc(
+            "r with { field: value }",
+            "A copy of the record `r` with some fields changed.",
+        ),
+        "and" | "or" | "not" => doc(
+            "a and b, a or b, not a",
+            "Combine facts. At most one side may be uncertain: two uncertain facts need identities, so draw them first with `~`.",
+        ),
+        "div" => doc("a div b", "Integer division, rounded down."),
+        "mod" => doc("a mod b", "The remainder of `a div b`, with the sign of `b`."),
+        "to" => builtin(Builtin::To),
+        "true" | "false" => doc("true, false", "The two facts."),
+        "import" => doc("import …", "Not supported yet."),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_public_built_in_is_documented() {
+        for &b in Builtin::ALL {
+            let d = builtin(b);
+            assert_eq!(d.is_some(), b.is_public() || b == Builtin::To, "{}", b.name());
+            assert_eq!(category(b) == "Internal", d.is_none(), "{}", b.name());
+        }
+        for word in KEYWORDS {
+            assert!(keyword(word).is_some(), "{word}");
+        }
+    }
+}

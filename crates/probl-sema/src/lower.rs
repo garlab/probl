@@ -7,17 +7,42 @@
 
 use crate::builtins::Builtin;
 use crate::ir::*;
+use crate::symbols::{DefKind, Definition, Symbols};
 use probl_syntax::ast::{self, BinOp, UnOp};
 use probl_syntax::{Diagnostic, Span};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Lower a parsed program. The IR is returned even when there are errors, but
 /// it must not be run unless all diagnostics are warnings.
 pub fn lower(program: &ast::Program, src: &str) -> (Program, Vec<Diagnostic>) {
+    let (program, diags, _) = lower_with_symbols(program, src);
+    (program, diags)
+}
+
+/// Lower a parsed program, and say where its names are declared and used.
+pub fn lower_with_symbols(program: &ast::Program, src: &str) -> (Program, Vec<Diagnostic>, Symbols) {
     let mut lowerer = Lowerer::new(src);
     lowerer.program(program);
-    lowerer.finish()
+    let mut symbols = std::mem::take(&mut lowerer.symbols);
+    // A field read by name is the one declared record's with that field, if
+    // only one has it and no record without a type does. Otherwise it
+    // depends on the value.
+    for (span, name) in std::mem::take(&mut lowerer.field_uses) {
+        if lowerer.anonymous_fields.contains(&name) {
+            continue;
+        }
+        if let Some(&[(_, def)]) = lowerer.field_defs.get(&name).map(Vec::as_slice) {
+            symbols.references.push((span, def));
+        }
+    }
+    // Scopes still open when lowering ended run to the end of the program.
+    let end = src.len() as u32;
+    for d in &mut symbols.definitions {
+        d.scope.hi = d.scope.hi.min(end);
+    }
+    let (program, diags) = lowerer.finish();
+    (program, diags, symbols)
 }
 
 /// The name of compiler-generated variables. Each is assigned once per path
@@ -44,6 +69,8 @@ struct FnBuild {
 #[derive(Clone)]
 struct Binding {
     slot: SlotId,
+    /// Its definition in `Lowerer::symbols`.
+    def: usize,
     mutable: bool,
     /// Copied in from outside the function, so it can't be assigned.
     captured: bool,
@@ -101,6 +128,20 @@ struct Lowerer<'a> {
     settings: Settings,
     next_stmt: u32,
     ctx: Vec<Ctx>,
+    /// Where names are declared and used.
+    symbols: Symbols,
+    /// The definitions in each open scope, innermost last, whose scope ends
+    /// with it.
+    open: Vec<Vec<usize>>,
+    fn_defs: FxHashMap<String, usize>,
+    type_defs: FxHashMap<String, usize>,
+    variant_defs: FxHashMap<(u32, u32), usize>,
+    /// The declared records' fields by name: their record and definition.
+    field_defs: FxHashMap<String, Vec<(u32, usize)>>,
+    /// The names of fields in records without a declared type.
+    anonymous_fields: FxHashSet<String>,
+    /// Fields used by name, whose record isn't known until the program runs.
+    field_uses: Vec<(Span, String)>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -122,7 +163,35 @@ impl<'a> Lowerer<'a> {
             settings: Settings::default(),
             next_stmt: 0,
             ctx: Vec::new(),
+            symbols: Symbols::default(),
+            open: Vec::new(),
+            fn_defs: FxHashMap::default(),
+            type_defs: FxHashMap::default(),
+            variant_defs: FxHashMap::default(),
+            field_defs: FxHashMap::default(),
+            anonymous_fields: FxHashSet::default(),
+            field_uses: Vec::new(),
         }
+    }
+
+    /// Record a definition, visible from `scope.lo` to `scope.hi`.
+    fn define(&mut self, name: &str, kind: DefKind, span: Span, scope: Span) -> usize {
+        self.symbols.definitions.push(Definition {
+            name: name.to_string(),
+            kind,
+            mutable: false,
+            span,
+            scope,
+            global: false,
+            owner: None,
+            ty: None,
+        });
+        self.symbols.definitions.len() - 1
+    }
+
+    /// Record a use of a name.
+    fn refer(&mut self, span: Span, def: usize) {
+        self.symbols.references.push((span, def));
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -190,10 +259,15 @@ impl<'a> Lowerer<'a> {
 
     fn push_scope(&mut self) {
         self.cur().scopes.push(FxHashMap::default());
+        self.open.push(Vec::new());
     }
 
-    fn pop_scope(&mut self) {
+    /// Close the innermost scope, which ends in the source at `end`.
+    fn pop_scope(&mut self, end: u32) {
         self.cur().scopes.pop();
+        for d in self.open.pop().unwrap_or_default() {
+            self.symbols.definitions[d].scope.hi = end;
+        }
     }
 
     fn at_top_level(&self) -> bool {
@@ -202,7 +276,23 @@ impl<'a> Lowerer<'a> {
 
     /// Declare a variable in the innermost scope.
     fn declare(&mut self, name: &str, span: Span, mutable: bool) -> SlotId {
+        self.declare_as(name, span, mutable, DefKind::Variable).0
+    }
+
+    /// Declare a variable or a parameter in the innermost scope, and return
+    /// its slot and its definition. A parameter's scope is set by its
+    /// function.
+    fn declare_as(&mut self, name: &str, span: Span, mutable: bool, kind: DefKind) -> (SlotId, usize) {
         let top = self.at_top_level();
+        let def = self.define(name, kind, span, Span::new(span.hi as usize, u32::MAX as usize));
+        self.symbols.definitions[def].mutable = mutable;
+        if top {
+            self.symbols.definitions[def].global = true;
+        } else if kind == DefKind::Variable {
+            if let Some(open) = self.open.last_mut() {
+                open.push(def);
+            }
+        }
         if top && self.globals.contains_key(name) {
             self.error(span, format!("`{name}` is already defined at the top level"))
                 .help("top-level names must be unique; use `var` and assign to change a value");
@@ -211,6 +301,7 @@ impl<'a> Lowerer<'a> {
         let slot = self.new_slot_in(func, name, span);
         let binding = Binding {
             slot,
+            def,
             mutable,
             captured: false,
             ty: None,
@@ -219,7 +310,7 @@ impl<'a> Lowerer<'a> {
             self.globals.insert(name.to_string(), binding.clone());
         }
         self.cur().scopes.last_mut().unwrap().insert(name.to_string(), binding);
-        slot
+        (slot, def)
     }
 
     /// Record a declared type for the variable most recently declared as `name`.
@@ -245,6 +336,7 @@ impl<'a> Lowerer<'a> {
             ast::TypeExpr::Record { fields, .. } => {
                 let mut specs = Vec::new();
                 for (name, ty) in fields {
+                    self.anonymous_fields.insert(name.name.clone());
                     specs.push((name.name.clone(), self.type_spec(ty)?));
                 }
                 specs.sort_by(|a, b| a.0.cmp(&b.0));
@@ -282,6 +374,9 @@ impl<'a> Lowerer<'a> {
                     "dist" => TypeSpec::Dist(arg(0, self)?),
                     "map" => TypeSpec::Map(arg(0, self)?, arg(1, self)?),
                     _ => {
+                        if let Some(&def) = self.type_defs.get(n) {
+                            self.refer(name.span, def);
+                        }
                         if let Some(&r) = self.record_by_name.get(n) {
                             TypeSpec::Record(r)
                         } else if let Some(&e) = self.enum_by_name.get(n) {
@@ -347,25 +442,26 @@ impl<'a> Lowerer<'a> {
         }
         let func = self.ctx[depth].func;
         let kind = self.funcs[func as usize].kind;
-        let found = match kind {
+        let (found, def) = match kind {
             FnKind::Main => return None,
             FnKind::Lambda | FnKind::Simulate if depth > 0 => {
                 let outer = self.lookup_at(depth - 1, name)?;
                 let span = self.funcs[func as usize].span;
                 let slot = self.new_slot_in(func, name, span);
                 self.funcs[func as usize].parent_captures.push((slot, outer.slot));
-                slot
+                (slot, outer.def)
             }
             _ => {
                 let global = self.globals.get(name)?.clone();
                 let span = self.funcs[func as usize].span;
                 let slot = self.new_slot_in(func, name, span);
                 self.funcs[func as usize].global_slots.insert(global.slot, slot);
-                slot
+                (slot, global.def)
             }
         };
         let binding = Binding {
             slot: found,
+            def,
             mutable: false,
             captured: true,
             ty: None,
@@ -377,6 +473,15 @@ impl<'a> Lowerer<'a> {
     fn lookup(&mut self, name: &str) -> Option<Binding> {
         let depth = self.ctx.len() - 1;
         self.lookup_at(depth, name)
+    }
+
+    /// Record a use of an enum's variant.
+    fn refer_variant(&mut self, variant: &Lit, span: Span) {
+        if let Lit::Enum { ty, variant } = variant {
+            if let Some(&def) = self.variant_defs.get(&(*ty, *variant)) {
+                self.refer(span, def);
+            }
+        }
     }
 
     fn variant(&mut self, name: &str, span: Span) -> Option<Lit> {
@@ -455,6 +560,9 @@ impl<'a> Lowerer<'a> {
                     let id = self.new_fn(name, FnKind::Named, decl.span, None);
                     self.funcs[id as usize].n_params = decl.params.len() as u32;
                     self.fn_by_name.insert(name.clone(), id);
+                    let everywhere = Span::new(0, u32::MAX as usize);
+                    let def = self.define(name, DefKind::Function, decl.name.span, everywhere);
+                    self.fn_defs.insert(name.clone(), def);
                     fn_decls.push((id, decl));
                 }
                 ast::Item::Type(decl) => {
@@ -597,6 +705,8 @@ impl<'a> Lowerer<'a> {
         }
         let id = self.records.len() as u32;
         self.record_by_name.insert(name.clone(), id);
+        let def = self.define(name, DefKind::Record, decl.name.span, Span::new(0, u32::MAX as usize));
+        self.type_defs.insert(name.clone(), def);
         self.records.push(RecordType {
             name: name.clone(),
             fields: Vec::new(),
@@ -618,6 +728,10 @@ impl<'a> Lowerer<'a> {
             }
             // An unknown type has been reported; the program won't run.
             let ty = self.type_spec(ty).unwrap_or(TypeSpec::Unit);
+            let def = self.define(&field.name, DefKind::Field, field.span, Span::new(0, u32::MAX as usize));
+            self.symbols.definitions[def].owner = Some(self.records[id as usize].name.clone());
+            self.symbols.definitions[def].ty = Some(ty.describe_in(&self.records, &self.enums));
+            self.field_defs.entry(field.name.clone()).or_default().push((id, def));
             resolved.push(RecordField {
                 name: field.name.clone(),
                 ty,
@@ -677,11 +791,17 @@ impl<'a> Lowerer<'a> {
             return;
         }
         let ty = self.enums.len() as u32;
+        let everywhere = Span::new(0, u32::MAX as usize);
+        let def = self.define(name, DefKind::Enum, decl.name.span, everywhere);
+        self.type_defs.insert(name.clone(), def);
         let mut variants = Vec::new();
         for (i, variant) in decl.variants.iter().enumerate() {
             if variants.contains(&variant.name) {
                 self.error(variant.span, format!("the variant `{}` appears twice", variant.name));
             }
+            let def = self.define(&variant.name, DefKind::Variant, variant.span, everywhere);
+            self.symbols.definitions[def].owner = Some(name.clone());
+            self.variant_defs.insert((ty, i as u32), def);
             variants.push(variant.name.clone());
             let entry = match self.variants.get(&variant.name) {
                 Some(_) => Variant::Ambiguous,
@@ -697,6 +817,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn fn_body(&mut self, id: FnId, decl: &ast::FnDecl) {
+        self.symbols.functions.push(decl.span);
         self.ctx.push(Ctx {
             func: id,
             scopes: vec![FxHashMap::default()],
@@ -711,7 +832,8 @@ impl<'a> Lowerer<'a> {
                     format!("the parameter `{}` appears twice", param.name.name),
                 );
             }
-            let slot_id = self.declare(&param.name.name, param.name.span, false);
+            let (slot_id, def) = self.declare_as(&param.name.name, param.name.span, false, DefKind::Parameter);
+            self.symbols.definitions[def].scope.hi = decl.span.hi;
             if let Some(spec) = param.ty.as_ref().and_then(|t| self.type_spec(t)) {
                 self.set_declared_type(&param.name.name, &spec);
                 let st = self.check(slot_id, &spec, param.name.span);
@@ -722,7 +844,7 @@ impl<'a> Lowerer<'a> {
         self.cur().ret = decl.ret.as_ref().and_then(|t| self.type_spec(t));
         self.push_scope();
         let value = self.block_value(&decl.body, &mut stmts);
-        self.pop_scope();
+        self.pop_scope(decl.body.span.hi);
         let value = self.checked_return_value(value, decl.body.span, &mut stmts);
         let ret = self.stmt(decl.body.span, StmtKind::Return(value));
         stmts.push(ret);
@@ -918,7 +1040,7 @@ impl<'a> Lowerer<'a> {
         for s in &block.stmts {
             self.lower_stmt(s, &mut stmts);
         }
-        self.pop_scope();
+        self.pop_scope(block.span.hi);
         Block { stmts }
     }
 
@@ -1319,6 +1441,9 @@ impl<'a> Lowerer<'a> {
                     .rev()
                     .find_map(|s| s.get(name))
                     .cloned();
+                if let Some(b) = &local {
+                    self.refer(e.span, b.def);
+                }
                 match local {
                     Some(b) if b.mutable => Some(Place::slot(b.slot)),
                     Some(b) if b.captured => {
@@ -1333,7 +1458,8 @@ impl<'a> Lowerer<'a> {
                         None
                     }
                     None => {
-                        if self.lookup(name).is_some() {
+                        if let Some(b) = self.lookup(name) {
+                            self.refer(e.span, b.def);
                             self.error(e.span, format!("can't {action} `{name}` here"))
                                 .note("functions, lambdas and `simulate` blocks can read outside variables but only change their own")
                                 .help("return the new value instead");
@@ -1346,6 +1472,7 @@ impl<'a> Lowerer<'a> {
             }
             ast::ExprKind::Field { expr, name } => {
                 let mut place = self.place(expr, out, action)?;
+                self.field_uses.push((name.span, name.name.clone()));
                 place.path.push(PathElem::Field(name.name.clone()));
                 Some(place)
             }
@@ -1396,6 +1523,7 @@ impl<'a> Lowerer<'a> {
             _ => None,
         };
         self.cur().loops.push(LoopKind::For(var));
+        let end = body.span.hi;
         self.push_scope();
         let mut inner = Vec::new();
         let len = builtin(Builtin::Len, vec![slot(items, span)], span);
@@ -1425,7 +1553,7 @@ impl<'a> Lowerer<'a> {
         inner.push(incr);
         let body = self.scoped_block(body);
         inner.extend(body.stmts);
-        self.pop_scope();
+        self.pop_scope(end);
         self.cur().loops.pop();
         let lp = self.stmt(
             span,
@@ -1536,7 +1664,7 @@ impl<'a> Lowerer<'a> {
             }
             (_, None) => self.lower_stmt(body, &mut stmts),
         }
-        self.pop_scope();
+        self.pop_scope(body.span.hi);
         Block { stmts }
     }
 
@@ -1561,7 +1689,7 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
-        self.pop_scope();
+        self.pop_scope(block.span.hi);
         Block { stmts }
     }
 
@@ -1576,12 +1704,13 @@ impl<'a> Lowerer<'a> {
     ) {
         let c = self.expr(cond, out);
         let then = self.block_into(then, dest);
+        let end = otherwise.map_or(span.hi, |o| o.span.hi);
         let otherwise = match otherwise.map(|o| &o.kind) {
             Some(ast::ExprKind::If { cond, then, otherwise }) => {
                 let mut stmts = Vec::new();
                 self.push_scope();
                 self.if_into(cond, then, otherwise.as_deref(), dest, span, &mut stmts);
-                self.pop_scope();
+                self.pop_scope(end);
                 Block { stmts }
             }
             Some(ast::ExprKind::Block(block)) => self.block_into(block, dest),
@@ -1671,7 +1800,7 @@ impl<'a> Lowerer<'a> {
                 let cond = self.pattern_test(&arm.pattern, &slot(subject, scrutinee.span), &mut then);
                 let body = self.branch_body(&arm.body, dest);
                 then.extend(body.stmts);
-                self.pop_scope();
+                self.pop_scope(arm.span.hi);
                 let st = self.stmt(
                     arm.span,
                     StmtKind::If {
@@ -1724,7 +1853,7 @@ impl<'a> Lowerer<'a> {
                 }
                 None => then.extend(body),
             }
-            self.pop_scope();
+            self.pop_scope(arm.span.hi);
             let not_matched = Expr {
                 kind: ExprKind::Unary(UnOp::Not, Box::new(slot(matched, arm.span))),
                 span: arm.span,
@@ -1763,6 +1892,7 @@ impl<'a> Lowerer<'a> {
             ast::PatternKind::Wildcard => lit(Lit::Bool(true), span),
             ast::PatternKind::Name(name) => {
                 if let Some(variant) = self.variant(name, span) {
+                    self.refer_variant(&variant, span);
                     return binary(BinOp::Eq, value.clone(), lit(variant, span), span);
                 }
                 let dest = self.declare(name, span, false);
@@ -1980,9 +2110,16 @@ impl<'a> Lowerer<'a> {
                 if let ast::ExprKind::Name(base) = &expr.kind {
                     if let Some(&ty) = self.enum_by_name.get(base) {
                         if self.lookup(base).is_none() {
+                            if let Some(&def) = self.type_defs.get(base) {
+                                self.refer(expr.span, def);
+                            }
                             let enum_type = &self.enums[ty as usize];
                             return match enum_type.variants.iter().position(|v| *v == name.name) {
-                                Some(i) => lit(Lit::Enum { ty, variant: i as u32 }, span),
+                                Some(i) => {
+                                    let variant = Lit::Enum { ty, variant: i as u32 };
+                                    self.refer_variant(&variant, name.span);
+                                    lit(variant, span)
+                                }
                                 None => {
                                     let enum_name = enum_type.name.clone();
                                     self.error(name.span, format!("`{enum_name}` has no variant `{}`", name.name));
@@ -1992,6 +2129,7 @@ impl<'a> Lowerer<'a> {
                         }
                     }
                 }
+                self.field_uses.push((name.span, name.name.clone()));
                 ExprKind::Field(Box::new(self.expr(expr, out)), name.name.clone())
             }
             ast::ExprKind::Index { expr, index } => {
@@ -2000,6 +2138,9 @@ impl<'a> Lowerer<'a> {
                 ExprKind::Index(Box::new(base), Box::new(i))
             }
             ast::ExprKind::With { expr, fields } => {
+                for field in fields {
+                    self.field_uses.push((field.name.span, field.name.name.clone()));
+                }
                 let base = self.expr(expr, out);
                 let mut values = self.fields_after(vec![base], fields, out);
                 let base = values.remove(0).1;
@@ -2015,7 +2156,7 @@ impl<'a> Lowerer<'a> {
             ast::ExprKind::Block(block) => {
                 self.push_scope();
                 let v = self.block_value(block, out);
-                self.pop_scope();
+                self.pop_scope(block.span.hi);
                 return v;
             }
         };
@@ -2024,9 +2165,11 @@ impl<'a> Lowerer<'a> {
 
     fn name(&mut self, name: &str, span: Span) -> Expr {
         if let Some(b) = self.lookup(name) {
+            self.refer(span, b.def);
             return slot(b.slot, span);
         }
         if let Some(variant) = self.variant(name, span) {
+            self.refer_variant(&variant, span);
             return lit(variant, span);
         }
         if self.fn_by_name.contains_key(name) || Builtin::from_name(name).is_some() {
@@ -2083,6 +2226,9 @@ impl<'a> Lowerer<'a> {
     ) -> ExprKind {
         let lowered = self.fields(fields, out);
         let Some(name) = name else {
+            for field in fields {
+                self.anonymous_fields.insert(field.name.name.clone());
+            }
             return ExprKind::Record {
                 ty: None,
                 fields: lowered,
@@ -2092,6 +2238,18 @@ impl<'a> Lowerer<'a> {
             self.error(name.span, format!("unknown record type `{}`", name.name));
             return ExprKind::Lit(Lit::Unit);
         };
+        if let Some(&def) = self.type_defs.get(&name.name) {
+            self.refer(name.span, def);
+        }
+        for field in fields {
+            let def = self
+                .field_defs
+                .get(&field.name.name)
+                .and_then(|defs| defs.iter().find(|&&(r, _)| r == ty));
+            if let Some(&(_, def)) = def {
+                self.refer(field.name.span, def);
+            }
+        }
         let declared: Vec<String> = self.records[ty as usize]
             .fields
             .iter()
@@ -2267,6 +2425,9 @@ impl<'a> Lowerer<'a> {
             values.push(self.expr(r, out));
         }
         if let Some(&func) = self.fn_by_name.get(&name.name) {
+            if let Some(&def) = self.fn_defs.get(&name.name) {
+                self.refer(name.span, def);
+            }
             let values = self.positional_args(values, args, out);
             let caller = self.cur_func();
             self.funcs[caller as usize].calls.insert(func);
@@ -2393,13 +2554,14 @@ impl<'a> Lowerer<'a> {
             ret: None,
         });
         for p in params {
-            self.declare(&p.name, p.span, false);
+            let (_, def) = self.declare_as(&p.name, p.span, false, DefKind::Parameter);
+            self.symbols.definitions[def].scope.hi = body.span.hi;
         }
         self.funcs[id as usize].n_params = params.len() as u32;
         let mut stmts = Vec::new();
         self.push_scope();
         let v = self.expr(body, &mut stmts);
-        self.pop_scope();
+        self.pop_scope(body.span.hi);
         let ret = self.stmt(body.span, StmtKind::Return(v));
         stmts.push(ret);
         self.funcs[id as usize].body = Block { stmts };
@@ -2426,7 +2588,7 @@ impl<'a> Lowerer<'a> {
         let mut stmts = Vec::new();
         self.push_scope();
         let v = self.block_value(block, &mut stmts);
-        self.pop_scope();
+        self.pop_scope(block.span.hi);
         let ret = self.stmt(block.span, StmtKind::Return(v));
         stmts.push(ret);
         self.funcs[id as usize].body = Block { stmts };

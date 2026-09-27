@@ -11,7 +11,9 @@
 
 use probl_engine::data::{self, InputLimits, Resolver, Snapshots};
 use probl_engine::{Limits, Options, Progress, RuntimeError};
+use probl_sema::Builtin;
 use probl_sema::ir::Mode;
+use probl_sema::symbols::{DefKind, Symbols};
 use probl_syntax::{Diagnostic, Severity, SourceFile, Span};
 use serde_json::{Map, Value as Json, json};
 use std::io::Read;
@@ -47,13 +49,175 @@ fn input_limits() -> InputLimits {
 /// The name programs are shown under in diagnostics.
 const FILE: &str = "playground.probl";
 
-/// A program's diagnostics: `{"diagnostics": [...]}`, each with its
-/// severity, message, notes and help, where it is (see [`diagnostic`]), and
-/// the text the command line would print.
+/// A program's diagnostics and names: `{"diagnostics": [...], "symbols":
+/// {...}}`. Each diagnostic has its severity, message, notes and help, where
+/// it is (see [`diagnostic`]), and the text the command line would print.
+/// The symbols, where the program's names are declared and used, are there
+/// when it parses (see [`symbols`]); they're `null` otherwise.
 pub fn check(source: &str) -> String {
     let file = SourceFile::new(FILE, source);
-    let (_, diags) = probl_sema::compile(source);
-    json!({ "diagnostics": diags.iter().map(|d| diagnostic(d, &file)).collect::<Vec<_>>() }).to_string()
+    let (_, diags, symbols) = probl_sema::compile_with_symbols(source);
+    let symbols = symbols.map(|s| self::symbols(&s, source));
+    json!({ "diagnostics": diags.iter().map(|d| diagnostic(d, &file)).collect::<Vec<_>>(), "symbols": symbols })
+        .to_string()
+}
+
+/// Offsets in UTF-16 code units, as JavaScript counts them, for byte offsets
+/// in a text.
+struct Utf16(Option<Vec<u32>>);
+
+impl Utf16 {
+    fn new(text: &str) -> Utf16 {
+        if text.is_ascii() {
+            return Utf16(None);
+        }
+        let mut table = vec![0; text.len() + 1];
+        let mut units = 0;
+        for (i, c) in text.char_indices() {
+            table[i..i + c.len_utf8()].fill(units);
+            units += c.len_utf16() as u32;
+        }
+        table[text.len()] = units;
+        Utf16(Some(table))
+    }
+
+    fn at(&self, byte: u32) -> u32 {
+        match &self.0 {
+            None => byte,
+            Some(table) => table[(byte as usize).min(table.len() - 1)],
+        }
+    }
+}
+
+/// The program's names, for an editor:
+///
+/// - `definitions`: each with its name, kind, where it's declared (`from`,
+///   `to`, `line`), where it can be used (`scope`, and `global` for
+///   top-level variables, which functions can also use), its declaration's
+///   line (`detail`), and the comments that describe it (`doc`): the lines
+///   of comments just above, and a comment at the end of its line;
+/// - `references`: `[from, to, definition]` for every use of a name;
+/// - `functions`: `[from, to]` for each named function.
+///
+/// Offsets count UTF-16 code units.
+fn symbols(symbols: &Symbols, source: &str) -> Json {
+    let utf16 = Utf16::new(source);
+    let newlines: Vec<usize> = source.match_indices('\n').map(|(i, _)| i).collect();
+    let definitions: Vec<Json> = symbols
+        .definitions
+        .iter()
+        .map(|d| {
+            let (line, detail, doc) = declaration(source, &newlines, d.span.lo as usize);
+            let detail = match (d.kind, &d.owner, &d.ty) {
+                (DefKind::Field, Some(owner), Some(ty)) => format!("{owner}.{}: {ty}", d.name),
+                _ => detail,
+            };
+            json!({
+                "name": d.name,
+                "kind": d.kind.name(),
+                "mutable": d.mutable,
+                "global": d.global,
+                "owner": d.owner,
+                "from": utf16.at(d.span.lo),
+                "to": utf16.at(d.span.hi),
+                "line": line,
+                "scope": [utf16.at(d.scope.lo), utf16.at(d.scope.hi)],
+                "detail": detail,
+                "doc": doc,
+            })
+        })
+        .collect();
+    let references: Vec<Json> = symbols
+        .references
+        .iter()
+        .map(|(span, d)| json!([utf16.at(span.lo), utf16.at(span.hi), d]))
+        .collect();
+    let functions: Vec<Json> = symbols
+        .functions
+        .iter()
+        .map(|f| json!([utf16.at(f.lo), utf16.at(f.hi)]))
+        .collect();
+    json!({ "definitions": definitions, "references": references, "functions": functions })
+}
+
+/// For a declaration at byte `at`: its line number (from 1), its line
+/// without a comment at the end or an opening brace, and the comments that
+/// describe it. `newlines` are where the source's lines end.
+fn declaration(source: &str, newlines: &[usize], at: usize) -> (usize, String, Option<String>) {
+    let at = at.min(source.len());
+    let start = source[..at].rfind('\n').map_or(0, |i| i + 1);
+    let end = source[at..].find('\n').map_or(source.len(), |i| at + i);
+    let line = &source[start..end];
+    let (code, trailing) = split_comment(line);
+    let mut code = code.trim().trim_end_matches('{').trim_end().to_string();
+    if code.chars().count() > 120 {
+        code = code.chars().take(119).collect::<String>() + "…";
+    }
+    // Comment lines just above, nearest last.
+    let mut above: Vec<&str> = source[..start]
+        .lines()
+        .rev()
+        .take_while(|l| l.trim_start().starts_with('#'))
+        .map(|l| l.trim_start().trim_start_matches('#').trim())
+        .collect();
+    above.reverse();
+    let mut doc: Vec<&str> = above;
+    if let Some(t) = trailing {
+        doc.push(t);
+    }
+    let doc = (!doc.is_empty()).then(|| doc.join("\n"));
+    let number = newlines.partition_point(|&i| i < start) + 1;
+    (number, code, doc)
+}
+
+/// A line's code, and its comment at the end, if it has one: a `#` that
+/// isn't in a string.
+fn split_comment(line: &str) -> (&str, Option<&str>) {
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, c) in line.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' if in_string => escaped = true,
+            '"' => in_string = !in_string,
+            '#' if !in_string => return (&line[..i], Some(line[i + 1..].trim())),
+            _ => {}
+        }
+    }
+    (line, None)
+}
+
+/// The reference: `{"builtins": [...], "keywords": [...], "read": {...}}`,
+/// each with its `signature` and `summary`, and the built-ins with their
+/// `category`.
+pub fn docs() -> String {
+    let builtins: Vec<Json> = Builtin::ALL
+        .iter()
+        .filter(|b| b.is_public())
+        .filter_map(|&b| {
+            let d = probl_sema::docs::builtin(b)?;
+            Some(json!({
+                "name": b.name(),
+                "category": probl_sema::docs::category(b),
+                "signature": d.signature,
+                "summary": d.summary,
+            }))
+        })
+        .collect();
+    let keywords: Vec<Json> = probl_sema::docs::KEYWORDS
+        .iter()
+        .filter_map(|&k| {
+            let d = probl_sema::docs::keyword(k)?;
+            Some(json!({ "name": k, "signature": d.signature, "summary": d.summary }))
+        })
+        .collect();
+    let read = probl_sema::docs::READ;
+    json!({
+        "builtins": builtins,
+        "keywords": keywords,
+        "read": { "name": "read", "signature": read.signature, "summary": read.summary },
+    })
+    .to_string()
 }
 
 /// Run a program. The request is `{"source": …}`, and optionally:
@@ -333,6 +497,12 @@ mod exports {
     pub extern "C" fn probl_examples() -> usize {
         setup();
         give(super::examples())
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn probl_docs() -> usize {
+        setup();
+        give(super::docs())
     }
 
     #[unsafe(no_mangle)]

@@ -74,12 +74,12 @@ source ─► lexer ─► parser ─► AST ─► lowering ─► IR ─► an
 Cargo.toml              workspace
 crates/
   probl-syntax/         lexer, parser, AST, spans, diagnostics
-  probl-sema/           name resolution, lowering to IR, liveness and effect analysis, checks
+  probl-sema/           name resolution, lowering to IR, liveness and effect analysis, checks; names and docs for editors
   probl-engine/         values, distributions, weights, worlds, the interpreter, reports, limits
   probl-cli/            probl run | check | repl; golden tests over examples/
   probl-oracle/         the independent reference interpreter, program generator and fuzzer
   probl-wasm/           the engine as a WebAssembly module, for the playground
-web/                    the playground: the module's loader and its tests
+web/                    the playground: the page, its editor, the module's loader, and their tests
 examples/               sample programs; their "Output" blocks are golden tests
 docs/
 ```
@@ -308,7 +308,11 @@ The forecast made when the plan was first written, by running [`examples/09_road
 - **The playground.**
   - **The API:** `cargo test -p probl-wasm` tests it natively. All nine examples must print through it exactly what the engine prints for `probl run`.
   - **WebAssembly:** `node web/test/examples.mjs` runs the WebAssembly build in Node and compares every example with `probl run`, byte for byte.
-  - **Browsers:** `node web/test/page.mjs` drives the page in headless Chrome, or Firefox with `firefox`. It checks every example, progress and Stop, the call-depth limit, errors in the editor and share links.
+  - **Browsers:** `node web/test/page.mjs` drives the page in headless Chrome, or Firefox with `firefox`. It checks:
+    - every example, progress and Stop, the call-depth limit, errors in the editor and share links;
+    - hover, going to definitions, highlights and completion in the editor;
+    - the reference's search, the guide's programs and links, and the page's width on a phone.
+  - **Names:** `probl-sema/tests/symbols.rs` checks that each use leads to its declaration, and which names are visible where.
   - These need the WebAssembly target and Node, so `cargo test` doesn't run them.
 - **Samplers.** Kolmogorov–Smirnov tests for every continuous family, chi-square tests for the direct count samplers, and closed-form checks of CDFs, quantiles and densities. `probl-engine/tests/sampling.rs` covers the rules of semantics §13–14.
 - **Exact updates.** `probl-engine/tests/conjugate.rs` and the unit tests of `conjugate.rs` check:
@@ -371,5 +375,5 @@ Still open:
 
 The order the benchmarks recommend (docs/benchmarks.md). The first three are done: parallel sampling batches (6–8× for sampled models on 12 cores), cheaper merging (1.4–2.9× for enumeration), and moving draws to their first use (the reliability model follows 256 worlds instead of 2²⁰). So are reading data ([reading data](data-input.md)) and the evidence when sampling, which completes v0.2. So are exact updates for conjugate priors, the first part of better inference: an A/B test's 100,000 runs are worth 100,000 instead of 863 with 30 days of data, and instead of 204 with 120. And so is solving loops and recursion that cycle (semantics §6 and §10).
 
-1. **A playground in the browser** ([its plan](playground-plan.md)). The engine runs in WebAssembly, and prints exactly what the command line prints; the page works in Chrome and Firefox (`web/`). Next is hosting it, which needs a remote.
+1. **A playground in the browser** ([its plan](playground-plan.md)). The engine runs in WebAssembly, and prints exactly what the command line prints. The page works in Chrome and Firefox (`web/`), with the language guide, a reference, and completion, hover and go-to-definition in the editor. Next is hosting it, which needs a remote.
 2. **A general method for models that aren't conjugate** (lognormal priors, `a to b` estimates, hierarchical models, regressions). First a benchmark that needs it, then a specification: the review of the first proposal lists what it must contain ([inference proposal](inference-proposal.md), section 2).

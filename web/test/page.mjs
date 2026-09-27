@@ -1,6 +1,7 @@
 // The playground in real browsers, headless: every example prints what
-// `probl run` prints, and stopping, limits, errors in the editor and share
-// links work. Needs `npm run build`, `cargo build --release -p probl-cli`,
+// `probl run` prints; stopping, limits, errors in the editor and share
+// links work; and so do completion, descriptions on hover, going to a
+// definition, the reference and the guide. Needs `npm run build`, `cargo build --release -p probl-cli`,
 // and Chrome or Firefox where macOS puts them (or PROBL_CHROME and
 // PROBL_FIREFOX).
 //
@@ -46,10 +47,19 @@ async function press(page, id) {
   await page.evaluate((id) => document.getElementById(id).click(), id);
 }
 
-/** Run the editor's program, and wait for it to finish. */
-async function run(page) {
+/** Whether `test` becomes true in the page, within `timeout` ms. */
+function becomes(page, test, arg, timeout = 5000) {
+  return page.waitForFunction(test, { timeout, polling: 50 }, arg).then(
+    () => true,
+    () => false,
+  );
+}
+
+/** Run the editor's program, or what `start` starts, and wait for it to
+ * finish. */
+async function run(page, start = () => press(page, 'run')) {
   const before = await page.evaluate(() => window.playground.finished());
-  await press(page, 'run');
+  await start();
   await page.waitForFunction((n) => window.playground.finished() > n, { timeout: 120_000, polling: 50 }, before);
   return page.evaluate(() => ({
     result: document.getElementById('result').textContent,
@@ -119,6 +129,231 @@ try {
   const other = await open(link);
   const opened = await other.evaluate(() => window.playground.getSource());
   expect(opened === program, 'a share link opens the same program', opened);
+
+  // ── What the editor knows about the program ──
+  const editor = await open();
+  const source = [
+    '@mode sample(runs: 1000, seed: 1)',
+    'enum Plan { Free, Paid }',
+    '',
+    '# How often visitors sign up.',
+    'let rate ~ beta(2, 40)   # a few percent, probably',
+    'let visitors = 250',
+    '',
+    '# Sign-ups over some days: a binomial count.',
+    'fn signups(days: int) -> int {',
+    '  let n ~ binomial(days * visitors, rate)',
+    '  return n',
+    '}',
+    'report rate',
+    'report signups(14)',
+    'type Week = { visits: int, conversions: int }',
+    'let first = Week { visits: 1750, conversions: 60 }',
+    'report first.conversions',
+  ].join('\n');
+  await editor.evaluate((src) => window.playground.setSource(src), source);
+  /** Where the `n`th `needle` is in the program (from 0), plus `at`. */
+  const offset = (needle, n = 0, at = 0) => {
+    let i = -1;
+    for (let k = 0; k <= n; k += 1) i = source.indexOf(needle, i + 1);
+    return i + at;
+  };
+  const cursor = (pos) =>
+    editor.evaluate((pos) => {
+      window.playground.view.dispatch({ selection: { anchor: pos } });
+      window.playground.view.focus();
+    }, pos);
+  const selected = () =>
+    editor.evaluate(() => {
+      const { state } = window.playground.view;
+      const { from, to } = state.selection.main;
+      return `${state.sliceDoc(from, to)} on line ${state.doc.lineAt(from).number}`;
+    });
+  const texts = (selector) =>
+    editor.evaluate((selector) => [...document.querySelectorAll(selector)].map((e) => e.textContent), selector);
+  // A mouse event over the character at `pos`, sent to what's there as the
+  // browser sends it.
+  const mouse = (type, pos, keys = {}) =>
+    editor.evaluate(
+      (type, pos, keys) => {
+        const { view } = window.playground;
+        const a = view.coordsAtPos(pos, 1);
+        const b = view.coordsAtPos(pos + 1, -1);
+        const x = (a.left + b.left) / 2;
+        const y = (a.top + a.bottom) / 2;
+        const init = { clientX: x, clientY: y, bubbles: true, cancelable: true, button: 0, ...keys };
+        document.elementFromPoint(x, y).dispatchEvent(new MouseEvent(type, init));
+      },
+      type,
+      pos,
+      keys,
+    );
+
+  // The name under the cursor, and its other uses, once the checker has
+  // found them.
+  await cursor(offset('rate)', 0, 2));
+  await becomes(editor, () => document.querySelectorAll('.cm-probl-same').length === 3);
+  const same = await texts('.cm-probl-same');
+  expect(same.join() === 'rate,rate,rate', 'the name under the cursor is highlighted where it’s used', same.join());
+
+  // Hovering: a name of the program's, with its comments; a built-in; a
+  // keyword.
+  const unhover = () =>
+    editor.evaluate(() =>
+      window.playground.view.dom.dispatchEvent(new MouseEvent('mouseleave', { relatedTarget: document.body })),
+    );
+  async function hover(pos, timeout = 5000) {
+    await unhover();
+    await mouse('mousemove', pos);
+    await becomes(editor, () => document.querySelector('.cm-probl-card'), undefined, timeout);
+    return editor.evaluate(() => {
+      const card = document.querySelector('.cm-probl-card');
+      const part = (name) => card?.querySelector(`.cm-probl-${name}`)?.textContent ?? null;
+      return { code: part('signature'), what: part('what'), doc: part('doc') };
+    });
+  }
+  let card = await hover(offset('report rate', 0, 8));
+  expect(
+    card.code === 'let rate ~ beta(2, 40)' &&
+      card.what === 'variable, line 5' &&
+      card.doc === 'How often visitors sign up.\na few percent, probably',
+    'hovering a variable shows its declaration and comments',
+    JSON.stringify(card),
+  );
+  card = await hover(offset('signups(14)', 0, 2));
+  expect(
+    card.code === 'fn signups(days: int) -> int' && card.what === 'function, line 9' && card.doc === 'Sign-ups over some days: a binomial count.',
+    'hovering a function shows its signature',
+    JSON.stringify(card),
+  );
+  card = await hover(offset('binomial(', 0, 2));
+  expect(card.code?.startsWith('binomial(') && card.doc?.length > 20, 'hovering a built-in documents it', JSON.stringify(card));
+  card = await hover(offset('report rate', 0, 2));
+  expect(card.code?.includes('report') && card.doc?.length > 20, 'hovering a keyword documents it', JSON.stringify(card));
+  card = await hover(offset('binomial count', 0, 2), 1000);
+  expect(card.code === null, 'words in comments aren’t described', JSON.stringify(card));
+
+  await unhover();
+
+  // Going to a definition: F12, and Cmd-click or Ctrl-click, with the name
+  // underlined as a link while the key is down.
+  await cursor(offset('signups(14)', 0, 3));
+  await editor.keyboard.press('F12');
+  let went = await selected();
+  expect(went === 'signups on line 9', 'F12 goes to the definition', went);
+  await mouse('mousemove', offset('rate)', 0, 1), { metaKey: true });
+  const underlined = await texts('.cm-probl-link');
+  expect(underlined.join() === 'rate', 'holding Cmd or Ctrl underlines a name', underlined.join());
+  await mouse('mousedown', offset('rate)', 0, 1), { metaKey: true });
+  went = await selected();
+  expect(went === 'rate on line 5', 'Cmd-click goes to the definition', went);
+  await mouse('mousedown', offset('visitors,', 0, 1), { ctrlKey: true });
+  went = await selected();
+  expect(went === 'visitors on line 6', 'so does Ctrl-click', went);
+  await mouse('mousedown', offset('first.conversions', 0, 7), { metaKey: true });
+  went = await selected();
+  expect(went === 'conversions on line 15', 'a field goes to its record', went);
+  await editor.evaluate(() =>
+    window.playground.view.contentDOM.dispatchEvent(new KeyboardEvent('keyup', { key: 'Meta', bubbles: true })),
+  );
+  expect((await texts('.cm-probl-link')).length === 0, 'letting go of the key removes the underline');
+
+  // Completion, as you type: the program's names, the built-ins with their
+  // documentation, and an enum's variants.
+  const completions = async (typed) => {
+    await editor.keyboard.type(typed);
+    await becomes(editor, () => document.querySelector('.cm-tooltip-autocomplete li'));
+    return texts('.cm-tooltip-autocomplete li .cm-completionLabel');
+  };
+  await cursor(source.length);
+  let offered = await completions('\nreport visi');
+  let details = await texts('.cm-tooltip-autocomplete li .cm-completionDetail');
+  expect(
+    offered[0] === 'visitors' && details[0] === '= 250',
+    'completion offers the program’s names, with what they are',
+    `${offered.join(', ')}\n${details.join(', ')}`,
+  );
+  // (Keys reach a completion list after it's been open 75 ms.)
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  await editor.keyboard.press('Enter');
+  let line = await editor.evaluate(() => window.playground.view.state.doc.lineAt(window.playground.view.state.selection.main.head).text);
+  expect(line === 'report visitors', 'Enter takes the completion', line);
+  offered = await completions('\nlet k ~ binom');
+  details = await texts('.cm-tooltip-autocomplete li .cm-completionDetail');
+  await becomes(editor, () => document.querySelector('.cm-completionInfo .cm-probl-card'));
+  const info = await texts('.cm-completionInfo .cm-probl-signature');
+  expect(
+    offered[0] === 'binomial' && details[0]?.startsWith('(n: int') && info[0]?.startsWith('binomial('),
+    'completion offers the built-ins, with their documentation',
+    `${offered.join(', ')}\n${details.join(', ')}\n${info.join()}`,
+  );
+  await editor.keyboard.press('Escape');
+  offered = await completions('\nlet p = Plan.');
+  expect(offered.join() === 'Free,Paid', 'after an enum’s name, completion offers its variants', offered.join(', '));
+  await editor.keyboard.press('Escape');
+  await editor.keyboard.type('\n# the rate');
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  offered = await texts('.cm-tooltip-autocomplete li');
+  expect(offered.length === 0, 'there’s no completion in a comment', offered.join(', '));
+
+  // The tabs: each shows its pane alone.
+  const showTab = (name) => editor.evaluate((name) => document.querySelector(`[data-pane="${name}"]`).click(), name);
+  await showTab('reference');
+  const layout = await editor.evaluate(() => ({
+    output: getComputedStyle(document.getElementById('output')).display,
+    gap: document.getElementById('reference').getBoundingClientRect().top - document.querySelector('.tabs').getBoundingClientRect().bottom,
+  }));
+  expect(layout.output === 'none' && Math.abs(layout.gap) < 1, 'a tab shows its pane alone', JSON.stringify(layout));
+
+  // The reference, searched.
+  const found = await editor.evaluate(() => {
+    const search = document.getElementById('search');
+    search.value = 'binomial';
+    search.dispatchEvent(new Event('input'));
+    const entries = [...document.querySelectorAll('#entries .entry')];
+    const shown = entries.filter((e) => e.offsetParent !== null);
+    const signatures = entries.map((e) => e.querySelector('.signature').textContent);
+    return {
+      all: entries.length,
+      distinct: new Set(signatures).size,
+      shown: shown.map((e) => e.querySelector('.signature').textContent),
+      matching: shown.every((e) => e.dataset.search.includes('binomial')),
+    };
+  });
+  expect(
+    found.matching && found.shown.some((s) => s.startsWith('binomial(')) && found.shown.length < found.all / 4,
+    'searching the reference shows what matches',
+    JSON.stringify(found),
+  );
+  expect(found.distinct === found.all, 'the reference has each entry once', `${found.distinct} of ${found.all}`);
+
+  // The guide: its programs run in the editor, and its links open the
+  // examples.
+  await showTab('guide');
+  const guided = await becomes(editor, () => document.querySelectorAll('#guide button.try').length >= 10, undefined, 10_000);
+  expect(guided, 'the guide loads, with programs to run');
+  const snippet = await editor.evaluate(() => document.querySelector('#guide button.try').previousElementSibling.textContent);
+  answer = await run(editor, () => editor.evaluate(() => document.querySelector('#guide button.try').click()));
+  const ran = await editor.evaluate(() => ({
+    source: window.playground.getSource(),
+    output: !document.getElementById('output').hidden,
+  }));
+  expect(
+    ran.source === snippet && ran.output && !answer.error && answer.result.length > 0,
+    'a program in the guide runs in the editor',
+    `${ran.source}\n---\n${answer.result}`,
+  );
+  await showTab('guide');
+  await editor.evaluate(() => document.querySelector('#guide a[href="#example=02_craps"]').click());
+  const craps = await editor.evaluate(() => window.playground.examples.find((e) => e.name === '02_craps').source);
+  const linked = await becomes(editor, (src) => window.playground.getSource() === src, craps);
+  expect(linked, 'a link in the guide opens its example');
+
+  // On a phone, the guide's long lines scroll by themselves, not the page.
+  await editor.setViewport({ width: 390, height: 844 });
+  await showTab('guide');
+  const widths = await editor.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
+  expect(widths[0] <= widths[1], 'on a phone, the page fits the screen', widths.join(' > '));
 } finally {
   await browser.close();
   await server.dispose();

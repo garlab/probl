@@ -9,6 +9,7 @@
     "test": "node test/examples.mjs && node test/page.mjs"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.8.0",
     "@codemirror/language": "^6.11.0",
     "@codemirror/lint": "^6.8.0",
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "esbuild": "^0.28.2",
+    "marked": "^18.0.14",
     "puppeteer-core": "^24.0.0"
   }
 }

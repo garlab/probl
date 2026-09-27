@@ -2,7 +2,7 @@
 // compiled module, then requests; a run can be stopped only by ending the
 // worker, which the page then replaces.
 //
-//   → {type: 'init', module}              ← {type: 'ready', examples, version}
+//   → {type: 'init', module}              ← {type: 'ready', examples, docs, version}
 //   → {type: 'check', id, source}         ← {type: 'done', id, result}
 //   → {type: 'run', id, request}          ← {type: 'print', id, line}, {type: 'progress', id, done, total},
 //                                           then {type: 'done', id, result, memory}
@@ -20,7 +20,7 @@ self.onmessage = async ({ data }) => {
       onProgress: (done, total) => self.postMessage({ type: 'progress', id: current, done, total }),
     });
     const probl = await loaded;
-    self.postMessage({ type: 'ready', examples: probl.examples(), version: probl.version() });
+    self.postMessage({ type: 'ready', examples: probl.examples(), docs: probl.docs(), version: probl.version() });
     return;
   }
   // Requests sent before the module was ready wait for it, in order.

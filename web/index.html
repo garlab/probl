@@ -40,13 +40,26 @@
   </header>
   <main>
     <section id="editor" aria-label="Program"></section>
-    <section id="output" aria-label="Output">
-      <div class="bar">
-        <span id="status" role="status"></span>
-        <progress id="progress" hidden></progress>
+    <section id="side">
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-pane="output" aria-selected="true">Output</button>
+        <button role="tab" data-pane="guide" aria-selected="false">Guide</button>
+        <button role="tab" data-pane="reference" aria-selected="false">Reference</button>
+      </nav>
+      <div id="output" class="pane" role="tabpanel" aria-label="Output">
+        <div class="bar">
+          <span id="status" role="status"></span>
+          <progress id="progress" hidden></progress>
+        </div>
+        <pre id="printed" hidden></pre>
+        <pre id="result"></pre>
       </div>
-      <pre id="printed" hidden></pre>
-      <pre id="result"></pre>
+      <article id="guide" class="pane" role="tabpanel" aria-label="Guide" hidden></article>
+      <div id="reference" class="pane" role="tabpanel" aria-label="Reference" hidden>
+        <input id="search" type="search" placeholder="Search the built-in functions and keywords" aria-label="Search the reference">
+        <p class="hint">Hover a name in the editor to see what it is, and Cmd-click or Ctrl-click it (or press F12) to go to where it's declared. Completion comes as you type, or with Ctrl-Space.</p>
+        <div id="entries"></div>
+      </div>
     </section>
   </main>
   <footer>

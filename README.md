@@ -40,12 +40,12 @@ cargo run --release -p probl-cli -- repl
 cargo test --all
 ```
 
-The playground runs the same engine in the browser, compiled to WebAssembly. It needs Node, and Rust's WebAssembly target:
+The playground runs the same engine in the browser, compiled to WebAssembly. Beside the editor are the language guide, with programs to run, and a reference. The editor completes names, describes them on hover, and goes to their definitions with Cmd-click or Ctrl-click. It needs Node, and Rust's WebAssembly target:
 
 ```sh
 rustup target add wasm32-unknown-unknown
 cd web && npm install && npm run serve        # then open http://localhost:8000
-npm test                                      # every example, in Node and in headless Chrome
+npm test                                      # every example in Node, then the page in headless Chrome
 ```
 
 - [Language overview](docs/language-overview.md): the model, the syntax, and a tour of the language

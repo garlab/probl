@@ -182,3 +182,72 @@ fn errors_say_what_kind_and_where() {
     let (answer, _) = run(json!({ "source": src }));
     assert_eq!(answer["error"]["kind"], "limit", "{answer}");
 }
+
+#[test]
+fn check_gives_the_names_with_their_comments() {
+    let src = "# The rate before the pilot.\n# Probably a few percent.\nlet rate ~ beta(2, 40)   # prior\nlet s = \"é#\"  # not in the string\nreport rate * 100\n";
+    let answer: Value = serde_json::from_str(&probl_wasm::check(src)).unwrap();
+    let symbols = &answer["symbols"];
+    let definitions = symbols["definitions"].as_array().unwrap();
+    let rate = definitions.iter().find(|d| d["name"] == "rate").unwrap();
+    assert_eq!(rate["kind"], "variable");
+    assert_eq!(rate["line"], 3);
+    assert_eq!(rate["detail"], "let rate ~ beta(2, 40)");
+    assert_eq!(
+        rate["doc"],
+        "The rate before the pilot.\nProbably a few percent.\nprior"
+    );
+    let s = definitions.iter().find(|d| d["name"] == "s").unwrap();
+    assert_eq!(s["detail"], "let s = \"é#\"");
+    assert_eq!(s["doc"], "not in the string");
+    // The use of `rate` in the report, after a non-ASCII character: offsets
+    // count UTF-16 code units.
+    let rate_index = definitions.iter().position(|d| d["name"] == "rate").unwrap();
+    let reference = symbols["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r[2] == rate_index)
+        .unwrap();
+    let units: Vec<u16> = src.encode_utf16().collect();
+    let (from, to) = (
+        reference[0].as_u64().unwrap() as usize,
+        reference[1].as_u64().unwrap() as usize,
+    );
+    assert_eq!(String::from_utf16(&units[from..to]).unwrap(), "rate");
+    assert!(from > src.find("report").unwrap(), "{from}");
+    // A program that doesn't parse has no symbols.
+    let answer: Value = serde_json::from_str(&probl_wasm::check("let x = (")).unwrap();
+    assert_eq!(answer["symbols"], Value::Null);
+}
+
+#[test]
+fn functions_fields_and_variants_describe_themselves() {
+    let src =
+        "enum Market { Boom, Slump }\ntype Day = { visitors: int }\nfn f(d: Day) -> int {\n  return d.visitors\n}\n";
+    let answer: Value = serde_json::from_str(&probl_wasm::check(src)).unwrap();
+    let definitions = answer["symbols"]["definitions"].as_array().unwrap().clone();
+    let find = |name: &str| definitions.iter().find(|d| d["name"] == name).unwrap().clone();
+    assert_eq!(find("f")["detail"], "fn f(d: Day) -> int");
+    assert_eq!(find("d")["kind"], "parameter");
+    assert_eq!(find("visitors")["detail"], "Day.visitors: int");
+    assert_eq!(find("Slump")["owner"], "Market");
+    assert_eq!(answer["symbols"]["functions"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn the_reference_documents_every_built_in() {
+    let docs: Value = serde_json::from_str(&probl_wasm::docs()).unwrap();
+    let builtins = docs["builtins"].as_array().unwrap();
+    let public = probl_sema::Builtin::ALL.iter().filter(|b| b.is_public()).count();
+    assert_eq!(builtins.len(), public);
+    let binomial = builtins.iter().find(|b| b["name"] == "binomial").unwrap();
+    assert_eq!(binomial["category"], "Distributions");
+    assert_eq!(binomial["signature"], "binomial(n: int, p: prob) -> dist[int]");
+    for b in builtins {
+        assert!(!b["summary"].as_str().unwrap().is_empty(), "{b}");
+    }
+    let keywords = docs["keywords"].as_array().unwrap();
+    assert!(keywords.iter().any(|k| k["name"] == "observe"));
+    assert!(docs["read"]["summary"].as_str().unwrap().contains("CSV"));
+}
