@@ -7,7 +7,7 @@
 1. **Parallel sampling batches first.** Every sampled forecast takes 0.5–2.6 s on one core, and runs are independent. Running example 07's runs as 8 processes takes 0.27 s instead of 1.77 s (6.6×). This is the cheapest large win, and it meets the plan's target for example 07 (under 2 s on 8 cores) several times over. *Done: 6–8× on 12 cores ([below](#since-parallel-batches)).*
 2. **Then cheaper merging, and moving draws to their first use.** Enumeration hits a wall when states are large or many facts stay live together: blackjack from a real deck takes 5.2 s and 952 MB, and a 20-component reliability model 1.4 s and 847 MB. Merging (hashing and comparing world states) takes 34–70% of that time; caching the hashes of collections cuts most of it. Separately, moving each draw to just before its first use turns the reliability model's 1,048,576 worlds into 256, with the same answer. *Both are done: cheaper merging makes enumeration 1.4–2.9× faster ([below](#since-cheaper-merging)), and moving draws takes the reliability model from 1.2 s to 0.6 ms ([below](#since-moving-draws)).*
 3. **Then better inference for evidence-heavy forecasts.** Weighting runs by the evidence (likelihood weighting) degrades as data accumulates: an A/B test's 100,000 runs are worth 852 after 30 days of data, 467 after 60 and 211 after 120, and it gets exponentially worse with more unknown parameters. Forecasts with real data need conjugate updates, MCMC or particles; each needs its contract specified first (audit D4). *Done for conjugate priors: the A/B test's runs are worth 100,000 instead of 863 ([below](#since-exact-updates-for-conjugate-priors)). A general method waits for a benchmark that needs it.*
-4. **Not now:** symbolic inference, persistent collections and a bytecode interpreter. No benchmark is limited by what they'd fix, or a cheaper change fixes it first. Markov-chain solving would make cyclic loops exact and allow recursion to the same call, but no model is slow because of them.
+4. **Not now:** symbolic inference, persistent collections and a bytecode interpreter. No benchmark is limited by what they'd fix, or a cheaper change fixes it first. Markov-chain solving would make cyclic loops exact and allow recursion to the same call, but no model is slow because of them. *Done for loops: those that cycle are solved exactly ([below](#since-solving-loops-that-cycle)).*
 
 ## Running them
 
@@ -101,7 +101,7 @@ Large states are dominated by merging: a world's slots, including its deck (a ma
 
 **Better inference for evidence-heavy forecasts.** In `ab_test`, likelihood weighting still gets the headline right (P(B better) is 99.33% against the exact 99.37%, and the mean lift 20.03 against 20.11), but the tails already drift (the 5% quantile of the lift is 5.92 against 6.34), and its effective sample size falls from 852 to 211 as the data grows from 30 to 120 days. With more unknown parameters, it collapses exponentially. Forecasting with data needs conjugate updates for the common cases (beta–binomial, gamma–Poisson), and a general method such as Metropolis–Hastings over a run's choices, or particles with rejuvenation. Each needs its estimator contract written first (audit D4). *Recommended third: the most valuable feature for forecasting, and the largest. Conjugate updates are done ([below](#since-exact-updates-for-conjugate-priors)).*
 
-**Markov-chain solving.** The models with loops that cycle (`tennis`, craps, snakes and ladders, the tour's `while d6 != 6`) run in milliseconds; what unrolling costs them is exactness (unresolved weight up to 2.3 × 10⁻¹¹ in `tennis`), not time. Solving absorbing chains would make them exact, and would allow recursion that returns to the same call, which enumeration rejects today. *Worth doing for exactness and expressiveness, after the above.*
+**Markov-chain solving.** The models with loops that cycle (`tennis`, craps, snakes and ladders, the tour's `while d6 != 6`) run in milliseconds; what unrolling costs them is exactness (unresolved weight up to 2.3 × 10⁻¹¹ in `tennis`), not time. Solving absorbing chains would make them exact, and would allow recursion that returns to the same call, which enumeration rejects today. *Worth doing for exactness and expressiveness, after the above. Done for loops ([below](#since-solving-loops-that-cycle)).*
 
 **Symbolic inference** (decision diagrams, as in Dice). The blow-ups in these benchmarks are of two kinds. Many live facts (`reliability`) are fixed more cheaply by moving draws. Genuinely large states (the deck in `blackjack_deck`, three players in `snakes_three`) don't factorize, so symbolic methods wouldn't help, and sampling is the answer there (`snakes_three` samples 20,000 games in 1.4 s). *Not now.*
 
@@ -184,6 +184,21 @@ When sampling, a beta, gamma or normal prior observed through a conjugate form (
 | examples/08_signup_forecast | 31,244 → 200,000 | | 3.61e-15 ± 0.52% → 3.60e-15 (exact: 3.598e-15) | 189 → 186 ms |
 
 The standard errors fall 7–21×, so the same precision takes about 50 to 440 times fewer runs. The time per run doesn't change: an exact update costs about what the likelihood it replaces did. The tails are right now. Over 12 seeds, `ab_test`'s 5% quantile of the lift is 6.27–6.42 against the exact 6.34, and P(B better) is 99.32–99.42% against 99.37%. Without exact updates, seed 1 gives 6.19 and 99.30% ± 0.06%. The evidence without them was 4–7% low on all three data sets, by 1.0–1.3 of its standard errors: with few runs carrying the weight, it's more often too low than too high.
+
+## Since: solving loops that cycle
+
+A `while` or `loop` whose states come back is now solved as an absorbing Markov chain, as soon as a state comes back (docs/semantics.md, section 10; `crates/probl-engine/src/chain.rs`). It's exact, and a loop some worlds can never leave is an error at once, instead of after ten million rounds.
+
+| model | before | after |
+|---|--:|--:|
+| benches/tennis | 4 ms, unresolved 2.3e-11 | 1 ms, exact: 3 loops solved, 20 states |
+| benches/blackjack_shoe | 12 ms, 63,257 world-steps, unresolved < 1e-12 | 8 ms, 34,142 world-steps, exact: 2 loops solved, 1,080 states |
+
+Without merging, both now finish: solving tells states apart itself. Nothing else changed.
+- **Loops that count their rounds.** Craps, snakes and ladders, the tour's `while d6 != 6` and the duel all count, and one of those counts is reported, so their states never come back. They're unrolled as before, and still end with `unresolved < 1e-12`.
+- **Loops that end within a few rounds.** Risk and the dealer are unrolled as before, exactly.
+
+Hashing the states costs nothing measurable. A loop that ends once in 10⁹ rounds, which unrolling couldn't finish, takes microseconds.
 
 ## Smaller findings
 

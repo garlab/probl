@@ -2,6 +2,7 @@
 //! The rules it implements are in docs/semantics.md.
 
 pub mod builtins;
+pub mod chain;
 pub mod conjugate;
 pub mod continuous;
 pub mod data;
@@ -60,6 +61,9 @@ pub struct Limits {
     /// Threads that sample batches of runs at the same time. The output
     /// doesn't depend on it.
     pub max_threads: usize,
+    /// States of a loop solved as a Markov chain; a loop with more is
+    /// unrolled instead.
+    pub max_chain_states: usize,
 }
 
 impl Default for Limits {
@@ -75,6 +79,7 @@ impl Default for Limits {
             max_output: 64 * 1024 * 1024,
             stack_size: 64 * 1024 * 1024,
             max_threads: std::thread::available_parallelism().map_or(1, |n| n.get()),
+            max_chain_states: 50_000,
         }
     }
 }
@@ -103,6 +108,10 @@ pub struct Options {
     /// section 14). Turning it off draws every variable from its prior, for
     /// comparing: the estimates mean the same either way.
     pub conjugate: bool,
+    /// When enumerating, solve loops that cycle as Markov chains
+    /// (docs/semantics.md, section 10). Turning it off unrolls them, which
+    /// is only useful for checking the engine.
+    pub solve: bool,
 }
 
 impl Default for Options {
@@ -117,6 +126,7 @@ impl Default for Options {
             mode: None,
             inputs: None,
             conjugate: true,
+            solve: true,
         }
     }
 }
@@ -250,6 +260,8 @@ fn run_here(
         cancel: options.cancel.clone(),
         sample_seed: sample.map(|(_, seed)| seed),
         conjugate: options.conjugate,
+        solving: options.solve,
+        max_chain_states: limits.max_chain_states,
     };
     let epsilon = config.epsilon;
     let inputs = inputs(program, options)?;

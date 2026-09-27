@@ -128,7 +128,15 @@ If the evidence is zero and no weight is unresolved, the evidence is **impossibl
 
 ## 10. Termination and approximation
 
-**Unbounded loops.** `while` and `loop` repeat until no world is left inside. A loop stops early once the weight still inside is less than ε times the weight that entered it (ε is 10⁻¹² by default, set with `@epsilon`). The weight left inside is **unresolved**. `for` and `repeat` loops are never cut short.
+**Unbounded loops.** `while` and `loop` repeat until no world is left inside. `for` and `repeat` loops are never cut short.
+
+- **Solved, when they cycle.** When enumerating, a `while` or `loop` whose worlds come back to a state they were in at the start of an earlier round is solved as an absorbing Markov chain from that round on. A state is the values of the variables read later. The engine finds every state reachable from the worlds inside, runs the body once from each, and solves for the expected number of visits to each state. That gives how much weight leaves by each way out: `break`, `return`, and observations that rule worlds out. The answer is exact up to floating-point rounding, and nothing is left unresolved. If some worlds can never leave, because no way out can be reached from their state, it's an error.
+- **Unrolled, otherwise.** Some loops are unrolled instead:
+  - one that never comes back to a state, such as one that counts its rounds;
+  - one whose body reports or prints, which happen once per visit;
+  - one whose chain would have more states than the host allows (50,000 by default).
+
+  An unrolled loop stops early once the weight still inside is less than ε times the weight that entered it (ε is 10⁻¹² by default, set with `@epsilon`). The weight left inside is **unresolved**.
 
 **Infinite supports.** Distributions with infinitely many outcomes (`poisson`, `geometric`) drop outcomes whose probability is below 10⁻¹⁸. The dropped probability is the distribution's missing mass; drawing from it, or using it as a condition, adds (weight × missing mass) to the unresolved weight, because the missing outcomes could go either way. Combining distributions combines their missing mass (for independent draws, 1 − Π(1 − mᵢ)).
 

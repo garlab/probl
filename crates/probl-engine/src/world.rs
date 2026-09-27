@@ -78,6 +78,20 @@ pub fn clear_dead(worlds: &mut [World], live: &SlotSet) {
     clear(worlds, &dead);
 }
 
+/// The live slots among a frame's `n`.
+pub fn live_slots(live: &SlotSet, n: usize) -> Vec<usize> {
+    live.iter().map(|s| s as usize).filter(|&s| s < n).collect()
+}
+
+/// A hash of a world's live slots, as merging computes it.
+pub fn state_hash(w: &World, live: &[usize]) -> u64 {
+    let mut hasher = FxHasher::default();
+    for &i in live {
+        w.slots[i].hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 /// If `enabled`, merge the worlds that agree on the live slots, adding up
 /// their weights, and keeping the order of first appearance. Dead slots
 /// don't matter, cleared or not.
@@ -86,7 +100,7 @@ pub fn merge(worlds: Vec<World>, live: &SlotSet, enabled: bool) -> Vec<World> {
         return worlds;
     }
     let n = worlds[0].slots.len();
-    let live: Vec<usize> = live.iter().map(|s| s as usize).filter(|&s| s < n).collect();
+    let live = live_slots(live, n);
     let mut out: Vec<World> = Vec::with_capacity(worlds.len());
     // The first world kept with each hash, and after each world, the next
     // one with the same hash (only when different worlds' hashes collide).
@@ -94,12 +108,8 @@ pub fn merge(worlds: Vec<World>, live: &SlotSet, enabled: bool) -> Vec<World> {
     let mut next: Vec<usize> = Vec::with_capacity(worlds.len());
     const NONE: usize = usize::MAX;
     for w in worlds {
-        let mut hasher = FxHasher::default();
-        for &i in &live {
-            w.slots[i].hash(&mut hasher);
-        }
         let same = |kept: &World| live.iter().all(|&i| kept.slots[i] == w.slots[i]);
-        let found = match first.entry(hasher.finish()) {
+        let found = match first.entry(state_hash(&w, &live)) {
             Entry::Vacant(entry) => {
                 entry.insert(out.len());
                 None

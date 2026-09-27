@@ -7,6 +7,7 @@
 //! implements.
 
 use crate::builtins;
+use crate::chain::{Chain, Solution};
 use crate::conjugate::{self, Seen};
 use crate::continuous::{Family, Rng};
 use crate::dist::{Budget, Counts, Dist};
@@ -15,7 +16,7 @@ use crate::ops::{self, Truth};
 use crate::report::Sink;
 use crate::value::{Closure, Delayed, Value, fmt_prob};
 use crate::weight::Weight;
-use crate::world::{Flow, World, clear, clear_dead, merge, merge_values, total_weight};
+use crate::world::{Flow, World, clear, clear_dead, live_slots, merge, merge_values, state_hash, total_weight};
 use probl_sema::builtins::Lifting;
 use probl_sema::conjugate::{Conjugacy, Likelihood, Update};
 use probl_sema::ir::*;
@@ -35,6 +36,9 @@ pub struct Stats {
     pub world_steps: u64,
     pub calls: u64,
     pub memo_hits: u64,
+    /// Loops solved as Markov chains, and their states (section 10).
+    pub solved_loops: u64,
+    pub chain_states: u64,
     /// When sampling: what happened to each variable whose draws may be
     /// delayed (`Conjugacy::variables`).
     pub updates: Vec<Updates>,
@@ -59,6 +63,8 @@ impl Stats {
         self.world_steps += other.world_steps;
         self.calls += other.calls;
         self.memo_hits += other.memo_hits;
+        self.solved_loops += other.solved_loops;
+        self.chain_states += other.chain_states;
         if self.updates.len() < other.updates.len() {
             self.updates.resize(other.updates.len(), Updates::default());
         }
@@ -89,7 +95,15 @@ pub struct Config {
     /// When sampling, delay the draws of conjugate priors and update them
     /// exactly (section 14).
     pub conjugate: bool,
+    /// When enumerating, solve loops that cycle as Markov chains (section 10).
+    pub solving: bool,
+    /// The most states a loop's chain may have to be solved.
+    pub max_chain_states: usize,
 }
+
+/// The most steps eliminating one loop's chain may take before the loop is
+/// unrolled instead.
+const MAX_ELIMINATION: u64 = 200_000_000;
 
 /// Runs are executed this many at a time, and each batch has a random
 /// stream of its own. The size is fixed: changing it changes the output for
@@ -126,6 +140,8 @@ pub struct CallResult {
     pub outcomes: Vec<(Value, Weight)>,
     /// Weight the call left unresolved.
     pub unresolved: Weight,
+    /// Weight its observations ruled out, when enumerating.
+    pub lost: Weight,
     /// Whether the call ran `observe` (outside any `simulate`).
     pub observed: bool,
 }
@@ -144,6 +160,15 @@ pub struct Engine<'p> {
     depth: usize,
     /// Weight left unaccounted for (loops cut short, truncated tails).
     pub unresolved: Weight,
+    /// When enumerating: weight ruled out by observations, which solving a
+    /// loop counts as a way out of it.
+    lost: Weight,
+    /// For each statement: whether it's an unbounded loop that may be
+    /// solved as a Markov chain (section 10).
+    solvable: Vec<bool>,
+    /// Loops whose chains were found too large to solve: they're unrolled
+    /// from then on.
+    too_large: FxHashSet<StmtId>,
     /// Whether the current inference scope has run `observe`.
     pub observed: bool,
     /// Whether it has observed a value with a density, which makes the
@@ -192,6 +217,9 @@ impl<'p> Engine<'p> {
             active: FxHashSet::default(),
             depth: 0,
             unresolved: Weight::ZERO,
+            lost: Weight::ZERO,
+            solvable: probl_sema::effects::solvable_loops(prog),
+            too_large: FxHashSet::default(),
             observed: false,
             densities: false,
             last_ruling_out: None,
@@ -658,6 +686,7 @@ impl<'p> Engine<'p> {
                     };
                     let result = self.call(func, key, span)?;
                     self.unresolved += w.weight * result.unresolved;
+                    self.lost += w.weight * result.lost;
                     let last = result.outcomes.len().saturating_sub(1);
                     let mut w = Some(w);
                     for (i, (v, p)) in result.outcomes.iter().enumerate() {
@@ -823,10 +852,10 @@ impl<'p> Engine<'p> {
                             continue;
                         }
                     }
-                    let (factor, missing) = match from {
+                    let (factor, missing, ruled_out) = match from {
                         None => {
                             let c = self.eval_condition(f, value, &w)?;
-                            (c.yes, c.missing)
+                            (c.yes, c.missing, c.no)
                         }
                         Some(d) => {
                             let v = self.eval(f, value, &w)?;
@@ -836,7 +865,7 @@ impl<'p> Engine<'p> {
                                         Value::Bool(_) => None,
                                         _ => v.as_f64(),
                                     };
-                                    (x.map_or(0.0, |x| counts.pmf(x)), 0.0)
+                                    (x.map_or(0.0, |x| counts.pmf(x)), 0.0, 0.0)
                                 }
                                 _ => {
                                     let dist = self.eval(f, d, &w)?;
@@ -848,6 +877,9 @@ impl<'p> Engine<'p> {
                     };
                     if missing > 0.0 && self.sampler.is_none() {
                         self.unresolved += w.weight.scale(missing);
+                    }
+                    if ruled_out > 0.0 && self.sampler.is_none() {
+                        self.lost += w.weight.scale(ruled_out);
                     }
                     if factor > 0.0 {
                         w.weight = w.weight.scale(factor);
@@ -947,7 +979,28 @@ impl<'p> Engine<'p> {
         let mut inside = worlds;
         let mut out = Flow::default();
         let mut iterations: u64 = 0;
+        // The states met at the loop's start in earlier iterations, while it
+        // may be solved. Once one comes back, the loop cycles, and it's
+        // solved as a Markov chain from there (section 10).
+        let mut met = self.may_solve(stmt, bounded).then(FxHashSet::<u64>::default);
         while !inside.is_empty() {
+            let cycles = match &mut met {
+                Some(met) => {
+                    let head = live_slots(&live.loop_head[stmt.id as usize], inside[0].slots.len());
+                    let hashes: Vec<u64> = inside.iter().map(|w| state_hash(w, &head)).collect();
+                    let again = hashes.iter().any(|h| met.contains(h));
+                    met.extend(hashes);
+                    again
+                }
+                None => false,
+            };
+            if cycles {
+                met = None;
+                if let Some(solved) = self.solve_loop(f, stmt, body, &inside)? {
+                    out.join(solved);
+                    break;
+                }
+            }
             let mass = total_weight(&inside);
             if !bounded && mass < cutoff && self.sampler.is_none() {
                 self.unresolved += mass;
@@ -976,6 +1029,155 @@ impl<'p> Engine<'p> {
         }
         out.next = self.merge(out.next, stmt.id);
         Ok(out)
+    }
+
+    /// Whether a loop may be solved as a Markov chain: an unbounded loop
+    /// whose body doesn't report or print, when enumerating, unless its
+    /// chain was already found too large.
+    fn may_solve(&self, stmt: &Stmt, bounded: bool) -> bool {
+        !bounded
+            && self.config.solving
+            && self.sampler.is_none()
+            && self.solvable[stmt.id as usize]
+            && !self.too_large.contains(&stmt.id)
+    }
+
+    /// Solve a loop as an absorbing Markov chain, from the worlds `inside`
+    /// at its start (section 10). Its states are the worlds at its start,
+    /// told apart by the variables read later. Running the body once from
+    /// each state reachable from `inside` gives the chance of going on to
+    /// each state, and the worlds that leave. The expected number of visits
+    /// to each state then says how much of each leaves. `None` if the chain
+    /// is too large, and the loop should be unrolled instead.
+    fn solve_loop(&mut self, f: FnId, stmt: &'p Stmt, body: &'p Block, inside: &[World]) -> Result<Option<Flow>> {
+        let head_set = &self.live.loop_head[stmt.id as usize];
+        let after = &self.live.after[stmt.id as usize];
+        let n = inside[0].slots.len();
+        let head = live_slots(head_set, n);
+        let dead: Vec<SlotId> = head_set.iter_missing(n).collect();
+        // Each state: its world, with dead slots cleared, found by its live
+        // slots.
+        let mut states: Vec<Vec<Value>> = Vec::new();
+        let mut index: FxHashMap<Vec<Value>, usize> = FxHashMap::default();
+        let mut intern = |mut slots: Vec<Value>, states: &mut Vec<Vec<Value>>| -> usize {
+            for &d in &dead {
+                slots[d as usize] = Value::Dead;
+            }
+            let key: Vec<Value> = head.iter().map(|&i| slots[i].clone()).collect();
+            *index.entry(key).or_insert_with(|| {
+                states.push(slots);
+                states.len() - 1
+            })
+        };
+        let total = total_weight(inside);
+        let mut start: Vec<f64> = Vec::new();
+        for w in inside {
+            let i = intern(w.slots.clone(), &mut states);
+            if start.len() <= i {
+                start.resize(i + 1, 0.0);
+            }
+            start[i] += w.weight.ratio(total);
+        }
+        let mut chain = Chain::default();
+        let mut exits: Vec<Vec<World>> = Vec::new();
+        let mut returns: Vec<Vec<(Value, Weight)>> = Vec::new();
+        let mut unresolved: Vec<Weight> = Vec::new();
+        let mut k = 0;
+        while k < states.len() {
+            if states.len() > self.config.max_chain_states {
+                self.too_large.insert(stmt.id);
+                return Ok(None);
+            }
+            let world = World {
+                slots: states[k].clone(),
+                weight: Weight::ONE,
+                run: 0,
+            };
+            let saved_unresolved = std::mem::replace(&mut self.unresolved, Weight::ZERO);
+            let saved_lost = std::mem::replace(&mut self.lost, Weight::ZERO);
+            let flow = self.exec_block(f, body, vec![world]);
+            let left = std::mem::replace(&mut self.unresolved, saved_unresolved);
+            let lost = std::mem::replace(&mut self.lost, saved_lost);
+            let mut flow = flow?;
+            clear_dead(&mut flow.broke, after);
+            // Leaving: by `break` or `return`, unresolved, or ruled out.
+            let mut leave = left + lost;
+            for w in &flow.broke {
+                leave += w.weight;
+            }
+            for (_, w) in &flow.returned {
+                leave += *w;
+            }
+            let mut next: FxHashMap<usize, f64> = FxHashMap::default();
+            for w in flow.next.into_iter().chain(flow.continued) {
+                let p = w.weight.to_f64();
+                if p == 0.0 {
+                    // Too small for the chain's arithmetic.
+                    self.too_large.insert(stmt.id);
+                    return Ok(None);
+                }
+                let j = intern(w.slots, &mut states);
+                *next.entry(j).or_insert(0.0) += p;
+            }
+            let mut next: Vec<(usize, f64)> = next.into_iter().collect();
+            next.sort_by_key(|&(j, _)| j);
+            chain.next.push(next);
+            chain.leave.push(leave.to_f64());
+            exits.push(flow.broke);
+            returns.push(flow.returned);
+            unresolved.push(left);
+            k += 1;
+        }
+        start.resize(states.len(), 0.0);
+        let mut steps = MAX_ELIMINATION;
+        let solution = chain.visits(&start, &mut steps);
+        self.spend(MAX_ELIMINATION - steps, stmt.span)?;
+        let visits = match solution {
+            Solution::Visits(v) => v,
+            Solution::TooBig => {
+                self.too_large.insert(stmt.id);
+                return Ok(None);
+            }
+            Solution::Stuck(s) => return Err(self.never_leaves(f, stmt, &states[s], &head)),
+        };
+        self.stats.solved_loops += 1;
+        self.stats.chain_states += states.len() as u64;
+        let mut flow = Flow::default();
+        let mut left = Weight::ZERO;
+        for (k, v) in visits.into_iter().enumerate() {
+            if v == 0.0 {
+                continue;
+            }
+            let times = total.scale(v);
+            for mut w in std::mem::take(&mut exits[k]) {
+                w.weight = w.weight * times;
+                flow.next.push(w);
+            }
+            for (value, w) in std::mem::take(&mut returns[k]) {
+                flow.returned.push((value, w * times));
+            }
+            left += unresolved[k] * times;
+        }
+        self.unresolved += left;
+        Ok(Some(flow))
+    }
+
+    /// The error for a loop that some worlds can never leave, with one of
+    /// them.
+    fn never_leaves(&self, f: FnId, stmt: &Stmt, slots: &[Value], head: &[usize]) -> RuntimeError {
+        let names = &self.prog.functions[f as usize].slots;
+        let parts: Vec<String> = head
+            .iter()
+            .filter(|&&i| !names[i].name.starts_with('$') && names[i].name != "(temporary)")
+            .map(|&i| format!("`{}` is {:?}", names[i].name, slots[i]))
+            .collect();
+        let err = RuntimeError::new(stmt.span, "some worlds can never leave this loop")
+            .with_help("check that every world can leave the loop");
+        if parts.is_empty() {
+            err
+        } else {
+            err.with_note(format!("for example, the worlds where {}", parts.join(" and ")))
+        }
     }
 
     /// Store each possible value of `d` into `place`, one world per outcome.
@@ -1135,6 +1337,7 @@ impl<'p> Engine<'p> {
             self.active.insert(call_key.clone());
         }
         let saved_unresolved = std::mem::replace(&mut self.unresolved, Weight::ZERO);
+        let saved_lost = std::mem::replace(&mut self.lost, Weight::ZERO);
         let saved_observed = std::mem::replace(&mut self.observed, false);
         self.depth += 1;
         let flow = self.exec_block(
@@ -1148,6 +1351,7 @@ impl<'p> Engine<'p> {
         );
         self.depth -= 1;
         let unresolved = std::mem::replace(&mut self.unresolved, saved_unresolved);
+        let lost = std::mem::replace(&mut self.lost, saved_lost);
         let observed = std::mem::replace(&mut self.observed, saved_observed);
         self.observed |= observed;
         if !sampling {
@@ -1162,6 +1366,7 @@ impl<'p> Engine<'p> {
         let result = Arc::new(CallResult {
             outcomes: merge_values(flow.returned),
             unresolved,
+            lost,
             observed,
         });
         if memoizable {
@@ -1617,9 +1822,6 @@ fn update(target: &mut Value, keys: &[PathKey], v: Value) -> OpResult<()> {
     }
 }
 
-/// The probability of observing `v` from `d`, and the probability that is
-/// missing from `d` (so the true value may be up to that much higher). When
-/// sampling, a continuous `d` gives its density instead (section 13).
 /// Whether observing a value from `d` uses a density.
 fn is_density(d: &Value) -> bool {
     match d {
@@ -1629,7 +1831,11 @@ fn is_density(d: &Value) -> bool {
     }
 }
 
-fn likelihood(d: &Value, v: &Value, sampling: bool) -> OpResult<(f64, f64)> {
+/// The probability of observing `v` from `d`, the probability that is
+/// missing from `d` (so the true value may be up to that much higher), and
+/// the probability of the other outcomes, which the observation rules out.
+/// When sampling, a continuous `d` gives its density instead (section 13).
+fn likelihood(d: &Value, v: &Value, sampling: bool) -> OpResult<(f64, f64, f64)> {
     let continuous = match d {
         Value::Continuous(f) => Some(vec![(**f, 1.0)]),
         Value::Dist(dist) if dist.outcomes.iter().any(|(x, _)| matches!(x, Value::Continuous(_))) => {
@@ -1663,19 +1869,26 @@ fn likelihood(d: &Value, v: &Value, sampling: bool) -> OpResult<(f64, f64)> {
                 ops::article(&v.kind())
             ))
         })?;
-        return Ok((parts.iter().map(|(f, p)| p * f.pdf(x)).sum(), 0.0));
+        return Ok((parts.iter().map(|(f, p)| p * f.pdf(x)).sum(), 0.0, 0.0));
     }
     match d {
-        Value::Dist(dist) => Ok((
-            dist.outcomes
-                .iter()
-                .filter(|(x, _)| ops::equals(x, v))
-                .map(|(_, p)| p)
-                .sum(),
-            dist.missing,
-        )),
+        Value::Dist(dist) => {
+            let (mut seen, mut other) = (0.0, 0.0);
+            for (x, p) in &dist.outcomes {
+                if ops::equals(x, v) {
+                    seen += p;
+                } else {
+                    other += p;
+                }
+            }
+            Ok((seen, dist.missing, other))
+        }
         Value::Prob(_) => Err(OpError::new("`observe … from` needs a distribution, not a probability")
             .help("to observe that a fact with probability p is true, write `observe true from bernoulli(p)`")),
-        other => Ok((if ops::equals(other, v) { 1.0 } else { 0.0 }, 0.0)),
+        other => Ok(if ops::equals(other, v) {
+            (1.0, 0.0, 0.0)
+        } else {
+            (0.0, 0.0, 1.0)
+        }),
     }
 }

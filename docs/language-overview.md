@@ -129,7 +129,12 @@ while hp > 0 and foe_hp > 0 { … }
 loop { …; if done { break } }
 ```
 
-A loop with an uncertain condition runs until every world has left it. Some loops never end with certainty (`while d6 != 6` could in principle roll forever), so Probl stops a `while` or `loop` once the worlds still inside weigh less than ε times the weight that entered it (ε is 10⁻¹² by default; change it with `@epsilon 1e-9`). That remainder is reported as *unresolved* weight rather than silently dropped. `for` and `repeat` always run to the end.
+A loop with an uncertain condition runs until every world has left it. Some loops never end with certainty: `while d6 != 6` could in principle roll forever.
+
+- **Loops that come back are solved.** If the worlds come back to states they were in before, as a tennis game returns to deuce, Probl solves the loop exactly, as a Markov chain.
+- **Other loops stop at ε.** A loop that counts its rounds never comes back to a state. Probl stops such a `while` or `loop` once the worlds still inside weigh less than ε times the weight that entered it (ε is 10⁻¹² by default; change it with `@epsilon 1e-9`). That remainder is reported as *unresolved* weight rather than silently dropped.
+
+`for` and `repeat` always run to the end.
 
 ```probl
 var rolls = 1
@@ -414,7 +419,7 @@ This is the standard semantics of probabilistic programs as functions from a sta
 | Conditioning on evidence | `observe` | not a focus | not a focus | yes, with advanced inference |
 | Continuous quantities | yes, by sampling | no | yes | yes |
 
-Probl borrows `a to b` estimates from Squiggle, dice notation from AnyDice and tabletop games, and `observe` from probabilistic programming languages like WebPPL. Weighted states, probabilistic branching and state merging all have prior art; Probl's bet is putting them behind ordinary imperative code, with diagnostics that say how an answer was computed. Merging keeps many game models small, but loops are unrolled, not solved: a game that can go on forever is followed until the weight still playing is negligible. For exact inference at larger scale, finite-state loops could be solved as Markov chains (as PRISM does), and the research language Dice (Holtzen et al., 2020) compiles programs to binary decision diagrams; either could become a later backend.
+Probl borrows `a to b` estimates from Squiggle, dice notation from AnyDice and tabletop games, and `observe` from probabilistic programming languages like WebPPL. Weighted states, probabilistic branching and state merging all have prior art; Probl's bet is putting them behind ordinary imperative code, with diagnostics that say how an answer was computed. Merging keeps many game models small. A loop whose states come back is solved as a Markov chain, as PRISM does; the others are followed until the weight still playing is negligible. For exact inference at larger scale, the research language Dice (Holtzen et al., 2020) compiles programs to binary decision diagrams, which could become a later backend.
 
 ## 12. Examples
 

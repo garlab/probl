@@ -7,6 +7,7 @@
 //! cargo run --release -p probl-bench -- --quick     # one timed run each
 //! cargo run --release -p probl-bench -- --threads=1 # sampling on one thread
 //! cargo run --release -p probl-bench -- --no-conjugate # no exact updates for conjugate priors
+//! cargo run --release -p probl-bench -- --no-solve   # unroll loops that cycle instead of solving them
 //! ```
 //!
 //! For each model: the median time of a few runs, the engine's statistics,
@@ -95,6 +96,8 @@ struct Settings {
     threads: Option<usize>,
     /// Update conjugate priors exactly when sampling (the default).
     conjugate: bool,
+    /// Solve loops that cycle as Markov chains (the default).
+    solve: bool,
     /// The model's data, read once before the runs.
     inputs: Option<Arc<Inputs>>,
 }
@@ -111,6 +114,7 @@ fn run_once(program: &Program, settings: &Settings, merge: bool, limit: Duration
         limits,
         inputs: settings.inputs.clone(),
         conjugate: settings.conjugate,
+        solve: settings.solve,
         ..Options::default()
     };
     // A watchdog cancels the run at the time limit.
@@ -317,6 +321,7 @@ fn main() {
                 .unwrap_or_else(|_| panic!("--threads= needs a number, not {n:?}"))
         }),
         conjugate: !args.iter().any(|a| a == "--no-conjugate"),
+        solve: !args.iter().any(|a| a == "--no-solve"),
         inputs: None,
     };
     let filter: Vec<String> = args.into_iter().filter(|a| !a.starts_with("--")).collect();

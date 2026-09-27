@@ -128,6 +128,9 @@ enum Command {
         /// Don't reuse function results (for checking the engine).
         #[arg(long, hide = true)]
         no_memo: bool,
+        /// Unroll loops that cycle instead of solving them (for checking the engine).
+        #[arg(long, hide = true)]
+        no_solve: bool,
     },
     /// Check a program for errors without running it.
     Check {
@@ -177,6 +180,7 @@ fn main() -> ExitCode {
             max_depth,
             no_merge,
             no_memo,
+            no_solve,
         } => {
             let mut options = Options {
                 merge: !no_merge,
@@ -184,6 +188,7 @@ fn main() -> ExitCode {
                 epsilon,
                 fractions,
                 conjugate: !no_conjugate,
+                solve: !no_solve,
                 ..Options::default()
             };
             if let Some(n) = max_worlds {
@@ -305,10 +310,18 @@ fn run_file(path: &PathBuf, options: &mut Options, limits: &InputLimits, stats: 
             println!("{}", outcome.output);
             if stats {
                 let s = &outcome.stats;
-                eprintln!(
+                let mut line = format!(
                     "stats: peak {} worlds · {} world-steps · {} calls ({} reused)",
                     s.peak_worlds, s.world_steps, s.calls, s.memo_hits
                 );
+                if s.solved_loops > 0 {
+                    line.push_str(&format!(
+                        " · {} loops solved ({} states)",
+                        thousands(s.solved_loops as i64),
+                        thousands(s.chain_states as i64)
+                    ));
+                }
+                eprintln!("{line}");
                 for (variable, u) in &outcome.updates {
                     let (line, _) = file.line_col(variable.span.lo);
                     eprintln!(

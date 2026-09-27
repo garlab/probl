@@ -20,7 +20,7 @@ How each finding was answered:
 | D2: dropped prior weight doesn't bound a posterior | `for` and `repeat` are never cut short. `while` and `loop` stop at ε *relative to the weight that entered*. Event probabilities are printed as the range [a/(Z+U), (a+U)/(Z+U)] when unresolved weight U is visible. Means claim no bound. | semantics §10; `interp.rs`, `report.rs` |
 | D3: evidence and report scopes | Evidence is the program's; observations inside `simulate` are local. Impossible evidence is an error. An `observe` that can run after a `report` is a compile error. Reports show their reach, and reports that can count a world twice are labelled "per visit". | semantics §7–9; `effects.rs` |
 | D4: sampling needs estimator contracts | Specified before building (semantics §14), and only the simplest estimator is built: independent runs that never merge, likelihood weighting, standard errors on every printed probability, and the effective sample size. `simulate` is enumerated even when sampling, so no estimate hides inside another. Particles, beam search and merged runs stay unspecified and unbuilt. Exact updates for conjugate priors came later, after a [proposal and its review](inference-proposal.md); they keep runs independent. | semantics §14; `interp.rs`, `report.rs`, `conjugate.rs` |
-| D5: merging isn't a general answer to state explosion | The docs no longer claim it is; loops are unrolled, not solved. Solving finite-state loops as Markov chains is on the list for phase 7. | overview §11 |
+| D5: merging isn't a general answer to state explosion | The docs no longer claim it is. A loop whose states come back is solved as an absorbing Markov chain; the others are unrolled. | overview §11; semantics §10; `chain.rs` |
 | D6: `a to b` hides assumptions | `a to b` is a lognormal with positive ends, as in Squiggle; `normal_range(lo, hi)` says "normal" explicitly. `mean`, `quantile`, `cdf` and the other queries expose each distribution's assumptions. | semantics §13; `continuous.rs` |
 | I1: "exact" fractions | The mode is called *enumeration*. `--fractions` prints "≈ 244/495". Weights have an extended exponent, so repeated observations can't underflow. Missing mass composes, and distributions keep their probabilities adding up to 1 − missing. | semantics §10; `weight.rs`, `dist.rs` |
 | I2: evaluation order and effects | Lowering saves earlier operands in temporaries when a later operand assigns variables. An effect analysis finds functions that print (never memoized) or observe. | semantics §4 and §6; `lower.rs`, `effects.rs` |
@@ -139,6 +139,12 @@ The interpreter follows these rules:
 - **Expressions never split.** Lowering moves every construct that can split into a statement of its own (A-normal form). When an operand's statements assign a variable, the operands before it are saved in temporaries first, so evaluation is left to right (semantics §4).
 - **Join points merge.** After `if`, `chance` and `match`, at the head of every loop iteration and at function return, worlds are grouped by their live slots, and their weights are summed.
 - **`break`, `continue` and `return`** are just other outputs of `Flow`.
+- **Loops that cycle are solved** (semantics §10, `chain.rs`). While an unbounded loop runs, the engine hashes the states at its head. When one comes back, it stops unrolling:
+  - It finds every state reachable from the worlds inside, and runs the body once from each.
+  - It solves the resulting absorbing Markov chain one strongly connected group at a time, in the order weight flows. Within a group, it eliminates states as Grassmann, Taksar and Heyman do: only nonnegative numbers are added, so rare exits keep their precision.
+  - The worlds that leave each state are scaled by its expected visits.
+  - A state that can never be left is an error.
+  - A chain with more states than the host allows, or too costly to eliminate, is unrolled after all.
 - **Every step is budgeted.** World counts, outcomes, collection sizes and work are checked before the memory is allocated, and the cancellation flag is polled as work is counted.
 
 ### 3.5 Policies: one interpreter, several engines
@@ -249,7 +255,7 @@ The effort ranges assume one developer working full time, and they are 90% confi
 
 ### Phase 7: reach (open-ended), v0.4 and later
 
-- Solving finite-state loops and recursions as absorbing Markov chains, instead of unrolling them (D5): for exactness and for recursion that returns to the same call, since no benchmark is slow because of them.
+- Solving recursion that returns to the same call (D5), as loops that cycle already are.
 - A WebAssembly build and a browser playground ([its plan](playground-plan.md), which could come earlier); Python bindings.
 - Performance, if benchmarks call for it after the work in §9: a bytecode VM that runs each instruction over all worlds at once, persistent collections, a parallel enumerator.
 - Research track: compiling to decision diagrams for exact inference (as the Dice language does), and reports conditioned on later evidence (smoothing). The benchmarks' blow-ups are fixed more cheaply by moving draws, or need sampling.
@@ -286,6 +292,10 @@ The forecast made when the plan was first written, by running [`examples/09_road
   - mutated files, which must never make them panic (`PROBL_DATA_CASES` runs more).
 
   Example 08 reads its data from a CSV file ([reading data](data-input.md#tests)).
+- **Loops solved as Markov chains.** `probl-engine/tests/chains.rs` and the unit tests of `chain.rs` check:
+  - closed forms: gambler's ruin, a tennis game with deuce, a race to a 6 or a 1, evidence from observations inside a loop;
+  - loops some worlds can never leave, loops that end once in 10⁹ rounds, and chains too large to solve;
+  - 3,000 random loops that cycle, against unrolling: 7,875 probabilities agreed. `PROBL_CHAIN_CASES` runs more.
 - **Samplers.** Kolmogorov–Smirnov tests for every continuous family, chi-square tests for the direct count samplers, and closed-form checks of CDFs, quantiles and densities. `probl-engine/tests/sampling.rs` covers the rules of semantics §13–14.
 - **Exact updates.** `probl-engine/tests/conjugate.rs` and the unit tests of `conjugate.rs` check:
   - the formulas, against closed forms and numerical integration, including probabilities far below the smallest `f64`;
@@ -309,7 +319,7 @@ The forecast made when the plan was first written, by running [`examples/09_road
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| Enumeration blows up on real models | high | high | Liveness-based merging; comparing distributions directly instead of drawing; limits that fail clearly; statistics on what keeps worlds apart; Markov-chain solving later |
+| Enumeration blows up on real models | high | high | Liveness-based merging; comparing distributions directly instead of drawing; limits that fail clearly; statistics on what keeps worlds apart; loops that cycle solved as Markov chains |
 | Users confuse `=` and `~` | high | medium | Errors with suggested fixes, `match` and `and`/`or` refusing distributions, documentation that leads with the rule |
 | Sampling estimates are wrong in subtle ways | medium | high | Estimators specified before being built; independent runs only; every estimate tested against enumeration, and the standard errors' calibration too |
 | Rounding in floating-point weights | medium | medium | An extended exponent (no underflow); distributions renormalized to 1 − missing; fractions marked ≈; the oracle's exact comparison |
@@ -348,4 +358,4 @@ Still open:
 The order the benchmarks recommend (docs/benchmarks.md). The first three are done: parallel sampling batches (6–8× for sampled models on 12 cores), cheaper merging (1.4–2.9× for enumeration), and moving draws to their first use (the reliability model follows 256 worlds instead of 2²⁰). So are reading data ([reading data](data-input.md)) and the evidence when sampling, which completes v0.2. So are exact updates for conjugate priors, the first part of better inference: an A/B test's 100,000 runs are worth 100,000 instead of 863 with 30 days of data, and instead of 204 with 120.
 
 1. **A general method for models that aren't conjugate** (lognormal priors, `a to b` estimates, hierarchical models, regressions). First a benchmark that needs it, then a specification: the review of the first proposal lists what it must contain ([inference proposal](inference-proposal.md), section 2).
-2. **Markov-chain solving**, for exact cyclic loops and recursion to the same call.
+2. **Recursion that returns to the same call**, which enumeration rejects today. Loops that cycle are solved as Markov chains already (semantics §10).

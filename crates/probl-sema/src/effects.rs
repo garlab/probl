@@ -89,11 +89,48 @@ pub(crate) fn may_print(s: &Stmt, functions: &[Function]) -> bool {
         || (d.calls_closures && lambda_prints)
 }
 
+/// For each statement: whether it's a `while` or `loop` that may be solved
+/// as a Markov chain instead of unrolled (docs/semantics.md, section 10).
+/// Its body mustn't report or print, which happen once per visit to a
+/// state. Needs the functions' effects, which `analyze` fills in.
+pub fn solvable_loops(program: &Program) -> Vec<bool> {
+    fn visit(b: &Block, functions: &[Function], solvable: &mut [bool]) {
+        for s in &b.stmts {
+            match &s.kind {
+                StmtKind::If { then, otherwise, .. } => {
+                    visit(then, functions, solvable);
+                    visit(otherwise, functions, solvable);
+                }
+                StmtKind::Chance { arms, otherwise, .. } => {
+                    arms.iter().for_each(|(_, body)| visit(body, functions, solvable));
+                    if let Some(body) = otherwise {
+                        visit(body, functions, solvable);
+                    }
+                }
+                StmtKind::Loop { body, bounded } => {
+                    let mut d = Direct::default();
+                    d.block(body);
+                    solvable[s.id as usize] =
+                        !bounded && !d.reports && !body.stmts.iter().any(|s| may_print(s, functions));
+                    visit(body, functions, solvable);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut solvable = vec![false; program.stmt_count as usize];
+    for f in &program.functions {
+        visit(&f.body, &program.functions, &mut solvable);
+    }
+    solvable
+}
+
 /// What a function body does itself.
 #[derive(Default)]
 struct Direct {
     observes: bool,
     prints: bool,
+    reports: bool,
     calls: Vec<FnId>,
     simulates: Vec<FnId>,
     calls_closures: bool,
@@ -155,6 +192,7 @@ impl Direct {
                 }
             }
             StmtKind::Report { value, key, .. } => {
+                self.reports = true;
                 self.expr(value);
                 if let Some(k) = key {
                     self.expr(k);
