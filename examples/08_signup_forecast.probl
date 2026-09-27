@@ -19,13 +19,17 @@ let next_month ~ binomial(round(30 * daily_visitors), rate)
 report next_month as "sign-ups next month"
 report next_month >= 400 as "at least 400 sign-ups"
 
-# Each run starts from a draw of `rate` and is weighted by how well that rate
-# explains the pilot (likelihood weighting). The summary line reports the
-# effective sample size: how many equally weighted runs those amount to.
+# A beta prior observed through binomial counts is a conjugate pair: each run
+# updates `rate`'s distribution exactly with each day of the pilot, and draws
+# `rate` from the result when the forecast needs it. So every run ends with the
+# same weight, the probability of the pilot's data: the effective sample size
+# is the number of runs, and the evidence is exact. (With `--no-conjugate`,
+# each run draws `rate` first and is weighted by how well it explains the
+# pilot, and the 200,000 runs are worth about 31,000.)
 
 # ── Output (sampled: expect small differences in the last digits) ───────
-# sample · 200,000 runs · seed 7 · evidence 3.60e-15 (± 0.52%) · effective sample size 30,933
+# sample · 200,000 runs · seed 7 · evidence 3.60e-15 (± 0.00%) · effective sample size 200,000
 #
-# conversion rate (%)      mean 3.39 · sd 0.30 · 5% 2.90 · median 3.38 · 95% 3.91
-# sign-ups next month      mean 398 · sd 75 · 5% 288 · median 392 · 95% 530
-# at least 400 sign-ups    46.1% ± 0.3%
+# conversion rate (%)      mean 3.39 · sd 0.30 · 5% 2.90 · median 3.38 · 95% 3.90
+# sign-ups next month      mean 398 · sd 74 · 5% 288 · median 392 · 95% 530
+# at least 400 sign-ups    46.1% ± 0.1%

@@ -7,15 +7,17 @@
 //! implements.
 
 use crate::builtins;
-use crate::continuous::Rng;
+use crate::conjugate::{self, Seen};
+use crate::continuous::{Family, Rng};
 use crate::dist::{Budget, Counts, Dist};
-use crate::error::{OpError, OpResult, Result, RuntimeError};
+use crate::error::{ErrorKind, OpError, OpResult, Result, RuntimeError};
 use crate::ops::{self, Truth};
 use crate::report::Sink;
-use crate::value::{Closure, Value, fmt_prob};
+use crate::value::{Closure, Delayed, Value, fmt_prob};
 use crate::weight::Weight;
 use crate::world::{Flow, World, clear, clear_dead, merge, merge_values, total_weight};
 use probl_sema::builtins::Lifting;
+use probl_sema::conjugate::{Conjugacy, Likelihood, Update};
 use probl_sema::ir::*;
 use probl_sema::{Builtin, Liveness};
 use probl_syntax::Span;
@@ -33,6 +35,39 @@ pub struct Stats {
     pub world_steps: u64,
     pub calls: u64,
     pub memo_hits: u64,
+    /// When sampling: what happened to each variable whose draws may be
+    /// delayed (`Conjugacy::variables`).
+    pub updates: Vec<Updates>,
+}
+
+/// How often a variable's draws were delayed and updated exactly
+/// (docs/semantics.md, section 14), counted over all runs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Updates {
+    /// Draws delayed.
+    pub delayed: u64,
+    /// Observations that updated it exactly.
+    pub exact: u64,
+    /// Times it was drawn when first needed, from its updated distribution.
+    pub drawn: u64,
+}
+
+impl Stats {
+    /// Add up another batch's statistics.
+    pub fn absorb(&mut self, other: &Stats) {
+        self.peak_worlds = self.peak_worlds.max(other.peak_worlds);
+        self.world_steps += other.world_steps;
+        self.calls += other.calls;
+        self.memo_hits += other.memo_hits;
+        if self.updates.len() < other.updates.len() {
+            self.updates.resize(other.updates.len(), Updates::default());
+        }
+        for (mine, theirs) in self.updates.iter_mut().zip(&other.updates) {
+            mine.delayed += theirs.delayed;
+            mine.exact += theirs.exact;
+            mine.drawn += theirs.drawn;
+        }
+    }
 }
 
 /// How the engine runs, with the host's limits already applied.
@@ -51,6 +86,9 @@ pub struct Config {
     /// Sample with this seed, instead of enumerating (docs/semantics.md,
     /// section 14).
     pub sample_seed: Option<u64>,
+    /// When sampling, delay the draws of conjugate priors and update them
+    /// exactly (section 14).
+    pub conjugate: bool,
 }
 
 /// Runs are executed this many at a time, and each batch has a random
@@ -97,6 +135,8 @@ type CallKey = (FnId, Vec<Value>);
 pub struct Engine<'p> {
     prog: &'p Program,
     live: &'p Liveness,
+    /// Which draws may be delayed, and what must draw them.
+    conj: &'p Conjugacy,
     config: Config,
     budget: Budget,
     memo: FxHashMap<CallKey, Arc<CallResult>>,
@@ -136,6 +176,7 @@ impl<'p> Engine<'p> {
     pub fn new(
         prog: &'p Program,
         live: &'p Liveness,
+        conj: &'p Conjugacy,
         config: Config,
         inputs: &'p [Value],
         print: &'p mut (dyn FnMut(&str) + Send),
@@ -144,6 +185,7 @@ impl<'p> Engine<'p> {
         Engine {
             prog,
             live,
+            conj,
             budget: config.budget.clone(),
             config,
             memo: FxHashMap::default(),
@@ -315,6 +357,125 @@ impl<'p> Engine<'p> {
         }
     }
 
+    /// Whether draws of conjugate priors are delayed now: when sampling,
+    /// but not inside `simulate` (section 14).
+    fn delaying(&self) -> bool {
+        self.config.conjugate && self.sampler.is_some()
+    }
+
+    fn updates(&mut self, variable: u32) -> &mut Updates {
+        let i = variable as usize;
+        if self.stats.updates.len() <= i {
+            let n = self.conj.variables.len().max(i + 1);
+            self.stats.updates.resize(n, Updates::default());
+        }
+        &mut self.stats.updates[i]
+    }
+
+    /// Draw a delayed variable from its distribution, updated by the
+    /// observations so far, now that its value is needed.
+    fn draw_delayed(&mut self, w: &mut World, slot: SlotId) {
+        if let Value::Delayed(d) = &w.slots[slot as usize] {
+            let d = **d;
+            let x = d
+                .family
+                .sample(self.sampler.as_mut().expect("delayed only when sampling"));
+            w.slots[slot as usize] = Value::Float(x);
+            self.updates(d.variable).drawn += 1;
+        }
+    }
+
+    /// `observe` of a delayed variable through a conjugate form: the log of
+    /// the observation's probability (or density), with the variable
+    /// updated to its distribution after it. `None` when it isn't an exact
+    /// update: the variable isn't delayed, or doesn't have the right family,
+    /// or the rest of the observation isn't plain. Then the variable is
+    /// drawn, and the observation is made as usual. `from` is where
+    /// problems with the observed distribution's parameters are reported,
+    /// as when it's evaluated.
+    fn observe_exactly(&mut self, f: FnId, u: &Update<'p>, w: &mut World, from: Span) -> Result<Option<f64>> {
+        let Value::Delayed(d) = &w.slots[u.slot as usize] else {
+            return Ok(None);
+        };
+        let d = **d;
+        let pair = matches!(
+            (d.family, u.likelihood),
+            (
+                Family::Beta { .. },
+                Likelihood::Binomial { .. } | Likelihood::Bernoulli { .. }
+            ) | (Family::Gamma { .. }, Likelihood::Poisson { .. })
+                | (Family::Normal { .. }, Likelihood::Normal { .. })
+        );
+        let seen = if pair { self.seen(f, u, w, from)? } else { None };
+        let Some(seen) = seen else {
+            self.draw_delayed(w, u.slot);
+            return Ok(None);
+        };
+        let (ln, posterior) = conjugate::update(&d.family, seen).expect("a conjugate pair");
+        w.slots[u.slot as usize] = Value::Delayed(Arc::new(Delayed {
+            family: posterior,
+            variable: d.variable,
+        }));
+        self.updates(d.variable).exact += 1;
+        self.densities |= matches!(seen, Seen::Normal { .. });
+        Ok(Some(ln))
+    }
+
+    /// What a conjugate observation saw, checked as when its variable is
+    /// drawn; `None` if a part of it isn't a plain value.
+    fn seen(&mut self, f: FnId, u: &Update<'p>, w: &World, from: Span) -> Result<Option<Seen>> {
+        // A count, as observing one from a drawn distribution reads it:
+        // anything but a whole number of 0 or more is impossible.
+        let count = |v: &Value| match v {
+            Value::Bool(_) => f64::NAN,
+            _ => v.as_f64().unwrap_or(f64::NAN),
+        };
+        Ok(match u.likelihood {
+            Likelihood::Binomial { value, trials } => {
+                let v = self.eval(f, value, w)?;
+                let n = self.eval(f, trials, w)?;
+                match builtins::counts(Builtin::Binomial, &[n, Value::Prob(0.5)]).map_err(|e| e.at(from))? {
+                    Some(Counts::Binomial { n, .. }) => Some(Seen::Binomial {
+                        trials: n,
+                        k: count(&v),
+                    }),
+                    _ => None,
+                }
+            }
+            Likelihood::Bernoulli { value: None } => Some(Seen::Bernoulli(true)),
+            Likelihood::Bernoulli { value: Some(value) } => match self.eval(f, value, w)? {
+                Value::Bool(b) => Some(Seen::Bernoulli(b)),
+                _ => None,
+            },
+            Likelihood::Poisson { value } => {
+                let v = self.eval(f, value, w)?;
+                Some(Seen::Poisson { k: count(&v) })
+            }
+            Likelihood::Normal { value, sd } => {
+                let v = self.eval(f, value, w)?;
+                let sd = self.eval(f, sd, w)?;
+                if sd.is_uncertain() {
+                    return Ok(None);
+                }
+                let checked = builtins::call_plain(Builtin::Normal, &[Value::Float(0.0), sd], &mut self.budget)
+                    .map_err(|e| e.at(from))?;
+                let Value::Continuous(family) = checked else {
+                    unreachable!("`normal` gives a continuous distribution")
+                };
+                let Family::Normal { sd, .. } = *family else {
+                    unreachable!("`normal` gives a normal distribution")
+                };
+                match v {
+                    Value::Int(_) | Value::Float(_) | Value::Prob(_) => Some(Seen::Normal {
+                        y: v.as_f64().expect("a number"),
+                        sd,
+                    }),
+                    _ => None,
+                }
+            }
+        })
+    }
+
     fn merge(&self, worlds: Vec<World>, stmt: StmtId) -> Vec<World> {
         merge(worlds, &self.live.after[stmt as usize], self.merging())
     }
@@ -374,6 +535,19 @@ impl<'p> Engine<'p> {
         self.stats.peak_worlds = self.stats.peak_worlds.max(n);
         self.spend(n as u64, span)?;
         self.check_worlds(n, span)?;
+        let mut worlds = worlds;
+        if self.delaying() {
+            // Delayed variables this statement reads are drawn first.
+            let conj = self.conj;
+            let first = &conj.draws_first[stmt.id as usize];
+            if !first.is_empty() {
+                for w in &mut worlds {
+                    for &slot in first {
+                        self.draw_delayed(w, slot);
+                    }
+                }
+            }
+        }
         match &stmt.kind {
             StmtKind::Set { place, value } => {
                 let mut worlds = worlds;
@@ -384,6 +558,12 @@ impl<'p> Engine<'p> {
                 Ok(Flow::next(worlds))
             }
             StmtKind::Draw { place, dist } => {
+                // A conjugate prior's draw may be delayed (section 14).
+                let delay = if self.delaying() {
+                    self.conj.delays[stmt.id as usize]
+                } else {
+                    None
+                };
                 let mut out = Vec::with_capacity(worlds.len());
                 for w in worlds {
                     if self.sampler.is_some() {
@@ -396,6 +576,18 @@ impl<'p> Engine<'p> {
                         }
                     }
                     let d = self.eval(f, dist, &w)?;
+                    if let (Some(variable), Value::Continuous(family)) = (delay, &d) {
+                        if conjugate::is_prior(family) {
+                            let mut w = w;
+                            w.slots[place.slot as usize] = Value::Delayed(Arc::new(Delayed {
+                                family: **family,
+                                variable,
+                            }));
+                            self.updates(variable).delayed += 1;
+                            out.push(w);
+                            continue;
+                        }
+                    }
                     self.split_by(f, place, d, w, dist.span, &mut out)?;
                     self.check_worlds(out.len(), span)?;
                 }
@@ -612,8 +804,25 @@ impl<'p> Engine<'p> {
             }
             StmtKind::Observe { value, from } => {
                 self.observed = true;
+                let exact = if self.delaying() {
+                    probl_sema::conjugate::update(value, from.as_ref())
+                } else {
+                    None
+                };
                 let mut out = Vec::with_capacity(worlds.len());
                 for mut w in worlds {
+                    if let Some(u) = &exact {
+                        let at = from.as_ref().map_or(span, |d| d.span);
+                        if let Some(ln) = self.observe_exactly(f, u, &mut w, at)? {
+                            w.weight = w.weight * Weight::from_ln(ln);
+                            if w.weight.is_zero() {
+                                self.last_ruling_out = Some(span);
+                            } else {
+                                out.push(w);
+                            }
+                            continue;
+                        }
+                    }
                     let (factor, missing) = match from {
                         None => {
                             let c = self.eval_condition(f, value, &w)?;
@@ -686,7 +895,20 @@ impl<'p> Engine<'p> {
             }
             StmtKind::Fail { message } => Err(RuntimeError::new(span, message.clone())),
             StmtKind::Check { slot, ty } => {
-                for w in &worlds {
+                for w in &mut worlds {
+                    // A delayed variable is drawn only if some of its values
+                    // could fail the check.
+                    if let Value::Delayed(d) = &w.slots[*slot as usize] {
+                        let always = match ty {
+                            TypeSpec::Float => true,
+                            TypeSpec::Prob => matches!(d.family, Family::Beta { .. }),
+                            _ => false,
+                        };
+                        if always {
+                            continue;
+                        }
+                        self.draw_delayed(w, *slot);
+                    }
                     let v = &w.slots[*slot as usize];
                     if !self.conforms(v, ty) {
                         let name = &self.prog.functions[f as usize].slots[*slot as usize].name;
@@ -1047,6 +1269,18 @@ impl<'p> Engine<'p> {
     fn slot(&self, f: FnId, s: SlotId, w: &World, span: Span) -> Result<Value> {
         match &w.slots[s as usize] {
             Value::Dead => Err(self.no_value(f, s, span)),
+            Value::Delayed(_) => {
+                let name = &self.prog.functions[f as usize].slots[s as usize].name;
+                Err(OpError {
+                    message: "internal error: a variable was read before it was drawn".into(),
+                    help: Some("this is a bug in Probl; please report it with the program that caused it".into()),
+                    kind: ErrorKind::Internal,
+                }
+                .at(span)
+                .with_note(format!(
+                    "`{name}`'s draw was delayed for an exact update (docs/semantics.md, section 14)"
+                )))
+            }
             v => Ok(v.clone()),
         }
     }

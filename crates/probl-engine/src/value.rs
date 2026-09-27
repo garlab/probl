@@ -43,6 +43,20 @@ pub enum Value {
     Closure(Arc<Closure>),
     /// Days since 1970-01-01.
     Date(i32),
+    /// A variable's value that isn't drawn yet, internal to the engine
+    /// (docs/semantics.md, section 14). No operation ever sees one: the
+    /// engine draws it before any statement that reads it.
+    Delayed(Arc<Delayed>),
+}
+
+/// The distribution of a variable whose draw is delayed, updated exactly by
+/// the observations so far.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Delayed {
+    pub family: Family,
+    /// Which of the program's variables that may be delayed it is
+    /// (`Conjugacy::variables`), for statistics.
+    pub variable: u32,
 }
 
 /// A collection, and its hash once computed. Worlds are hashed whenever
@@ -362,6 +376,7 @@ impl Value {
             Value::Continuous(f) => format!("{} distribution", f.name()),
             Value::Closure(_) => "function".into(),
             Value::Date(_) => "date".into(),
+            Value::Delayed(_) => "value not drawn yet".into(),
         }
     }
 
@@ -402,6 +417,7 @@ impl Value {
             Value::Dist(_) => 12,
             Value::Closure(_) => 13,
             Value::Continuous(_) => 14,
+            Value::Delayed(_) => 15,
         }
     }
 
@@ -469,6 +485,9 @@ fn eq_other(x: &Value, y: &Value) -> bool {
         (Value::Closure(a), Value::Closure(b)) => Arc::ptr_eq(a, b) || a == b,
         (Value::Date(a), Value::Date(b)) => a == b,
         (Value::Continuous(a), Value::Continuous(b)) => family_key(a) == family_key(b),
+        (Value::Delayed(a), Value::Delayed(b)) => {
+            a.variable == b.variable && family_key(&a.family) == family_key(&b.family)
+        }
         _ => false,
     }
 }
@@ -505,6 +524,7 @@ fn hash_other<H: Hasher>(value: &Value, state: &mut H) {
         Value::Closure(c) => c.hash(state),
         Value::Date(d) => d.hash(state),
         Value::Continuous(f) => family_key(f).hash(state),
+        Value::Delayed(d) => (d.variable, family_key(&d.family)).hash(state),
     }
 }
 
@@ -535,6 +555,9 @@ impl Ord for Value {
             (Value::Dist(a), Value::Dist(b)) => a.cmp(b),
             (Value::Closure(a), Value::Closure(b)) => a.cmp(b),
             (Value::Continuous(a), Value::Continuous(b)) => family_key(a).cmp(&family_key(b)),
+            (Value::Delayed(a), Value::Delayed(b)) => {
+                (a.variable, family_key(&a.family)).cmp(&(b.variable, family_key(&b.family)))
+            }
             _ => Ordering::Equal,
         }
     }
@@ -670,6 +693,7 @@ fn write_value(v: &Value, f: &mut fmt::Formatter<'_>, nested: bool) -> fmt::Resu
         Value::Closure(_) => write!(f, "<function>"),
         Value::Date(d) => write!(f, "{}", crate::dates::format(*d)),
         Value::Continuous(family) => write!(f, "{family}"),
+        Value::Delayed(d) => write!(f, "<not drawn yet: {}>", d.family),
     }
 }
 

@@ -214,7 +214,8 @@ fn place(p: &Place, f: &mut impl FnMut(SlotId)) {
     }
 }
 
-fn expr(e: &Expr, f: &mut impl FnMut(SlotId)) {
+/// Call `f` with every slot `e` reads.
+pub(crate) fn expr(e: &Expr, f: &mut impl FnMut(SlotId)) {
     match &e.kind {
         ExprKind::Lit(_) | ExprKind::Input(_) => {}
         ExprKind::Slot(s) => f(*s),

@@ -339,6 +339,10 @@ All modes compute the same model; switching mode changes speed and accuracy, nev
 
 Sampled runs are independent: they never merge, and every call makes its own choices. Evidence weights them (likelihood weighting); the **effective sample size** in the summary line says how many equally weighted runs they're worth, and when it's small, so is the confidence the estimates deserve. The same seed always gives the same output.
 
+**Exact updates.** Some priors and observations fit together: a `beta` observed through `binomial` or `bernoulli`, a `gamma` through `poisson`, and a `normal` through `normal` with a known spread (they're *conjugate*). For such a variable, a sampled run doesn't draw it first and weight itself by the data. It keeps the variable's distribution, updates it exactly with each observation, and draws the variable from the result when something first needs its value. The model is the same, but the runs are worth more: in an A/B test with 30 days of data, 100,000 runs are worth 100,000 instead of 863, and the evidence is exact. `probl run --no-conjugate` turns it off, for comparing, and `probl run --stats` shows which variables were updated this way.
+
+Only the observations before the variable's first use update it exactly. The ones after weight the runs as usual. If they disagree with the earlier ones, fewer runs can carry the weight than without exact updates, so use such a variable after all its observations when you can.
+
 Choose a mode with a pragma at the top of a file, or override it on the command line:
 
 ```probl
@@ -348,6 +352,7 @@ Choose a mode with a pragma at the top of a file, or override it on the command 
 ```sh
 probl run model.probl --mode sample --runs 100000 --seed 3   # sample, whatever the program says
 probl run model.probl --threads 2                            # sample on at most 2 cores
+probl run model.probl --no-conjugate                         # sample without exact updates, for comparing
 probl run model.probl --timeout 10                           # stop after 10 seconds
 probl check model.probl                                      # parse and check without running
 probl check --data model.probl                               # and check its data
@@ -359,10 +364,10 @@ The output always starts with a line saying how the numbers were computed, so an
 
 ```
 enumerated · evidence 8.87% · unresolved < 1e-12
-sample · 200,000 runs · seed 7 · evidence 3.61e-15 (± 0.52%) · effective sample size 31,244
+sample · 200,000 runs · seed 7 · evidence 3.60e-15 (± 0.00%) · effective sample size 200,000
 ```
 
-When the program observes, the line gives the evidence: the probability of all the observations. Sampling estimates it, with its standard error. When an observation uses a density (`observe 1.5 from normal(mu, 1)`), it gives the evidence's logarithm (`log evidence -1.825 ± 0.003`), which compares models: the difference of two models' log evidence on the same data is the logarithm of their Bayes factor.
+When the program observes, the line gives the evidence: the probability of all the observations. Sampling estimates it, with its standard error, which is 0 when every observation is an exact update. When an observation uses a density (`observe 1.5 from normal(mu, 1)`), it gives the evidence's logarithm (`log evidence -1.825 ± 0.003`), which compares models: the difference of two models' log evidence on the same data is the logarithm of their Bayes factor.
 
 Sampling uses every core by default. The runs go in batches of 1,000 with random numbers of their own, combined in order, so the output is the same on any number of cores.
 

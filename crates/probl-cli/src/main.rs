@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use probl_cli::{LocalFiles, parse_size};
 use probl_engine::Options;
 use probl_engine::data::{self, InputLimits, Resolver, Snapshots};
+use probl_engine::report::thousands;
 use probl_sema::ir::{DataFormat, Mode, Program};
 use probl_syntax::{Diagnostic, SourceFile, render_all};
 use std::io::{BufRead, IsTerminal, Read, Write};
@@ -100,6 +101,9 @@ enum Command {
         /// When sampling: the most threads to use (the output doesn't depend on it).
         #[arg(long)]
         threads: Option<usize>,
+        /// When sampling: draw every variable from its prior, without exact updates for conjugate priors (for comparing; the estimates mean the same).
+        #[arg(long)]
+        no_conjugate: bool,
         /// Stop the run after this many seconds.
         #[arg(long)]
         timeout: Option<f64>,
@@ -164,6 +168,7 @@ fn main() -> ExitCode {
             runs,
             seed,
             threads,
+            no_conjugate,
             timeout,
             max_worlds,
             max_work,
@@ -178,6 +183,7 @@ fn main() -> ExitCode {
                 memoize: !no_memo,
                 epsilon,
                 fractions,
+                conjugate: !no_conjugate,
                 ..Options::default()
             };
             if let Some(n) = max_worlds {
@@ -303,6 +309,16 @@ fn run_file(path: &PathBuf, options: &mut Options, limits: &InputLimits, stats: 
                     "stats: peak {} worlds · {} world-steps · {} calls ({} reused)",
                     s.peak_worlds, s.world_steps, s.calls, s.memo_hits
                 );
+                for (variable, u) in &outcome.updates {
+                    let (line, _) = file.line_col(variable.span.lo);
+                    eprintln!(
+                        "exact updates: `{}` (line {line}) · {} draws delayed · {} observations · drawn {} times",
+                        variable.name,
+                        thousands(u.delayed as i64),
+                        thousands(u.exact as i64),
+                        thousands(u.drawn as i64)
+                    );
+                }
                 for source in &outcome.data {
                     eprintln!(
                         "data: {} · {} bytes · sha256 {}",

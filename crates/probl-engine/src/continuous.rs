@@ -447,6 +447,37 @@ fn beta_pdf(a: f64, b: f64, x: f64) -> f64 {
     )
 }
 
+/// ln √(2π).
+const LN_SQRT_2PI: f64 = 0.918_938_533_204_672_7;
+
+/// ln B(a, b), the logarithm of the beta function. For large arguments,
+/// the log gammas it's made of are huge and nearly cancel, so it's computed
+/// from their Stirling series instead, as R's `lbeta` is.
+pub fn ln_beta(a: f64, b: f64) -> f64 {
+    let (p, q) = if a < b { (a, b) } else { (b, a) };
+    let share = p / (p + q);
+    if p >= 10.0 {
+        let rest = stirling_rest(p) + stirling_rest(q) - stirling_rest(p + q);
+        -0.5 * libm::log(q) + LN_SQRT_2PI + rest + (p - 0.5) * libm::log(share) + q * libm::log1p(-share)
+    } else if q >= 10.0 {
+        let rest = stirling_rest(q) - stirling_rest(p + q);
+        libm::lgamma(p) + rest + p - p * libm::log(p + q) + (q - 0.5) * libm::log1p(-share)
+    } else {
+        libm::lgamma(p) + libm::lgamma(q) - libm::lgamma(p + q)
+    }
+}
+
+/// ln Γ(x) minus Stirling's approximation (x − ½) ln x − x + ln √(2π), for
+/// x ≥ 10: the first seven terms of its series, which are exact to 10⁻¹⁶
+/// there.
+fn stirling_rest(x: f64) -> f64 {
+    let r = 1.0 / (x * x);
+    let series = 1.0 / 12.0
+        + r * (-1.0 / 360.0
+            + r * (1.0 / 1260.0 + r * (-1.0 / 1680.0 + r * (1.0 / 1188.0 + r * (-691.0 / 360_360.0 + r / 156.0)))));
+    series / x
+}
+
 /// The regularized incomplete beta function I_x(a, b), by its continued
 /// fraction (Numerical Recipes, section 6.4).
 pub fn beta_cdf(a: f64, b: f64, x: f64) -> f64 {

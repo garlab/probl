@@ -1,6 +1,6 @@
 # Proposal: better inference for forecasts with data
 
-> Revised September 2026 after the [review](inference-proposal-review.md), which found part 1 sound and part 2 underspecified. Part 1, exact updates for conjugate priors, is specified here and built first. Part 2, a general method, is deferred: its specification needs the four things listed in section 2 before anything is built. This is the next step of the [implementation plan](implementation-plan.md) (section 9), and answers the [project audit](project-audit.md)'s finding D4 for what's built.
+> Revised September 2026 after the [review](inference-proposal-review.md), which found part 1 sound and part 2 underspecified. Part 1, exact updates for conjugate priors, is built: [semantics](semantics.md) §14 has its rules, and the [benchmarks](benchmarks.md#since-exact-updates-for-conjugate-priors) its effect. Part 2, a general method, is deferred: its specification needs the four things listed in section 2 before anything is built. This is the next step of the [implementation plan](implementation-plan.md) (section 9), and answers the [project audit](project-audit.md)'s finding D4 for what's built.
 
 ## The problem
 
@@ -82,6 +82,7 @@ Other pairs can come later (gamma–exponential, Dirichlet–categorical, normal
 - **The model is the same.** Drawing `a` from its posterior after the observations gives the same joint distribution as drawing it from the prior and weighting by them. Every report and the evidence estimate the same quantities, with section 14's estimators and standard-error formulas: runs are still independent, and nothing merges.
 - **The random numbers change.** For a program with delayed draws, a seed gives different random numbers than it did before.
 - **The estimates' variance and finite-sample bias change.** Exact updates preserve the target distribution and reduce the reliance on importance weights. When every observation is an exact update and nothing else random affects the weights, every run ends with the same weight. The effective sample size is then the number of runs, and the evidence estimate is exact: its standard error is 0, up to rounding. Report estimates still have Monte Carlo error, estimated per run as before.
+- **Not always for the better.** A variable read between its observations is drawn from its distribution given the earlier observations only, and the later ones weight the runs as before. That distribution is narrower than the prior. If the later observations disagree with the earlier ones, they fit it worse than they'd fit the prior, and fewer runs carry the weight. Among 3,000 random programs that mix every kind of use, 8% had fewer effective runs with exact updates. In one of them, a normal variable is drawn between an observation of 1.6 and one of −2, each with a standard deviation of 0.5. With exact updates 200,000 runs are worth 34 to 103, against 36,000 without. The effective sample size in the summary line shows it, and `--no-conjugate` compares. Reading a variable only after all its observations avoids it.
 - **Some limits of drawing don't apply.** An exact update doesn't draw `x` or list the observed distribution's outcomes. So it never reaches the limits that drawing would, such as `poisson`'s rate above 10¹⁵, or listing a binomial too spread out to draw directly.
 
 ### Numbers
@@ -113,6 +114,7 @@ The review's acceptance checks, for part 1:
 - **Agreement:** the same estimates as `--no-conjugate`, within their standard errors, on models where both work.
 - **Calibration of the reports:** over many seeds, the reports' errors against the exact posterior are calibrated (mean z² near 1), although every run has the same weight.
 - **Simulation-based calibration:** for data simulated from the prior, the engine's estimate of the posterior probability that the parameter is below its true value is uniform. This checks the whole posterior, not a few numbers.
+- **Random programs** that mix exact updates with every other use of the variables: they never read a delayed variable, and estimate the same posteriors as without exact updates.
 
 ## 2. A general method: deferred
 

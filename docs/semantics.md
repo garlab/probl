@@ -1,6 +1,6 @@
 # Probl reference semantics
 
-> Version 0.2, September 2026. This document is normative for the engine. Where it disagrees with the [language overview](language-overview.md), this document wins. It resolves findings D1–D3, I1 and I2 of the [project audit](project-audit.md). Continuous distributions (D6) and basic sampling (D4) are in sections 13 and 14, and data read from files in section 15; what is still open, such as particles and solving recursive equations (D5), is listed in section 16.
+> Version 0.2, September 2026. This document is normative for the engine. Where it disagrees with the [language overview](language-overview.md), this document wins. It resolves findings D1–D3, I1 and I2 of the [project audit](project-audit.md). Continuous distributions (D6) and sampling (D4), with exact updates for conjugate priors, are in sections 13 and 14, and data read from files in section 15; what is still open, such as particles and solving recursive equations (D5), is listed in section 16.
 
 ## 1. Values and types
 
@@ -195,6 +195,24 @@ Anything else, such as arithmetic (`normal(0, 1) * 2`) or comparing two continuo
 
 When few runs carry the weight (a small effective sample size), this estimate is unreliable too, and more often too low than too high. If every run is ruled out, it's an error: the evidence is impossible, or too unlikely for this number of runs.
 
+**Exact updates for conjugate priors.** Unless whoever runs the program turns them off (`probl run --no-conjugate`), some variables are updated exactly instead of being drawn and weighted by the evidence. This changes which random numbers a seed gives, and the variance of the estimates, not what they estimate.
+
+- **Delayed draws.** A draw `x ~ D` into a whole variable, outside `simulate`, is *delayed* when the function it's in also observes `x` in one of the forms below, and `D`'s value is a single beta, gamma or normal distribution. `D` is evaluated and checked at the draw, as usual. `x` then holds `D` internally: no expression can read it in that state.
+- **Exact updates.** Each of these observations of a delayed `x` multiplies the run's weight by the probability of what's observed (a density for `normal`) given `x`'s current distribution. It then replaces that distribution with `x`'s distribution given the observation:
+
+  | `x`'s distribution | Observation | Afterwards | The weight multiplies by |
+  |---|---|---|---|
+  | `beta(α, β)` | `observe k from binomial(n, x)` | `beta(α + k, β + n − k)` | C(n, k) B(α + k, β + n − k) / B(α, β) |
+  | `beta(α, β)` | `observe v from bernoulli(x)`, or `observe bernoulli(x)` (v is `true`) | `beta(α + 1, β)` if v, `beta(α, β + 1)` if not | α / (α + β), or β / (α + β) |
+  | `gamma(s, θ)` | `observe k from poisson(x)` | `gamma(s + k, θ / (1 + θ))` | Γ(s + k) / (Γ(s) k!) · (θ / (1 + θ))ᵏ (1 + θ)⁻ˢ |
+  | `normal(μ, σ)` | `observe y from normal(x, τ)` | `normal(μ + g(y − μ), στ / √(σ² + τ²))`, where g = σ² / (σ² + τ²) | the normal density of `y` with mean μ and standard deviation √(σ² + τ²) |
+
+  `x` must be the parameter, written as itself, and appear nowhere else in the observation. The observation's other parts must be plain values; they're evaluated and checked as when `x` is drawn, with the same errors. A value the distribution can't produce, such as a count above `n`, makes the run impossible.
+- **Drawing.** Any other statement that reads a delayed `x` draws it first, from its current distribution, and `x` is an ordinary number from then on. That includes every expression, a call or closure that captures `x`, and an observation in another form, or of a family that doesn't pair. A type check draws `x` only if some of its distribution's values could fail it, so `let p: prob ~ beta(2, 3)` stays delayed. A delayed variable that's assigned, or never read again, is never drawn.
+- **The same model.** Drawing `x` from its updated distribution, with the weight multiplied by the probability of each observation given the distribution before it, gives the same expected weight to every outcome as drawing `x` at `~` and weighting by each observation given `x`. So every report and the evidence estimate the same quantities, and runs are still independent: the estimators and standard errors above apply unchanged. When every observation is an exact update and nothing else random affects the weights, every run ends with the same weight. The effective sample size is then n, and Ẑ is the evidence itself, with a standard error of 0. The reports still have sampling error.
+- **Observations after the draw.** An observation made after `x` is drawn weights the runs as usual, and `x` was drawn from its distribution given the earlier observations only. When the later observations disagree with the earlier ones, that can leave fewer effective runs than drawing `x` from its prior would. Reading `x` only after all its observations avoids it.
+- **Limits.** An exact update doesn't draw `x` or list the observed distribution's outcomes, so it doesn't reach the limits that drawing would, such as `poisson`'s rate above 10¹⁵. Probabilities are computed as logarithms, so an observation's probability can be far below the smallest floating-point number.
+
 ## 15. Data
 
 `let name: T = read(path)` binds data read from outside the program, such as a CSV or JSON file ([reading data](data-input.md)).
@@ -206,6 +224,7 @@ When few runs carry the weight (a small effective sample size), this estimate is
 ## 16. Not specified yet
 
 - **Particles, beam search and merged runs** (audit D4): how merged samples keep their statistical bookkeeping, and when particles resample.
+- **A general method for models that aren't conjugate**, such as MCMC: its target, its moves and its report estimators ([inference proposal](inference-proposal.md), section 2).
 - **Nested estimates** (D4): `simulate` blocks that must be sampled, and how their error affects decisions.
 - **Arithmetic on continuous distributions**, beyond comparing them with numbers.
 - **Recursion that returns to the same call, when enumerating** (D5): currently an error; solving such systems as Markov chains is future work.

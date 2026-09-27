@@ -2,6 +2,7 @@
 //! The rules it implements are in docs/semantics.md.
 
 pub mod builtins;
+pub mod conjugate;
 pub mod continuous;
 pub mod data;
 pub mod dates;
@@ -15,13 +16,14 @@ pub mod weight;
 pub mod world;
 
 pub use error::{ErrorKind, RuntimeError};
-pub use interp::Stats;
+pub use interp::{Stats, Updates};
 pub use weight::Weight;
 
 use continuous::Rng;
 use dist::Budget;
 use error::OpError;
 use probl_sema::Liveness;
+use probl_sema::conjugate::{Conjugacy, Variable};
 use probl_sema::ir::{Mode, Program};
 use probl_syntax::Span;
 use report::{Format, Sink};
@@ -97,6 +99,10 @@ pub struct Options {
     /// The program's data, loaded with [`data::load`]. A program that reads
     /// data can't run without it.
     pub inputs: Option<Arc<data::Inputs>>,
+    /// When sampling, update conjugate priors exactly (docs/semantics.md,
+    /// section 14). Turning it off draws every variable from its prior, for
+    /// comparing: the estimates mean the same either way.
+    pub conjugate: bool,
 }
 
 impl Default for Options {
@@ -110,6 +116,7 @@ impl Default for Options {
             cancel: None,
             mode: None,
             inputs: None,
+            conjugate: true,
         }
     }
 }
@@ -129,6 +136,9 @@ pub struct Outcome {
     pub sample: Option<Sampled>,
     /// The data the program read, if any.
     pub data: Vec<data::SourceInfo>,
+    /// The variables whose draws could be delayed for exact updates when
+    /// sampling, and what happened to them.
+    pub updates: Vec<(Variable, Updates)>,
 }
 
 /// How a program was sampled (docs/semantics.md, section 14).
@@ -239,14 +249,16 @@ fn run_here(
         },
         cancel: options.cancel.clone(),
         sample_seed: sample.map(|(_, seed)| seed),
+        conjugate: options.conjugate,
     };
     let epsilon = config.epsilon;
     let inputs = inputs(program, options)?;
     let live = probl_sema::analyze(program);
+    let conj = probl_sema::conjugate::analyze(program);
     if let Some((runs, seed)) = sample {
-        return sampled(program, &live, config, options, print, runs, seed);
+        return sampled(program, &live, &conj, config, options, print, runs, seed);
     }
-    let mut engine = interp::Engine::new(program, &live, config, inputs, print);
+    let mut engine = interp::Engine::new(program, &live, &conj, config, inputs, print);
     let finished = engine.run_main()?;
     let unresolved = engine.unresolved;
 
@@ -312,6 +324,7 @@ fn run_here(
         reports: std::mem::take(&mut engine.sinks),
         sample: None,
         data: sources(options),
+        updates: Vec::new(),
     })
 }
 
@@ -422,10 +435,7 @@ impl Combined {
         self.densities |= batch.densities;
         self.unresolved += batch.unresolved;
         self.last_ruling_out = batch.last_ruling_out.or(self.last_ruling_out);
-        self.stats.peak_worlds = self.stats.peak_worlds.max(batch.stats.peak_worlds);
-        self.stats.world_steps += batch.stats.world_steps;
-        self.stats.calls += batch.stats.calls;
-        self.stats.memo_hits += batch.stats.memo_hits;
+        self.stats.absorb(&batch.stats);
     }
 }
 
@@ -437,9 +447,11 @@ type Sent = (u64, Result<interp::Batch, RuntimeError>, interp::Printed);
 /// combine them in batch order: what's printed, the first error, and every
 /// sum come out the same whatever the number of threads. The threads share
 /// one budget of work.
+#[allow(clippy::too_many_arguments)]
 fn run_batches(
     program: &Program,
     live: &Liveness,
+    conj: &Conjugacy,
     config: &interp::Config,
     options: &Options,
     print: &mut (dyn FnMut(&str) + Send),
@@ -487,7 +499,7 @@ fn run_batches(
                 } else {
                     inputs.to_vec()
                 };
-                let mut engine = interp::Engine::new(program, live, config.clone(), &copied, &mut ignore);
+                let mut engine = interp::Engine::new(program, live, conj, config.clone(), &copied, &mut ignore);
                 loop {
                     let index = next.fetch_add(1, Ordering::Relaxed);
                     if index >= batches {
@@ -566,16 +578,18 @@ fn run_batches(
 }
 
 /// Sample the program and print its estimates (docs/semantics.md, section 14).
+#[allow(clippy::too_many_arguments)]
 fn sampled(
     program: &Program,
     live: &Liveness,
+    conj: &Conjugacy,
     config: interp::Config,
     options: &Options,
     print: &mut (dyn FnMut(&str) + Send),
     runs: u64,
     seed: u64,
 ) -> Result<Outcome, RuntimeError> {
-    let mut engine = run_batches(program, live, &config, options, print, runs, seed)?;
+    let mut engine = run_batches(program, live, conj, &config, options, print, runs, seed)?;
     let totals = engine.totals;
     if totals.weight.is_zero() {
         let span = engine.last_ruling_out.unwrap_or_default();
@@ -641,5 +655,11 @@ fn sampled(
             densities: engine.densities,
         }),
         data: sources(options),
+        updates: conj
+            .variables
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (v.clone(), engine.stats.updates.get(i).copied().unwrap_or_default()))
+            .collect(),
     })
 }

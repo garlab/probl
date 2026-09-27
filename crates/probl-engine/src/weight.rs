@@ -27,6 +27,22 @@ impl Weight {
         Weight { mant, exp }
     }
 
+    /// e^l: a weight from its natural logarithm, even one far outside the
+    /// range of an `f64`. A logarithm of −∞ (or NaN) gives zero.
+    pub fn from_ln(l: f64) -> Weight {
+        if l.is_nan() || l == f64::NEG_INFINITY {
+            return Weight::ZERO;
+        }
+        debug_assert!(l.is_finite(), "invalid log weight {l}");
+        // l = k ln 2 + r with |r| ≤ ln 2 / 2, so e^l = e^r × 2^k. ln 2 is
+        // split in two, the first part short enough for k ln 2 to be exact.
+        const LN2_HI: f64 = 6.931_471_803_691_238e-1;
+        const LN2_LO: f64 = 1.908_214_929_270_587_7e-10;
+        let k = libm::round(l / std::f64::consts::LN_2);
+        let r = (l - k * LN2_HI) - k * LN2_LO;
+        normalize(libm::exp(r), k as i64)
+    }
+
     pub fn is_zero(self) -> bool {
         self.mant == 0.0
     }
@@ -223,6 +239,22 @@ mod tests {
         assert!((a.ratio(w) - 0.25).abs() < 1e-15);
         let b = w + w;
         assert!((b.ratio(w) - 2.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn weights_from_logarithms() {
+        assert_eq!(Weight::from_ln(0.0), Weight::ONE);
+        assert!((Weight::from_ln(0.75f64.ln()).to_f64() - 0.75).abs() < 1e-15);
+        assert!((Weight::from_ln(3.5).to_f64() - 3.5f64.exp()).abs() < 1e-13);
+        assert!(Weight::from_ln(f64::NEG_INFINITY).is_zero());
+        assert!(Weight::from_ln(f64::NAN).is_zero());
+        // Far below an f64: e^-4234.1 = 10^-1838.8…
+        let w = Weight::from_ln(-4234.102082009147);
+        assert!(!w.is_zero());
+        assert!((w.log10() - -4234.102082009147 / std::f64::consts::LN_10).abs() < 1e-10);
+        // Multiplying adds logarithms.
+        let (a, b) = (Weight::from_ln(-1000.25), Weight::from_ln(-2000.5));
+        assert!(((a * b).ratio(Weight::from_ln(-3000.75)) - 1.0).abs() < 1e-12);
     }
 
     #[test]

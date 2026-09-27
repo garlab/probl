@@ -6,7 +6,7 @@
 
 1. **Parallel sampling batches first.** Every sampled forecast takes 0.5–2.6 s on one core, and runs are independent. Running example 07's runs as 8 processes takes 0.27 s instead of 1.77 s (6.6×). This is the cheapest large win, and it meets the plan's target for example 07 (under 2 s on 8 cores) several times over. *Done: 6–8× on 12 cores ([below](#since-parallel-batches)).*
 2. **Then cheaper merging, and moving draws to their first use.** Enumeration hits a wall when states are large or many facts stay live together: blackjack from a real deck takes 5.2 s and 952 MB, and a 20-component reliability model 1.4 s and 847 MB. Merging (hashing and comparing world states) takes 34–70% of that time; caching the hashes of collections cuts most of it. Separately, moving each draw to just before its first use turns the reliability model's 1,048,576 worlds into 256, with the same answer. *Both are done: cheaper merging makes enumeration 1.4–2.9× faster ([below](#since-cheaper-merging)), and moving draws takes the reliability model from 1.2 s to 0.6 ms ([below](#since-moving-draws)).*
-3. **Then better inference for evidence-heavy forecasts.** Weighting runs by the evidence (likelihood weighting) degrades as data accumulates: an A/B test's 100,000 runs are worth 852 after 30 days of data, 467 after 60 and 211 after 120, and it gets exponentially worse with more unknown parameters. Forecasts with real data need conjugate updates, MCMC or particles; each needs its contract specified first (audit D4).
+3. **Then better inference for evidence-heavy forecasts.** Weighting runs by the evidence (likelihood weighting) degrades as data accumulates: an A/B test's 100,000 runs are worth 852 after 30 days of data, 467 after 60 and 211 after 120, and it gets exponentially worse with more unknown parameters. Forecasts with real data need conjugate updates, MCMC or particles; each needs its contract specified first (audit D4). *Done for conjugate priors: the A/B test's runs are worth 100,000 instead of 863 ([below](#since-exact-updates-for-conjugate-priors)). A general method waits for a benchmark that needs it.*
 4. **Not now:** symbolic inference, persistent collections and a bytecode interpreter. No benchmark is limited by what they'd fix, or a cheaper change fixes it first. Markov-chain solving would make cyclic loops exact and allow recursion to the same call, but no model is slow because of them.
 
 ## Running them
@@ -16,6 +16,7 @@ cargo run --release -p probl-bench              # every model in benches/ and ex
 cargo run --release -p probl-bench -- tennis    # models whose name contains "tennis"
 cargo run --release -p probl-bench -- --quick   # one timed run each
 cargo run --release -p probl-bench -- --threads=1   # sample on one thread
+cargo run --release -p probl-bench -- --no-conjugate   # sample without exact updates for conjugate priors
 ```
 
 For each model, the runner reports the median time of up to five runs, the engine's statistics, the peak heap (from a separate run that counts allocations, and isn't timed), and for enumerated models the same run without merging worlds. Sampling uses every core unless `--threads=` says otherwise. A run that takes more than 60 seconds is cancelled and reported as such. `cargo test` checks that every model still compiles.
@@ -98,7 +99,7 @@ Large states are dominated by merging: a world's slots, including its deck (a ma
 
 **Moving draws to their first use.** A compiler pass could move each `let x ~ D` down to just before the first statement that reads `x`, when nothing in between reads or changes what `D` depends on. Draws are independent, so this doesn't change the model; it lets the facts a statement combines die, and their worlds merge, before the next draws split them again. Done by hand, it turns `reliability` from 1,048,576 worlds and 847 MB into 256 worlds, with the same 99.53%. The pass must not move a draw across an `observe`, a call, or anything that could fail, so that errors stay where the semantics puts them. *Recommended with cheaper merging.*
 
-**Better inference for evidence-heavy forecasts.** In `ab_test`, likelihood weighting still gets the headline right (P(B better) is 99.33% against the exact 99.37%, and the mean lift 20.03 against 20.11), but the tails already drift (the 5% quantile of the lift is 5.92 against 6.34), and its effective sample size falls from 852 to 211 as the data grows from 30 to 120 days. With more unknown parameters, it collapses exponentially. Forecasting with data needs conjugate updates for the common cases (beta–binomial, gamma–Poisson), and a general method such as Metropolis–Hastings over a run's choices, or particles with rejuvenation. Each needs its estimator contract written first (audit D4). *Recommended third: the most valuable feature for forecasting, and the largest.*
+**Better inference for evidence-heavy forecasts.** In `ab_test`, likelihood weighting still gets the headline right (P(B better) is 99.33% against the exact 99.37%, and the mean lift 20.03 against 20.11), but the tails already drift (the 5% quantile of the lift is 5.92 against 6.34), and its effective sample size falls from 852 to 211 as the data grows from 30 to 120 days. With more unknown parameters, it collapses exponentially. Forecasting with data needs conjugate updates for the common cases (beta–binomial, gamma–Poisson), and a general method such as Metropolis–Hastings over a run's choices, or particles with rejuvenation. Each needs its estimator contract written first (audit D4). *Recommended third: the most valuable feature for forecasting, and the largest. Conjugate updates are done ([below](#since-exact-updates-for-conjugate-priors)).*
 
 **Markov-chain solving.** The models with loops that cycle (`tennis`, craps, snakes and ladders, the tour's `while d6 != 6`) run in milliseconds; what unrolling costs them is exactness (unresolved weight up to 2.3 × 10⁻¹¹ in `tennis`), not time. Solving absorbing chains would make them exact, and would allow recursion that returns to the same call, which enumeration rejects today. *Worth doing for exactness and expressiveness, after the above.*
 
@@ -170,6 +171,19 @@ A type-annotated draw moves with its check.
 | benches/reliability | 1.23 s · 1,048,576 worlds · 8,388,607 world-steps · 762 MB | 0.55 ms · 256 worlds · 1,643 world-steps · 384 KB |
 
 The other models already draw where they use the values: only craps' first roll moved, past two assignments. The oracle, which interprets the source directly, agrees with the engine on 20,000 generated programs, and sampling is still calibrated.
+
+## Since: exact updates for conjugate priors
+
+When sampling, a beta, gamma or normal prior observed through a conjugate form (binomial or Bernoulli counts, Poisson counts, normal values with a known spread) is no longer drawn first and weighted by the data. Each run updates its distribution exactly with each observation and draws it from the result when first needed (docs/semantics.md, section 14; the [inference proposal](inference-proposal.md)). In `ab_test` and example 08, every run then ends with the same weight, the probability of the data. So the effective sample size is the number of runs, and the evidence is exact. The same machine, seed and 12 threads, with `--no-conjugate` for before:
+
+| model | effective sample size | mean lift's standard error | evidence | time |
+|---|--:|--:|---|--:|
+| benches/ab_test, 30 days | 863 → 100,000 | 0.21 → 0.03 | 4.02e-62 ± 3.4% → 4.20e-62 (exact: 4.2045e-62) | 249 → 240 ms |
+| the same, 60 days | 417 → 100,000 | 0.21 → 0.02 | 1.88e-121 ± 4.9% → 2.01e-121 | |
+| the same, 120 days | 204 → 100,000 | 0.21 → 0.01 | 8.45e-240 ± 7.0% → 9.10e-240 | |
+| examples/08_signup_forecast | 31,244 → 200,000 | | 3.61e-15 ± 0.52% → 3.60e-15 (exact: 3.598e-15) | 189 → 186 ms |
+
+The standard errors fall 7–21×, so the same precision takes about 50 to 440 times fewer runs. The time per run doesn't change: an exact update costs about what the likelihood it replaces did. The tails are right now. Over 12 seeds, `ab_test`'s 5% quantile of the lift is 6.27–6.42 against the exact 6.34, and P(B better) is 99.32–99.42% against 99.37%. Without exact updates, seed 1 gives 6.19 and 99.30% ± 0.06%. The evidence without them was 4–7% low on all three data sets, by 1.0–1.3 of its standard errors: with few runs carrying the weight, it's more often too low than too high.
 
 ## Smaller findings
 

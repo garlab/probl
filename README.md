@@ -27,7 +27,7 @@ Probl is aimed at two kinds of work:
 
 ## Status
 
-The engine enumerates and samples. Examples 01–06 print their documented output, checked against independent calculations; the forecasting examples 07–09 sample, and agree with an independent reference simulation within their sampling error. The rules are written down in [the reference semantics](docs/semantics.md). A second, deliberately simple interpreter checks enumeration against them on thousands of generated programs, and sampling is checked against enumeration, standard errors included.
+The engine enumerates and samples. Examples 01–06 print their documented output, checked against independent calculations; the forecasting examples 07–09 sample, and agree with an independent reference simulation within their sampling error. The rules are written down in [the reference semantics](docs/semantics.md). A second, deliberately simple interpreter checks enumeration against them on thousands of generated programs, and sampling is checked against enumeration, standard errors included. When sampling, conjugate priors (a beta with binomial counts, say) are updated exactly instead of weighting each run by the data, so forecasts from data keep every run's worth.
 
 ```sh
 cargo run --release -p probl-cli -- run examples/02_craps.probl
@@ -43,6 +43,7 @@ cargo test --all
 - [Language overview](docs/language-overview.md): the model, the syntax, and a tour of the language
 - [Reference semantics](docs/semantics.md): the precise rules the engine follows
 - [Reading data](docs/data-input.md): CSV, JSON and lines, read with declared types, and its [design review](docs/data-input-review.md)
+- [Better inference](docs/inference-proposal.md): exact updates for conjugate priors, what a general method needs first, and its [design review](docs/inference-proposal-review.md)
 - [Implementation plan](docs/implementation-plan.md): status, architecture, phases, testing and risks
 - [Project audit](docs/project-audit.md): the review that led to the reference semantics
 - [Benchmarks](docs/benchmarks.md): realistic models, what they cost, and what to build next (`cargo run --release -p probl-bench`)

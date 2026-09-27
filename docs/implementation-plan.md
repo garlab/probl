@@ -19,7 +19,7 @@ How each finding was answered:
 | D1: events, probabilities and distributions collapse into one another | `bool` (facts), `prob` (parameters) and `dist[T]` are distinct. `and`/`or` take facts, and at most one uncertain fact. `bernoulli(p)` makes an event. `simulate` keeps distributions of probabilities. `match` needs a settled value. Type annotations are checked. | semantics §1–3; `ops.rs`, `lower.rs` |
 | D2: dropped prior weight doesn't bound a posterior | `for` and `repeat` are never cut short. `while` and `loop` stop at ε *relative to the weight that entered*. Event probabilities are printed as the range [a/(Z+U), (a+U)/(Z+U)] when unresolved weight U is visible. Means claim no bound. | semantics §10; `interp.rs`, `report.rs` |
 | D3: evidence and report scopes | Evidence is the program's; observations inside `simulate` are local. Impossible evidence is an error. An `observe` that can run after a `report` is a compile error. Reports show their reach, and reports that can count a world twice are labelled "per visit". | semantics §7–9; `effects.rs` |
-| D4: sampling needs estimator contracts | Specified before building (semantics §14), and only the simplest estimator is built: independent runs that never merge, likelihood weighting, standard errors on every printed probability, and the effective sample size. `simulate` is enumerated even when sampling, so no estimate hides inside another. Particles, beam search and merged runs stay unspecified and unbuilt. | semantics §14; `interp.rs`, `report.rs` |
+| D4: sampling needs estimator contracts | Specified before building (semantics §14), and only the simplest estimator is built: independent runs that never merge, likelihood weighting, standard errors on every printed probability, and the effective sample size. `simulate` is enumerated even when sampling, so no estimate hides inside another. Particles, beam search and merged runs stay unspecified and unbuilt. Exact updates for conjugate priors came later, after a [proposal and its review](inference-proposal.md); they keep runs independent. | semantics §14; `interp.rs`, `report.rs`, `conjugate.rs` |
 | D5: merging isn't a general answer to state explosion | The docs no longer claim it is; loops are unrolled, not solved. Solving finite-state loops as Markov chains is on the list for phase 7. | overview §11 |
 | D6: `a to b` hides assumptions | `a to b` is a lognormal with positive ends, as in Squiggle; `normal_range(lo, hi)` says "normal" explicitly. `mean`, `quantile`, `cdf` and the other queries expose each distribution's assumptions. | semantics §13; `continuous.rs` |
 | I1: "exact" fractions | The mode is called *enumeration*. `--fractions` prints "≈ 244/495". Weights have an extended exponent, so repeated observations can't underflow. Missing mass composes, and distributions keep their probabilities adding up to 1 − missing. | semantics §10; `weight.rs`, `dist.rs` |
@@ -232,6 +232,7 @@ The effort ranges assume one developer working full time, and they are 90% confi
 - Done: the evidence when sampling (semantics §14): the average final weight, with its standard error from the effective sample size, or its logarithm when an observation uses a density. It's checked against enumeration's exact evidence, standard errors included.
 - **Exit reached:** everything planned for v0.2 is built; releasing it is a matter of packaging.
 - Only if benchmarks call for them, each with its contract first: arithmetic on continuous distributions, merged sampling, particles, beam, nested estimates, and an `auto` mode that says what it chose.
+- Done since: exact updates for conjugate priors (semantics §14, [inference proposal](inference-proposal.md)). When sampling, draws of beta, gamma and normal priors are delayed. Binomial, Bernoulli, Poisson and normal observations update them exactly, and they're drawn from the result when first needed. `ab_test`'s 100,000 runs are worth 100,000 instead of 863, and its evidence is exact.
 
 ### Phase 5: inspection (2–4 weeks)
 
@@ -286,6 +287,15 @@ The forecast made when the plan was first written, by running [`examples/09_road
 
   Example 08 reads its data from a CSV file ([reading data](data-input.md#tests)).
 - **Samplers.** Kolmogorov–Smirnov tests for every continuous family, chi-square tests for the direct count samplers, and closed-form checks of CDFs, quantiles and densities. `probl-engine/tests/sampling.rs` covers the rules of semantics §13–14.
+- **Exact updates.** `probl-engine/tests/conjugate.rs` and the unit tests of `conjugate.rs` check:
+  - the formulas, against closed forms and numerical integration, including probabilities far below the smallest `f64`;
+  - the evidence of whole data sets against mpmath;
+  - which uses draw a delayed variable, and that errors are the same with and without exact updates;
+  - agreement with `--no-conjugate`, and calibration against exact posteriors (a mean squared z-score near 1 over 1,800 estimates, with every run weighted the same);
+  - simulation-based calibration for each pair;
+  - random programs that mix exact updates with every other use of the variables. They never read a delayed variable, and estimate the same posteriors as without exact updates. On 3,000 of them, 4,863 estimates agreed within their standard errors (mean z² 0.78). `PROBL_CONJUGATE_CASES` runs more.
+
+  Planting an error in a posterior's formula makes at least three of them fail.
 - **Sampled examples.** Examples 07–09 are compared with outputs from an independent reference simulation, token by token: estimates within five standard errors, other numbers within 4%, dates within three days. The comparator has its own test.
 - **Benchmarks.** `cargo run --release -p probl-bench` runs the models in `benches/` and `examples/` and prints their time, worlds, world-steps, calls, peak heap, and cost without merging; `cargo test` checks that they compile. They aren't run in the test suite (they take about 3½ minutes), and nothing tracks them over time yet.
 
@@ -303,7 +313,7 @@ The forecast made when the plan was first written, by running [`examples/09_road
 | Users confuse `=` and `~` | high | medium | Errors with suggested fixes, `match` and `and`/`or` refusing distributions, documentation that leads with the rule |
 | Sampling estimates are wrong in subtle ways | medium | high | Estimators specified before being built; independent runs only; every estimate tested against enumeration, and the standard errors' calibration too |
 | Rounding in floating-point weights | medium | medium | An extended exponent (no underflow); distributions renormalized to 1 − missing; fractions marked ≈; the oracle's exact comparison |
-| Likelihood weighting degenerates (low effective sample size) | high for Bayesian models | medium | Always print the effective sample size and warn when it's low; resample-move and conjugate updates later |
+| Likelihood weighting degenerates (low effective sample size) | high for Bayesian models | medium | Always print the effective sample size; exact updates for conjugate priors (done); a general method, specified first, for the rest |
 | Float-valued state never merges | medium | medium | Warn when float slots keep worlds apart; recommend integers or rounding |
 | Untrusted models exhaust a host | medium | high | Host limits checked before allocation, cancellation, no panics; a separate worker process for hosted use. Sampled reports of continuous values still keep every distinct value: a quantile sketch is next |
 | Scope creep (units, plotting, modules, …) | high | medium | Phase exit criteria; features no example needs wait |
@@ -321,6 +331,8 @@ Settled by the audit, and in review since:
 | Name of the mode | enumeration | exact |
 | Typing | static, with inference: every expression's type is known before running, and values and distributions have different types. Annotations are optional, except for data read from outside | dynamic, with annotations checked as the program runs (what exists today) |
 | Types of data | declared in the program, and they decide how data is read; `probl schema` suggests them | guessed from the data when running |
+| Conjugate priors when sampling | updated exactly by default, with `--no-conjugate` to compare | opt-in, as `@mode sample(…, exact: true)` |
+| A general method for other models | waits for a concrete benchmark, and a specification of its target, moves and report estimators | lightweight Metropolis–Hastings now, as first proposed |
 
 Still open:
 
@@ -333,7 +345,7 @@ Still open:
 
 ## 9. Next steps
 
-The order the benchmarks recommend (docs/benchmarks.md). The first three are done: parallel sampling batches (6–8× for sampled models on 12 cores), cheaper merging (1.4–2.9× for enumeration), and moving draws to their first use (the reliability model follows 256 worlds instead of 2²⁰). So are reading data ([reading data](data-input.md)) and the evidence when sampling, which completes v0.2.
+The order the benchmarks recommend (docs/benchmarks.md). The first three are done: parallel sampling batches (6–8× for sampled models on 12 cores), cheaper merging (1.4–2.9× for enumeration), and moving draws to their first use (the reliability model follows 256 worlds instead of 2²⁰). So are reading data ([reading data](data-input.md)) and the evidence when sampling, which completes v0.2. So are exact updates for conjugate priors, the first part of better inference: an A/B test's 100,000 runs are worth 100,000 instead of 863 with 30 days of data, and instead of 204 with 120.
 
-1. **Better inference for evidence-heavy forecasts**: specify, then build, conjugate updates and a general method (Metropolis–Hastings over a run's choices, or particles with rejuvenation), with the audit's D4 checklist. Likelihood weighting's effective sample size falls from 852 to 211 as an A/B test's data grows from 30 to 120 days. Now that models can read real data, this matters more.
+1. **A general method for models that aren't conjugate** (lognormal priors, `a to b` estimates, hierarchical models, regressions). First a benchmark that needs it, then a specification: the review of the first proposal lists what it must contain ([inference proposal](inference-proposal.md), section 2).
 2. **Markov-chain solving**, for exact cyclic loops and recursion to the same call.
