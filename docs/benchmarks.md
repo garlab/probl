@@ -196,7 +196,7 @@ A `while` or `loop` whose states come back is now solved as an absorbing Markov 
 
 Without merging, both now finish: solving tells states apart itself. Nothing else changed.
 - **Loops that count their rounds.** Craps, snakes and ladders, the tour's `while d6 != 6` and the duel all count, and one of those counts is reported, so their states never come back. They're unrolled as before, and still end with `unresolved < 1e-12`.
-- **Loops that end within a few rounds.** Risk and the dealer are unrolled as before, exactly.
+- **Loops that end within a few rounds.** The dealer is unrolled as before, exactly. In Risk, different paths reach the same armies after different numbers of rounds, which counts as coming back, so it's solved from there. It prints the same.
 
 Hashing the states costs nothing measurable. A loop that ends once in 10⁹ rounds, which unrolling couldn't finish, takes microseconds.
 

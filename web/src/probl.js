@@ -13,9 +13,11 @@ export class Crash extends Error {}
 
 /**
  * Instantiate the module, from its bytes or a compiled `WebAssembly.Module`.
- * `onPrint` receives each line a program prints, as it prints it.
+ * `onPrint` receives each line a program prints, as it prints it, and
+ * `onProgress`, when sampling, the runs done and the runs in all, after each
+ * batch.
  */
-export async function load(module, { onPrint = () => {} } = {}) {
+export async function load(module, { onPrint = () => {}, onProgress = () => {} } = {}) {
   let memory;
   let panic = null;
   const text = (ptr, len) => decoder.decode(new Uint8Array(memory.buffer, ptr, len));
@@ -25,6 +27,7 @@ export async function load(module, { onPrint = () => {} } = {}) {
       panicked: (ptr, len) => {
         panic = text(ptr, len);
       },
+      progress: (done, total) => onProgress(done, total),
     },
   };
   const made = await WebAssembly.instantiate(module, imports);

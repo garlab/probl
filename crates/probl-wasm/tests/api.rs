@@ -9,7 +9,7 @@ fn run(request: Value) -> (Value, Vec<String>) {
     let printed = Arc::new(Mutex::new(Vec::new()));
     let sink = printed.clone();
     let mut print = move |line: &str| sink.lock().unwrap().push(line.to_string());
-    let answer = probl_wasm::run(&request.to_string(), &mut print);
+    let answer = probl_wasm::run(&request.to_string(), &mut print, None);
     let lines = printed.lock().unwrap().clone();
     (serde_json::from_str(&answer).unwrap(), lines)
 }
@@ -102,6 +102,16 @@ fn what_programs_print_comes_as_it_happens() {
     assert_eq!(lines, ["hello"]);
     assert!(answer["output"].as_str().unwrap().contains("33.33%"));
     assert_eq!(answer["stats"]["peak_worlds"], 1);
+}
+
+#[test]
+fn sampling_says_how_far_it_is() {
+    let told = Arc::new(Mutex::new(Vec::new()));
+    let sink = told.clone();
+    let progress = probl_engine::Progress(Arc::new(move |done, total| sink.lock().unwrap().push((done, total))));
+    let request = json!({ "source": "report d6 > 4", "runs": 2500 }).to_string();
+    probl_wasm::run(&request, &mut |_| {}, Some(progress));
+    assert_eq!(*told.lock().unwrap(), [(1000, 2500), (2000, 2500), (2500, 2500)]);
 }
 
 #[test]

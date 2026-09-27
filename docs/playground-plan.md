@@ -1,6 +1,6 @@
 # Plan: a playground in the browser
 
-> September 2026. The [implementation plan](implementation-plan.md) had "a WebAssembly build and a browser playground" in phase 7; this plans it as a project of its own. **Phase 1 is built:** the engine runs in WebAssembly and prints exactly what the command line prints (section [Phase 1, as built](#phase-1-as-built)). The open questions at the end were answered with the proposals, except hosting, which waits for a remote.
+> September 2026. The [implementation plan](implementation-plan.md) had "a WebAssembly build and a browser playground" in phase 7; this plans it as a project of its own. **Phases 1 and 2 are built:** the engine runs in WebAssembly and prints exactly what the command line prints, and the page works in Chrome and Firefox (sections [Phase 1, as built](#phase-1-as-built) and [Phase 2, as built](#phase-2-as-built)). The open questions at the end were answered with the proposals. Hosting waits for a remote.
 
 ## How hard is it?
 
@@ -166,6 +166,33 @@ So the slowest examples would take 2–4 seconds in the browser, with a progress
   - **Output:** every example prints exactly what `probl run` prints, sampled ones included (`node web/test/examples.mjs`).
   - **Speed:** WebAssembly is 1.7–2.1× slower than one native core. The slowest example, 07, takes 3.2 s; the enumerated ones take up to 0.46 s. Memory reached 31 MiB.
   - **Stack:** V8's own stack is what limits recursion, not WebAssembly's. A recursive function worked 600 calls deep and failed at 800 with "Maximum call stack size exceeded", which the loader reports as a crash. The limit of 150 nested calls leaves a margin, to check in each browser's workers in phase 2.
+
+## Phase 2, as built
+
+`web/`: `npm run build` builds the module and bundles the page into `web/dist`, and `npm run serve` serves it on port 8000.
+
+- **The page:**
+  - CodeMirror, with Probl's highlighting, and compile errors underlined as you type.
+  - Run (Ctrl-Enter or ⌘-Enter), Stop (Escape), Share, the examples, and options: the mode, runs and seed, exact updates, and the 30-second limit.
+  - Output as `probl run` prints it, what `print` prints as it comes, and progress for sampled runs.
+  - A runtime error is underlined where it happened.
+  - Light and dark, and one column on a phone.
+- **Two workers share the compiled module.** One checks the program as it's edited; the other runs it. Stop, the time limit and a crash all end the runner, and a new one takes its place.
+- **Data:** every program may read the examples' data, from memory.
+- **Share links** carry the program compressed in the fragment. The last program edited is kept in the browser.
+- **Sizes:** the page's script is 406 KB, 132 KB compressed, mostly CodeMirror; the module is 1.1 MB, 400 KB compressed.
+- **Tested in headless Chrome and Firefox** (`node web/test/page.mjs`, with `firefox` for Firefox):
+  - every example prints exactly what `probl run` prints;
+  - a long run shows its progress, stops, and the next run works;
+  - 149 nested calls work, and 200 are the limit's error;
+  - a compile error is underlined;
+  - a share link opens the same program.
+- **Measured in the browsers:**
+  - **Speed:** similar to Node. Example 07 takes 2.6 s in Chrome and 3.0 s in Firefox.
+  - **Recursion:** Chrome's worker handled 350 nested calls and crashed at 400, when V8's stack ran out. Firefox handled 600 and failed at 800, when WebAssembly's own 1 MiB stack ran out. The limit of 150 leaves a margin of 2.3× in Chrome. A crash is reported as one, and the worker replaced.
+  - **Clicks in tests:** headless Firefox doesn't always deliver WebDriver clicks to a page that just loaded, so the tests press buttons through the DOM.
+
+Left: hosting and continuous integration (phase 3, which needs a remote), and the later items in phase 4.
 
 ## Open questions
 

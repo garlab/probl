@@ -40,10 +40,19 @@ cargo run --release -p probl-cli -- repl
 cargo test --all
 ```
 
+The playground runs the same engine in the browser, compiled to WebAssembly. It needs Node, and Rust's WebAssembly target:
+
+```sh
+rustup target add wasm32-unknown-unknown
+cd web && npm install && npm run serve        # then open http://localhost:8000
+npm test                                      # every example, in Node and in headless Chrome
+```
+
 - [Language overview](docs/language-overview.md): the model, the syntax, and a tour of the language
 - [Reference semantics](docs/semantics.md): the precise rules the engine follows
 - [Reading data](docs/data-input.md): CSV, JSON and lines, read with declared types, and its [design review](docs/data-input-review.md)
 - [Better inference](docs/inference-proposal.md): exact updates for conjugate priors, what a general method needs first, and its [design review](docs/inference-proposal-review.md)
+- [Playground plan](docs/playground-plan.md): Probl in the browser, what it took, and what's left
 - [Implementation plan](docs/implementation-plan.md): status, architecture, phases, testing and risks
 - [Project audit](docs/project-audit.md): the review that led to the reference semantics
 - [Benchmarks](docs/benchmarks.md): realistic models, what they cost, and what to build next (`cargo run --release -p probl-bench`)

@@ -1,0 +1,148 @@
+:root {
+  --page: #f6f5f1;
+  --editor: #ffffff;
+  --panel: #ffffff;
+  --text: #1d1f22;
+  --faint: #8a8f98;
+  --line: #dddbd3;
+  --active: #f3f1ea;
+  --selection: #d7e4f7;
+  --accent: #2458c6;
+  --accent-text: #ffffff;
+  --error: #b3261e;
+  --keyword: #8739b8;
+  --number: #1a7f5a;
+  --string: #a6541b;
+  --comment: #7c828c;
+  --type: #1f6fa8;
+  --function: #3d4ea6;
+  --meta: #b0306e;
+  --operator: #5b616b;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #16181c;
+    --editor: #1d2025;
+    --panel: #23262c;
+    --text: #e3e5e8;
+    --faint: #7d838d;
+    --line: #33373e;
+    --active: #262a30;
+    --selection: #2f4466;
+    --accent: #6d9cf2;
+    --accent-text: #0f1726;
+    --error: #ff8a80;
+    --keyword: #c792ea;
+    --number: #7fd4a8;
+    --string: #f0b37e;
+    --comment: #7f8791;
+    --type: #7cc4f0;
+    --function: #9fb0ff;
+    --meta: #f08bbd;
+    --operator: #a6adb8;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; margin: 0; }
+
+body {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background: var(--page);
+  color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+h1 { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -0.01em; }
+h1 span { color: var(--faint); font-weight: 450; }
+
+select, input, button {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 5px 10px;
+}
+
+#examples { max-width: min(460px, 100%); }
+input[type="number"] { width: 7.5em; }
+input[type="checkbox"] { padding: 0; }
+
+.actions { display: flex; gap: 8px; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: 0.45; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+
+.options { position: relative; }
+.options summary { cursor: pointer; color: var(--faint); padding: 5px 0; }
+.options .panel {
+  position: absolute;
+  z-index: 10;
+  right: 0;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.14);
+}
+.options label { display: flex; align-items: center; gap: 8px; }
+#sampling { display: flex; gap: 12px; }
+#sampling[hidden] { display: none; }
+
+main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  min-height: 0;
+}
+
+#editor { min-height: 0; overflow: hidden; border-right: 1px solid var(--line); }
+#editor .cm-editor { height: 100%; font-size: 14px; }
+#editor .cm-scroller { font-family: var(--mono); line-height: 1.5; }
+#editor .cm-focused { outline: none; }
+
+#output { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.bar { display: flex; align-items: center; gap: 12px; min-height: 38px; padding: 8px 16px; color: var(--faint); font-size: 14px; }
+progress { flex: 0 1 200px; }
+
+pre {
+  margin: 0;
+  padding: 4px 16px 16px;
+  font: 13.5px/1.5 var(--mono);
+  white-space: pre;
+  overflow-x: auto;
+}
+#printed { color: var(--faint); border-bottom: 1px dashed var(--line); padding-bottom: 10px; margin-bottom: 8px; }
+#result.error { color: var(--error); }
+
+footer { padding: 8px 16px; border-top: 1px solid var(--line); color: var(--faint); font-size: 12.5px; }
+
+@media (max-width: 760px) {
+  body { grid-template-rows: auto auto auto; height: auto; min-height: 100%; }
+  #examples { flex: 1 1 100%; width: 100%; min-width: 0; max-width: none; }
+  main { grid-template-columns: 1fr; }
+  #editor { height: 55vh; border-right: none; border-bottom: 1px solid var(--line); }
+  #output { min-height: 40vh; }
+  .options .panel { right: auto; left: 0; }
+}

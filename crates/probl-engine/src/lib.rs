@@ -112,6 +112,19 @@ pub struct Options {
     /// (docs/semantics.md, section 10). Turning it off unrolls them, which
     /// is only useful for checking the engine.
     pub solve: bool,
+    /// When sampling, told after each batch how many runs are done, and how
+    /// many there are.
+    pub progress: Option<Progress>,
+}
+
+/// A function told how many runs are done, and how many there are.
+#[derive(Clone)]
+pub struct Progress(pub Arc<dyn Fn(u64, u64) + Send + Sync>);
+
+impl std::fmt::Debug for Progress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Progress")
+    }
 }
 
 impl Default for Options {
@@ -127,6 +140,7 @@ impl Default for Options {
             inputs: None,
             conjugate: true,
             solve: true,
+            progress: None,
         }
     }
 }
@@ -599,6 +613,9 @@ fn run_batches(
                 Ok(batch) => combined.absorb(batch),
                 Err(e) => return stop(e),
             }
+            if let Some(progress) = &options.progress {
+                (progress.0)(((index + 1) * interp::BATCH).min(runs), runs);
+            }
             *combined_upto.lock().unwrap_or_else(PoisonError::into_inner) = index + 1;
             caught_up.notify_all();
         }
@@ -636,6 +653,9 @@ fn run_batches_here(
             print(&line);
         }
         combined.absorb(result?);
+        if let Some(progress) = &options.progress {
+            (progress.0)(first + n, runs);
+        }
     }
     Ok(combined)
 }

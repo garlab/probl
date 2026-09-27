@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Probl playground</title>
+  <meta name="description" content="Write and run Probl programs in your browser: programs whose conditions are probabilities.">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header>
+    <h1>Probl <span>playground</span></h1>
+    <select id="examples" aria-label="Examples">
+      <option value="">Examples…</option>
+    </select>
+    <div class="actions">
+      <button id="run" class="primary" title="Run (Ctrl+Enter or ⌘+Enter)">Run</button>
+      <button id="stop" disabled title="Stop (Escape)">Stop</button>
+      <button id="share" title="Copy a link to this program">Share</button>
+    </div>
+    <details class="options">
+      <summary>Options</summary>
+      <div class="panel">
+        <label>Mode
+          <select id="mode">
+            <option value="program">as the program says</option>
+            <option value="enumerate">enumerate</option>
+            <option value="sample">sample</option>
+          </select>
+        </label>
+        <span id="sampling" hidden>
+          <label>Runs <input id="runs" type="number" min="1" value="10000"></label>
+          <label>Seed <input id="seed" type="number" min="0" value="0"></label>
+        </span>
+        <label><input id="conjugate" type="checkbox" checked> Exact updates for conjugate priors</label>
+        <label><input id="limited" type="checkbox" checked> Stop runs after 30 seconds</label>
+      </div>
+    </details>
+  </header>
+  <main>
+    <section id="editor" aria-label="Program"></section>
+    <section id="output" aria-label="Output">
+      <div class="bar">
+        <span id="status" role="status"></span>
+        <progress id="progress" hidden></progress>
+      </div>
+      <pre id="printed" hidden></pre>
+      <pre id="result"></pre>
+    </section>
+  </main>
+  <footer>
+    <span id="version"></span> · Programs run in your browser, with lower limits than the command line. Nothing you write is sent anywhere.
+  </footer>
+</body>
+</html>

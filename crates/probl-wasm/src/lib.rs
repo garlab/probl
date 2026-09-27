@@ -10,7 +10,7 @@
 //! the tests call.
 
 use probl_engine::data::{self, InputLimits, Resolver, Snapshots};
-use probl_engine::{Limits, Options, RuntimeError};
+use probl_engine::{Limits, Options, Progress, RuntimeError};
 use probl_sema::ir::Mode;
 use probl_syntax::{Diagnostic, Severity, SourceFile, Span};
 use serde_json::{Map, Value as Json, json};
@@ -63,12 +63,14 @@ pub fn check(source: &str) -> String {
 /// - `"conjugate"`: `false` to sample without exact updates;
 /// - `"files"`: `{path: text}`, the files `read` may read.
 ///
-/// `print` receives what the program prints, as it prints it. The answer is
+/// `print` receives what the program prints, as it prints it, and
+/// `progress`, when sampling, how many runs are done after each batch, and
+/// how many there are. The answer is
 /// `{"output": …, "stats": …, "diagnostics": [...]}`, or
 /// `{"error": …, "diagnostics": [...]}`, with the error described as a
 /// diagnostic, and its `"kind"`: `"language"`, `"unsupported"`, `"limit"`
 /// or `"internal"`.
-pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send)) -> String {
+pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option<Progress>) -> String {
     let request: Json = match serde_json::from_str(request) {
         Ok(r) => r,
         Err(e) => {
@@ -88,6 +90,7 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send)) -> String {
         limits: limits(),
         conjugate: request["conjugate"].as_bool().unwrap_or(true),
         mode: mode(&request, &program.settings.mode),
+        progress,
         ..Options::default()
     };
     if !program.inputs.is_empty() {
@@ -262,6 +265,8 @@ mod exports {
         fn print(ptr: *const u8, len: usize);
         /// What a panic said, just before the module stops.
         fn panicked(ptr: *const u8, len: usize);
+        /// Runs done, and runs there are, after each batch of sampled runs.
+        fn progress(done: f64, total: f64);
     }
 
     thread_local! {
@@ -317,7 +322,11 @@ mod exports {
         let request = take(ptr, len);
         // SAFETY: the pointer and length describe `line`.
         let mut printed = |line: &str| unsafe { print(line.as_ptr(), line.len()) };
-        give(super::run(&request, &mut printed))
+        // SAFETY: `progress` takes two numbers.
+        let told = probl_engine::Progress(std::sync::Arc::new(|done, total| unsafe {
+            progress(done as f64, total as f64)
+        }));
+        give(super::run(&request, &mut printed, Some(told)))
     }
 
     #[unsafe(no_mangle)]

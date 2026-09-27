@@ -305,6 +305,11 @@ The forecast made when the plan was first written, by running [`examples/09_road
   - closed forms: the audit's `f()`, exploding dice, mutual recursion, a recursive tennis game, observations in each round;
   - calls that never return, and ones that come back and print;
   - 3,000 random processes written both ways, as recursion and as a loop. Half of them add 1 at each step, so their results have infinitely many values. All 176,491 probabilities agreed. `PROBL_RECURSION_CASES` runs more.
+- **The playground.**
+  - **The API:** `cargo test -p probl-wasm` tests it natively. All nine examples must print through it exactly what the engine prints for `probl run`.
+  - **WebAssembly:** `node web/test/examples.mjs` runs the WebAssembly build in Node and compares every example with `probl run`, byte for byte.
+  - **Browsers:** `node web/test/page.mjs` drives the page in headless Chrome, or Firefox with `firefox`. It checks every example, progress and Stop, the call-depth limit, errors in the editor and share links.
+  - These need the WebAssembly target and Node, so `cargo test` doesn't run them.
 - **Samplers.** Kolmogorov–Smirnov tests for every continuous family, chi-square tests for the direct count samplers, and closed-form checks of CDFs, quantiles and densities. `probl-engine/tests/sampling.rs` covers the rules of semantics §13–14.
 - **Exact updates.** `probl-engine/tests/conjugate.rs` and the unit tests of `conjugate.rs` check:
   - the formulas, against closed forms and numerical integration, including probabilities far below the smallest `f64`;
@@ -366,5 +371,5 @@ Still open:
 
 The order the benchmarks recommend (docs/benchmarks.md). The first three are done: parallel sampling batches (6–8× for sampled models on 12 cores), cheaper merging (1.4–2.9× for enumeration), and moving draws to their first use (the reliability model follows 256 worlds instead of 2²⁰). So are reading data ([reading data](data-input.md)) and the evidence when sampling, which completes v0.2. So are exact updates for conjugate priors, the first part of better inference: an A/B test's 100,000 runs are worth 100,000 instead of 863 with 30 days of data, and instead of 204 with 120. And so is solving loops and recursion that cycle (semantics §6 and §10).
 
-1. **A playground in the browser** ([its plan](playground-plan.md)). Phase 1 is built: the engine runs in WebAssembly, and prints exactly what the command line prints. Next is the page.
+1. **A playground in the browser** ([its plan](playground-plan.md)). The engine runs in WebAssembly, and prints exactly what the command line prints; the page works in Chrome and Firefox (`web/`). Next is hosting it, which needs a remote.
 2. **A general method for models that aren't conjugate** (lognormal priors, `a to b` estimates, hierarchical models, regressions). First a benchmark that needs it, then a specification: the review of the first proposal lists what it must contain ([inference proposal](inference-proposal.md), section 2).
