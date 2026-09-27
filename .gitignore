@@ -1,5 +1,7 @@
 /target
 /web/node_modules
 /web/dist
+/web/.wrangler
+/web/.env
 
 .obsidian

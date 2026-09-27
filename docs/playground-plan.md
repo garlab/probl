@@ -1,6 +1,6 @@
 # Plan: a playground in the browser
 
-> September 2026. The [implementation plan](implementation-plan.md) had "a WebAssembly build and a browser playground" in phase 7; this plans it as a project of its own. **Phases 1 and 2 are built:** the engine runs in WebAssembly and prints exactly what the command line prints, and the page works in Chrome and Firefox (sections [Phase 1, as built](#phase-1-as-built) and [Phase 2, as built](#phase-2-as-built)). The open questions at the end were answered with the proposals. Hosting waits for a remote.
+> September 2026. The [implementation plan](implementation-plan.md) had "a WebAssembly build and a browser playground" in phase 7; this plans it as a project of its own. **Phases 1 and 2 are built:** the engine runs in WebAssembly and prints exactly what the command line prints, and the page works in Chrome and Firefox (sections [Phase 1, as built](#phase-1-as-built) and [Phase 2, as built](#phase-2-as-built)). The open questions at the end were answered with the proposals. It's hosted on Cloudflare Pages, deployed with `npm run deploy` (section [Hosting, as built](#hosting-as-built)); continuous integration is next.
 
 ## How hard is it?
 
@@ -112,7 +112,7 @@ So the slowest examples would take 2–4 seconds in the browser, with a progress
 - **Tools:** the `wasm32-unknown-unknown` target, and nothing else for the module (see [Phase 1, as built](#phase-1-as-built)). The page uses CodeMirror 6 for the editor and esbuild to bundle it: a handful of npm packages, with a lockfile.
 - **Size:** the module includes the parser, the engine, the diagnostics renderer, and the CSV and JSON readers: 1.1 MB, and 400 KB compressed, without `wasm-opt`.
 - **The stack:** the call-depth limit keeps recursion within what the browser allows (see [Phase 1, as built](#phase-1-as-built)).
-- **Hosting:** static files, since everything runs in the browser. Any static host works, such as GitHub Pages, provided it serves `.wasm` as `application/wasm`. The repository has no remote yet.
+- **Hosting:** static files, since everything runs in the browser. Any static host works, provided it serves `.wasm` as `application/wasm`. It's on Cloudflare Pages (see [Hosting, as built](#hosting-as-built)).
 - **Continuous integration:** check that the engine builds for `wasm32` on every change, run the tests below, and publish the page from the main branch.
 
 ## Tests
@@ -136,7 +136,7 @@ So the slowest examples would take 2–4 seconds in the browser, with a progress
    - the editor and its highlighting, with diagnostics in place;
    - output, examples, options, share links;
    - the layout on phones.
-3. **Hosting** (1–2 days): the static build, continuous integration and publishing. This needs a remote.
+3. **Hosting** (1–2 days): the static build, continuous integration and publishing. Publishing is done, to Cloudflare Pages; continuous integration is next.
 4. **Later, each on its own:**
    - charts of distributions and fan charts of `by` reports, which need the structured output (`--format json`) planned for phase 5 (3–5 days);
    - the data tab (1–2 days);
@@ -201,7 +201,7 @@ So the slowest examples would take 2–4 seconds in the browser, with a progress
   - **Recursion:** Chrome's worker handled 350 nested calls and crashed at 400, when V8's stack ran out. Firefox handled 600 and failed at 800, when WebAssembly's own 1 MiB stack ran out. The limit of 150 leaves a margin of 2.3× in Chrome. A crash is reported as one, and the worker replaced.
   - **Clicks in tests:** headless Firefox doesn't always deliver WebDriver clicks to a page that just loaded, so the tests press buttons through the DOM.
 
-Left: hosting and continuous integration (phase 3, which needs a remote), and the later items in phase 4.
+Left: continuous integration (phase 3), and the later items in phase 4.
 
 ## The guide and the editor, as built
 
@@ -233,10 +233,23 @@ Beside the output are two more tabs: the language overview as a **guide**, and a
   - the names natively, in `probl-sema/tests/symbols.rs` and the API's tests;
   - in headless Chrome and Firefox: hover, going to definitions, highlights, completion, signature help and indentation as a person types, the tabs, the reference's search, the guide's programs and links, the cursor against light and dark backgrounds, and the page's width on a phone.
 
+## Hosting, as built
+
+The playground is deployed to Cloudflare Pages with wrangler, a development dependency of `web/`.
+
+- **`npm run deploy`** (`web/deploy.mjs`) deploys what's in the working tree:
+  - It checks the credentials and finds the project through Cloudflare's API, before the build. If the project doesn't exist, it creates it with wrangler, with `main` as its production branch.
+  - It builds, and uploads `web/dist` with `wrangler pages deploy`, with the commit's hash and message. It warns if the working tree has uncommitted changes.
+  - Without flags, it deploys to production. With `--preview`, it deploys a preview named after the current git branch.
+- **Credentials** come from the environment or from `web/.env`, which git ignores: `CLOUDFLARE_API_TOKEN`, a token with *Account · Cloudflare Pages · Edit*, and `CLOUDFLARE_ACCOUNT_ID`. `CLOUDFLARE_PAGES_PROJECT` names the project, `probl-playground` by default. Wrangler needs Node 22 or later.
+- **Served as Cloudflare serves it:** under `wrangler pages dev`, which serves files as Pages does, every browser test passes in Chrome and Firefox. `probl.wasm` is served as `application/wasm`, and `guide.html` redirects to `/guide`, which `fetch` follows. Every file is revalidated on each load (`max-age=0, must-revalidate`), so a new deployment shows at once.
+- **Testing a deployment:** `PROBL_URL=https://probl-playground.pages.dev node test/page.mjs` runs the browser tests against it.
+- **For continuous integration:** the same script, with the two variables as secrets. Pull requests could deploy previews with `--preview`, then run the browser tests against them.
+
 ## Open questions
 
 1. **When:** before Markov-chain solving, the next step in the plan, or after? And before phase 5's structured output, which charts would need?
-2. **Where:** GitHub Pages needs a remote. Otherwise, another static host or your own domain?
+2. **Where:** Cloudflare Pages.
 3. **Data in the first release:** the examples' files only (proposed), a data tab straight away, or no `read` at all?
 4. **Output in the first release:** text, as `probl run` prints it (proposed), or charts first, which need structured output?
 5. **The editor:** CodeMirror 6, with npm and esbuild (proposed), or a plain text box with no JavaScript dependencies?

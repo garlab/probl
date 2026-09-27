@@ -6,7 +6,8 @@
   "scripts": {
     "build": "node build.mjs",
     "serve": "node build.mjs --serve",
-    "test": "node test/examples.mjs && node test/page.mjs"
+    "test": "node test/examples.mjs && node test/page.mjs",
+    "deploy": "node deploy.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -21,6 +22,7 @@
   "devDependencies": {
     "esbuild": "^0.28.2",
     "marked": "^18.0.14",
-    "puppeteer-core": "^24.0.0"
+    "puppeteer-core": "^24.0.0",
+    "wrangler": "^4.142.0"
   }
 }

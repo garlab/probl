@@ -48,6 +48,19 @@ cd web && npm install && npm run serve        # then open http://localhost:8000
 npm test                                      # every example in Node, then the page in headless Chrome
 ```
 
+It's deployed to Cloudflare Pages with wrangler. `npm run deploy` checks the credentials, creates the Pages project the first time, builds, and uploads `web/dist`. It needs Node 22 or later, and two variables, from the environment or from `web/.env`, which git ignores:
+
+- `CLOUDFLARE_API_TOKEN`: an API token with the permission *Account · Cloudflare Pages · Edit*.
+- `CLOUDFLARE_ACCOUNT_ID`: the account's ID.
+- Optionally, `CLOUDFLARE_PAGES_PROJECT`, the project's name. It's `probl-playground` if unset.
+
+```sh
+cd web
+npm run deploy                                # production: the project's production branch, main
+npm run deploy -- --preview                   # a preview, named after the current git branch
+PROBL_URL=https://probl-playground.pages.dev node test/page.mjs   # test the deployed page
+```
+
 - [Language overview](docs/language-overview.md): the model, the syntax, and a tour of the language
 - [Reference semantics](docs/semantics.md): the precise rules the engine follows
 - [Reading data](docs/data-input.md): CSV, JSON and lines, read with declared types, and its [design review](docs/data-input-review.md)
