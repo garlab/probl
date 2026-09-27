@@ -4,8 +4,9 @@
 // definition with Cmd-click, Ctrl-click or F12, and highlights of the
 // name under the cursor.
 
+import { closeCompletion, completionStatus, selectedCompletion } from '@codemirror/autocomplete';
 import { syntaxTree } from '@codemirror/language';
-import { StateEffect, StateField } from '@codemirror/state';
+import { Prec, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, EditorView, hoverTooltip, keymap } from '@codemirror/view';
 
 /** New symbols from the compiler, for the document as it is now. */
@@ -137,8 +138,10 @@ function card({ code, what, doc }) {
   return dom;
 }
 
-/** The editor's extensions, given the reference (`docs()` from the module). */
-export function intelligence(docs) {
+/** The editor's extensions, given the reference (`docs()` from the module)
+ * and `names(source)`, which gives a program's symbols, or null. Put them
+ * before `basicSetup`: Enter must reach them before the completion list. */
+export function intelligence(docs, names) {
   const builtins = new Map(docs.builtins.map((b) => [b.name, b]));
   builtins.set('read', docs.read);
   const keywords = new Map(docs.keywords.map((k) => [k.name, k]));
@@ -149,7 +152,7 @@ export function intelligence(docs) {
   const parameters = (b) => (b.signature.startsWith(`${b.name}(`) ? b.signature.slice(b.name.length) : b.signature);
 
   // ── Completion ──
-  function complete(context) {
+  async function complete(context) {
     if (inText(context.state, context.pos, -1)) return null;
     const word = context.matchBefore(/[A-Za-z_]\w*/);
     const from = word ? word.from : context.pos;
@@ -157,7 +160,11 @@ export function intelligence(docs) {
     const before = context.state.sliceDoc(line.from, from);
     const dotted = /([A-Za-z_]\w*)?\.$/.exec(before);
     if (!word && !context.explicit && !dotted) return null;
-    const symbols = context.state.field(symbolsField, false);
+    // Not while naming something new: a variable, a function or its
+    // parameters, a type, or a loop's variable.
+    if (/\b(let|var|fn|type|enum|for)\s+$|\bfn\s+\w+\s*\((.*,)?\s*$/.test(before)) return null;
+    // The names as the program is now: the last check may be older.
+    const symbols = (await names(context.state.doc.toString())) ?? context.state.field(symbolsField, false);
     const definitions = symbols?.definitions ?? [];
     const options = [];
     const seen = new Set();
@@ -277,9 +284,27 @@ export function intelligence(docs) {
     );
   });
 
+  // Enter takes a completion only when that changes something: with the
+  // whole name typed, it starts a new line.
+  const smartEnter = Prec.highest(
+    keymap.of([
+      {
+        key: 'Enter',
+        run(view) {
+          if (completionStatus(view.state) !== 'active') return false;
+          const { head } = view.state.selection.main;
+          const typed = /\w*$/.exec(view.state.sliceDoc(view.state.doc.lineAt(head).from, head))[0];
+          if (selectedCompletion(view.state)?.label === typed) closeCompletion(view);
+          return false;
+        },
+      },
+    ]),
+  );
+
   return {
     complete,
     extensions: [
+      smartEnter,
       symbolsField,
       hover,
       link,

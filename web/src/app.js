@@ -130,7 +130,10 @@ async function main() {
   const runner = new Engine(module, onRun);
   const { examples, docs, version } = await checker.ready;
   $('version').textContent = `Probl ${version}`;
-  const intel = intelligence(docs);
+  const intel = intelligence(docs, async (source) => {
+    const answer = await check(source);
+    return answer.type === 'done' ? answer.result.symbols : null;
+  });
 
   // The examples' data, which any program may read.
   const files = Object.assign({}, ...examples.map((e) => e.files));
@@ -174,10 +177,10 @@ async function main() {
   const view = new EditorView({
     parent: $('editor'),
     extensions: [
+      intel.extensions,
       basicSetup,
       probl,
       probl.data.of({ autocomplete: intel.complete }),
-      intel.extensions,
       syntaxHighlighting(highlight),
       theme,
       scheme.of(EditorView.darkTheme.of(darkScheme.matches)),

@@ -296,6 +296,45 @@ try {
   offered = await texts('.cm-tooltip-autocomplete li');
   expect(offered.length === 0, 'there’s no completion in a comment', offered.join(', '));
 
+  // Typing a program as a person would, faster than the checker checks.
+  const typed = () => editor.evaluate(() => window.playground.getSource());
+  await editor.evaluate(() => window.playground.setSource(''));
+  await cursor(0);
+  offered = await completions('let quota = 3\nreport quo');
+  expect(offered[0] === 'quota', 'completion knows a name declared a moment ago', offered.join(', '));
+  await editor.keyboard.type('ta');
+  await becomes(editor, () => document.querySelector('.cm-tooltip-autocomplete li'));
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  await editor.keyboard.press('Enter');
+  let text = await typed();
+  expect(text === 'let quota = 3\nreport quota\n', 'Enter after a whole name starts a new line', JSON.stringify(text));
+  await editor.keyboard.type('let enumer');
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  offered = await texts('.cm-tooltip-autocomplete li');
+  expect(offered.length === 0, 'there’s no completion while naming a variable', offered.join(', '));
+  // Blocks indent, and their closing braces line up.
+  await editor.evaluate(() => window.playground.setSource(''));
+  await cursor(0);
+  await editor.keyboard.type('fn f(x: int) -> int {\nif x > 1 {\nreturn x');
+  text = await typed();
+  expect(
+    text === 'fn f(x: int) -> int {\n  if x > 1 {\n    return x\n  }\n}',
+    'blocks indent as you type',
+    JSON.stringify(text),
+  );
+  await editor.keyboard.press('Escape');
+  const indented = 'if 50% {\n  report 1\n  ';
+  await editor.evaluate((src) => window.playground.setSource(src), indented);
+  await cursor(indented.length);
+  await editor.keyboard.type('} else {\nreport 2');
+  text = await typed();
+  expect(
+    text === 'if 50% {\n  report 1\n} else {\n  report 2\n}',
+    'a closing brace goes back out to its block’s line',
+    JSON.stringify(text),
+  );
+  await editor.keyboard.press('Escape');
+
   // The tabs: each shows its pane alone.
   const showTab = (name) => editor.evaluate((name) => document.querySelector(`[data-pane="${name}"]`).click(), name);
   await showTab('reference');

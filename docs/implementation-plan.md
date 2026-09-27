@@ -310,7 +310,7 @@ The forecast made when the plan was first written, by running [`examples/09_road
   - **WebAssembly:** `node web/test/examples.mjs` runs the WebAssembly build in Node and compares every example with `probl run`, byte for byte.
   - **Browsers:** `node web/test/page.mjs` drives the page in headless Chrome, or Firefox with `firefox`. It checks:
     - every example, progress and Stop, the call-depth limit, errors in the editor and share links;
-    - hover, going to definitions, highlights and completion in the editor;
+    - hover, going to definitions, highlights, completion and indentation in the editor, typed as a person types;
     - the reference's search, the guide's programs and links, the cursor against light and dark backgrounds, and the page's width on a phone.
   - **Names:** `probl-sema/tests/symbols.rs` checks that each use leads to its declaration, and which names are visible where.
   - These need the WebAssembly target and Node, so `cargo test` doesn't run them.

@@ -1,5 +1,6 @@
 // Highlighting for Probl in CodeMirror: keywords, numbers with their
-// percentages and dice, strings, comments and pragmas.
+// percentages and dice, strings, comments and pragmas. It also indents: a
+// line inside brackets is one level in from the line that opened them.
 
 import { StreamLanguage } from '@codemirror/language';
 
@@ -26,9 +27,15 @@ function string(stream, state) {
   return 'string';
 }
 
+const opening = new Set(['(', '[', '{']);
+const closing = new Set([')', ']', '}']);
+
 export const probl = StreamLanguage.define({
   name: 'probl',
-  startState: () => ({ string: false }),
+  // `open`: for each bracket not yet closed, innermost last, the
+  // indentation of the line it's on.
+  startState: () => ({ string: false, open: [] }),
+  copyState: (state) => ({ string: state.string, open: state.open.slice() }),
   token(stream, state) {
     if (state.string) return string(stream, state);
     if (stream.eatSpace()) return null;
@@ -53,8 +60,22 @@ export const probl = StreamLanguage.define({
       return 'variableName';
     }
     if (stream.match(/^(->|=>|==|!=|<=|>=|\.\.<|\.\.|\+=|-=|\*=|\/=|[-+*/<>=~])/)) return 'operator';
-    stream.next();
+    const c = stream.next();
+    if (opening.has(c)) state.open.push(stream.indentation());
+    else if (closing.has(c)) state.open.pop();
     return null;
   },
-  languageData: { commentTokens: { line: '#' } },
+  indent(state, textAfter, cx) {
+    if (!state.open.length) return 0;
+    const opener = state.open[state.open.length - 1];
+    // A line that starts by closing the bracket lines up with its opener's.
+    return closing.has(textAfter[0]) ? opener : opener + cx.unit;
+  },
+  languageData: {
+    commentTokens: { line: '#' },
+    // Typing a closing bracket at the start of a line indents it again.
+    indentOnInput: /^\s*[)\]}]$/,
+    // `'` isn't a quote in Probl.
+    closeBrackets: { brackets: ['(', '[', '{', '"'] },
+  },
 });
