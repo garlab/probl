@@ -145,10 +145,12 @@ function card({ code, what, doc }) {
   return dom;
 }
 
-/** The editor's extensions, given the reference (`docs()` from the module)
- * and `names(source)`, which gives a program's symbols, or null. Put them
- * before `basicSetup`: Enter must reach them before the completion list. */
-export function intelligence(docs, names) {
+/** The editor's extensions, given the reference (`docs()` from the module),
+ * `names(source)`, which gives a program's symbols, or null, and
+ * `showReference(name)`, which shows a built-in's or keyword's entry. Put
+ * them before `basicSetup`: Enter must reach them before the completion
+ * list. */
+export function intelligence(docs, names, showReference) {
   const builtins = new Map(docs.builtins.map((b) => [b.name, b]));
   builtins.set('read', docs.read);
   const keywords = new Map(docs.keywords.map((k) => [k.name, k]));
@@ -238,10 +240,21 @@ export function intelligence(docs, names) {
     return { pos: word.from, end: word.to, above: true, create: () => ({ dom: card(content) }) };
   });
 
-  // ── Going to a definition ──
+  /** The built-in or keyword at `pos`, which the reference documents. */
+  function documentedAt(state, pos) {
+    const word = wordAt(state, pos);
+    if (!word || inText(state, pos, 1) || !(builtins.has(word.text) || keywords.has(word.text))) return null;
+    return word;
+  }
+
+  // ── Going to a definition, or to the reference ──
   function goToDefinition(view, pos) {
     const def = definitionAt(view.state, pos);
-    if (!def) return false;
+    if (!def) {
+      const word = documentedAt(view.state, pos);
+      if (word) showReference(word.text);
+      return word !== null;
+    }
     view.dispatch({
       selection: { anchor: def.from, head: def.to },
       effects: EditorView.scrollIntoView(def.from, { y: 'center' }),
@@ -268,7 +281,7 @@ export function intelligence(docs, names) {
     if (event.metaKey || event.ctrlKey) {
       const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
       const word = pos === null ? null : wordAt(view.state, pos);
-      if (word && definitionAt(view.state, pos)) range = { from: word.from, to: word.to };
+      if (word && (definitionAt(view.state, pos) || documentedAt(view.state, pos))) range = { from: word.from, to: word.to };
     }
     const current = view.state.field(link);
     if (current?.from !== range?.from || current?.to !== range?.to) view.dispatch({ effects: setLink.of(range) });

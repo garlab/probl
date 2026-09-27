@@ -191,6 +191,8 @@ button.link { font: inherit; color: var(--accent); background: none; border: non
 #reference .hint { color: var(--faint); font-size: 13.5px; margin: 10px 0 0; }
 #reference h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--faint); margin: 22px 0 6px; }
 #reference section[hidden], #reference .entry[hidden] { display: none; }
+#reference .entry.current { border-left: 3px solid var(--accent); margin-left: -13px; padding-left: 10px; }
+#reference .entry.current .signature { color: var(--accent); }
 .entry { padding: 7px 0; border-bottom: 1px solid var(--line); }
 .entry .signature { font-family: var(--mono); font-size: 13.5px; font-weight: 600; }
 .entry p { margin: 3px 0 0; font-size: 14px; }

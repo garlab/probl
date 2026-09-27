@@ -88,9 +88,10 @@ try {
   // Stopping a long run, and running again after.
   await page.evaluate(() => window.playground.setSource('@mode sample(runs: 100_000_000, seed: 1)\nreport d6 > 3'));
   await press(page, 'run');
-  await new Promise((resolve) => setTimeout(resolve, 1500));
+  const progressed = /Running… [\d,]+ of 100,000,000 runs/;
+  await becomes(page, (re) => new RegExp(re).test(document.getElementById('status').textContent), progressed.source, 10_000);
   const progress = await page.$eval('#status', (e) => e.textContent);
-  expect(/Running… [\d,]+ of 100,000,000 runs/.test(progress), 'a long run shows its progress', progress);
+  expect(progressed.test(progress), 'a long run shows its progress', progress);
   await press(page, 'stop');
   const stopped = await page.$eval('#status', (e) => e.textContent);
   expect(stopped === 'Stopped.', 'Stop stops it', stopped);
@@ -305,6 +306,24 @@ try {
     window.playground.view.contentDOM.dispatchEvent(new KeyboardEvent('keyup', { key: 'Meta', bubbles: true })),
   );
   expect((await texts('.cm-probl-link')).length === 0, 'letting go of the key removes the underline');
+
+  // A built-in's definition is its entry in the reference.
+  await mouse('mousemove', offset('binomial(', 0, 1), { metaKey: true });
+  const builtinLink = await texts('.cm-probl-link');
+  expect(builtinLink.join() === 'binomial', 'holding Cmd or Ctrl underlines a built-in too', builtinLink.join());
+  await cursor(offset('binomial(', 0, 2));
+  await editor.keyboard.press('F12');
+  const entry = await editor.evaluate(() => ({
+    tab: document.querySelector('[role="tab"][aria-selected="true"]').dataset.pane,
+    current: document.querySelector('#entries .entry.current')?.dataset.names,
+    visible: document.querySelector('#entries .entry.current')?.offsetParent !== null,
+  }));
+  expect(
+    entry.tab === 'reference' && entry.current === 'binomial' && entry.visible,
+    'F12 on a built-in shows its entry in the reference',
+    JSON.stringify(entry),
+  );
+  await editor.evaluate(() => document.querySelector('[data-pane="output"]').click());
 
   // Completion, as you type: the program's names, the built-ins with their
   // documentation, and an enum's variants.

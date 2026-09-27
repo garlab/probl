@@ -132,10 +132,14 @@ async function main() {
   const runner = new Engine(module, onRun);
   const { examples, docs, version } = await checker.ready;
   $('version').textContent = `Probl ${version}`;
-  const intel = intelligence(docs, async (source) => {
-    const answer = await check(source);
-    return answer.type === 'done' ? answer.result.symbols : null;
-  });
+  const intel = intelligence(
+    docs,
+    async (source) => {
+      const answer = await check(source);
+      return answer.type === 'done' ? answer.result.symbols : null;
+    },
+    (name) => showReference(name),
+  );
 
   // The examples' data, which any program may read.
   const files = Object.assign({}, ...examples.map((e) => e.files));
@@ -462,6 +466,7 @@ async function main() {
   const entry = (item) => {
     const div = document.createElement('div');
     div.className = 'entry';
+    div.dataset.names = item.name;
     div.dataset.search = `${item.name} ${item.signature} ${item.summary}`.toLowerCase();
     const head = document.createElement('code');
     head.className = 'signature';
@@ -493,11 +498,22 @@ async function main() {
       let any = false;
       for (const e of section.querySelectorAll('.entry')) {
         e.hidden = query !== '' && !e.dataset.search.includes(query);
+        e.classList.remove('current');
         any ||= !e.hidden;
       }
       section.hidden = !any;
     }
   });
+
+  /** Show a built-in's or keyword's entry, from the editor. */
+  function showReference(name) {
+    showPane('reference');
+    $('search').value = name;
+    $('search').dispatchEvent(new Event('input'));
+    const entry = [...$('entries').querySelectorAll('.entry')].find((e) => e.dataset.names.split(' ').includes(name));
+    entry?.classList.add('current');
+    entry?.scrollIntoView({ block: 'nearest' });
+  }
 
   // The guide: the language overview, loaded when first shown. Its
   // complete programs can be run in the editor.
