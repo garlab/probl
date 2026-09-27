@@ -6,7 +6,7 @@
 
 import { closeCompletion, completionStatus, selectedCompletion } from '@codemirror/autocomplete';
 import { syntaxTree } from '@codemirror/language';
-import { Prec, StateEffect, StateField } from '@codemirror/state';
+import { EditorSelection, Prec, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, hoverTooltip, keymap, showTooltip } from '@codemirror/view';
 import { highlight } from './probl-lang.js';
 
@@ -354,6 +354,28 @@ export function intelligence(docs, names, showReference) {
     return true;
   }
 
+  /** Select the name at `pos` where it's declared and wherever it's used,
+   * as the compiler resolves it, so that typing renames it everywhere. */
+  function selectUses(view, pos) {
+    const def = definitionAt(view.state, pos);
+    if (!def) return false;
+    const { references } = view.state.field(symbolsField);
+    const ranges = [[def.from, def.to], ...references.filter(([, , d]) => d === def.index)]
+      .filter(([from, to]) => from < to)
+      .sort((a, b) => a[0] - b[0]);
+    const main = Math.max(
+      0,
+      ranges.findIndex(([from, to]) => from <= pos && pos <= to),
+    );
+    view.dispatch({
+      selection: EditorSelection.create(
+        ranges.map(([from, to]) => EditorSelection.range(from, to)),
+        main,
+      ),
+    });
+    return true;
+  }
+
   // The name under the mouse while Cmd or Ctrl is held, underlined as a link.
   const setLink = StateEffect.define();
   const link = StateField.define({
@@ -524,7 +546,10 @@ export function intelligence(docs, names, showReference) {
       hover,
       link,
       highlights,
-      keymap.of([{ key: 'F12', run: (view) => goToDefinition(view, view.state.selection.main.head) }]),
+      keymap.of([
+        { key: 'F12', run: (view) => goToDefinition(view, view.state.selection.main.head) },
+        { key: 'F2', run: (view) => selectUses(view, view.state.selection.main.head) },
+      ]),
       EditorView.domEventHandlers({
         mousedown(event, view) {
           if (!(event.metaKey || event.ctrlKey) || event.button !== 0) return false;

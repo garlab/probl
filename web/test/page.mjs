@@ -326,6 +326,23 @@ try {
   );
   await editor.evaluate(() => document.querySelector('[data-pane="output"]').click());
 
+  // F2 selects a name everywhere it's used, so that typing renames it.
+  await cursor(offset('report rate', 0, 8));
+  await editor.keyboard.press('F2');
+  const uses = await editor.evaluate(() => {
+    const { state } = window.playground.view;
+    return state.selection.ranges.map((r) => `${state.sliceDoc(r.from, r.to)}@${state.doc.lineAt(r.from).number}`);
+  });
+  expect(uses.join() === 'rate@5,rate@10,rate@13', 'F2 selects a name wherever it’s used', uses.join());
+  await editor.keyboard.type('share');
+  const renamed = await editor.evaluate(() => window.playground.getSource());
+  expect(
+    (renamed.match(/\bshare\b/g) ?? []).length === 3 && !/\brate\b/.test(renamed.replace(/#.*$/gm, '')),
+    'and typing renames it',
+    renamed,
+  );
+  await editor.evaluate((src) => window.playground.setSource(src), source);
+
   // Completion, as you type: the program's names, the built-ins with their
   // documentation, and an enum's variants.
   const completions = async (typed) => {

@@ -211,6 +211,7 @@ Beside the output are two more tabs: the language overview as a **guide**, and a
   - **Hover** a name to see its declaration, what it is, its line, and the comments above it or at the end of its line. Hover a built-in or a keyword for its documentation. Words in comments and strings aren't names.
   - **Go to a definition** with Cmd-click or Ctrl-click, or F12. While the key is down, the name under the mouse is underlined as a link. On a built-in or a keyword, the same keys show its entry in the reference.
   - **The name under the cursor** is highlighted, with each of its uses.
+  - **Renaming:** F2 selects a name where it's declared and wherever it's used, as the compiler resolves it, so typing renames it everywhere at once.
   - **Completion** comes as you type, or with Ctrl-Space. It offers the names in scope first, nearest first, then the built-ins and keywords, with documentation beside the list. After an enum's name and a dot it offers the enum's variants; after any other dot, fields, and functions as methods.
     - It asks the checker about the program as it is, so a name declared a moment ago is offered.
     - It stays quiet while you name something new, after `let`, `var`, `fn`, `type`, `enum` or `for`.
