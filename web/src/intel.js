@@ -31,11 +31,12 @@ function mapSymbols(symbols, changes) {
   // program, is unknown until the next check. Scopes and functions, which
   // contain the edits, follow them.
   const edited = (from, to) => changes.touchesRange(from, to) !== false;
-  const definitions = symbols.definitions.map((d) =>
-    edited(d.from, d.to)
+  const definitions = symbols.definitions.map((d) => {
+    if (d.gone) return d;
+    return edited(d.from, d.to)
       ? { ...d, from: -1, to: -1, scope: [-1, -1], gone: true }
-      : { ...d, from: at(d.from), to: at(d.to, 1), scope: [at(d.scope[0]), at(d.scope[1], 1)] },
-  );
+      : { ...d, from: at(d.from), to: at(d.to, 1), scope: [at(d.scope[0]), at(d.scope[1], 1)] };
+  });
   return {
     definitions,
     references: symbols.references

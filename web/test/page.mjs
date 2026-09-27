@@ -130,6 +130,54 @@ try {
   const opened = await other.evaluate(() => window.playground.getSource());
   expect(opened === program, 'a share link opens the same program', opened);
 
+  // Before a run, the output pane says how to run the program; after, long
+  // reports wrap to fit it.
+  const fresh = await open();
+  const hinted = await fresh.evaluate(() => document.getElementById('empty').offsetParent !== null);
+  expect(hinted, 'before a run, the output pane says how to run the program');
+  await fresh.select('#examples', '01_tour');
+  await run(fresh);
+  const fitted = await fresh.evaluate(() => {
+    const result = document.getElementById('result');
+    return {
+      hint: document.getElementById('empty').offsetParent !== null,
+      scroll: result.scrollWidth,
+      width: result.clientWidth,
+    };
+  });
+  expect(!fitted.hint && fitted.scroll <= fitted.width, 'long reports wrap to fit the pane', JSON.stringify(fitted));
+
+  // Editing an example: the menu and the address stop naming it, so that
+  // reloading keeps the edits.
+  await fresh.select('#examples', '02_craps');
+  const named = await fresh.evaluate(() => `${document.getElementById('examples').value} ${location.hash}`);
+  expect(named === '02_craps #example=02_craps', 'an example is named in the menu and the address', named);
+  await fresh.evaluate(() => {
+    const { view } = window.playground;
+    view.dispatch({ selection: { anchor: view.state.doc.length } });
+    view.focus();
+  });
+  await fresh.keyboard.type('\nreport d4');
+  const unnamed = await becomes(fresh, () => location.hash === '' && document.getElementById('examples').value === '');
+  expect(unnamed, 'once it’s edited, neither names it');
+  await fresh.reload();
+  await fresh.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  const kept = await fresh.evaluate(() => [location.href, window.playground.getSource().slice(-40)]);
+  expect(kept[1].endsWith('\nreport d4'), 'reloading keeps the edits', JSON.stringify(kept));
+
+  // Replacing a program of your own says how to get it back, and undo does.
+  await fresh.evaluate(() => window.playground.setSource('# mine\nreport d6'));
+  await fresh.select('#examples', '03_rpg_duel');
+  const replaced = await fresh.$eval('#status', (e) => e.textContent);
+  expect(replaced.includes('brings it back'), 'replacing your own program says how to get it back', replaced);
+  await fresh.evaluate(() => window.playground.view.focus());
+  const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
+  await fresh.keyboard.down(mod);
+  await fresh.keyboard.press('z');
+  await fresh.keyboard.up(mod);
+  const undone = await fresh.evaluate(() => window.playground.getSource());
+  expect(undone === '# mine\nreport d6', 'and undo does', undone);
+
   // ── What the editor knows about the program ──
   const editor = await open();
   const source = [
@@ -340,7 +388,9 @@ try {
   await editor.evaluate(() => window.playground.setSource('let a = 1\nreport a'));
   await cursor(17);
   await becomes(editor, () => document.querySelectorAll('.cm-probl-same').length === 2);
+  // (Twice: a name forgotten at the first edit stays forgotten at the next.)
   await editor.evaluate(() => window.playground.setSource('let b = ('));
+  await editor.evaluate(() => window.playground.setSource('let c = ('));
   await cursor(5);
   await new Promise((resolve) => setTimeout(resolve, 700));
   const lingering = await texts('.cm-probl-same');

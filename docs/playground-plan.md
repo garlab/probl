@@ -176,11 +176,17 @@ So the slowest examples would take 2–4 seconds in the browser, with a progress
   - CodeMirror, with Probl's highlighting, and compile errors underlined as you type.
   - Run (Ctrl-Enter or ⌘-Enter), Stop (Escape), Share, the examples, and options: the mode, runs and seed, exact updates, and the 30-second limit.
   - Output as `probl run` prints it, what `print` prints as it comes, and progress for sampled runs.
+    - Before a run, the output pane says how to run the program, and where the guide and the reference are.
+    - A report too long for the pane wraps at its ` · ` separators, under its values. Each wrapped line starts with its separator. The text is unchanged.
   - A runtime error is underlined where it happened.
   - Light and dark, and one column on a phone.
 - **Two workers share the compiled module.** One checks the program as it's edited; the other runs it. Stop, the time limit and a crash all end the runner, and a new one takes its place.
 - **Data:** every program may read the examples' data, from memory.
-- **Share links** carry the program compressed in the fragment. The last program edited is kept in the browser.
+- **Share links** carry the program compressed in the fragment.
+- **The program you're working on is kept:**
+  - The last program you edited is kept in the browser. Programs opened from a link, the menu or the guide aren't: they aren't yours.
+  - Once you edit an example or a linked program, the menu and the address stop naming it, so reloading keeps your edits.
+  - When an example or the guide replaces a program of your own, the status line says that undo (⌘Z or Ctrl+Z) brings it back. Each program loaded is one step in the undo history.
 - **Sizes:** the page's script is 406 KB, 132 KB compressed, mostly CodeMirror; the module is 1.1 MB, 400 KB compressed.
 - **Tested in headless Chrome and Firefox** (`node web/test/page.mjs`, with `firefox` for Firefox):
   - every example prints exactly what `probl run` prints;

@@ -154,6 +154,20 @@ pre {
 }
 #printed { color: var(--faint); border-bottom: 1px dashed var(--line); padding-bottom: 10px; margin-bottom: 8px; }
 #result.error { color: var(--error); }
+/* A report too long for the pane wraps at its ` · ` separators, under its
+   values. */
+#result .line {
+  --indent: min(var(--hang), 40%); /* a long label leaves room for the values */
+  display: block;
+  white-space: pre-wrap;
+  padding-left: var(--indent);
+  text-indent: calc(-1 * var(--indent));
+}
+#result .item { white-space: pre; }
+#empty { margin: 0; padding: 4px 16px; color: var(--faint); max-width: 60ch; }
+#empty[hidden] { display: none; }
+kbd { font: 0.92em var(--mono); background: var(--code-bg); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+button.link { font: inherit; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; }
 
 /* The guide: the language overview. */
 #guide { padding: 4px 22px 40px; line-height: 1.55; }

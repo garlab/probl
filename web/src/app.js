@@ -5,7 +5,7 @@
 // it's edited, and the runner runs it. Stopping a run ends the runner's
 // worker, and a new one takes its place.
 
-import { indentWithTab } from '@codemirror/commands';
+import { indentWithTab, isolateHistory } from '@codemirror/commands';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { linter, lintGutter, setDiagnostics } from '@codemirror/lint';
 import { Compartment } from '@codemirror/state';
@@ -20,6 +20,8 @@ const TIME_LIMIT = 30;
 const STORED = 'probl-playground-source';
 
 const $ = (id) => document.getElementById(id);
+/** The modifier key for shortcuts: ⌘ on Apple's systems, Ctrl elsewhere. */
+const modKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
 const format = new Intl.NumberFormat('en');
 
 // ── Workers ──────────────────────────────────────────────────────────────
@@ -174,6 +176,8 @@ async function main() {
   );
 
   let saving = null;
+  let edited = false;
+  const userEdits = ['input', 'delete', 'move', 'undo', 'redo'];
   const view = new EditorView({
     parent: $('editor'),
     extensions: [
@@ -193,8 +197,16 @@ async function main() {
       ]),
       EditorView.updateListener.of((update) => {
         if (!update.docChanged) return;
+        // Only what the person changes is kept for next time: a program
+        // loaded from a link, the menu or the guide isn't theirs.
+        edited ||= update.transactions.some((tr) => userEdits.some((event) => tr.isUserEvent(event)));
         clearTimeout(saving);
-        saving = setTimeout(() => remember(update.state.doc.toString()), 500);
+        saving = setTimeout(() => {
+          const source = update.state.doc.toString();
+          if (edited) remember(source);
+          edited = false;
+          followEdits(source);
+        }, 500);
       }),
     ],
   });
@@ -203,9 +215,27 @@ async function main() {
     view.dispatch({ effects: scheme.reconfigure(EditorView.darkTheme.of(darkScheme.matches)) });
   });
 
+  // A new program is a step of its own in the history, so that undo takes
+  // back that and no more.
   const setSource = (source) => {
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: source } });
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: source },
+      annotations: isolateHistory.of('full'),
+    });
   };
+
+  // The program the address links to (`#code=` or `#example=`), until it's
+  // edited.
+  let linked = null;
+
+  /** Put a program in the editor. If it replaces a program of the person's
+   * own, the note for the status line says how to get it back. */
+  function load(source) {
+    const before = view.state.doc.toString();
+    setSource(source);
+    const own = before.trim() !== '' && before !== source && before !== linked && !examples.some((e) => e.source === before);
+    return own ? `Your program was replaced: ${modKey}+Z brings it back.` : '';
+  }
 
   // ── Examples ──
   const select = $('examples');
@@ -218,24 +248,66 @@ async function main() {
   select.addEventListener('change', () => {
     const example = examples.find((e) => e.name === select.value);
     if (!example) return;
-    setSource(example.source);
+    const note = load(example.source);
+    linked = example.source;
     history.replaceState(null, '', `#example=${example.name}`);
-    clearOutput();
+    clearOutput(note);
     view.focus();
   });
+
+  /** After edits: the menu names the example the program is, if it is one,
+   * and a link to another program leaves the address, so that reloading
+   * keeps the edits. */
+  function followEdits(source) {
+    select.value = examples.find((e) => e.source === source)?.name ?? '';
+    if (linked !== null && source !== linked) {
+      history.replaceState(null, '', location.pathname + location.search);
+      linked = null;
+    }
+  }
 
   // ── Running ──
   let running = null;
   // Runs that finished, were stopped or crashed: tests wait on it.
   let finished = 0;
 
-  function clearOutput() {
+  function clearOutput(note = '') {
     $('printed').textContent = '';
     $('printed').hidden = true;
     $('result').textContent = '';
     $('result').className = '';
-    $('status').textContent = '';
+    $('status').textContent = note;
     $('progress').hidden = true;
+    $('empty').hidden = false;
+  }
+
+  /** A run's output, as `probl run` prints it. Each line is laid out so that
+   * a report too long for the pane wraps at its ` · ` separators, under its
+   * values: the text itself doesn't change. */
+  function showOutput(text) {
+    const lines = text.split('\n');
+    $('result').replaceChildren(
+      ...lines.map((line, i) => {
+        const row = document.createElement('span');
+        row.className = 'line';
+        // A report's label, and the spaces that line its values up.
+        const label = /^\s*\S.*?\s{2,}(?=\S)/.exec(line)?.[0] ?? '';
+        row.style.setProperty('--hang', `${label.length}ch`);
+        row.append(label);
+        line
+          .slice(label.length)
+          .split(' · ')
+          .forEach((part, j) => {
+            // A wrapped line starts with its separator.
+            const item = document.createElement('span');
+            item.className = 'item';
+            item.textContent = j ? `· ${part}` : part;
+            row.append(...(j ? [' ', item] : [item]));
+          });
+        if (i < lines.length - 1) row.append('\n');
+        return row;
+      }),
+    );
   }
 
   function request() {
@@ -252,16 +324,19 @@ async function main() {
     return r;
   }
 
-  function start() {
+  /** Run the program. `note` is added to the status line when it's done. */
+  function start(note = '') {
     if (running) stop(null);
     showPane('output');
     clearOutput();
+    $('empty').hidden = true;
     const id = ++lastId;
     const started = performance.now();
     const limited = $('limited').checked;
     running = {
       id,
       started,
+      note,
       lines: [],
       ticker: setInterval(() => {
         const seconds = (performance.now() - started) / 1000;
@@ -318,28 +393,32 @@ async function main() {
       $('result').textContent = `The engine crashed: ${data.message}\n\nThis may be the playground's limits (memory, or calls nested too deep), or a bug in Probl.`;
       $('status').textContent = `Crashed after ${elapsed.toFixed(1)} s.`;
     } else if (data.type === 'done') {
+      const { note } = running;
       finish();
-      show(data.result, elapsed);
+      show(data.result, elapsed, note);
     }
   }
 
-  function show(result, elapsed) {
+  function show(result, elapsed, note) {
     const time = elapsed < 1 ? `${Math.round(elapsed * 1000)} ms` : `${elapsed.toFixed(1)} s`;
+    const status = (text) => {
+      $('status').textContent = note ? `${text} ${note}` : text;
+    };
     if (result.output !== undefined) {
-      $('result').textContent = result.output;
+      showOutput(result.output);
       const s = result.stats;
       const parts = [`Done in ${time}`];
       if (s.runs === undefined) parts.push(`${format.format(s.world_steps)} world-steps`);
       if (s.solved_loops) parts.push(`${s.solved_loops} ${s.solved_loops === 1 ? 'loop' : 'loops'} solved`);
       if (s.solved_calls) parts.push(`${s.solved_calls} recursive ${s.solved_calls === 1 ? 'call' : 'calls'} solved`);
-      $('status').textContent = `${parts.join(' · ')}.`;
+      status(`${parts.join(' · ')}.`);
       return;
     }
     const error = result.error;
     $('result').className = 'error';
     $('result').textContent = error?.rendered ?? error?.message ?? 'Something went wrong.';
     const limit = error?.kind === 'limit' ? ' The playground’s limits are lower than the command line’s.' : '';
-    $('status').textContent = `Failed after ${time}.${limit}`;
+    status(`Failed after ${time}.${limit}`);
     if (error?.from !== undefined) {
       const doc = view.state.doc;
       const diagnostics = result.diagnostics.filter((d) => d.severity === 'warning').map((d) => toEditor(d, doc));
@@ -347,7 +426,7 @@ async function main() {
     }
   }
 
-  $('run').addEventListener('click', start);
+  $('run').addEventListener('click', () => start());
   $('stop').addEventListener('click', () => stop('Stopped.'));
   $('mode').addEventListener('change', () => {
     $('sampling').hidden = $('mode').value !== 'sample';
@@ -436,9 +515,10 @@ async function main() {
   $('guide').addEventListener('click', (event) => {
     const button = event.target.closest('button.try');
     if (button) {
-      setSource(button.previousElementSibling.textContent);
-      history.replaceState(null, '', location.pathname);
-      start();
+      const note = load(button.previousElementSibling.textContent);
+      linked = null;
+      history.replaceState(null, '', location.pathname + location.search);
+      start(note);
       return;
     }
     // Links within the guide scroll it, without touching the address.
@@ -480,15 +560,25 @@ async function main() {
   window.addEventListener('hashchange', async () => {
     const source = await fromLink();
     if (source !== null) {
-      setSource(source);
-      clearOutput();
+      const note = load(source);
+      linked = source;
+      clearOutput(note);
       showPane('output');
     }
   });
 
   // The first program: from the link, then as left, then the tour.
-  setSource((await fromLink()) ?? remembered() ?? examples[0].source);
+  linked = await fromLink();
+  const first = linked ?? remembered() ?? examples[0].source;
+  setSource(first);
+  select.value = examples.find((e) => e.source === first)?.name ?? '';
   view.focus();
+
+  // The hint shown until a run: its shortcut, and its links to the tabs.
+  for (const key of document.querySelectorAll('kbd.mod')) key.textContent = modKey;
+  for (const link of document.querySelectorAll('[data-show]')) {
+    link.addEventListener('click', () => showPane(link.dataset.show));
+  }
 
   // For tests and for the curious.
   window.playground = {
@@ -496,7 +586,7 @@ async function main() {
     examples,
     getSource: () => view.state.doc.toString(),
     setSource,
-    run: start,
+    run: () => start(),
     stop: () => stop('Stopped.'),
     isRunning: () => running !== null,
     finished: () => finished,
