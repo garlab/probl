@@ -23,7 +23,7 @@ For each model, the runner reports the median time of up to five runs, the engin
 
 ## The models
 
-The twelve models in [`benches/`](../benches/) are realistic uses of the language, each chosen to stress one of the candidate improvements; the nine examples run alongside them.
+The twelve models in [`benches/`](../benches/) are realistic uses of the language, each chosen to stress one of the candidate improvements; the ten examples run alongside them.
 
 | Model | What it computes | What it stresses |
 |---|---|---|
@@ -67,6 +67,7 @@ Measured before sampling ran in parallel: sampled models used one core.
 | examples/07_launch_forecast | sample | 1.79 s | 1,000 | 22,067,620 | 81 ns | 900,000 | 7 MB |  |  |
 | examples/08_signup_forecast | sample | 1.16 s | 1,000 | 13,600,000 | 85 ns |  | 25 MB |  | effective sample size 31,194 |
 | examples/09_roadmap | sample | 557 ms | 1,000 | 5,200,000 | 107 ns | 500,000 | 2 MB |  |  |
+| examples/10_quantum_key | enumerate | 1 ms | 32 | 1,290 | 1,083 ns | 170 (83% reused) | 75 KB | 1,450 steps (1×), 2 ms |  |
 
 "Without merging" repeats an enumerated run with merging off, stopping at the world limit or at 20 times the merged run's time. A world-step is one statement run in one world; "per step" divides the time by them.
 

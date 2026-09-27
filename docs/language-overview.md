@@ -447,6 +447,7 @@ Probl borrows `a to b` estimates from Squiggle, dice notation from AnyDice and t
 | [`07_launch_forecast.probl`](../examples/07_launch_forecast.probl) | forecasting | `a to b` estimates, regime switching, a fan chart over months |
 | [`08_signup_forecast.probl`](../examples/08_signup_forecast.probl) | forecasting | `observe … from`, learning a rate, then forecasting with it |
 | [`09_roadmap.probl`](../examples/09_roadmap.probl) | forecasting | risks and dates: a forecast of this project's own plan |
+| [`10_quantum_key.probl`](../examples/10_quantum_key.probl) | physics | quantum key distribution: a measurement as branching worlds, `observe` inside `simulate`, Bayes' rule for an eavesdropper |
 
 Every example ends with the output it should produce, and those outputs are golden tests. The enumerated ones were checked against independent reference calculations, and must be printed exactly. The sampled ones come from an independent reference simulation, so the engine's numbers must agree with them within their sampling error: estimates within five standard errors, other numbers within 4%.
 

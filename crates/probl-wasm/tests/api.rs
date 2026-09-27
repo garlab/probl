@@ -39,7 +39,7 @@ impl Resolver for Given {
 #[test]
 fn the_examples_print_what_the_command_line_prints() {
     let all = examples();
-    assert_eq!(all.len(), 9);
+    assert_eq!(all.len(), 10);
     for example in all {
         let source = example["source"].as_str().unwrap();
         let (answer, _) = run(json!({ "source": source, "files": example["files"] }));

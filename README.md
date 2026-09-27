@@ -69,4 +69,4 @@ PROBL_URL=https://probl-playground.pages.dev node test/page.mjs   # test the dep
 - [Implementation plan](docs/implementation-plan.md): status, architecture, phases, testing and risks
 - [Project audit](docs/project-audit.md): the review that led to the reference semantics
 - [Benchmarks](docs/benchmarks.md): realistic models, what they cost, and what to build next (`cargo run --release -p probl-bench`)
-- [Examples](examples/): nine sample programs with their expected output, from a tour of the language to a revenue forecast
+- [Examples](examples/): ten sample programs with their expected output, from a tour of the language to a revenue forecast and quantum cryptography

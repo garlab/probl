@@ -4,7 +4,7 @@
 
 ## 0. Status
 
-The engine enumerates and samples. All nine examples run: 01–06 print their documented output exactly, as checked against independent calculations, and the sampled 07–09 agree with an independent reference simulation within their sampling error. The audit of commit `a37c0b6` found that several of the language's promises weren't well defined, and that the tests couldn't catch it. All five of its recommended steps are done:
+The engine enumerates and samples. All ten examples run: the enumerated 01–06 and 10 print their documented output exactly, as checked against independent calculations, and the sampled 07–09 agree with an independent reference simulation within their sampling error. The audit of commit `a37c0b6` found that several of the language's promises weren't well defined, and that the tests couldn't catch it. All five of its recommended steps are done:
 
 1. **Reference semantics.** [docs/semantics.md](semantics.md) is normative for the engine: types and event identity, evaluation order, calls versus `simulate`, evidence, reports, termination and approximation, and resource limits.
 2. **Lowering and the numerical contract.** Operands are evaluated left to right, effects decide what can be memoized, weights can't underflow, and fractions are labelled as approximations.
@@ -306,7 +306,7 @@ The forecast made when the plan was first written, by running [`examples/09_road
   - calls that never return, and ones that come back and print;
   - 3,000 random processes written both ways, as recursion and as a loop. Half of them add 1 at each step, so their results have infinitely many values. All 176,491 probabilities agreed. `PROBL_RECURSION_CASES` runs more.
 - **The playground.**
-  - **The API:** `cargo test -p probl-wasm` tests it natively. All nine examples must print through it exactly what the engine prints for `probl run`.
+  - **The API:** `cargo test -p probl-wasm` tests it natively. All ten examples must print through it exactly what the engine prints for `probl run`.
   - **WebAssembly:** `node web/test/examples.mjs` runs the WebAssembly build in Node and compares every example with `probl run`, byte for byte.
   - **Browsers:** `node web/test/page.mjs` drives the page in headless Chrome, or Firefox with `firefox`. It checks:
     - every example, progress and Stop, the call-depth limit, errors in the editor and share links;

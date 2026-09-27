@@ -1,0 +1,113 @@
+# Quantum key distribution (BB84): can anyone listen in without being noticed?
+#
+# Alice sends Bob a secret key, one photon per bit. She writes each bit in
+# the photon's polarization, in one of two bases picked at random:
+# rectilinear (| is 0, — is 1) or diagonal (/ is 0, \ is 1). Bob measures
+# each photon in a basis he also picks at random. Afterwards they say over a
+# public line which bases they used, never the bits, and keep the bits where
+# the bases matched.
+#
+# Quantum mechanics decides what a measurement shows. In the basis the photon
+# was written in, it shows the bit. In the other basis, it shows 0 or 1 with
+# probability 1/2 each (the Born rule), and leaves the photon as it showed
+# it: the bit that was written is gone. A photon can't be copied either (the
+# no-cloning theorem). So Eve, to listen in, has to measure the photons
+# herself, in bases she guesses, and send Bob new ones as she saw them.
+
+@mode enumerate
+
+enum Basis { Rectilinear, Diagonal }
+let bases = [Rectilinear, Diagonal]
+
+# What measuring a photon shows: its bit, in the basis it was written in, or
+# a coin toss in the other one. Either way, that's what the photon holds now.
+fn measure(bit: int, written: Basis, measured: Basis) -> int {
+  if measured == written { return bit }
+  return if 50% { 0 } else { 1 }
+}
+
+# One photon from Alice to Bob, which Eve measures with probability `listening`.
+type Photon = { kept: bool, bob_wrong: bool, eve_right: bool }
+
+fn photon(listening: prob) -> Photon {
+  let bit ~ one_of([0, 1])
+  let alice ~ one_of(bases)
+  let bob ~ one_of(bases)
+  var sent = bit                 # what the photon on the line holds,
+  var basis = alice              # and in which basis
+  var eve_right = false
+  if listening {
+    let eve ~ one_of(bases)
+    sent = measure(bit, alice, eve)
+    basis = eve
+    eve_right = sent == bit
+  }
+  let seen = measure(sent, basis, bob)
+  return Photon { kept: alice == bob, bob_wrong: seen != bit, eve_right: eve_right }
+}
+
+# The photons whose bits make the key: those Bob measured in Alice's basis.
+fn kept(listening: prob) -> Photon {
+  let p = photon(listening)
+  observe p.kept
+  return p
+}
+
+report simulate { photon(0%).kept } as "photons kept for the key"
+report simulate { kept(0%).bob_wrong } as "errors in the key, no one listening"
+report simulate { kept(100%).bob_wrong } as "errors in the key, Eve measuring every photon"
+report simulate { kept(100%).eve_right } as "bits of the key Eve has right"
+
+# Eve can't learn the key without changing it: every photon she measures in
+# the wrong basis, half of them, reaches Bob as a coin toss. Measuring fewer
+# photons leaves fewer errors, and teaches her less.
+for share in [0%, 10%, 50%, 100%] {
+  report simulate { kept(share).bob_wrong } by share as "errors in the key, by the share of photons Eve measures"
+}
+
+# So before using the key, Alice and Bob compare some of its bits in public,
+# and throw those away. One that differs means someone measured the photons.
+# (Real lines are a little noisy too, so real systems accept some errors,
+# below about 11%, and shrink the key to what Eve can't know.)
+let error = P(simulate { kept(100%).bob_wrong })
+for compared in [1, 5, 10, 20, 30] {
+  report binomial(compared, error) > 0 by compared as "Eve is caught, by the bits compared"
+}
+
+# If Eve is on the line one day in ten, how likely is it that she was
+# listening today, when all the bits compared agreed?
+for compared in [0, 5, 10, 20] {
+  let listened = simulate {
+    let eve ~ bernoulli(10%)
+    observe 0 from binomial(compared, if eve { error } else { 0% })
+    eve
+  }
+  report listened by compared as "Eve was listening, by the bits that agreed"
+}
+
+# ── Output ──────────────────────────────────────────────────────────────
+# enumerated
+#
+# photons kept for the key                         50.00%
+# errors in the key, no one listening              0.00%
+# errors in the key, Eve measuring every photon    25.00%
+# bits of the key Eve has right                    75.00%
+#
+# errors in the key, by the share of photons Eve measures
+#     0%    0.00%
+#    10%    2.50%
+#    50%   12.50%
+#   100%   25.00%
+#
+# Eve is caught, by the bits compared
+#    1   25.00%
+#    5   76.27%
+#   10   94.37%
+#   20   99.68%
+#   30   99.98%
+#
+# Eve was listening, by the bits that agreed
+#    0   10.00%
+#    5    2.57%
+#   10    0.62%
+#   20    0.04%

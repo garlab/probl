@@ -476,7 +476,8 @@ pub fn render(program: &Program, sinks: &[Sink], format: Format) -> String {
         if !simple.is_empty() {
             flush(&mut simple, &mut out);
         }
-        if !out.is_empty() {
+        // A blank line before the table, unless one ends the table before.
+        if !out.is_empty() && !out.ends_with("\n\n") {
             out.push('\n');
         }
         writeln!(out, "{label}{reach}").unwrap();
