@@ -120,12 +120,21 @@ async function main() {
   });
   const runner = new Engine(module, onRun);
   const { examples, docs, version } = await checker.ready;
+  $('status').textContent = '';
   $('version').textContent = `Probl ${version}`;
   const intel = intelligence(
     docs,
     async (source) => {
       const answer = await check(source);
-      return answer.type === 'done' ? answer.result.symbols : null;
+      const symbols = answer.type === 'done' ? answer.result.symbols : null;
+      // They're the newest names: keep them for hovers, highlights and
+      // later completions too, if the text hasn't changed since.
+      if (symbols) {
+        setTimeout(() => {
+          if (view.state.doc.toString() === source) view.dispatch({ effects: setSymbols.of(symbols) });
+        });
+      }
+      return symbols;
     },
     (name) => showReference(name),
   );
@@ -646,6 +655,7 @@ async function main() {
     isRunning: () => running !== null,
     finished: () => finished,
   };
+  $('run').disabled = false;
   document.body.dataset.ready = 'true';
 }
 

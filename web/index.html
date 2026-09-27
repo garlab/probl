@@ -15,7 +15,7 @@
       <option value="">Examples…</option>
     </select>
     <div class="actions">
-      <button id="run" class="primary" title="Run (Ctrl+Enter or ⌘+Enter)">Run</button>
+      <button id="run" class="primary" title="Run (Ctrl+Enter or ⌘+Enter)" disabled>Run</button>
       <button id="stop" disabled title="Stop (Escape)">Stop</button>
       <button id="share" title="Copy a link to this program">Share</button>
     </div>
@@ -49,7 +49,7 @@
       </nav>
       <div id="output" class="pane" role="tabpanel" aria-labelledby="tab-output">
         <div class="bar">
-          <span id="status" role="status"></span>
+          <span id="status" role="status">Loading Probl…</span>
           <progress id="progress" hidden></progress>
         </div>
         <p id="empty">Press Run, or <kbd class="mod">Ctrl</kbd>+Enter, to run the program: its reports appear here. New to Probl? The <button class="link" data-show="guide">guide</button> explains the language, and the <button class="link" data-show="reference">reference</button> lists what's built in.</p>

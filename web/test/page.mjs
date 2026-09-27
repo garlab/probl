@@ -136,6 +136,19 @@ try {
   const fresh = await open();
   const hinted = await fresh.evaluate(() => document.getElementById('empty').offsetParent !== null);
   expect(hinted, 'before a run, the output pane says how to run the program');
+  const loading = await fresh.evaluate(async () => {
+    const page = await (await fetch('index.html')).text();
+    const html = new DOMParser().parseFromString(page, 'text/html');
+    return {
+      before: [html.getElementById('status').textContent, html.getElementById('run').disabled],
+      after: [document.getElementById('status').textContent, document.getElementById('run').disabled],
+    };
+  });
+  expect(
+    loading.before[0].startsWith('Loading') && loading.before[1] && loading.after[0] === '' && !loading.after[1],
+    'while the engine loads, the page says so and Run waits',
+    JSON.stringify(loading),
+  );
   await fresh.select('#examples', '01_tour');
   await run(fresh);
   const fitted = await fresh.evaluate(() => {
