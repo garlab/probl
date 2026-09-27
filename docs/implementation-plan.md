@@ -250,7 +250,7 @@ The effort ranges assume one developer working full time, and they are 90% confi
 ### Phase 7: reach (open-ended), v0.4 and later
 
 - Solving finite-state loops and recursions as absorbing Markov chains, instead of unrolling them (D5): for exactness and for recursion that returns to the same call, since no benchmark is slow because of them.
-- A WebAssembly build and a browser playground; Python bindings.
+- A WebAssembly build and a browser playground ([its plan](playground-plan.md), which could come earlier); Python bindings.
 - Performance, if benchmarks call for it after the work in §9: a bytecode VM that runs each instruction over all worlds at once, persistent collections, a parallel enumerator.
 - Research track: compiling to decision diagrams for exact inference (as the Dice language does), and reports conditioned on later evidence (smoothing). The benchmarks' blow-ups are fixed more cheaply by moving draws, or need sampling.
 
