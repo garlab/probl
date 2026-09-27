@@ -40,13 +40,14 @@
   </header>
   <main>
     <section id="editor" aria-label="Program"></section>
+    <div id="divider" role="separator" aria-orientation="vertical" aria-label="Width of the editor" aria-valuemin="20" aria-valuemax="80" tabindex="0" title="Drag to resize, or double-click to reset"></div>
     <section id="side">
-      <nav class="tabs" role="tablist">
-        <button role="tab" data-pane="output" aria-selected="true">Output</button>
-        <button role="tab" data-pane="guide" aria-selected="false">Guide</button>
-        <button role="tab" data-pane="reference" aria-selected="false">Reference</button>
+      <nav class="tabs" role="tablist" aria-label="Output, guide and reference">
+        <button role="tab" id="tab-output" aria-controls="output" data-pane="output" aria-selected="true">Output</button>
+        <button role="tab" id="tab-guide" aria-controls="guide" data-pane="guide" aria-selected="false" tabindex="-1">Guide</button>
+        <button role="tab" id="tab-reference" aria-controls="reference" data-pane="reference" aria-selected="false" tabindex="-1">Reference</button>
       </nav>
-      <div id="output" class="pane" role="tabpanel" aria-label="Output">
+      <div id="output" class="pane" role="tabpanel" aria-labelledby="tab-output">
         <div class="bar">
           <span id="status" role="status"></span>
           <progress id="progress" hidden></progress>
@@ -55,8 +56,8 @@
         <pre id="printed" hidden></pre>
         <pre id="result"></pre>
       </div>
-      <article id="guide" class="pane" role="tabpanel" aria-label="Guide" hidden></article>
-      <div id="reference" class="pane" role="tabpanel" aria-label="Reference" hidden>
+      <article id="guide" class="pane" role="tabpanel" aria-labelledby="tab-guide" hidden></article>
+      <div id="reference" class="pane" role="tabpanel" aria-labelledby="tab-reference" hidden>
         <input id="search" type="search" placeholder="Search the built-in functions and keywords" aria-label="Search the reference">
         <p class="hint">Hover a name in the editor to see what it is, and Cmd-click or Ctrl-click it (or press F12) to go to where it's declared, or to its entry here. F2 selects a name everywhere it's used, so typing renames it. Completion comes as you type, or with Ctrl-Space, and a call's signature shows while you type its arguments.</p>
         <div id="entries"></div>

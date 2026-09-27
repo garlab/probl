@@ -479,6 +479,50 @@ try {
   }));
   expect(layout.output === 'none' && Math.abs(layout.gap) < 1, 'a tab shows its pane alone', JSON.stringify(layout));
 
+  // The tabs can be used from the keyboard: the arrow keys, Home and End.
+  await editor.evaluate(() => document.querySelector('[data-pane="reference"]').focus());
+  const tabbed = [];
+  for (const key of ['ArrowRight', 'ArrowLeft', 'Home', 'End']) {
+    await editor.keyboard.press(key);
+    tabbed.push(
+      await editor.evaluate(() => {
+        const selected = document.querySelector('[role="tab"][aria-selected="true"]');
+        const reachable = [...document.querySelectorAll('[role="tab"]')].filter((t) => t.tabIndex === 0);
+        return document.activeElement === selected && reachable.length === 1 ? selected.dataset.pane : 'lost';
+      }),
+    );
+  }
+  expect(tabbed.join() === 'output,reference,output,reference', 'the tabs work from the keyboard', tabbed.join());
+
+  // The divider between the editor and the side panel: dragged, or moved
+  // with the arrow keys, and reset by a double click.
+  const share = () =>
+    editor.evaluate(() => {
+      const main = document.querySelector('main').getBoundingClientRect();
+      return Math.round((document.getElementById('editor').getBoundingClientRect().width / main.width) * 100);
+    });
+  const before = await share();
+  await editor.evaluate(() => document.getElementById('divider').focus());
+  await editor.keyboard.press('ArrowRight');
+  await editor.keyboard.press('ArrowRight');
+  const keyed = await share();
+  expect(keyed - before >= 9 && keyed - before <= 11, 'the arrow keys move the divider', `${before}% to ${keyed}%`);
+  const bar = await editor.evaluate(() => {
+    const r = document.getElementById('divider').getBoundingClientRect();
+    const main = document.querySelector('main').getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, left: main.left, width: main.width };
+  });
+  await editor.mouse.move(bar.x, bar.y);
+  await editor.mouse.down();
+  await editor.mouse.move(bar.left + bar.width * 0.3, bar.y, { steps: 5 });
+  await editor.mouse.up();
+  const dragged = await share();
+  expect(Math.abs(dragged - 30) <= 2, 'dragging moves the divider', `${dragged}%`);
+  await editor.mouse.move(bar.left + bar.width * 0.3, bar.y);
+  await editor.evaluate(() => document.getElementById('divider').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+  const reset = await share();
+  expect(Math.abs(reset - before) <= 1, 'a double click puts it back', `${reset}%`);
+
   // The reference, searched.
   const found = await editor.evaluate(() => {
     const search = document.getElementById('search');

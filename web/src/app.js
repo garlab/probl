@@ -17,6 +17,7 @@ import { highlighter, probl } from './probl-lang.js';
 /** Seconds a run may take before it's stopped, unless the options say not to. */
 const TIME_LIMIT = 30;
 const STORED = 'probl-playground-source';
+const SPLIT = 'probl-playground-split';
 
 const $ = (id) => document.getElementById(id);
 /** The modifier key for shortcuts: ⌘ on Apple's systems, Ctrl elsewhere. */
@@ -72,17 +73,17 @@ async function decode(code) {
   return new TextDecoder().decode(await squeeze(bytes, new DecompressionStream('deflate-raw')));
 }
 
-function remember(source) {
+function remember(value, key = STORED) {
   try {
-    localStorage.setItem(STORED, source);
+    localStorage.setItem(key, value);
   } catch {
     // Private windows and blocked storage: nothing to remember.
   }
 }
 
-function remembered() {
+function remembered(key = STORED) {
   try {
-    return localStorage.getItem(STORED);
+    return localStorage.getItem(key);
   } catch {
     return null;
   }
@@ -430,12 +431,62 @@ async function main() {
     for (const tab of tabs) {
       const selected = tab.dataset.pane === name;
       tab.setAttribute('aria-selected', String(selected));
+      tab.tabIndex = selected ? 0 : -1;
       $(tab.dataset.pane).hidden = !selected;
     }
     if (name === 'guide') loadGuide();
     if (name === 'reference') $('search').focus();
   }
   for (const tab of tabs) tab.addEventListener('click', () => showPane(tab.dataset.pane));
+  // The arrow keys, Home and End move between the tabs.
+  document.querySelector('.tabs').addEventListener('keydown', (event) => {
+    const at = tabs.indexOf(document.activeElement);
+    const next = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: tabs.length - 1 }[event.key];
+    if (at < 0 || next === undefined) return;
+    event.preventDefault();
+    const tab = tabs[(next + tabs.length) % tabs.length];
+    showPane(tab.dataset.pane);
+    tab.focus();
+  });
+
+  // ── The divider between the editor and the side panel ──
+  const divider = $('divider');
+  const main = document.querySelector('main');
+  /** Give the editor `share` of the width, from 20% to 80%. */
+  function setShare(share) {
+    const clamped = Math.round(Math.min(80, Math.max(20, share)));
+    main.style.setProperty('--share', `${clamped}%`);
+    divider.setAttribute('aria-valuenow', String(clamped));
+    return clamped;
+  }
+  let share = setShare(Number(remembered(SPLIT)) || 52);
+  divider.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    divider.classList.add('dragging');
+    const move = (e) => {
+      const { left, width } = main.getBoundingClientRect();
+      share = setShare(((e.clientX - left) / width) * 100);
+    };
+    const up = () => {
+      divider.classList.remove('dragging');
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      remember(String(share), SPLIT);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
+  divider.addEventListener('keydown', (event) => {
+    const step = { ArrowLeft: -5, ArrowRight: 5 }[event.key];
+    if (step === undefined) return;
+    event.preventDefault();
+    share = setShare(share + step);
+    remember(String(share), SPLIT);
+  });
+  divider.addEventListener('dblclick', () => {
+    share = setShare(52);
+    remember(String(share), SPLIT);
+  });
 
   // The reference, from the module's documentation.
   const inline = (text) => {

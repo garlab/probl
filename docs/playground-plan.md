@@ -180,6 +180,8 @@ So the slowest examples would take 2–4 seconds in the browser, with a progress
     - A report too long for the pane wraps at its ` · ` separators, under its values. Each wrapped line starts with its separator. The text is unchanged.
   - A runtime error is underlined where it happened.
   - Light and dark, and one column on a phone.
+  - The divider between the editor and the side panel can be dragged, or focused and moved with the arrow keys. It's remembered, and a double click puts it back.
+  - The tabs work from the keyboard: the arrow keys, Home and End, as the ARIA tabs pattern has it.
 - **Two workers share the compiled module.** One checks the program as it's edited; the other runs it. Stop, the time limit and a crash all end the runner, and a new one takes its place.
 - **Data:** every program may read the examples' data, from memory.
 - **Share links** carry the program compressed in the fragment.

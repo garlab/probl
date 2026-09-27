@@ -119,11 +119,14 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 
 main {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  /* The editor's share, which the divider changes. */
+  grid-template-columns: minmax(0, calc(var(--share, 52%) - 3px)) 6px minmax(0, 1fr);
   min-height: 0;
 }
 
-#editor { min-height: 0; overflow: hidden; border-right: 1px solid var(--line); }
+#editor { min-height: 0; overflow: hidden; }
+#divider { cursor: col-resize; background: linear-gradient(var(--line), var(--line)) center / 1px 100% no-repeat; touch-action: none; }
+#divider:hover, #divider:focus-visible, #divider.dragging { background-image: linear-gradient(var(--accent), var(--accent)); background-size: 2px 100%; outline: none; }
 #editor .cm-editor { height: 100%; font-size: 14px; }
 #editor .cm-scroller { font-family: var(--mono); line-height: 1.5; }
 #editor .cm-focused { outline: none; }
@@ -229,6 +232,7 @@ footer { padding: 8px 16px; border-top: 1px solid var(--line); color: var(--fain
   body { grid-template-rows: auto auto auto; height: auto; min-height: 100%; }
   #examples { flex: 1 1 100%; width: 100%; min-width: 0; max-width: none; }
   main { grid-template-columns: minmax(0, 1fr); }
+  #divider { display: none; }
   #editor { height: 55vh; border-right: none; border-bottom: 1px solid var(--line); }
   #output { min-height: 40vh; }
   .options .panel { right: auto; left: 0; }
