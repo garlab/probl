@@ -8,6 +8,7 @@
 import { indentWithTab } from '@codemirror/commands';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { linter, lintGutter, setDiagnostics } from '@codemirror/lint';
+import { Compartment } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
 import { basicSetup } from 'codemirror';
@@ -101,7 +102,9 @@ const highlight = HighlightStyle.define([
 
 const theme = EditorView.theme({
   '&': { height: '100%', color: 'var(--text)', backgroundColor: 'var(--editor)' },
-  '.cm-content': { caretColor: 'var(--text)' },
+  // The cursor CodeMirror draws in place of the browser's, in the text's
+  // color: its own is black, which the dark background hides.
+  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--text)', borderLeftWidth: '2px', marginLeft: '-1px' },
   '.cm-gutters': { backgroundColor: 'var(--editor)', color: 'var(--faint)', border: 'none' },
   '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--active)' },
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
@@ -109,6 +112,11 @@ const theme = EditorView.theme({
   },
   '.cm-tooltip': { backgroundColor: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--line)' },
 });
+
+// Whether the page is dark, which CodeMirror's own styles follow: its
+// search panel, search matches and the like.
+const darkScheme = window.matchMedia('(prefers-color-scheme: dark)');
+const scheme = new Compartment();
 
 async function main() {
   const module = await WebAssembly.compileStreaming(fetch('probl.wasm'));
@@ -172,6 +180,7 @@ async function main() {
       intel.extensions,
       syntaxHighlighting(highlight),
       theme,
+      scheme.of(EditorView.darkTheme.of(darkScheme.matches)),
       lint,
       lintGutter(),
       keymap.of([
@@ -185,6 +194,10 @@ async function main() {
         saving = setTimeout(() => remember(update.state.doc.toString()), 500);
       }),
     ],
+  });
+
+  darkScheme.addEventListener('change', () => {
+    view.dispatch({ effects: scheme.reconfigure(EditorView.darkTheme.of(darkScheme.matches)) });
   });
 
   const setSource = (source) => {

@@ -311,7 +311,7 @@ The forecast made when the plan was first written, by running [`examples/09_road
   - **Browsers:** `node web/test/page.mjs` drives the page in headless Chrome, or Firefox with `firefox`. It checks:
     - every example, progress and Stop, the call-depth limit, errors in the editor and share links;
     - hover, going to definitions, highlights and completion in the editor;
-    - the reference's search, the guide's programs and links, and the page's width on a phone.
+    - the reference's search, the guide's programs and links, the cursor against light and dark backgrounds, and the page's width on a phone.
   - **Names:** `probl-sema/tests/symbols.rs` checks that each use leads to its declaration, and which names are visible where.
   - These need the WebAssembly target and Node, so `cargo test` doesn't run them.
 - **Samplers.** Kolmogorov–Smirnov tests for every continuous family, chi-square tests for the direct count samplers, and closed-form checks of CDFs, quantiles and densities. `probl-engine/tests/sampling.rs` covers the rules of semantics §13–14.

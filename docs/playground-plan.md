@@ -213,7 +213,7 @@ Beside the output are two more tabs: the language overview as a **guide**, and a
 - **Sizes:** the guide is 49 KB, or 16 KB compressed, and loads when first shown. The page's script grew by 8 KB, to 414 KB.
 - **Tested:**
   - the names natively, in `probl-sema/tests/symbols.rs` and the API's tests;
-  - in headless Chrome and Firefox: hover, going to definitions, highlights, completion, the tabs, the reference's search, the guide's programs and links, and the page's width on a phone.
+  - in headless Chrome and Firefox: hover, going to definitions, highlights, completion, the tabs, the reference's search, the guide's programs and links, the cursor against light and dark backgrounds, and the page's width on a phone.
 
 ## Open questions
 

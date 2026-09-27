@@ -349,6 +349,29 @@ try {
   const linked = await becomes(editor, (src) => window.playground.getSource() === src, craps);
   expect(linked, 'a link in the guide opens its example');
 
+  // The cursor stands out from the editor's background, light and dark.
+  // (Firefox can't be switched from here, so it checks the one it has.)
+  for (const value of firefox ? [null] : ['light', 'dark']) {
+    if (value) await editor.emulateMediaFeatures([{ name: 'prefers-color-scheme', value }]);
+    const { scheme, ratio } = await editor.evaluate(() => {
+      window.playground.view.focus();
+      const luminance = (color) => {
+        const [r, g, b] = color
+          .match(/[\d.]+/g)
+          .slice(0, 3)
+          .map((c) => (c / 255 <= 0.03928 ? c / 255 / 12.92 : ((c / 255 + 0.055) / 1.055) ** 2.4));
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const cursor = luminance(getComputedStyle(document.querySelector('.cm-cursor')).borderLeftColor);
+      const background = luminance(getComputedStyle(window.playground.view.dom).backgroundColor);
+      return {
+        scheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+        ratio: (Math.max(cursor, background) + 0.05) / (Math.min(cursor, background) + 0.05),
+      };
+    });
+    expect(ratio >= 4.5, `the cursor shows against the ${scheme} background`, `contrast ${ratio.toFixed(1)}`);
+  }
+
   // On a phone, the guide's long lines scroll by themselves, not the page.
   await editor.setViewport({ width: 390, height: 844 });
   await showTab('guide');
