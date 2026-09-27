@@ -195,6 +195,20 @@ pub fn run(
     })
 }
 
+/// Run a program on the calling thread, as [`run`] does on a thread of its
+/// own. The calling thread's stack must be large enough for the program's
+/// calls (`Limits::stack_size` doesn't apply), and a panic isn't caught.
+/// With one thread allowed (`Limits::max_threads`), sampling starts no
+/// thread either, so this works where threads aren't available, such as in
+/// WebAssembly.
+pub fn run_on_this_thread(
+    program: &Program,
+    options: &Options,
+    print: &mut (dyn FnMut(&str) + Send),
+) -> Result<Outcome, RuntimeError> {
+    run_here(program, options, print)
+}
+
 /// What a panic said.
 fn panic_detail(panic: &(dyn Any + Send)) -> String {
     panic
@@ -344,7 +358,7 @@ fn run_here(
 fn scientific(w: Weight) -> String {
     let l = w.log10();
     let exponent = l.floor();
-    let mantissa = 10f64.powf(l - exponent);
+    let mantissa = libm::pow(10.0, l - exponent);
     // Rounding the mantissa can make it 10.0.
     let (mantissa, exponent) = if format!("{mantissa:.2}") == "10.00" {
         (1.0, exponent + 1.0)
@@ -364,7 +378,7 @@ fn evidence_estimate(z: Weight, relative_se: f64, densities: bool) -> String {
             return format!("log evidence {ln:.2}");
         }
         let decimals = if relative_se > 0.0 {
-            (-relative_se.log10().floor()).clamp(2.0, 6.0) as usize
+            (-libm::log10(relative_se).floor()).clamp(2.0, 6.0) as usize
         } else {
             2
         };
@@ -480,6 +494,9 @@ fn run_batches(
     config.budget.shared = Some(Arc::new(AtomicU64::new(config.budget.work_left)));
     config.budget.work_left = 0;
     let config = &config;
+    if threads == 1 {
+        return run_batches_here(program, live, conj, config, inputs, options, print, runs, seed);
+    }
 
     let next = AtomicU64::new(0);
     // The lowest batch that failed: no batch after it needs to run.
@@ -587,6 +604,40 @@ fn run_batches(
         }
         Ok(combined)
     })
+}
+
+/// Run the batches one after another on the calling thread, starting no
+/// thread: the same output as on several threads.
+#[allow(clippy::too_many_arguments)]
+fn run_batches_here(
+    program: &Program,
+    live: &Liveness,
+    conj: &Conjugacy,
+    config: &interp::Config,
+    inputs: &[Value],
+    options: &Options,
+    print: &mut (dyn FnMut(&str) + Send),
+    runs: u64,
+    seed: u64,
+) -> Result<Combined, RuntimeError> {
+    let mut ignore = |_: &str| {};
+    let mut engine = interp::Engine::new(program, live, conj, config.clone(), inputs, &mut ignore);
+    let mut combined = Combined::new(program.reports.len());
+    let mut bytes = 0;
+    for index in 0..runs.div_ceil(interp::BATCH) {
+        let first = index * interp::BATCH;
+        let n = (runs - first).min(interp::BATCH);
+        let (result, lines) = engine.run_batch(Rng::stream(seed, index), first, n, bytes);
+        for (span, line) in lines {
+            bytes += line.len() + 1;
+            if bytes > options.limits.max_output {
+                return Err(interp::too_much_output(span));
+            }
+            print(&line);
+        }
+        combined.absorb(result?);
+    }
+    Ok(combined)
 }
 
 /// Sample the program and print its estimates (docs/semantics.md, section 14).

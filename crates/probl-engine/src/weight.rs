@@ -92,7 +92,7 @@ impl Weight {
         if self.is_zero() {
             return f64::NEG_INFINITY;
         }
-        self.mant.log10() + self.exp as f64 * std::f64::consts::LOG10_2
+        libm::log10(self.mant) + self.exp as f64 * std::f64::consts::LOG10_2
     }
 
     pub fn sum(weights: impl IntoIterator<Item = Weight>) -> Weight {
@@ -162,7 +162,7 @@ impl fmt::Debug for Weight {
         let x = self.to_f64();
         if x == 0.0 && !self.is_zero() {
             let l = self.log10();
-            write!(f, "{:.3}e{}", 10f64.powf(l - l.floor()), l.floor())
+            write!(f, "{:.3}e{}", libm::pow(10.0, l - l.floor()), l.floor())
         } else {
             write!(f, "{x}")
         }

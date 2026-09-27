@@ -25,6 +25,17 @@ num-bigint = "0.4"
 num-rational = { version = "0.4", default-features = false, features = ["num-bigint", "std"] }
 num-traits = "0.2"
 
+# The playground's WebAssembly build: small, and a panic ends the module
+# (the playground reports it and starts a new one).
+[profile.wasm]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = 0
+strip = true
+
 [profile.dev.package."*"]
 opt-level = 2
 

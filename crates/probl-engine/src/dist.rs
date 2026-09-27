@@ -242,7 +242,7 @@ impl Dist {
             return Ok(Dist::point(Value::Int(1)));
         }
         // Outcomes until the tail (1 - p)^k drops below the threshold.
-        let count = (TAIL.ln() / (1.0 - p).ln()).ceil();
+        let count = (libm::log(TAIL) / libm::log(1.0 - p)).ceil();
         budget.outcomes(if count.is_finite() { count as u128 } else { u128::MAX })?;
         budget.work(count as u64)?;
         let mut pairs = Vec::with_capacity(count as usize);
@@ -278,7 +278,7 @@ impl Dist {
         }
         let pairs = pools.into_iter().map(|(pool, w)| (Value::list(pool), w)).collect();
         // Each die independently misses `die.missing` of its probability.
-        let missing = 1.0 - (1.0 - die.missing).powi(count as i32);
+        let missing = 1.0 - libm::pow(1.0 - die.missing, count as f64);
         Ok(Dist::from_pairs(pairs, missing))
     }
 
@@ -633,7 +633,7 @@ pub fn ln_gamma(x: f64) -> f64 {
     ];
     if x < 0.5 {
         // Reflection formula.
-        return (std::f64::consts::PI / (std::f64::consts::PI * x).sin()).ln() - ln_gamma(1.0 - x);
+        return libm::log(std::f64::consts::PI / libm::sin(std::f64::consts::PI * x)) - ln_gamma(1.0 - x);
     }
     let x = x - 1.0;
     let mut a = C[0];
@@ -641,7 +641,7 @@ pub fn ln_gamma(x: f64) -> f64 {
     for (i, c) in C.iter().enumerate().skip(1) {
         a += c / (x + i as f64);
     }
-    0.5 * (2.0 * std::f64::consts::PI).ln() + (x + 0.5) * t.ln() - t + a.ln()
+    0.5 * libm::log(2.0 * std::f64::consts::PI) + (x + 0.5) * libm::log(t) - t + libm::log(a)
 }
 
 #[cfg(test)]

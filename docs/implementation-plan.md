@@ -78,6 +78,8 @@ crates/
   probl-engine/         values, distributions, weights, worlds, the interpreter, reports, limits
   probl-cli/            probl run | check | repl; golden tests over examples/
   probl-oracle/         the independent reference interpreter, program generator and fuzzer
+  probl-wasm/           the engine as a WebAssembly module, for the playground
+web/                    the playground: the module's loader and its tests
 examples/               sample programs; their "Output" blocks are golden tests
 docs/
 ```
@@ -195,7 +197,7 @@ Each `report` site owns an accumulator for each value of its `by` key: the weigh
 
 ### 3.10 Randomness and reproducibility
 
-Runs go in batches of a fixed size, 1,000, and each batch draws from a xoshiro256++ stream of its own, seeded through SplitMix64 from the seed and the batch's number. The samplers use `libm`, not the platform's math library.
+Runs go in batches of a fixed size, 1,000, and each batch draws from a xoshiro256++ stream of its own, seeded through SplitMix64 from the seed and the batch's number. Every floating-point function goes through `libm`, not the platform's math library, so a program prints the same on every platform, WebAssembly included.
 
 Batches run on up to `max_threads` threads (all the cores by default, `--threads` on the command line), each with an engine of its own. Batches are combined in order, as they arrive:
 
@@ -364,5 +366,5 @@ Still open:
 
 The order the benchmarks recommend (docs/benchmarks.md). The first three are done: parallel sampling batches (6–8× for sampled models on 12 cores), cheaper merging (1.4–2.9× for enumeration), and moving draws to their first use (the reliability model follows 256 worlds instead of 2²⁰). So are reading data ([reading data](data-input.md)) and the evidence when sampling, which completes v0.2. So are exact updates for conjugate priors, the first part of better inference: an A/B test's 100,000 runs are worth 100,000 instead of 863 with 30 days of data, and instead of 204 with 120. And so is solving loops and recursion that cycle (semantics §6 and §10).
 
-1. **A playground in the browser** ([its plan](playground-plan.md)).
+1. **A playground in the browser** ([its plan](playground-plan.md)). Phase 1 is built: the engine runs in WebAssembly, and prints exactly what the command line prints. Next is the page.
 2. **A general method for models that aren't conjugate** (lognormal priors, `a to b` estimates, hierarchical models, regressions). First a benchmark that needs it, then a specification: the review of the first proposal lists what it must contain ([inference proposal](inference-proposal.md), section 2).

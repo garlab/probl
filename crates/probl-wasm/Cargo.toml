@@ -1,0 +1,16 @@
+[package]
+name = "probl-wasm"
+description = "Probl compiled to WebAssembly, for the playground in the browser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+probl-syntax.workspace = true
+probl-sema.workspace = true
+probl-engine.workspace = true
+serde_json.workspace = true

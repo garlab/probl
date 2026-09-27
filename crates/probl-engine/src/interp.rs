@@ -2034,7 +2034,7 @@ pub fn fmt_weight(w: Weight) -> String {
     let x = w.to_f64();
     if x == 0.0 && !w.is_zero() {
         let l = w.log10() + 2.0;
-        return format!("{:.1}e{}%", 10f64.powf(l - l.floor()), l.floor());
+        return format!("{:.1}e{}%", libm::pow(10.0, l - l.floor()), l.floor());
     }
     fmt_prob(x)
 }

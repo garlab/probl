@@ -404,7 +404,7 @@ fn arith(op: BinOp, a: &Value, b: &Value) -> OpResult<Value> {
                         .map(Value::Int)
                         .ok_or_else(overflow)
                 } else {
-                    Ok(Value::Float((x as f64).powf(y as f64)))
+                    Ok(Value::Float(libm::pow(x as f64, y as f64)))
                 }
             }
             _ => Err(bad()),
@@ -439,7 +439,7 @@ fn arith(op: BinOp, a: &Value, b: &Value) -> OpResult<Value> {
             }
             x - (x / y).floor() * y
         }
-        BinOp::Pow => x.powf(y),
+        BinOp::Pow => libm::pow(x, y),
         _ => return Err(bad()),
     };
     if !v.is_finite() {

@@ -1,6 +1,6 @@
 # Plan: a playground in the browser
 
-> Draft, September 2026, for review. Nothing here is built. The [implementation plan](implementation-plan.md) has "a WebAssembly build and a browser playground" in phase 7. This plans it as a project of its own, which can come earlier. The open questions at the end need a decision before it's built.
+> September 2026. The [implementation plan](implementation-plan.md) had "a WebAssembly build and a browser playground" in phase 7; this plans it as a project of its own. **Phase 1 is built:** the engine runs in WebAssembly and prints exactly what the command line prints (section [Phase 1, as built](#phase-1-as-built)). The open questions at the end were answered with the proposals, except hosting, which waits for a remote.
 
 ## How hard is it?
 
@@ -63,7 +63,7 @@ Programs, options and results cross as JSON strings, so the interface stays smal
   - **Limits:** the playground sets them, not the page.
 - **`examples()`** gives the bundled examples with their data files.
 
-The API is plain Rust around `probl_sema::compile` and `probl_engine::run`, so its tests run natively with `cargo test`.
+The API is plain Rust around `probl_sema::compile` and `probl_engine::run_on_this_thread`, so its tests run natively with `cargo test`. The module exports it as plain functions, and a small loader passes the text through the module's memory (see [Phase 1, as built](#phase-1-as-built)).
 
 ### The worker
 
@@ -108,9 +108,9 @@ So the slowest examples would take 2–4 seconds in the browser, with a progress
 
 ## Building and hosting
 
-- **Tools:** the `wasm32-unknown-unknown` target, `wasm-bindgen-cli` pinned to the crate's version, and `wasm-opt` for size. The page uses CodeMirror 6 for the editor and esbuild to bundle it: a handful of npm packages, with a lockfile.
-- **Size:** the module includes the parser, the engine, the diagnostics renderer, and the CSV and JSON readers. Somewhere near 1 MB after `wasm-opt`, and a third of that compressed, is a guess to check in phase 1.
-- **The stack:** set at link time for the WebAssembly target, together with the call-depth limit.
+- **Tools:** the `wasm32-unknown-unknown` target, and nothing else for the module (see [Phase 1, as built](#phase-1-as-built)). The page uses CodeMirror 6 for the editor and esbuild to bundle it: a handful of npm packages, with a lockfile.
+- **Size:** the module includes the parser, the engine, the diagnostics renderer, and the CSV and JSON readers: 1.1 MB, and 400 KB compressed, without `wasm-opt`.
+- **The stack:** the call-depth limit keeps recursion within what the browser allows (see [Phase 1, as built](#phase-1-as-built)).
 - **Hosting:** static files, since everything runs in the browser. Any static host works, such as GitHub Pages, provided it serves `.wasm` as `application/wasm`. The repository has no remote yet.
 - **Continuous integration:** check that the engine builds for `wasm32` on every change, run the tests below, and publish the page from the main branch.
 
@@ -152,6 +152,20 @@ So the slowest examples would take 2–4 seconds in the browser, with a progress
 | A shared link runs someone else's program | It runs in the viewer's browser, with no access to files or the network, within the limits. Output is shown as text, never as HTML |
 | A JavaScript toolchain to maintain in a Rust repository | A few pinned packages; the page is static files; its build is one script |
 | `wasm-bindgen` versions drift | The command-line tool is pinned to the crate's version. The JSON interface would also work over plain exported functions, if it had to |
+
+## Phase 1, as built
+
+- **The engine:**
+  - `probl_engine::run_on_this_thread` runs a program without starting a thread. With one thread allowed, sampling runs its batches one after another, with the same output as on several threads.
+  - Every floating-point function goes through `libm`. No example's output changed natively.
+- **`crates/probl-wasm`:**
+  - **The API:** `check`, `run` and `examples`, as above. The playground's limits are 1,000,000 worlds, 2 × 10⁹ units of work, 150 nested calls, 20,000 chain states and 1 MiB of output. Data may be 8 MiB. `read` reads only the files given with the request, and there's no standard input.
+  - **Plain exported functions, not `wasm-bindgen`.** The interface is only text, so `probl_alloc`, `probl_run` and the others take and give it through memory. `web/src/probl.js`, 70 lines, does the rest. That needs no generated glue and no tool pinned to a version: `cargo build -p probl-wasm --target wasm32-unknown-unknown --profile wasm` is the whole build.
+  - **Panics:** a panic hook sends the message to the loader before the module stops, and the loader reports it as a crash.
+- **Measured, in Node:**
+  - **Output:** every example prints exactly what `probl run` prints, sampled ones included (`node web/test/examples.mjs`).
+  - **Speed:** WebAssembly is 1.7–2.1× slower than one native core. The slowest example, 07, takes 3.2 s; the enumerated ones take up to 0.46 s. Memory reached 31 MiB.
+  - **Stack:** V8's own stack is what limits recursion, not WebAssembly's. A recursive function worked 600 calls deep and failed at 800 with "Maximum call stack size exceeded", which the loader reports as a crash. The limit of 150 nested calls leaves a margin, to check in each browser's workers in phase 2.
 
 ## Open questions
 

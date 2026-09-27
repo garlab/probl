@@ -21,9 +21,9 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
         B::Ceil => to_int(a(0), f64::ceil),
         B::Round => to_int(a(0), f64::round),
         B::Sqrt => float1(a(0), "sqrt", |x| (x >= 0.0).then(|| x.sqrt())),
-        B::Exp => float1(a(0), "exp", |x| Some(x.exp()).filter(|y| y.is_finite())),
-        B::Ln => float1(a(0), "ln", |x| (x > 0.0).then(|| x.ln())),
-        B::Log10 => float1(a(0), "log10", |x| (x > 0.0).then(|| x.log10())),
+        B::Exp => float1(a(0), "exp", |x| Some(libm::exp(x)).filter(|y| y.is_finite())),
+        B::Ln => float1(a(0), "ln", |x| (x > 0.0).then(|| libm::log(x))),
+        B::Log10 => float1(a(0), "log10", |x| (x > 0.0).then(|| libm::log10(x))),
         B::Clamp => {
             let (lo, hi) = (a(1), a(2));
             if ops::compare(lo, hi)?.is_gt() {
@@ -173,9 +173,9 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
             if p <= 0.0 || p >= 1.0 {
                 return Err(OpError::new("logit needs a probability strictly between 0% and 100%"));
             }
-            Ok(Value::Float((p / (1.0 - p)).ln()))
+            Ok(Value::Float(libm::log(p / (1.0 - p))))
         }
-        B::InvLogit => Ok(Value::Prob(1.0 / (1.0 + (-number(a(0), "inv_logit")?).exp()))),
+        B::InvLogit => Ok(Value::Prob(1.0 / (1.0 + libm::exp(-number(a(0), "inv_logit")?)))),
         B::Date => {
             let s = text(a(0), "date")?;
             dates::parse(&s)

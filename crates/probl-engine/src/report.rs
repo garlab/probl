@@ -617,7 +617,7 @@ pub fn estimate(p: f64, se: f64) -> String {
     let decimals = if se < 0.005 {
         2
     } else {
-        (-se.log10().floor()).clamp(0.0, 2.0) as usize
+        (-libm::log10(se).floor()).clamp(0.0, 2.0) as usize
     };
     format!("{p:.decimals$}% ± {se:.decimals$}%")
 }
@@ -654,7 +654,7 @@ fn numeric_stats(dist: &[(Value, f64)], mean_se: Option<f64>) -> Option<String> 
         }
     });
     let mean_text = match mean_se {
-        Some(se) if se * if percent { 100.0 } else { 1.0 } >= 0.5 * 10f64.powi(-(decimals as i32)) => {
+        Some(se) if se * if percent { 100.0 } else { 1.0 } >= 0.5 * libm::pow(10.0, -(decimals as f64)) => {
             format!("{} ± {}", show(mean, decimals), show(se, decimals))
         }
         _ => show(mean, decimals),
