@@ -7,6 +7,7 @@ import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'no
 import { fileURLToPath } from 'node:url';
 import * as esbuild from 'esbuild';
 import { marked } from 'marked';
+import { highlight } from './src/probl-lang.js';
 import { load } from './src/probl.js';
 
 const web = fileURLToPath(new URL('.', import.meta.url));
@@ -43,14 +44,19 @@ const slug = (text) =>
     .replace(/[^\p{L}\p{N}\s_-]/gu, '')
     .trim()
     .replace(/\s+/g, '-');
+// The top-level sections, for a list of contents after the opening note.
+const sections = [];
 marked.use({
   renderer: {
     heading({ tokens, depth, text }) {
-      return `<h${depth} id="${slug(text)}">${this.parser.parseInline(tokens)}</h${depth}>\n`;
+      const inner = this.parser.parseInline(tokens);
+      if (depth === 2) sections.push(`<li><a href="#${slug(text)}">${inner}</a></li>`);
+      return `<h${depth} id="${slug(text)}">${inner}</h${depth}>\n`;
     },
     code({ text, lang }) {
-      const pre = `<pre><code>${escape(text)}</code></pre>`;
-      if (lang !== 'probl') return `${pre}\n`;
+      if (lang !== 'probl') return `<pre><code>${escape(text)}</code></pre>\n`;
+      const html = highlight(text, escape, (part, classes) => `<span class="${classes}">${escape(part)}</span>`);
+      const pre = `<pre><code>${html.join('')}</code></pre>`;
       const runs = !probl.check(text).diagnostics.some((d) => d.severity === 'error');
       return `<figure>${pre}${runs ? '<button class="try">Run in the editor</button>' : ''}</figure>\n`;
     },
@@ -64,8 +70,9 @@ marked.use({
     },
   },
 });
-const overview = readFileSync(`${root}docs/language-overview.md`, 'utf8');
-writeFileSync(`${dist}/guide.html`, marked.parse(overview));
+const overview = marked.parse(readFileSync(`${root}docs/language-overview.md`, 'utf8'));
+const contents = `<nav class="contents" aria-label="Contents"><p>Contents</p><ul>${sections.join('')}</ul></nav>\n`;
+writeFileSync(`${dist}/guide.html`, overview.replace('</blockquote>\n', `</blockquote>\n${contents}`));
 
 if (process.argv.includes('--serve')) {
   const context = await esbuild.context({});

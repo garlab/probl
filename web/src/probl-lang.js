@@ -3,6 +3,7 @@
 // line inside brackets is one level in from the line that opened them.
 
 import { StreamLanguage } from '@codemirror/language';
+import { highlightCode, tagHighlighter, tags } from '@lezer/highlight';
 
 const keywords = new Set([
   'and', 'break', 'chance', 'continue', 'div', 'else', 'enum', 'fn', 'for', 'if', 'import', 'in',
@@ -79,3 +80,30 @@ export const probl = StreamLanguage.define({
     closeBrackets: { brackets: ['(', '[', '{', '"'] },
   },
 });
+
+/** Classes for Probl's tokens, which the page's style colors: in the
+ * editor, the guide's programs and the descriptions of names. */
+export const highlighter = tagHighlighter([
+  { tag: tags.keyword, class: 'tok-keyword' },
+  { tag: [tags.number, tags.atom, tags.bool], class: 'tok-number' },
+  { tag: tags.string, class: 'tok-string' },
+  { tag: tags.comment, class: 'tok-comment' },
+  { tag: tags.typeName, class: 'tok-type' },
+  { tag: tags.function(tags.variableName), class: 'tok-function' },
+  { tag: tags.meta, class: 'tok-meta' },
+  { tag: tags.operator, class: 'tok-operator' },
+]);
+
+/** Probl code, highlighted: `text(part)` and `span(part, classes)` build
+ * the output, as HTML or as elements. */
+export function highlight(code, text, span) {
+  const out = [];
+  highlightCode(
+    code,
+    probl.parser.parse(code),
+    highlighter,
+    (part, classes) => out.push(classes ? span(part, classes) : text(part)),
+    () => out.push(text('\n')),
+  );
+  return out;
+}

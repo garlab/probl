@@ -6,14 +6,13 @@
 // worker, and a new one takes its place.
 
 import { indentWithTab, isolateHistory } from '@codemirror/commands';
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { syntaxHighlighting } from '@codemirror/language';
 import { linter, lintGutter, setDiagnostics } from '@codemirror/lint';
 import { Compartment } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
-import { tags } from '@lezer/highlight';
 import { basicSetup } from 'codemirror';
 import { intelligence, setSymbols } from './intel.js';
-import { probl } from './probl-lang.js';
+import { highlighter, probl } from './probl-lang.js';
 
 /** Seconds a run may take before it's stopped, unless the options say not to. */
 const TIME_LIMIT = 30;
@@ -90,17 +89,6 @@ function remembered() {
 }
 
 // ── The page ─────────────────────────────────────────────────────────────
-
-const highlight = HighlightStyle.define([
-  { tag: tags.keyword, color: 'var(--keyword)' },
-  { tag: [tags.number, tags.atom, tags.bool], color: 'var(--number)' },
-  { tag: tags.string, color: 'var(--string)' },
-  { tag: tags.comment, color: 'var(--comment)', fontStyle: 'italic' },
-  { tag: tags.typeName, color: 'var(--type)' },
-  { tag: [tags.function(tags.variableName)], color: 'var(--function)' },
-  { tag: tags.meta, color: 'var(--meta)' },
-  { tag: tags.operator, color: 'var(--operator)' },
-]);
 
 const theme = EditorView.theme({
   '&': { height: '100%', color: 'var(--text)', backgroundColor: 'var(--editor)' },
@@ -189,7 +177,7 @@ async function main() {
       basicSetup,
       probl,
       probl.data.of({ autocomplete: intel.complete }),
-      syntaxHighlighting(highlight),
+      syntaxHighlighting(highlighter),
       theme,
       scheme.of(EditorView.darkTheme.of(darkScheme.matches)),
       lint,

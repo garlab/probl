@@ -221,6 +221,8 @@ Beside the output are two more tabs: the language overview as a **guide**, and a
   - **Indentation:** a line inside brackets is one level in from the line that opened them, and a closing bracket goes back out to that line's level.
 - **The reference** documents every public built-in and keyword, from `probl_sema::docs`, and can be searched. A test fails if a built-in has no documentation.
 - **The guide** is `docs/language-overview.md`, rendered when the page is built:
+  - A list of contents leads to its sections.
+  - Its Probl blocks are highlighted as the editor highlights them, by the same tokenizer. So is the code in descriptions of names.
   - 12 of its 20 Probl blocks are complete programs, as the module itself checks them. Each has a button that runs it in the editor.
   - Its links to the examples open them. Links to the other documents are left as text.
 - **Sizes:** the guide is 49 KB, or 16 KB compressed, and loads when first shown. The page's script grew by 8 KB, to 414 KB.

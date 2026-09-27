@@ -169,6 +169,17 @@ pre {
 kbd { font: 0.92em var(--mono); background: var(--code-bg); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
 button.link { font: inherit; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; }
 
+/* Probl's tokens: in the editor, the guide's programs and the
+   descriptions of names. */
+.tok-keyword { color: var(--keyword); }
+.tok-number { color: var(--number); }
+.tok-string { color: var(--string); }
+.tok-comment { color: var(--comment); font-style: italic; }
+.tok-type { color: var(--type); }
+.tok-function { color: var(--function); }
+.tok-meta { color: var(--meta); }
+.tok-operator { color: var(--operator); }
+
 /* The guide: the language overview. */
 #guide { padding: 4px 22px 40px; line-height: 1.55; }
 #guide h1 { font-size: 22px; margin: 18px 0 8px; }
@@ -184,6 +195,12 @@ button.link { font: inherit; color: var(--accent); background: none; border: non
 #guide th, #guide td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; vertical-align: top; }
 #guide blockquote { margin: 12px 0; padding: 2px 14px; border-left: 3px solid var(--line); color: var(--faint); }
 #guide a { color: var(--accent); }
+#guide .contents { margin: 16px 0; padding: 10px 16px 12px; background: var(--code-bg); border-radius: 8px; }
+#guide .contents p { margin: 0 0 6px; font-weight: 600; }
+#guide .contents ul { margin: 0; padding: 0; list-style: none; columns: 2 16em; column-gap: 28px; }
+#guide .contents li { margin: 2px 0; break-inside: avoid; }
+#guide .contents a { text-decoration: none; }
+#guide .contents a:hover { text-decoration: underline; }
 
 /* The reference. */
 #reference { padding: 12px 18px 40px; }

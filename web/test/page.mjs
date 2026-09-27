@@ -161,10 +161,11 @@ try {
   await fresh.keyboard.type('\nreport d4');
   const unnamed = await becomes(fresh, () => location.hash === '' && document.getElementById('examples').value === '');
   expect(unnamed, 'once it’s edited, neither names it');
+  const edits = await fresh.evaluate(() => window.playground.getSource());
   await fresh.reload();
   await fresh.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
-  const kept = await fresh.evaluate(() => [location.href, window.playground.getSource().slice(-40)]);
-  expect(kept[1].endsWith('\nreport d4'), 'reloading keeps the edits', JSON.stringify(kept));
+  const kept = await fresh.evaluate(() => window.playground.getSource());
+  expect(kept === edits && kept.includes('d4'), 'reloading keeps the edits', JSON.stringify(kept.slice(-40)));
 
   // Replacing a program of your own says how to get it back, and undo does.
   await fresh.evaluate(() => window.playground.setSource('# mine\nreport d6'));
@@ -488,6 +489,20 @@ try {
   await showTab('guide');
   const guided = await becomes(editor, () => document.querySelectorAll('#guide button.try').length >= 10, undefined, 10_000);
   expect(guided, 'the guide loads, with programs to run');
+  const address = await editor.evaluate(() => location.href);
+  await editor.evaluate(() => document.querySelector('#guide .contents a[href="#5-evidence"]').click());
+  const jumped = await editor.evaluate(() => ({
+    offset: Math.round(
+      document.getElementById('5-evidence').getBoundingClientRect().top -
+        document.getElementById('guide').getBoundingClientRect().top,
+    ),
+    href: location.href,
+  }));
+  expect(
+    Math.abs(jumped.offset) < 5 && jumped.href === address,
+    'its contents lead to its sections, and leave the address alone',
+    JSON.stringify(jumped),
+  );
   const snippet = await editor.evaluate(() => document.querySelector('#guide button.try').previousElementSibling.textContent);
   answer = await run(editor, () => editor.evaluate(() => document.querySelector('#guide button.try').click()));
   const ran = await editor.evaluate(() => ({

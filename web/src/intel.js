@@ -8,6 +8,7 @@ import { closeCompletion, completionStatus, selectedCompletion } from '@codemirr
 import { syntaxTree } from '@codemirror/language';
 import { Prec, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, hoverTooltip, keymap, showTooltip } from '@codemirror/view';
+import { highlight } from './probl-lang.js';
 
 /** New symbols from the compiler, for the document as it is now. */
 export const setSymbols = StateEffect.define();
@@ -198,7 +199,18 @@ function card({ code, what, doc }) {
   if (code) {
     const pre = document.createElement('code');
     pre.className = 'cm-probl-signature';
-    pre.textContent = code;
+    pre.append(
+      ...highlight(
+        code,
+        (part) => part,
+        (part, classes) => {
+          const span = document.createElement('span');
+          span.className = classes;
+          span.textContent = part;
+          return span;
+        },
+      ),
+    );
     dom.append(pre);
   }
   if (what) {
