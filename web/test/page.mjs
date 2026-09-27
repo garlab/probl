@@ -164,6 +164,26 @@ try {
     };
   });
   expect(!fitted.hint && fitted.scroll <= fitted.width, 'long reports wrap to fit the pane', JSON.stringify(fitted));
+  // Wrapping leaves each report's first line where it was: at the left.
+  await fresh.select('#examples', '10_quantum_key');
+  await run(fresh);
+  const shifted = await fresh.evaluate(() => {
+    const result = document.getElementById('result');
+    const left = result.getBoundingClientRect().left + parseFloat(getComputedStyle(result).paddingLeft);
+    return [...result.querySelectorAll('.line')]
+      .filter((line) => line.textContent.trim() !== '')
+      .map((line) => {
+        const texts = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+        let text = texts.nextNode();
+        while (text.length === 0) text = texts.nextNode();
+        const range = document.createRange();
+        range.setStart(text, 0);
+        range.setEnd(text, 1);
+        return [Math.round(range.getBoundingClientRect().left - left), line.textContent.slice(0, 30)];
+      })
+      .filter(([offset]) => Math.abs(offset) > 1);
+  });
+  expect(shifted.length === 0, 'and each report starts at the left of the pane', JSON.stringify(shifted));
 
   // Editing an example: the menu and the address stop naming it, so that
   // reloading keeps the edits.

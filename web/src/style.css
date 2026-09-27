@@ -159,8 +159,11 @@ pre {
 #result.error { color: var(--error); }
 /* A report too long for the pane wraps at its ` · ` separators, under its
    values. */
+/* The output is a size container, so `cqw` is 1% of its width in both
+   properties below (a percentage isn't: text-indent's is of the line). */
+#result { container-type: inline-size; }
 #result .line {
-  --indent: min(var(--hang), 40%); /* a long label leaves room for the values */
+  --indent: min(var(--hang), 40cqw); /* a long label leaves room for the values */
   display: block;
   white-space: pre-wrap;
   padding-left: var(--indent);
