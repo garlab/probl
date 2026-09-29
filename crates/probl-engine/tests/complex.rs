@@ -204,7 +204,7 @@ fn complex_values_never_become_probabilities_or_ordered_reals() {
         "report normal(complex(0), 1)",
         "report variance(one_of([complex(1), complex(2)]))",
         "report floor(complex(1))",
-        "report sqrt(complex(-1))",
+        "report erf(complex(1))",
         "report complex(1) mod 2",
         "report complex(1) div 2",
     ] {

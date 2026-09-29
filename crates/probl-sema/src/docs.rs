@@ -161,41 +161,65 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "round(x, digits?: int)",
             "Round to the nearest value, halves away from zero. With no `digits`, returns an int. With `digits`, rounds that many decimal places: `round(1.234, 2)` is 1.23; `round(1234, -2)` is 1200. Int inputs stay exact ints (overflow is an error); other numbers return floats. Float scaling is approximate near halfway cases. This changes the value, not its display format.",
         ),
-        B::Sqrt => doc("sqrt(x) -> float", "The square root. It's an error below 0."),
+        B::Sqrt => doc(
+            "sqrt(x) -> float or complex",
+            "The square root. Real inputs must be nonnegative. Complex inputs give the principal root with nonnegative real part: `sqrt(complex(-1))` is `complex(0, 1)`.",
+        ),
         B::Cbrt => doc(
-            "cbrt(x) -> float",
-            "The real cube root, including negative inputs: `cbrt(-8)` is -2. `x` must be finite.",
+            "cbrt(x) -> float or complex",
+            "The cube root. Real inputs give the real root: `cbrt(-8)` is -2. Complex inputs give the principal root with phase `arg(x)/3`: `cbrt(complex(-8))` is approximately `complex(1, sqrt(3))`.",
         ),
-        B::Exp => doc("exp(x) -> float", "e to the power `x`."),
+        B::Exp => doc(
+            "exp(x) -> float or complex",
+            "e to the power `x`. Complex inputs give `exp(real(x)) * cis(imag(x))`; overflow is an error.",
+        ),
         B::Exp2 => doc(
-            "exp2(x) -> float",
-            "2 to the power `x`, the inverse of `log2`. `x` must be finite; overflow is an error, and very small results may underflow to zero.",
+            "exp2(x) -> float or complex",
+            "2 to the power `x`, including complex inputs. Overflow is an error; very small results may underflow to zero.",
         ),
-        B::Ln => doc("ln(x) -> float", "The natural logarithm. `x` must be above 0."),
-        B::Log10 => doc("log10(x) -> float", "The base-10 logarithm. `x` must be above 0."),
-        B::Log2 => doc("log2(x) -> float", "The base-2 logarithm. `x` must be above 0."),
+        B::Ln => doc(
+            "ln(x) -> float or complex",
+            "The natural logarithm. Real inputs must be positive. Nonzero complex inputs give the principal value `complex(ln(abs(x)), arg(x))`, with phase +pi on the negative real axis. Other branches are explicit: `ln(x) + complex(0, 2*pi*k)` for integer `k`.",
+        ),
+        B::Log10 => doc(
+            "log10(x) -> float or complex",
+            "The base-10 logarithm. Real inputs must be positive; nonzero complex inputs give the principal value `ln(x)/ln(10)`.",
+        ),
+        B::Log2 => doc(
+            "log2(x) -> float or complex",
+            "The base-2 logarithm. Real inputs must be positive; nonzero complex inputs give the principal value `ln(x)/ln(2)`.",
+        ),
         B::Log1p => doc(
-            "log1p(x) -> float",
-            "`ln(1 + x)`, accurate even when `x` is tiny. `x` must be above −1.",
+            "log1p(x) -> float or complex",
+            "`ln(1 + x)`, preserving tiny real or complex inputs. Real inputs must be above −1. Complex inputs use the principal logarithm; complex −1 is an error.",
         ),
         B::Expm1 => doc(
-            "expm1(x) -> float",
-            "`exp(x) − 1`, accurate even when `x` is tiny: for a Poisson process with constant `rate`, the chance of at least one event in time `t` is `-expm1(-rate * t)`.",
+            "expm1(x) -> float or complex",
+            "`exp(x) − 1`, preserving tiny real or complex inputs. For a Poisson process with constant `rate`, the chance of at least one event in time `t` is `-expm1(-rate * t)`.",
         ),
-        B::Sin => doc("sin(x) -> float", "The sine of `x`, an angle in radians."),
-        B::Cos => doc("cos(x) -> float", "The cosine of `x`, an angle in radians."),
-        B::Tan => doc("tan(x) -> float", "The tangent of `x`, an angle in radians."),
+        B::Sin => doc(
+            "sin(x) -> float or complex",
+            "The sine of a real angle in radians, or its complex extension.",
+        ),
+        B::Cos => doc(
+            "cos(x) -> float or complex",
+            "The cosine of a real angle in radians, or its complex extension.",
+        ),
+        B::Tan => doc(
+            "tan(x) -> float or complex",
+            "The tangent of a real angle in radians, or its complex extension.",
+        ),
         B::Asin => doc(
-            "asin(x) -> float",
-            "The angle whose sine is `x`, in radians, from −pi/2 to pi/2. `x` must be from −1 to 1.",
+            "asin(x) -> float or complex",
+            "The inverse sine in radians. Real inputs must be from −1 to 1. Complex inputs give the principal value, with real part from −pi/2 to pi/2 and cuts on the real axis outside [−1, 1]. Exact cut values use the upper side.",
         ),
         B::Acos => doc(
-            "acos(x) -> float",
-            "The angle whose cosine is `x`, in radians, from 0 to pi. `x` must be from −1 to 1.",
+            "acos(x) -> float or complex",
+            "The inverse cosine in radians. Real inputs must be from −1 to 1. Complex inputs give the principal value, with real part from 0 to pi and cuts on the real axis outside [−1, 1]. Exact cut values use the upper side.",
         ),
         B::Atan => doc(
-            "atan(x) -> float",
-            "The angle whose tangent is `x`, in radians, between −pi/2 and pi/2.",
+            "atan(x) -> float or complex",
+            "The inverse tangent in radians. Complex inputs give the principal value, with cuts on the imaginary axis beyond ±i; ±i are errors. Exact cut values use the right side.",
         ),
         B::Atan2 => doc(
             "atan2(y, x) -> float",
@@ -205,20 +229,29 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "hypot(x, y) -> float",
             "`sqrt(x^2 + y^2)`, the distance from the origin to (`x`, `y`), without overflowing on the way.",
         ),
-        B::Sinh => doc("sinh(x) -> float", "The hyperbolic sine."),
-        B::Cosh => doc("cosh(x) -> float", "The hyperbolic cosine."),
-        B::Tanh => doc("tanh(x) -> float", "The hyperbolic tangent, between −1 and 1."),
+        B::Sinh => doc(
+            "sinh(x) -> float or complex",
+            "The hyperbolic sine, including complex inputs.",
+        ),
+        B::Cosh => doc(
+            "cosh(x) -> float or complex",
+            "The hyperbolic cosine, including complex inputs.",
+        ),
+        B::Tanh => doc(
+            "tanh(x) -> float or complex",
+            "The hyperbolic tangent, including complex inputs. Real results lie between −1 and 1.",
+        ),
         B::Asinh => doc(
-            "asinh(x) -> float",
-            "The inverse hyperbolic sine, for any finite number.",
+            "asinh(x) -> float or complex",
+            "The inverse hyperbolic sine. Complex inputs give the principal value, with cuts on the imaginary axis beyond ±i. Exact cut values use the right side.",
         ),
         B::Acosh => doc(
-            "acosh(x) -> float",
-            "The nonnegative inverse hyperbolic cosine. `x` must be at least 1.",
+            "acosh(x) -> float or complex",
+            "The inverse hyperbolic cosine. Real inputs must be at least 1. Complex inputs give the principal value with nonnegative real part and a cut on the real axis below 1. Exact cut values use the upper side.",
         ),
         B::Atanh => doc(
-            "atanh(x) -> float",
-            "The inverse hyperbolic tangent. `x` must be strictly between −1 and 1; the endpoints are errors.",
+            "atanh(x) -> float or complex",
+            "The inverse hyperbolic tangent. Real inputs must be strictly between −1 and 1. Complex inputs give the principal value, with cuts on the real axis outside [−1, 1]; ±1 are errors. Exact cut values use the upper side.",
         ),
         B::Choose => doc(
             "choose(n: int, k: int) -> int",

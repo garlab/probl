@@ -85,9 +85,9 @@ report cos(d6)                 # a finite distribution, transformed outcome by o
 
 Use `log1p(x)` for `ln(1 + x)` and `expm1(x)` for `exp(x) - 1` when `x` may be tiny, and `hypot(x, y)` for a distance without squaring large or tiny numbers. Arguments outside a function's domain, such as `asin(2)`, and overflowing results are errors. Continuous distributions must be drawn before applying these functions.
 
-The inverse hyperbolic functions are `asinh(x)` (any finite number), `acosh(x)` (`x >= 1`) and `atanh(x)` (`-1 < x < 1`). Like the forward functions, they return floats.
+For real inputs, the inverse hyperbolic functions are `asinh(x)` (any finite number), `acosh(x)` (`x >= 1`) and `atanh(x)` (`-1 < x < 1`). Like the forward functions, they return floats. Their complex extensions are described below.
 
-`cbrt(x)` gives the real cube root, including negative inputs: `cbrt(-8)` is −2. `exp2(x)` gives 2 to the power `x`, complementing `log2`. Both return floats; overflow is an error, and very small results may underflow to zero.
+For real inputs, `cbrt(x)` gives the real cube root, including negative inputs: `cbrt(-8)` is −2. `exp2(x)` gives 2 to the power `x`, complementing `log2`. Both return floats; overflow is an error, and very small results may underflow to zero.
 
 `round(x)` rounds to an int, with halves away from zero. Give an integer `digits` to select decimal places; negative values round tens, hundreds, and so on. With `digits`, ints stay exact ints, while floats and probabilities return floats. Binary floating-point scaling can affect results near halfway cases. Rounding changes the value, not its display format.
 
@@ -129,9 +129,15 @@ report imag(z)             # 4
 report i ^ 2               # complex(-1, 0)
 report cis(pi / 2)         # approximately i
 report mean(one_of([z, conj(z)]))   # complex(3, 0)
+report sqrt(complex(-1))           # complex(0, 1)
+report ln(complex(-1))             # complex(0, pi)
+report exp(i * pi)                 # approximately complex(-1, 0)
+report cos(i)                     # approximately complex(1.54308, 0)
 ```
 
-Complex components are finite floats; overflow and division by zero are errors. There is no ordering or implicit conversion to a probability. Type annotations require an actual complex value: write `let z: complex = complex(1)`. Existing real-only functions such as `sqrt` and `ln` retain their real domains. Compare approximate results using `abs(a - b) < tolerance`.
+Complex components are finite floats; overflow and division by zero are errors. There is no ordering or implicit conversion to a probability. Type annotations require an actual complex value: write `let z: complex = complex(1)`. Compare approximate results using `abs(a - b) < tolerance`.
+
+Roots, logarithms, exponentials, trigonometric and hyperbolic functions (including their inverses) accept complex values. Real inputs keep their real domains: `sqrt(-1)` is still an error. Complex functions return one principal value. Other logarithm branches are explicit: `ln(z) + complex(0, 2*pi*k)` for integer `k`; they do not create probabilistic alternatives. `ln(0)` is undefined. See [complex semantics](semantics.md) for branch cuts and the distinction between real `cbrt(-8)` and principal complex `cbrt(complex(-8))`.
 
 A distribution over complex values is ordinary uncertainty about a number. Opposite outcomes do not cancel. Complex values are a foundation for amplitude calculations; quantum states and gates are future work described in the [design note](quantum-and-complex.md).
 

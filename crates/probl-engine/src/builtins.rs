@@ -25,29 +25,43 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
         B::Ceil => to_int(a(0), f64::ceil),
         B::Trunc => to_int(a(0), libm::trunc),
         B::Round => round(a(0), args.get(1)),
-        B::Sqrt => float1(a(0), "sqrt", |x| (x >= 0.0).then(|| x.sqrt())),
-        B::Cbrt => float1(a(0), "cbrt", |x| Some(libm::cbrt(x))),
-        B::Exp => float1(a(0), "exp", |x| Some(libm::exp(x)).filter(|y| y.is_finite())),
-        B::Exp2 => float1(a(0), "exp2", |x| Some(libm::exp2(x))),
-        B::Ln => float1(a(0), "ln", |x| (x > 0.0).then(|| libm::log(x))),
-        B::Log10 => float1(a(0), "log10", |x| (x > 0.0).then(|| libm::log10(x))),
-        B::Log2 => float1(a(0), "log2", |x| (x > 0.0).then(|| libm::log2(x))),
-        B::Log1p => float1(a(0), "log1p", |x| (x > -1.0).then(|| libm::log1p(x))),
-        B::Expm1 => float1(a(0), "expm1", |x| Some(libm::expm1(x)).filter(|y| y.is_finite())),
-        B::Sin => float1(a(0), "sin", |x| Some(libm::sin(x))),
-        B::Cos => float1(a(0), "cos", |x| Some(libm::cos(x))),
-        B::Tan => float1(a(0), "tan", |x| Some(libm::tan(x))),
-        B::Asin => float1(a(0), "asin", |x| (-1.0..=1.0).contains(&x).then(|| libm::asin(x))),
-        B::Acos => float1(a(0), "acos", |x| (-1.0..=1.0).contains(&x).then(|| libm::acos(x))),
-        B::Atan => float1(a(0), "atan", |x| Some(libm::atan(x))),
+        B::Sqrt => elementary1(a(0), "sqrt", Complex::sqrt, |x| (x >= 0.0).then(|| x.sqrt())),
+        B::Cbrt => elementary1(a(0), "cbrt", Complex::cbrt, |x| Some(libm::cbrt(x))),
+        B::Exp => elementary1(a(0), "exp", Complex::exp, |x| {
+            Some(libm::exp(x)).filter(|y| y.is_finite())
+        }),
+        B::Exp2 => elementary1(a(0), "exp2", Complex::exp2, |x| Some(libm::exp2(x))),
+        B::Ln => elementary1(a(0), "ln", Complex::ln, |x| (x > 0.0).then(|| libm::log(x))),
+        B::Log10 => elementary1(a(0), "log10", Complex::log10, |x| (x > 0.0).then(|| libm::log10(x))),
+        B::Log2 => elementary1(a(0), "log2", Complex::log2, |x| (x > 0.0).then(|| libm::log2(x))),
+        B::Log1p => elementary1(a(0), "log1p", Complex::log1p, |x| (x > -1.0).then(|| libm::log1p(x))),
+        B::Expm1 => elementary1(a(0), "expm1", Complex::expm1, |x| {
+            Some(libm::expm1(x)).filter(|y| y.is_finite())
+        }),
+        B::Sin => elementary1(a(0), "sin", Complex::sin, |x| Some(libm::sin(x))),
+        B::Cos => elementary1(a(0), "cos", Complex::cos, |x| Some(libm::cos(x))),
+        B::Tan => elementary1(a(0), "tan", Complex::tan, |x| Some(libm::tan(x))),
+        B::Asin => elementary1(a(0), "asin", Complex::asin, |x| {
+            (-1.0..=1.0).contains(&x).then(|| libm::asin(x))
+        }),
+        B::Acos => elementary1(a(0), "acos", Complex::acos, |x| {
+            (-1.0..=1.0).contains(&x).then(|| libm::acos(x))
+        }),
+        B::Atan => elementary1(a(0), "atan", Complex::atan, |x| Some(libm::atan(x))),
         B::Atan2 => float2(a(0), a(1), "atan2", libm::atan2),
         B::Hypot => float2(a(0), a(1), "hypot", libm::hypot),
-        B::Sinh => float1(a(0), "sinh", |x| Some(libm::sinh(x)).filter(|y| y.is_finite())),
-        B::Cosh => float1(a(0), "cosh", |x| Some(libm::cosh(x)).filter(|y| y.is_finite())),
-        B::Tanh => float1(a(0), "tanh", |x| Some(libm::tanh(x))),
-        B::Asinh => float1(a(0), "asinh", |x| Some(libm::asinh(x))),
-        B::Acosh => float1(a(0), "acosh", |x| (x >= 1.0).then(|| libm::acosh(x))),
-        B::Atanh => float1(a(0), "atanh", |x| (x.abs() < 1.0).then(|| libm::atanh(x))),
+        B::Sinh => elementary1(a(0), "sinh", Complex::sinh, |x| {
+            Some(libm::sinh(x)).filter(|y| y.is_finite())
+        }),
+        B::Cosh => elementary1(a(0), "cosh", Complex::cosh, |x| {
+            Some(libm::cosh(x)).filter(|y| y.is_finite())
+        }),
+        B::Tanh => elementary1(a(0), "tanh", Complex::tanh, |x| Some(libm::tanh(x))),
+        B::Asinh => elementary1(a(0), "asinh", Complex::asinh, |x| Some(libm::asinh(x))),
+        B::Acosh => elementary1(a(0), "acosh", Complex::acosh, |x| (x >= 1.0).then(|| libm::acosh(x))),
+        B::Atanh => elementary1(a(0), "atanh", Complex::atanh, |x| {
+            (x.abs() < 1.0).then(|| libm::atanh(x))
+        }),
         B::Choose => choose(
             nonnegative_int(a(0), "choose")?,
             nonnegative_int(a(1), "choose")?,
@@ -757,6 +771,22 @@ fn num1(v: &Value, func: &str, f: fn(f64) -> f64, i: fn(i64) -> Option<i64>) -> 
         Value::Float(x) => Ok(Value::Float(f(*x))),
         Value::Prob(x) => Ok(Value::Prob(f(*x))),
         other => Err(expected("a number", other, func)),
+    }
+}
+
+/// Real inputs keep their real domains; an explicit complex input requests the
+/// principal complex extension. Distribution lifting happens in the interpreter.
+fn elementary1(
+    v: &Value,
+    func: &str,
+    complex: fn(Complex) -> OpResult<Complex>,
+    real: impl Fn(f64) -> Option<f64>,
+) -> OpResult<Value> {
+    match v {
+        Value::Complex(z) => complex(*z)
+            .map(Value::Complex)
+            .map_err(|_| OpError::new(format!("`{func}` isn't defined for {v} or its result isn't finite"))),
+        _ => float1(v, func, real),
     }
 }
 
