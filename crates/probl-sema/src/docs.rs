@@ -57,6 +57,13 @@ pub fn category(b: Builtin) -> &'static str {
         | B::LnGamma
         | B::Erf
         | B::Erfc
+        | B::Complex
+        | B::Real
+        | B::Imag
+        | B::Conj
+        | B::Abs2
+        | B::Arg
+        | B::Cis
         | B::Clamp => "Math",
         B::Str | B::Upper | B::Lower | B::Split | B::Join | B::Print => "Text",
         B::Len
@@ -140,7 +147,10 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "max(a, b, …) or max(xs)",
             "The largest of its arguments, or of a list or range's items.",
         ),
-        B::Abs => doc("abs(x)", "The absolute value. An int stays an int."),
+        B::Abs => doc(
+            "abs(x)",
+            "The absolute value. An int stays an int; a complex number gives its magnitude as a float.",
+        ),
         B::Floor => doc("floor(x) -> int", "`x` rounded down, as an int."),
         B::Ceil => doc("ceil(x) -> int", "`x` rounded up, as an int."),
         B::Trunc => doc(
@@ -241,6 +251,28 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Erfc => doc(
             "erfc(x) -> float",
             "The complementary error function, `1 - erf(x)`, computed directly to preserve small tails. For a standard normal, the probability above `x` is `erfc(x / sqrt(2)) / 2`. `x` must be finite; very small results may underflow to zero.",
+        ),
+        B::Complex => doc(
+            "complex(re, im?) -> complex",
+            "Construct a complex number from finite real components. The imaginary part defaults to 0; `complex(z)` also accepts an existing complex number. Complex values are ordinary data, never probabilities or quantum states.",
+        ),
+        B::Real => doc("real(z) -> float", "The real component of a real or complex number."),
+        B::Imag => doc("imag(z) -> float", "The imaginary component; 0 for a real number."),
+        B::Conj => doc(
+            "conj(z) -> complex",
+            "The complex conjugate: negate the imaginary component.",
+        ),
+        B::Abs2 => doc(
+            "abs2(z) -> float",
+            "The squared magnitude, `real(z)^2 + imag(z)^2`. This is a nonnegative number, not an implicit probability; overflow is an error.",
+        ),
+        B::Arg => doc(
+            "arg(z) -> float",
+            "The phase angle in radians, from −pi to pi. Signed zeros are treated alike: a negative real number has phase pi, and zero has phase 0 by convention.",
+        ),
+        B::Cis => doc(
+            "cis(theta) -> complex",
+            "`complex(cos(theta), sin(theta))`, a unit-magnitude phase (up to floating-point rounding). `theta` is a finite real angle in radians.",
         ),
         B::Clamp => doc("clamp(x, lo, hi)", "`x`, kept between `lo` and `hi`."),
         // Text
@@ -404,7 +436,10 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "P(c) -> prob",
             "The probability that a fact, or a distribution of facts, is true: `P(d6 > 4)`.",
         ),
-        B::Mean => doc("mean(d) -> float", "The mean of a distribution."),
+        B::Mean => doc(
+            "mean(d) -> float or complex",
+            "The weighted arithmetic mean of a distribution. Complex outcomes give a complex mean; their probabilities stay real.",
+        ),
         B::Sd => doc("sd(d) -> float", "The standard deviation of a distribution."),
         B::Variance => doc("variance(d) -> float", "The variance of a distribution."),
         B::Median => doc("median(d)", "The value with half the distribution at or below it."),

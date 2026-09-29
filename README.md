@@ -65,6 +65,7 @@ PROBL_URL=https://probl-playground.pages.dev node test/page.mjs   # test the dep
 - [Reference semantics](docs/semantics.md): the precise rules the engine follows
 - [Reading data](docs/data-input.md): CSV, JSON and lines, read with declared types, and its [design review](docs/data-input-review.md)
 - [Better inference](docs/inference-proposal.md): exact updates for conjugate priors, what a general method needs first, and its [design review](docs/inference-proposal-review.md)
+- [Complex values and quantum simulation](docs/quantum-and-complex.md): the implemented scalar foundation and a possible future quantum engine
 - [Playground plan](docs/playground-plan.md): Probl in the browser, what it took, and what's left
 - [Implementation plan](docs/implementation-plan.md): status, architecture, phases, testing and risks
 - [Project audit](docs/project-audit.md): the review that led to the reference semantics

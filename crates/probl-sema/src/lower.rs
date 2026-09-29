@@ -365,6 +365,7 @@ impl<'a> Lowerer<'a> {
                 Some(match n {
                     "int" => TypeSpec::Int,
                     "float" => TypeSpec::Float,
+                    "complex" => TypeSpec::Complex,
                     "prob" => TypeSpec::Prob,
                     "bool" => TypeSpec::Bool,
                     "str" => TypeSpec::Str,
@@ -383,7 +384,7 @@ impl<'a> Lowerer<'a> {
                             TypeSpec::Enum(e)
                         } else {
                             let mut known: Vec<String> = [
-                                "int", "float", "prob", "bool", "str", "date", "list", "map", "bag", "dist",
+                                "int", "float", "complex", "prob", "bool", "str", "date", "list", "map", "bag", "dist",
                             ]
                             .iter()
                             .map(|s| s.to_string())
@@ -423,6 +424,7 @@ impl<'a> Lowerer<'a> {
         let expected = match ty {
             TypeSpec::Int => "an int",
             TypeSpec::Float => "a float",
+            TypeSpec::Complex => "a complex",
             TypeSpec::Prob => "a probability",
             TypeSpec::Bool => "a bool",
             TypeSpec::Str => "a string",

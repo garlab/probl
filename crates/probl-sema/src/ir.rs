@@ -289,6 +289,7 @@ pub enum StmtKind {
 pub enum TypeSpec {
     Int,
     Float,
+    Complex,
     Prob,
     Bool,
     Str,
@@ -316,6 +317,7 @@ impl TypeSpec {
         match self {
             TypeSpec::Int => "int".into(),
             TypeSpec::Float => "float".into(),
+            TypeSpec::Complex => "complex".into(),
             TypeSpec::Prob => "prob".into(),
             TypeSpec::Bool => "bool".into(),
             TypeSpec::Str => "str".into(),

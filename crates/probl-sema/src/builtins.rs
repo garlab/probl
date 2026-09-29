@@ -80,6 +80,13 @@ builtins! {
     LnGamma = "ln_gamma", 1..=1, Lift, true;
     Erf = "erf", 1..=1, Lift, true;
     Erfc = "erfc", 1..=1, Lift, true;
+    Complex = "complex", 1..=2, Lift, true;
+    Real = "real", 1..=1, Lift, true;
+    Imag = "imag", 1..=1, Lift, true;
+    Conj = "conj", 1..=1, Lift, true;
+    Abs2 = "abs2", 1..=1, Lift, true;
+    Arg = "arg", 1..=1, Lift, true;
+    Cis = "cis", 1..=1, Lift, true;
     Clamp = "clamp", 3..=3, Lift, true;
     // Text
     Str = "str", 1..=1, Lift, true;

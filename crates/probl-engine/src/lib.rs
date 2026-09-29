@@ -3,6 +3,7 @@
 
 pub mod builtins;
 pub mod chain;
+pub mod complex;
 pub mod conjugate;
 pub mod continuous;
 pub mod data;

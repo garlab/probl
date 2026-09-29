@@ -21,6 +21,13 @@ report [erfc(-1), erfc(8), 1 - erf(8)] as "small tails"
 report [cbrt(-8), cbrt(1e-300), exp2(0.5), exp2(-1074)] as "roots and powers"
 report [trunc(-1.9), trunc(9007199254740993), trunc(-9.223372036854776e18)] as "truncation"
 report erfc(one_of([-1, 1])) as "uncertain complements"
+let z: complex = complex(3, 4)
+report [z, z * conj(z), z / complex(1, -1), complex(0, 1)^-3] as "complex arithmetic"
+report [real(z), imag(z), abs(z), abs2(z), arg(z)] as "complex components"
+report [cis(pi / 2), arg(complex(-1, -0.0))] as "complex phase"
+report complex(1e308, 1e308) / complex(1e308, 1e308) as "scaled complex division"
+report one_of([complex(0, 1), complex(0, -1)]) as "classical complex mixture"
+report mean(one_of([complex(1, 2), 3])) as "complex mean"
 report choose(d2 + 2, 2) as "uncertain selections"
 report hypot(one_of([0: 25%, 3: 75%]), one_of([0, 4])) as "independent arguments"
 let angle ~ uniform(-pi, pi)

@@ -267,6 +267,7 @@ pub fn unary(op: UnOp, v: &Value, budget: &mut Budget) -> OpResult<Value> {
         UnOp::Neg => lift1(v, budget, |x| match x {
             Value::Int(i) => i.checked_neg().map(Value::Int).ok_or_else(overflow),
             Value::Float(f) | Value::Prob(f) => Ok(Value::Float(-f)),
+            Value::Complex(z) => Ok(Value::Complex(z.negated())),
             other => Err(OpError::new(format!("can't negate {}", article(&other.kind())))),
         }),
         UnOp::Not => not(v, budget),
@@ -365,6 +366,23 @@ fn arith(op: BinOp, a: &Value, b: &Value) -> OpResult<Value> {
             article(&b.kind())
         ))
     };
+    if matches!(a, Value::Complex(_)) || matches!(b, Value::Complex(_)) {
+        let (Some(x), Some(y)) = (a.as_complex(), b.as_complex()) else {
+            return Err(bad());
+        };
+        let z = match op {
+            BinOp::Add => x.plus(y),
+            BinOp::Sub => x.minus(y),
+            BinOp::Mul => x.times(y),
+            BinOp::Div => x.divided_by(y),
+            BinOp::Pow => match b {
+                Value::Int(n) => x.powi(*n),
+                _ => Err(OpError::new("a complex power needs an int exponent")),
+            },
+            _ => Err(bad()),
+        }?;
+        return Ok(Value::Complex(z));
+    }
     if let (Value::Int(x), Value::Int(y)) = (a, b) {
         let (x, y) = (*x, *y);
         return match op {
@@ -496,6 +514,23 @@ fn division_by_zero() -> OpError {
 
 /// The language's `==`: numbers compare by value across int, float and prob.
 pub fn equals(a: &Value, b: &Value) -> bool {
+    if let (Value::Complex(x), Value::Complex(y)) = (a, b) {
+        return x == y;
+    }
+    if let (Value::Complex(z), real) | (real, Value::Complex(z)) = (a, b) {
+        if z.im() != 0.0 {
+            return false;
+        }
+        return match real {
+            // Compare integers without rounding them through f64.
+            Value::Int(n) => {
+                let x = z.re();
+                x.fract() == 0.0 && x >= i64::MIN as f64 && x < -(i64::MIN as f64) && x as i64 == *n
+            }
+            Value::Float(x) | Value::Prob(x) => z.re() == *x,
+            _ => false,
+        };
+    }
     match (number(a), number(b)) {
         (Some(x), Some(y)) => x == y,
         _ => a == b,
@@ -504,6 +539,9 @@ pub fn equals(a: &Value, b: &Value) -> bool {
 
 /// Ordering for `<`, `>` and friends.
 pub fn compare(a: &Value, b: &Value) -> OpResult<std::cmp::Ordering> {
+    if matches!(a, Value::Complex(_)) || matches!(b, Value::Complex(_)) {
+        return Err(OpError::new("complex values have no ordering").help("compare `abs(z)`, `real(z)` or `imag(z)`"));
+    }
     if let (Some(x), Some(y)) = (number(a), number(b)) {
         return x.partial_cmp(&y).ok_or_else(|| OpError::new("can't compare with NaN"));
     }

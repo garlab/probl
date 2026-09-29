@@ -114,6 +114,27 @@ report ln_gamma(101)       # ln(100!), approximately 363.74
 report erf(1)              # approximately 0.8427
 ```
 
+### Complex numbers
+
+Use `complex(re, im)` for complex numeric data. The imaginary component defaults to zero. Arithmetic supports real and complex operands; powers take integer exponents. `abs` gives the magnitude, `abs2` its square, `conj` the conjugate, and `arg` the phase in radians. `cis(theta)` constructs a unit-magnitude phase, up to floating-point rounding.
+
+```probl
+let i = complex(0, 1)
+let z: complex = complex(3, 4)
+report z * conj(z)         # complex(25, 0)
+report abs(z)              # 5
+report abs2(z)             # 25
+report real(z)             # 3
+report imag(z)             # 4
+report i ^ 2               # complex(-1, 0)
+report cis(pi / 2)         # approximately i
+report mean(one_of([z, conj(z)]))   # complex(3, 0)
+```
+
+Complex components are finite floats; overflow and division by zero are errors. There is no ordering or implicit conversion to a probability. Type annotations require an actual complex value: write `let z: complex = complex(1)`. Existing real-only functions such as `sqrt` and `ln` retain their real domains. Compare approximate results using `abs(a - b) < tolerance`.
+
+A distribution over complex values is ordinary uncertainty about a number. Opposite outcomes do not cancel. Complex values are a foundation for amplitude calculations; quantum states and gates are future work described in the [design note](quantum-and-complex.md).
+
 ### Variables
 
 ```probl
@@ -602,6 +623,7 @@ From loosest to tightest binding:
 | Probability | `odds(p)` `logit(p)` `inv_logit(x)` |
 | Math | `abs` `min` `max` `clamp` `floor` `ceil` `trunc` `round(x, digits?)` `sqrt` `cbrt` `hypot(x, y)` `exp` `exp2` `expm1` `ln` `log1p` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `sinh` `cosh` `tanh` `asinh` `acosh` `atanh` |
 | Integer and special functions | `choose(n, k)` `factorial(n)` `gcd(a, b)` `lcm(a, b)` `euler_phi(n)` `ln_gamma(x)` `erf(x)` `erfc(x)` |
+| Complex numbers | `complex(re, im?)` `real(z)` `imag(z)` `conj(z)` `abs(z)` `abs2(z)` `arg(z)` `cis(theta)` |
 | Constants | `pi` `e` `euler_gamma`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
 | Collections | `len` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `highest(n)` `lowest(n)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
 | Text | `str` `upper` `lower` `split` `join` |

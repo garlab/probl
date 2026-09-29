@@ -1,5 +1,6 @@
 //! Built-in functions that don't need the interpreter.
 
+use crate::complex::Complex;
 use crate::continuous::{Family, Mixture, Part};
 use crate::dates;
 use crate::dist::{Budget, Counts, Dist};
@@ -16,7 +17,10 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
     let a = |i: usize| &args[i];
     match b {
         B::Min | B::Max => min_max(args, b == B::Max, budget),
-        B::Abs => num1(a(0), "abs", |x| x.abs(), |i| i.checked_abs()),
+        B::Abs => match a(0) {
+            Value::Complex(z) => finite_float(z.abs(), "abs"),
+            v => num1(v, "abs", |x| x.abs(), |i| i.checked_abs()),
+        },
         B::Floor => to_int(a(0), f64::floor),
         B::Ceil => to_int(a(0), f64::ceil),
         B::Trunc => to_int(a(0), libm::trunc),
@@ -68,6 +72,23 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
         B::LnGamma => float1(a(0), "ln_gamma", |x| (x > 0.0).then(|| libm::lgamma(x))),
         B::Erf => float1(a(0), "erf", |x| Some(libm::erf(x))),
         B::Erfc => float1(a(0), "erfc", |x| Some(libm::erfc(x))),
+        B::Complex => {
+            let z = if args.len() == 1 {
+                complex_number(a(0), "complex")?
+            } else {
+                Complex::new(number(a(0), "complex")?, number(a(1), "complex")?)?
+            };
+            Ok(Value::Complex(z))
+        }
+        B::Real => Ok(Value::Float(complex_number(a(0), "real")?.re())),
+        B::Imag => Ok(Value::Float(complex_number(a(0), "imag")?.im())),
+        B::Conj => Ok(Value::Complex(complex_number(a(0), "conj")?.conjugate())),
+        B::Abs2 => finite_float(complex_number(a(0), "abs2")?.abs2(), "abs2"),
+        B::Arg => Ok(Value::Float(complex_number(a(0), "arg")?.arg())),
+        B::Cis => {
+            let theta = number(a(0), "cis")?;
+            Complex::new(libm::cos(theta), libm::sin(theta)).map(Value::Complex)
+        }
         B::Clamp => {
             let (lo, hi) = (a(1), a(2));
             if ops::compare(lo, hi)?.is_gt() {
@@ -282,13 +303,27 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
         B::P => probability_of(v),
         B::Pdf => Err(OpError::new("pdf needs a continuous distribution")
             .help("for a distribution whose outcomes can be listed, use `pmf`")),
-        B::Mean => numeric_dist(v, "mean").map(|d| Value::Float(d.mean().unwrap())),
+        B::Mean => {
+            let d = as_dist(v);
+            if d.outcomes.iter().any(|(x, _)| matches!(x, Value::Complex(_))) {
+                budget.work(d.outcomes.len() as u64)?;
+                let mut sum = Complex::new(0.0, 0.0)?;
+                let total = d.total();
+                for (x, p) in &d.outcomes {
+                    let x = complex_number(x, "mean")?;
+                    sum = sum.plus(x.times(Complex::new(p / total, 0.0)?)?)?;
+                }
+                Ok(Value::Complex(sum))
+            } else {
+                numeric_dist(v, "mean").map(|d| Value::Float(d.mean().unwrap()))
+            }
+        }
         B::Variance => numeric_dist(v, "variance").map(|d| Value::Float(d.variance().unwrap())),
         B::Sd => numeric_dist(v, "sd").map(|d| Value::Float(d.variance().unwrap().sqrt())),
-        B::Median => Ok(as_dist(v).quantile(0.5).unwrap()),
+        B::Median => quantile(v, 0.5, budget),
         B::Quantile => {
             let q = to_prob(&args[1])?;
-            Ok(as_dist(v).quantile(q).unwrap())
+            quantile(v, q, budget)
         }
         B::Support => {
             let d = as_dist(v);
@@ -490,6 +525,53 @@ fn numeric_dist(v: &Value, what: &str) -> OpResult<Dist> {
     Ok(d)
 }
 
+fn quantile(v: &Value, q: f64, budget: &mut Budget) -> OpResult<Value> {
+    fn check(v: &Value, budget: &mut Budget) -> OpResult<()> {
+        budget.work(1)?;
+        match v {
+            Value::Complex(_) => {
+                ops::compare(v, v)?;
+            }
+            Value::List(xs) => {
+                for x in xs.iter() {
+                    check(x, budget)?;
+                }
+            }
+            Value::Map(xs) => {
+                for (k, v) in xs.iter() {
+                    check(k, budget)?;
+                    check(v, budget)?;
+                }
+            }
+            Value::Bag(xs) => {
+                for x in xs.keys() {
+                    check(x, budget)?;
+                }
+            }
+            Value::Record(r) => {
+                for (_, x) in &r.fields {
+                    check(x, budget)?;
+                }
+            }
+            Value::Dist(d) => {
+                for (x, _) in &d.outcomes {
+                    check(x, budget)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    let d = as_dist(v);
+    for (value, _) in &d.outcomes {
+        // The total order used to store outcomes is not a mathematical order
+        // for complex numbers. Preserve existing categorical quantiles while
+        // rejecting complex data, including inside collections.
+        check(value, budget)?;
+    }
+    Ok(d.quantile(q).unwrap())
+}
+
 fn iter_items(v: &Value, budget: &mut Budget) -> OpResult<Value> {
     match v {
         Value::List(_) | Value::Range(..) => Ok(v.clone()),
@@ -523,6 +605,21 @@ fn number(v: &Value, func: &str) -> OpResult<f64> {
             Err(expected("a number", v, func).help("draw a value first, like `let x ~ normal(0, 1)`"))
         }
         _ => v.as_f64().ok_or_else(|| expected("a number", v, func)),
+    }
+}
+
+fn complex_number(v: &Value, func: &str) -> OpResult<Complex> {
+    v.as_complex()
+        .ok_or_else(|| expected("a finite real or complex number", v, func))
+}
+
+fn finite_float(x: f64, func: &str) -> OpResult<Value> {
+    if x.is_finite() {
+        Ok(Value::Float(x))
+    } else {
+        Err(OpError::new(format!(
+            "`{func}` gave a result that isn't a finite number"
+        )))
     }
 }
 

@@ -9,6 +9,7 @@
 | `bool` | `true`, `false` | **Facts.** Comparisons of settled values, `and`/`or`/`not`, `in`, pattern tests |
 | `prob` | a number from 0 to 1 | **Probabilities.** Percentage literals from `0%` to `100%`. A probability is a parameter, not an event |
 | `int`, `float` | numbers | Arithmetic on probabilities gives floats |
+| `complex` | `complex(re, im)` | Two finite floating-point components; never an implicit probability |
 | `str`, `date`, `list[T]`, `map[K, V]`, `bag[T]`, records, enums, functions | | |
 | `dist[T]` | a distribution over `T` | Dice, `one_of`, `bernoulli`, counts, `roll`, `simulate`, continuous distributions (section 13), and operations on distributions |
 
@@ -40,6 +41,18 @@ Wherever a probability is expected, a `float` from 0 to 1 is accepted too. Nothi
 | `erfc(x)` | Finite number. Returns the complementary error function as a float, from 0 to 2. Computes 1 − erf(x) directly to preserve small tails; extremely small results may underflow to zero. For the standard normal, the probability above x is `erfc(x / sqrt(2)) / 2`. |
 
 The selection, factorial, sign and zero conventions follow the corresponding [Python integer math functions](https://docs.python.org/3/library/math.html#number-theoretic-functions), with Probl's fixed integer range and two-argument `gcd`/`lcm`. Mathematical definitions: [NIST's gamma function](https://dlmf.nist.gov/5.2) and [Euler's totient](https://dlmf.nist.gov/27.2).
+
+**Complex values.** `complex(re, im)` takes finite real numeric components; the imaginary component defaults to zero. `complex(z)` also accepts a complex value. Both components use `f64`, so converting very large integers can round them. A `complex` annotation requires a complex value; use the constructor to convert explicitly. No imaginary literal syntax or built-in `i` name is introduced.
+
+Complex values support `+`, `-`, unary `-`, `*`, `/`, and integer powers `z ^ n`. Mixed real/complex arithmetic promotes the real operand; results stay complex, even if their imaginary component is zero. Negative integer powers take the reciprocal; zero to zero is one. Division by zero, non-finite components and overflowing results are errors; underflow is possible. Fractional or complex exponents, `div`, and `mod` are not defined for complex operands.
+
+`real(z)` and `imag(z)` return float components, `conj(z)` returns the complex conjugate, `abs(z)` returns the magnitude, and `abs2(z)` returns its square as a float. These functions accept real inputs too. `arg(z)` returns the phase in radians from −pi to pi; zero has phase zero by convention. `cis(theta)` takes a finite real angle and returns `complex(cos(theta), sin(theta))`. Signed zeros are canonicalized, so a negative real complex value has phase +pi. These conventions also constrain any future complex functions with branch cuts.
+
+`==` and `!=` compare complex components numerically, including equality with a real number when the imaginary component is zero. Integer comparisons do not round the integer operand into a float. Structural equality for world merging, keys and memoization remains exact and typed, as for existing numeric types; approximate comparisons are explicit, such as `abs(a - b) < 1e-12`. Complex values have no ordering: comparisons, ordering-dependent queries and sorting cannot order them. The deterministic internal ordering used to store outcomes is not a mathematical order.
+
+Complex arithmetic and helper functions lift over finite distributions. Such distributions remain classical mixtures: outcomes with opposite phases do not cancel. `sum` supports complex elements; `mean` returns a complex weighted arithmetic mean when any outcome is complex. `variance`, `sd`, real-only math functions and distribution parameters do not accept complex arguments. Reports present complex values as categorical outcomes instead of applying real summary statistics. Complex values cannot be conditions or probability weights, even with zero imaginary component. `abs2` is an ordinary float, potentially above 1; it is not automatically normalized or interpreted as a probability.
+
+The data-file schema does not add a complex encoding; read real and imaginary fields and construct values explicitly. The [complex and quantum design note](quantum-and-complex.md) distinguishes these implemented scalar rules from a possible future quantum engine.
 
 ## 2. Events and identity
 

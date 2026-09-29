@@ -6,6 +6,7 @@
 //! merge); the language's `==` lives in [`crate::ops`] and compares numbers
 //! across types.
 
+use crate::complex::Complex;
 use crate::continuous::Family;
 use crate::dist::Dist;
 use rustc_hash::FxHasher;
@@ -26,6 +27,7 @@ pub enum Value {
     Bool(bool),
     Int(i64),
     Float(f64),
+    Complex(Complex),
     /// A probability: a number from 0 to 1. It's a parameter, not an event.
     Prob(f64),
     Str(Arc<str>),
@@ -355,6 +357,7 @@ impl Value {
             Value::Bool(_) => "bool".into(),
             Value::Int(_) => "int".into(),
             Value::Float(_) => "float".into(),
+            Value::Complex(_) => "complex".into(),
             Value::Prob(_) => "prob".into(),
             Value::Str(_) => "str".into(),
             Value::List(_) => "list".into(),
@@ -399,6 +402,15 @@ impl Value {
         }
     }
 
+    /// Promote real numeric data to a complex scalar, without accepting facts
+    /// or converting complex data back into real probabilities.
+    pub fn as_complex(&self) -> Option<Complex> {
+        match self {
+            Value::Complex(z) => Some(*z),
+            _ => self.as_f64().and_then(|x| Complex::new(x, 0.0).ok()),
+        }
+    }
+
     /// Order of the value kinds, used to sort mixed values.
     fn rank(&self) -> u8 {
         match self {
@@ -418,6 +430,7 @@ impl Value {
             Value::Closure(_) => 13,
             Value::Continuous(_) => 14,
             Value::Delayed(_) => 15,
+            Value::Complex(_) => 16,
         }
     }
 
@@ -474,6 +487,7 @@ fn eq_other(x: &Value, y: &Value) -> bool {
     match (x, y) {
         (Value::Unit, Value::Unit) => true,
         (Value::Float(a), Value::Float(b)) | (Value::Prob(a), Value::Prob(b)) => float_key(*a) == float_key(*b),
+        (Value::Complex(a), Value::Complex(b)) => a == b,
         (Value::Str(a), Value::Str(b)) => a == b,
         (Value::List(a), Value::List(b)) => Arc::ptr_eq(a, b) || a == b,
         (Value::Map(a), Value::Map(b)) => Arc::ptr_eq(a, b) || a == b,
@@ -513,6 +527,7 @@ fn hash_other<H: Hasher>(value: &Value, state: &mut H) {
     match value {
         Value::Dead | Value::Unit | Value::Bool(_) | Value::Int(_) => {}
         Value::Float(f) | Value::Prob(f) => float_key(*f).hash(state),
+        Value::Complex(z) => (float_key(z.re()), float_key(z.im())).hash(state),
         Value::Str(s) => s.hash(state),
         Value::List(items) => items.hash(state),
         Value::Map(m) => m.hash(state),
@@ -546,6 +561,9 @@ impl Ord for Value {
             }
             (Value::Str(a), Value::Str(b)) => a.cmp(b),
             (Value::Date(a), Value::Date(b)) => a.cmp(b),
+            // Storage order only; the language's comparison operators reject
+            // complex values. Components are finite with canonical zeros.
+            (Value::Complex(a), Value::Complex(b)) => a.re().total_cmp(&b.re()).then(a.im().total_cmp(&b.im())),
             (Value::Enum(a), Value::Enum(b)) => (a.ty, a.variant).cmp(&(b.ty, b.variant)),
             (Value::List(a), Value::List(b)) => a.cmp(b),
             (Value::Range(a, b), Value::Range(c, d)) => (a, b).cmp(&(c, d)),
@@ -619,6 +637,7 @@ fn write_value(v: &Value, f: &mut fmt::Formatter<'_>, nested: bool) -> fmt::Resu
         Value::Unit => write!(f, "()"),
         Value::Int(i) => write!(f, "{i}"),
         Value::Float(x) => write!(f, "{}", fmt_float(*x)),
+        Value::Complex(z) => write!(f, "complex({}, {})", fmt_float(z.re()), fmt_float(z.im())),
         Value::Bool(b) => write!(f, "{b}"),
         Value::Prob(p) => write!(f, "{}", fmt_prob(*p)),
         Value::Str(s) if nested => write!(f, "{s:?}"),

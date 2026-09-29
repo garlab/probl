@@ -1328,6 +1328,7 @@ impl<'p> Engine<'p> {
         match (ty, v) {
             (TypeSpec::Int, Value::Int(_)) => true,
             (TypeSpec::Float, Value::Float(_) | Value::Int(_)) => true,
+            (TypeSpec::Complex, Value::Complex(_)) => true,
             (TypeSpec::Prob, Value::Prob(_)) => true,
             (TypeSpec::Prob, Value::Float(x)) => (0.0..=1.0).contains(x),
             (TypeSpec::Bool, Value::Bool(_)) => true,
