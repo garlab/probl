@@ -1,0 +1,14 @@
+# Large integer data stays text until the engine parses it.
+let json: list[int] = read("data/integers.json")
+let csv: list[{ n: int }] = read("data/integers.csv")
+let lines: list[int] = read("data/integers.txt")
+let expected = 123456789012345678901234567890123456789012345678901
+report json[0] == expected and csv[0].n == expected and lines[0] == expected
+report json[1] == -expected and csv[1].n == -expected and lines[1] == -expected
+report json
+report json[0] + json[1]
+report choose(100, 50)
+report (10^400 + 1) div 3
+report [(10^400) / (10^400), (10^400)^-1, complex(0, 1)^(10^400 + 1)]
+report len(0..10^100)
+report one_of([10^100: 25%, 10^100 + 1: 75%])

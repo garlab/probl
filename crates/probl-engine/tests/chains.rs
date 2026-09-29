@@ -180,7 +180,7 @@ loop {
 }
 report x",
     );
-    assert_eq!(out.reports[0].distribution(), [(Value::Int(3), 1.0)]);
+    assert_eq!(out.reports[0].distribution(), [(Value::Int(3.into()), 1.0)]);
     assert_eq!(out.stats.solved_loops, 1);
 }
 

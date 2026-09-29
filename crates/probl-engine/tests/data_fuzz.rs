@@ -128,7 +128,7 @@ fn written_data_reads_back() {
             }));
             let base = vec![
                 (names[1].clone(), Value::Date(day)),
-                (names[2].clone(), Value::Int(n)),
+                (names[2].clone(), Value::Int(n.into())),
                 (names[3].clone(), Value::str(&name)),
                 (names[4].clone(), Value::Bool(ok)),
                 (names[6].clone(), Value::Float(x)),
@@ -141,7 +141,12 @@ fn written_data_reads_back() {
             ));
             full.push((
                 names[0].clone(),
-                Value::map(counts.iter().map(|(k, v)| (Value::str(k), Value::Int(*v))).collect()),
+                Value::map(
+                    counts
+                        .iter()
+                        .map(|(k, v)| (Value::str(k), Value::Int((*v).into())))
+                        .collect(),
+                ),
             ));
             json_rows.push(make_record(ty.clone(), full));
         }
@@ -156,7 +161,10 @@ fn written_data_reads_back() {
         let ints: Vec<i64> = (0..rng.below(5)).map(|_| int(&mut rng)).collect();
         let lines: String = ints.iter().map(|n| format!("{n}\n")).collect();
         let got = read("let ns: list[int] = read(\"n.txt\")", lines.into_bytes(), &limits).unwrap();
-        assert_eq!(got, Value::list(ints.into_iter().map(Value::Int).collect()));
+        assert_eq!(
+            got,
+            Value::list(ints.into_iter().map(|n| Value::Int(n.into())).collect())
+        );
     }
 }
 
@@ -223,6 +231,7 @@ fn malformed_data_never_panics() {
         max_values: 300,
         max_collection: 100,
         max_depth: 8,
+        ..InputLimits::default()
     };
     let mut rng = Rng(7);
     let (mut read_ok, mut rejected) = (0, 0);

@@ -256,6 +256,8 @@ fn input_limits(max_input: Option<u64>, options: &Options) -> InputLimits {
     InputLimits {
         max_bytes: max_input.unwrap_or(default.max_bytes),
         max_collection: options.limits.max_collection,
+        max_integer_bits: options.limits.max_integer_bits,
+        max_integer_bytes: options.limits.max_integer_bytes,
         ..default
     }
 }

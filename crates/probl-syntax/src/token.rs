@@ -4,7 +4,7 @@ use crate::span::Span;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tok {
-    Int(i64),
+    Int(probl_number::Integer),
     Float(f64),
     /// A percentage, already divided by 100: `30%` is `Percent(0.3)`.
     Percent(f64),

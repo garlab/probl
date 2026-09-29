@@ -66,7 +66,7 @@ pub(crate) fn read(bytes: &[u8], ty: &TypeSpec, cx: &mut Cx) -> Result<Value, Pr
         for (i, (_, ty)) in fields.iter().enumerate() {
             cx.budget.value()?;
             let column = columns[i];
-            let v = text::plain(&record[column], ty, cx.program)
+            let v = text::plain(&record[column], ty, cx.program, &mut cx.budget)
                 .map_err(|p| p.at(format!("line {line}, column {}", quoted(&headers[column]))))?;
             values.push((field_names[i].clone(), v));
         }

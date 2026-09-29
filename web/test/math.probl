@@ -44,3 +44,9 @@ report hypot(one_of([0: 25%, 3: 75%]), one_of([0, 4])) as "independent arguments
 let angle ~ uniform(-pi, pi)
 report sin(angle) as "random angle"
 report abs(sin(angle)^2 + cos(angle)^2 - 1) < 1e-12 as "one angle, two uses"
+
+report [factorial(30), choose(100, 50), 10^100 + 1 - 10^100] as "large exact integers"
+report [gcd(6 * 10^100, 9 * 10^100), lcm(6 * 10^100, 9 * 10^100), euler_phi(2^100)] as "large integer functions"
+report [(10^400) / (10^400), 9007199254740993 > 9007199254740992.0, round(10^100 + 15, -1)] as "integer precision boundaries"
+report [len(0..10^100), (10^100..10^100 + 2)[1], complex(0, 1)^(10^400 + 1)] as "large indices and exponents"
+report one_of([10^400, 10^400 + 1]) as "large integer outcomes"

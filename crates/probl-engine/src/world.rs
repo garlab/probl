@@ -173,17 +173,21 @@ mod tests {
         live.insert(0);
         // Slot 1 is dead: worlds that differ only there are the same world.
         let worlds = vec![
-            world(vec![Value::Int(1), Value::Int(7), Value::Dead]),
-            world(vec![Value::Int(2), Value::Int(7), Value::Dead]),
-            world(vec![Value::Int(1), Value::list(vec![Value::Int(8)]), Value::Dead]),
+            world(vec![Value::Int(1.into()), Value::Int(7.into()), Value::Dead]),
+            world(vec![Value::Int(2.into()), Value::Int(7.into()), Value::Dead]),
+            world(vec![
+                Value::Int(1.into()),
+                Value::list(vec![Value::Int(8.into())]),
+                Value::Dead,
+            ]),
         ];
         let mut merged = merge(worlds, &live, true);
         assert_eq!(merged.len(), 2);
-        assert_eq!(merged[0].slots[0], Value::Int(1));
+        assert_eq!(merged[0].slots[0], Value::Int(1.into()));
         assert_eq!(merged[0].weight.to_f64(), 2.0);
         assert_eq!(merged[1].weight.to_f64(), 1.0);
         clear_dead(&mut merged, &live);
         assert!(merged.iter().all(|w| w.slots[1] == Value::Dead));
-        assert_eq!(merged[1].slots[0], Value::Int(2));
+        assert_eq!(merged[1].slots[0], Value::Int(2.into()));
     }
 }

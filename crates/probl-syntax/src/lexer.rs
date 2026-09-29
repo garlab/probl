@@ -146,11 +146,10 @@ impl Lexer<'_> {
                 }
             }
         } else {
-            match text.parse::<i64>() {
+            match text.parse::<probl_number::Integer>() {
                 Ok(v) => self.push(Tok::Int(v), lo),
-                Err(_) => {
-                    self.error(lo, self.pos, "integer too large")
-                        .note("integers must lie between -9223372036854775808 and 9223372036854775807");
+                Err(err) => {
+                    self.error(lo, self.pos, err.to_string());
                 }
             }
         }
@@ -480,8 +479,8 @@ mod tests {
         assert_eq!(
             toks("42 1_000 3.5 2.5e-3 1e-12 30% 12.5% d6 2d6 10d10"),
             vec![
-                Tok::Int(42),
-                Tok::Int(1000),
+                Tok::Int(42.into()),
+                Tok::Int(1000.into()),
                 Tok::Float(3.5),
                 Tok::Float(2.5e-3),
                 Tok::Float(1e-12),
@@ -500,10 +499,10 @@ mod tests {
         assert_eq!(
             toks("1..6 0..<n"),
             vec![
-                Tok::Int(1),
+                Tok::Int(1.into()),
                 Tok::DotDot,
-                Tok::Int(6),
-                Tok::Int(0),
+                Tok::Int(6.into()),
+                Tok::Int(0.into()),
                 Tok::DotDotLt,
                 Tok::Ident("n".into()),
                 Tok::Eof
@@ -533,9 +532,9 @@ mod tests {
                 Tok::Let,
                 Tok::Ident("x".into()),
                 Tok::Tilde,
-                Tok::Int(5),
+                Tok::Int(5.into()),
                 Tok::Ident("to".into()),
-                Tok::Int(10),
+                Tok::Int(10.into()),
                 Tok::Eof
             ]
         );
@@ -576,9 +575,9 @@ mod tests {
             vec![
                 Tok::Ident("f".into()),
                 Tok::LParen,
-                Tok::Int(1),
+                Tok::Int(1.into()),
                 Tok::Comma,
-                Tok::Int(2),
+                Tok::Int(2.into()),
                 Tok::RParen,
                 Tok::Newline,
                 Tok::Ident("x".into()),
@@ -588,7 +587,7 @@ mod tests {
                 Tok::Ident("b".into()),
                 Tok::Newline,
                 Tok::LBracket,
-                Tok::Int(1),
+                Tok::Int(1.into()),
                 Tok::RBracket,
                 Tok::Eof,
             ]
@@ -636,6 +635,10 @@ mod tests {
         assert_eq!(errors("\"abc"), vec!["unterminated string"]);
         assert_eq!(errors("2d6x"), vec!["invalid dice literal"]);
         assert_eq!(errors("0d6"), vec!["a dice roll needs at least one die"]);
-        assert_eq!(errors("9999999999999999999"), vec!["integer too large"]);
+        assert!(errors("9999999999999999999").is_empty());
+        assert_eq!(
+            errors(&"9".repeat(20_000)),
+            vec!["integer size exceeds the limit of 65536 bits"]
+        );
     }
 }

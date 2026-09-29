@@ -41,6 +41,10 @@ use value::Value;
 /// `@max_iterations` can lower them, never raise them.
 #[derive(Clone, Debug)]
 pub struct Limits {
+    /// Maximum bits per integer; cannot exceed the parser's hard ceiling.
+    pub max_integer_bits: u64,
+    /// Cumulative allowance for large integer results (including shared copies).
+    pub max_integer_bytes: u64,
     /// Worlds one statement may produce.
     pub max_worlds: usize,
     /// Outcomes of one distribution, or of combining distributions.
@@ -71,6 +75,8 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Limits {
         Limits {
+            max_integer_bits: probl_number::MAX_INTEGER_BITS,
+            max_integer_bytes: 256 * 1024 * 1024,
             max_worlds: 10_000_000,
             max_outcomes: 2_000_000,
             max_collection: 10_000_000,
@@ -282,6 +288,9 @@ fn run_here(
         max_cached_calls: limits.max_cached_calls,
         max_output: limits.max_output,
         budget: Budget {
+            max_integer_bits: limits.max_integer_bits,
+            integer_bytes_left: Arc::new(AtomicU64::new(limits.max_integer_bytes)),
+            cancel: options.cancel.clone(),
             max_outcomes: limits.max_outcomes,
             max_collection: limits.max_collection,
             work_left: limits.max_work,
@@ -427,7 +436,15 @@ fn inputs<'a>(program: &Program, options: &'a Options) -> Result<&'a [Value], Ru
         return Ok(&[]);
     };
     match &options.inputs {
-        Some(inputs) if inputs.fit(program) => Ok(inputs.values()),
+        Some(inputs) if inputs.fit(program) => {
+            if inputs.max_integer_bits() > options.limits.max_integer_bits {
+                return Err(RuntimeError::limit(
+                    first.span,
+                    "an input integer exceeds the runtime integer size limit",
+                ));
+            }
+            Ok(inputs.values())
+        }
         Some(_) => Err(internal("the data was loaded for a different program".to_string())),
         None => Err(
             RuntimeError::new(first.span, "the program reads data, which wasn't loaded")

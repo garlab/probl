@@ -411,12 +411,23 @@ version = "0.0.1"
 dependencies = [
  "csv",
  "libm",
+ "probl-number",
  "probl-sema",
  "probl-syntax",
  "rustc-hash",
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "probl-number"
+version = "0.0.1"
+dependencies = [
+ "num-bigint",
+ "num-rational",
+ "num-traits",
+ "rustc-hash",
 ]
 
 [[package]]
@@ -436,6 +447,7 @@ name = "probl-sema"
 version = "0.0.1"
 dependencies = [
  "insta",
+ "probl-number",
  "probl-syntax",
  "rustc-hash",
 ]
@@ -446,6 +458,7 @@ version = "0.0.1"
 dependencies = [
  "ariadne",
  "insta",
+ "probl-number",
 ]
 
 [[package]]

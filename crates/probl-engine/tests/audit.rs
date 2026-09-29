@@ -239,9 +239,12 @@ fn i3_singleton_distributions_do_not_crash() {
 #[test]
 fn i3_boundary_integers_do_not_crash() {
     output("report len((9223372036854775806)..(9223372036854775807))");
-    assert!(error("report 1..<(-9223372036854775807 - 1)").contains("out of bounds"));
-    assert!(error("report 9223372036854775807 + 1").contains("overflow"));
-    assert!(error("report (-9223372036854775807 - 1) div -1").contains("overflow"));
+    assert_eq!(mean("report len(1..<(-9223372036854775807 - 1))"), 0.0);
+    assert_eq!(chance("report 9223372036854775807 + 1 == 9223372036854775808"), 1.0);
+    assert_eq!(
+        chance("report (-9223372036854775807 - 1) div -1 == 9223372036854775808"),
+        1.0
+    );
     assert!(error("report len(support(one_of(0..9223372036854775807)))").contains("over the limit"));
 }
 

@@ -8,7 +8,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering as Atomic};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as Atomic};
 
 /// Outcomes below this probability are dropped from infinite supports.
 const TAIL: f64 = 1e-18;
@@ -30,6 +30,11 @@ const WORK_CHUNK: u64 = 1 << 14;
 /// Limits on building distributions, shared by everything in a run.
 #[derive(Clone, Debug)]
 pub struct Budget {
+    /// Maximum bits in the magnitude of a single integer.
+    pub max_integer_bits: u64,
+    /// Cumulative allowance for produced large integer payloads, shared by runs.
+    pub integer_bytes_left: Arc<AtomicU64>,
+    pub cancel: Option<Arc<AtomicBool>>,
     /// The most outcomes one distribution (or combination) may have.
     pub max_outcomes: usize,
     /// The most elements a collection built by the program may have.
@@ -44,11 +49,56 @@ pub struct Budget {
 impl Budget {
     pub fn unlimited() -> Budget {
         Budget {
+            max_integer_bits: probl_number::MAX_INTEGER_BITS,
+            integer_bytes_left: Arc::new(AtomicU64::new(u64::MAX)),
+            cancel: None,
             max_outcomes: usize::MAX,
             max_collection: usize::MAX,
             work_left: u64::MAX,
             shared: None,
         }
+    }
+
+    pub fn integer_bits(&self, bits: u64) -> OpResult<()> {
+        let limit = self.max_integer_bits.min(probl_number::MAX_INTEGER_BITS);
+        if bits > limit {
+            return Err(OpError::limit(format!(
+                "integer size exceeds the limit of {limit} bits"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Reserve before materializing a collection, or after a single bounded
+    /// result. Conservative: shared results may be charged again; no refunds.
+    pub fn integer_allocation(&self, bits: u64, count: u64) -> OpResult<()> {
+        self.integer_bits(bits)?;
+        if bits <= 63 || count == 0 {
+            return Ok(());
+        }
+        let bytes = bits
+            .div_ceil(64)
+            .saturating_mul(8)
+            .saturating_add(48)
+            .saturating_mul(count);
+        self.integer_bytes_left
+            .fetch_update(Atomic::Relaxed, Atomic::Relaxed, |left| left.checked_sub(bytes))
+            .map(|_| ())
+            .map_err(|_| OpError::limit("the run used up its large integer memory allowance"))
+    }
+
+    /// Charge before arithmetic, including copying and processing large operands.
+    pub fn integer_work(
+        &mut self,
+        a: &probl_number::Integer,
+        b: &probl_number::Integer,
+        quadratic: bool,
+    ) -> OpResult<()> {
+        self.integer_bits(a.bits())?;
+        self.integer_bits(b.bits())?;
+        let x = a.bits().div_ceil(64).max(1);
+        let y = b.bits().div_ceil(64).max(1);
+        self.work(if quadratic { x.saturating_mul(y) } else { x.max(y) })
     }
 
     /// Check that a distribution with `n` outcomes may be built.
@@ -80,6 +130,9 @@ impl Budget {
 
     /// Spend `n` units of work.
     pub fn work(&mut self, n: u64) -> OpResult<()> {
+        if self.cancel.as_ref().is_some_and(|c| c.load(Atomic::Relaxed)) {
+            return Err(OpError::limit("the run was cancelled"));
+        }
         if n > self.work_left && !self.top_up(n - self.work_left) {
             self.work_left = 0;
             return Err(OpError::limit("the run used up its work budget"));
@@ -200,17 +253,17 @@ impl Dist {
             .into_iter()
             .enumerate()
             .filter(|(_, w)| *w > 0.0)
-            .map(|(s, w)| (Value::Int(s as i64), w))
+            .map(|(s, w)| (Value::Int((s as i64).into()), w))
             .collect();
         Ok(Dist::from_sorted(pairs, 0.0))
     }
 
     pub fn binomial(n: u64, p: f64, budget: &mut Budget) -> OpResult<Dist> {
         if p <= 0.0 {
-            return Ok(Dist::point(Value::Int(0)));
+            return Ok(Dist::point(Value::Int(0.into())));
         }
         if p >= 1.0 {
-            return Ok(Dist::point(Value::Int(n as i64)));
+            return Ok(Dist::point(Value::Int((n as i64).into())));
         }
         let odds = p / (1.0 - p);
         let mode = (((n as f64) + 1.0) * p).floor().min(n as f64) as u64;
@@ -225,7 +278,7 @@ impl Dist {
 
     pub fn poisson(rate: f64, budget: &mut Budget) -> OpResult<Dist> {
         if rate <= 0.0 {
-            return Ok(Dist::point(Value::Int(0)));
+            return Ok(Dist::point(Value::Int(0.into())));
         }
         walk_from_mode(
             rate.floor() as u64,
@@ -239,7 +292,7 @@ impl Dist {
     /// Number of tries up to and including the first success.
     pub fn geometric(p: f64, budget: &mut Budget) -> OpResult<Dist> {
         if p >= 1.0 {
-            return Ok(Dist::point(Value::Int(1)));
+            return Ok(Dist::point(Value::Int(1.into())));
         }
         // Outcomes until the tail (1 - p)^k drops below the threshold.
         let count = (libm::log(TAIL) / libm::log(1.0 - p)).ceil();
@@ -249,7 +302,7 @@ impl Dist {
         let mut tail = 1.0;
         let mut k: i64 = 1;
         while tail >= TAIL {
-            pairs.push((Value::Int(k), tail * p));
+            pairs.push((Value::Int(k.into()), tail * p));
             tail *= 1.0 - p;
             k += 1;
         }
@@ -542,7 +595,7 @@ fn walk_from_mode(
         .rev()
         .chain(std::iter::once((mode, 1.0)))
         .chain(above)
-        .map(|(k, w)| (Value::Int(k as i64), w / sum))
+        .map(|(k, w)| (Value::Int((k as i64).into()), w / sum))
         .collect();
     Ok(Dist::from_sorted(pairs, tails / sum))
 }
@@ -659,7 +712,7 @@ mod tests {
         assert!(close(d.outcomes[5].1, 6.0 / 36.0));
         assert!(close(d.mean().unwrap(), 7.0));
         assert!(close(d.variance().unwrap(), 35.0 / 6.0));
-        assert_eq!(d.quantile(0.5), Some(Value::Int(7)));
+        assert_eq!(d.quantile(0.5), Some(Value::Int(7.into())));
     }
 
     #[test]
@@ -737,7 +790,7 @@ mod tests {
         assert_eq!(pool.outcomes.len(), 56);
         assert!(close(pool.total(), 1.0));
         // A die with missing mass m: a pool of n misses 1 - (1 - m)^n.
-        let leaky = Dist::from_pairs(vec![(Value::Int(1), 0.9)], 0.1);
+        let leaky = Dist::from_pairs(vec![(Value::Int(1.into()), 0.9)], 0.1);
         let pool = Dist::pool(2, &leaky, b).unwrap();
         assert!(close(pool.missing, 1.0 - 0.81));
         assert!(close(pool.total() + pool.missing, 1.0));
@@ -748,8 +801,7 @@ mod tests {
         let mut small = Budget {
             max_outcomes: 1000,
             max_collection: 1000,
-            work_left: u64::MAX,
-            shared: None,
+            ..Budget::unlimited()
         };
         assert!(Dist::dice(1, 100_000, &mut small).is_err());
         assert!(Dist::pool(40, &Dist::dice(1, 6, &mut Budget::unlimited()).unwrap(), &mut small).is_err());

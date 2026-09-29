@@ -934,7 +934,7 @@ impl<'a> Lowerer<'a> {
                     s.span,
                     StmtKind::Set {
                         place: Place::slot(k),
-                        value: lit(Lit::Int(0), s.span),
+                        value: lit(Lit::Int((0).into()), s.span),
                     },
                 );
                 out.push(set_n);
@@ -956,7 +956,7 @@ impl<'a> Lowerer<'a> {
                     s.span,
                     StmtKind::Set {
                         place: Place::slot(k),
-                        value: binary(BinOp::Add, slot(k, s.span), lit(Lit::Int(1), s.span), s.span),
+                        value: binary(BinOp::Add, slot(k, s.span), lit(Lit::Int((1).into()), s.span), s.span),
                     },
                 );
                 inner.push(incr);
@@ -1314,7 +1314,7 @@ impl<'a> Lowerer<'a> {
             ast::PatternKind::List(items) => {
                 let check = builtin(
                     Builtin::IsListOfLen,
-                    vec![value.clone(), lit(Lit::Int(items.len() as i64), pattern.span)],
+                    vec![value.clone(), lit(Lit::Int((items.len() as i64).into()), pattern.span)],
                     pattern.span,
                 );
                 let fail = self.stmt(
@@ -1334,7 +1334,10 @@ impl<'a> Lowerer<'a> {
                 out.push(st);
                 for (i, item) in items.iter().enumerate() {
                     let element = Expr {
-                        kind: ExprKind::Index(Box::new(value.clone()), Box::new(lit(Lit::Int(i as i64), item.span))),
+                        kind: ExprKind::Index(
+                            Box::new(value.clone()),
+                            Box::new(lit(Lit::Int((i as i64).into()), item.span)),
+                        ),
                         span: item.span,
                     };
                     self.bind_pattern(item, element, mutable, out);
@@ -1518,7 +1521,7 @@ impl<'a> Lowerer<'a> {
             span,
             StmtKind::Set {
                 place: Place::slot(index),
-                value: lit(Lit::Int(0), span),
+                value: lit(Lit::Int((0).into()), span),
             },
         );
         out.push(set_items);
@@ -1553,7 +1556,7 @@ impl<'a> Lowerer<'a> {
             span,
             StmtKind::Set {
                 place: Place::slot(index),
-                value: binary(BinOp::Add, slot(index, span), lit(Lit::Int(1), span), span),
+                value: binary(BinOp::Add, slot(index, span), lit(Lit::Int((1).into()), span), span),
             },
         );
         inner.push(incr);
@@ -1920,12 +1923,15 @@ impl<'a> Lowerer<'a> {
             ast::PatternKind::List(items) => {
                 let mut cond = builtin(
                     Builtin::IsListOfLen,
-                    vec![value.clone(), lit(Lit::Int(items.len() as i64), span)],
+                    vec![value.clone(), lit(Lit::Int((items.len() as i64).into()), span)],
                     span,
                 );
                 for (i, item) in items.iter().enumerate() {
                     let element = Expr {
-                        kind: ExprKind::Index(Box::new(value.clone()), Box::new(lit(Lit::Int(i as i64), item.span))),
+                        kind: ExprKind::Index(
+                            Box::new(value.clone()),
+                            Box::new(lit(Lit::Int((i as i64).into()), item.span)),
+                        ),
                         span: item.span,
                     };
                     let c = self.pattern_test(item, &element, binds);
@@ -2057,7 +2063,7 @@ impl<'a> Lowerer<'a> {
     fn expr(&mut self, e: &ast::Expr, out: &mut Vec<Stmt>) -> Expr {
         let span = e.span;
         let kind = match &e.kind {
-            ast::ExprKind::Int(v) => ExprKind::Lit(Lit::Int(*v)),
+            ast::ExprKind::Int(v) => ExprKind::Lit(Lit::Int(v.clone())),
             ast::ExprKind::Float(v) => ExprKind::Lit(Lit::Float(*v)),
             ast::ExprKind::Percent(v) => {
                 if (0.0..=1.0).contains(v) {
@@ -2912,14 +2918,14 @@ fn plural(n: usize) -> &'static str {
 
 fn pragma_int(e: &ast::Expr) -> Option<u64> {
     match e.kind {
-        ast::ExprKind::Int(v) if v >= 0 => Some(v as u64),
+        ast::ExprKind::Int(ref v) => v.to_u64(),
         _ => None,
     }
 }
 
 fn pragma_float(e: &ast::Expr) -> Option<f64> {
     match e.kind {
-        ast::ExprKind::Int(v) => Some(v as f64),
+        ast::ExprKind::Int(ref v) => v.to_f64(),
         ast::ExprKind::Float(v) => Some(v),
         _ => None,
     }

@@ -13,7 +13,9 @@
 //! It covers the discrete, bounded part of the language: ints, facts,
 //! probabilities, dice, `bernoulli`, `one_of`, lists, functions, `simulate`,
 //! `observe`, `report`, and loops that end. The number of worlds grows with
-//! every split, so it gives up ([`Stop::TooBig`]) beyond its limits.
+//! every split, so it gives up ([`Stop::TooBig`]) beyond its limits. Its
+//! reference integer arithmetic is limited to i64; the engine's arbitrary-
+//! precision cases have separate arithmetic and language regression tests.
 
 pub mod generate;
 
@@ -753,7 +755,13 @@ impl<'a> Interp<'a> {
         self.tick()?;
         let one = |w: World, v: Value| -> R<Outs> { Ok(vec![(w, Ok(v))]) };
         match &e.kind {
-            ExprKind::Int(i) => one(w, Value::Int(*i)),
+            ExprKind::Int(i) => one(
+                w,
+                Value::Int(
+                    i.to_i64()
+                        .ok_or_else(|| Stop::TooBig("oracle integer out of range".into()))?,
+                ),
+            ),
             ExprKind::Float(f) => one(w, Value::Float(self.number(e, *f))),
             ExprKind::Percent(f) => {
                 let x = self.number(e, *f * 100.0) / int(100);
@@ -987,7 +995,10 @@ impl<'a> Interp<'a> {
 
     fn literal(&self, e: &Expr) -> R<Value> {
         match &e.kind {
-            ExprKind::Int(i) => Ok(Value::Int(*i)),
+            ExprKind::Int(i) => Ok(Value::Int(
+                i.to_i64()
+                    .ok_or_else(|| Stop::TooBig("oracle integer out of range".into()))?,
+            )),
             ExprKind::Bool(b) => Ok(Value::Bool(*b)),
             ExprKind::Str(segments) => match segments.as_slice() {
                 [StrSegment::Lit(text)] => Ok(Value::Str(Rc::from(text.as_str()))),
@@ -1331,7 +1342,9 @@ fn unary(op: UnOp, v: &Value) -> R<Value> {
 }
 
 fn overflow() -> Stop {
-    Stop::Error("integer overflow".into())
+    // This deliberately small reference interpreter has a narrower resource
+    // bound than the production arbitrary-precision integer implementation.
+    Stop::TooBig("oracle integer out of range".into())
 }
 
 fn binary(op: BinOp, a: &Value, b: &Value) -> R<Value> {

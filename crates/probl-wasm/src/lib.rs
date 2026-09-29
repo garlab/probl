@@ -23,6 +23,7 @@ use std::sync::Arc;
 /// tab has less memory and a smaller stack, and one thread.
 pub fn limits() -> Limits {
     Limits {
+        max_integer_bytes: 64 * 1024 * 1024,
         max_worlds: 1_000_000,
         max_outcomes: 1_000_000,
         max_collection: 1_000_000,
@@ -39,6 +40,7 @@ pub fn limits() -> Limits {
 /// The limits on data a program reads.
 fn input_limits() -> InputLimits {
     InputLimits {
+        max_integer_bytes: limits().max_integer_bytes,
         max_bytes: 8 * 1024 * 1024,
         max_values: 1_000_000,
         max_collection: 1_000_000,

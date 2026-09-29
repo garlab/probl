@@ -9,7 +9,7 @@ use probl_engine::{ErrorKind, Limits, Options};
 fn integer(src: &str) -> i64 {
     let values = distribution(src);
     match values.as_slice() {
-        [(Value::Int(n), p)] if *p == 1.0 => *n,
+        [(Value::Int(n), p)] if *p == 1.0 => n.to_i64().expect("small integer"),
         _ => panic!("expected one exact integer from {src}: {values:?}"),
     }
 }
@@ -111,9 +111,16 @@ fn trunc_rounds_toward_zero_and_integer_rounding_uses_the_full_range() {
             9_223_372_036_854_774_784
         );
         assert_eq!(integer(&format!("report {name}(-9.223372036854776e18)")), i64::MIN);
-        for input in ["9.223372036854776e18", "-9.223372036854778e18", "1e308", "0 ^ -1"] {
-            assert!(error(&format!("report {name}({input})")).contains("too large to be an int"));
-        }
+        assert_eq!(
+            chance(&format!("report {name}(9.223372036854776e18) == 9223372036854775808")),
+            1.0
+        );
+        assert_eq!(
+            chance(&format!("report {name}(-9.223372036854778e18) == -9223372036854777856")),
+            1.0
+        );
+        assert_eq!(chance(&format!("report {name}(1e308) == 1e308")), 1.0);
+        assert!(error(&format!("report {name}(0.0 ^ -1)")).contains("finite"));
     }
 }
 
@@ -125,8 +132,11 @@ fn libm_batch_checks_domains_types_and_arities() {
         assert!(compile_error(&format!("report {name}(1, 2)")).contains("takes"));
         assert!(error(&format!("report {name}(normal(0, 1))")).contains("draw a value first"));
     }
-    for expression in ["erfc(0 ^ -1)", "cbrt(0 ^ -1)", "exp2(0 ^ -1)", "exp2(1024)"] {
-        assert!(error(&format!("report {expression}")).contains("isn't defined for"));
+    for expression in ["erfc(0.0 ^ -1)", "cbrt(0.0 ^ -1)", "exp2(0.0 ^ -1)", "exp2(1024)"] {
+        assert!({
+            let e = error(&format!("report {expression}"));
+            e.contains("isn't defined for") || e.contains("isn't a finite number")
+        });
     }
 }
 
@@ -158,11 +168,11 @@ fn round_retains_the_one_argument_form_and_supports_decimal_places() {
     assert_eq!(float("report round(5e-324, 323)"), 0.0);
     assert_eq!(float("report round(5e-324, 324)"), f64::from_bits(1));
     assert!(error("report round(1.79e308, -308)").contains("isn't defined for"));
-    assert!(error("report round(1e308)").contains("too large to be an int"));
+    assert_eq!(chance("report round(1e308) == 1e308"), 1.0);
 }
 
 #[test]
-fn round_keeps_integer_inputs_exact_and_checks_overflow() {
+fn round_keeps_integer_inputs_exact_across_machine_boundaries() {
     for (expression, expected) in [
         ("round(9007199254740993, 2)", 9_007_199_254_740_993),
         ("round(9007199254740993, -1)", 9_007_199_254_740_990),
@@ -178,12 +188,12 @@ fn round_keeps_integer_inputs_exact_and_checks_overflow() {
     ] {
         assert_eq!(integer(&format!("report {expression}")), expected, "{expression}");
     }
-    for expression in [
-        "round(9223372036854775807, -1)",
-        "round(-9223372036854775807 - 1, -1)",
-        "round(9223372036854775807, -19)",
+    for (expression, expected) in [
+        ("round(9223372036854775807, -1)", "9223372036854775810"),
+        ("round(-9223372036854775807 - 1, -1)", "-9223372036854775810"),
+        ("round(9223372036854775807, -19)", "10000000000000000000"),
     ] {
-        assert!(error(&format!("report {expression}")).contains("integer overflow"));
+        assert_eq!(chance(&format!("report {expression} == {expected}")), 1.0);
     }
 }
 
@@ -219,19 +229,22 @@ fn rounding_and_inverse_hyperbolic_domains_and_arities_are_checked() {
         assert!(error(&format!("report {expression}")).contains("needs"), "{expression}");
     }
     for expression in [
-        "round(0 ^ -1, 2)",
-        "round(0 ^ -1, 9223372036854775807)",
-        "asinh(0 ^ -1)",
+        "round(0.0 ^ -1, 2)",
+        "round(0.0 ^ -1, 9223372036854775807)",
+        "asinh(0.0 ^ -1)",
         "acosh(0.999)",
         "acosh(-1)",
-        "acosh(0 ^ -1)",
+        "acosh(0.0 ^ -1)",
         "atanh(-1)",
         "atanh(1)",
         "atanh(2)",
-        "atanh(0 ^ -1)",
+        "atanh(0.0 ^ -1)",
     ] {
         assert!(
-            error(&format!("report {expression}")).contains("isn't defined for"),
+            {
+                let e = error(&format!("report {expression}"));
+                e.contains("isn't defined for") || e.contains("isn't a finite number")
+            },
             "{expression}"
         );
     }
@@ -361,23 +374,12 @@ fn domains_types_arity_and_overflow_are_checked() {
     ] {
         assert!(error(&format!("report {source}")).contains("needs an int"), "{source}");
     }
-    for source in ["ln_gamma(0)", "ln_gamma(-0.5)", "ln_gamma(1e308)", "erf(0 ^ -1)"] {
+    for source in ["ln_gamma(0)", "ln_gamma(-0.5)", "ln_gamma(1e308)", "erf(0.0 ^ -1)"] {
         assert!(
-            error(&format!("report {source}")).contains("isn't defined for"),
-            "{source}"
-        );
-    }
-    for source in [
-        "choose(67, 33)",
-        "choose(9223372036854775807, 2)",
-        "factorial(21)",
-        "factorial(9223372036854775807)",
-        "gcd(-9223372036854775807 - 1, 0)",
-        "lcm(-9223372036854775807 - 1, 1)",
-        "lcm(9223372036854775807, 2)",
-    ] {
-        assert!(
-            error(&format!("report {source}")).contains("integer overflow"),
+            {
+                let e = error(&format!("report {source}"));
+                e.contains("isn't defined for") || e.contains("isn't a finite number")
+            },
             "{source}"
         );
     }
@@ -412,8 +414,8 @@ fn integer_work_respects_host_limits() {
         "choose(9223372036854775807, 4611686018427387903)",
     ] {
         let err = exec_raw(&format!("report {source}"), &options).unwrap_err();
-        assert_eq!(err.kind, ErrorKind::Language);
-        assert!(err.message.contains("integer overflow"));
+        assert_eq!(err.kind, ErrorKind::Limit);
+        assert!(err.message.contains("limit") || err.message.contains("budget"));
     }
 }
 

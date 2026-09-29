@@ -39,6 +39,10 @@ pub trait Resolver {
 /// Limits on loading data, for all of a program's inputs together.
 #[derive(Clone, Debug)]
 pub struct InputLimits {
+    /// Maximum magnitude size for each integer.
+    pub max_integer_bits: u64,
+    /// Cumulative allowance for large integer payloads across all inputs.
+    pub max_integer_bytes: u64,
     /// Bytes read.
     pub max_bytes: u64,
     /// Values made: every number, string, record and element.
@@ -52,6 +56,8 @@ pub struct InputLimits {
 impl Default for InputLimits {
     fn default() -> InputLimits {
         InputLimits {
+            max_integer_bits: probl_number::MAX_INTEGER_BITS,
+            max_integer_bytes: 256 * 1024 * 1024,
             max_bytes: 64 * 1024 * 1024,
             max_values: 10_000_000,
             max_collection: 10_000_000,
@@ -81,12 +87,17 @@ impl Snapshots {
 /// for the program it runs.
 #[derive(Debug)]
 pub struct Inputs {
+    max_integer_bits: u64,
     manifest: Vec<Input>,
     values: Vec<Value>,
     sources: Vec<SourceInfo>,
 }
 
 impl Inputs {
+    pub(crate) fn max_integer_bits(&self) -> u64 {
+        self.max_integer_bits
+    }
+
     /// The value of each input, in the order of the program's manifest.
     pub fn values(&self) -> &[Value] {
         &self.values
@@ -126,6 +137,8 @@ pub fn load(
         program,
         budget: Budget {
             values_left: limits.max_values,
+            integer_bytes_left: limits.max_integer_bytes,
+            max_integer_bits_seen: 0,
             limits,
             cancel,
             ticks: 0,
@@ -180,6 +193,7 @@ pub fn load(
         })
         .collect();
     Ok(Inputs {
+        max_integer_bits: cx.budget.max_integer_bits_seen,
         manifest: program.inputs.clone(),
         values,
         sources,
@@ -253,7 +267,7 @@ fn lines(bytes: &[u8], ty: &TypeSpec, cx: &mut Cx) -> Result<Value, Problem> {
         }
         cx.budget.collection(items.len() + 1)?;
         cx.budget.value()?;
-        let v = text::plain(line, item, cx.program).map_err(|p| p.at(format!("line {}", i + 1)))?;
+        let v = text::plain(line, item, cx.program, &mut cx.budget).map_err(|p| p.at(format!("line {}", i + 1)))?;
         items.push(v);
     }
     Ok(Value::list(items))
@@ -293,12 +307,32 @@ enum PathPart {
 /// Limits being spent while decoding.
 struct Budget<'a> {
     values_left: u64,
+    integer_bytes_left: u64,
+    max_integer_bits_seen: u64,
     limits: &'a InputLimits,
     cancel: Option<&'a AtomicBool>,
     ticks: u32,
 }
 
 impl Budget<'_> {
+    fn integer(&mut self, bits: u64) -> Result<(), Problem> {
+        let limit = self.limits.max_integer_bits.min(probl_number::MAX_INTEGER_BITS);
+        if bits > limit {
+            return Err(Problem::limit(format!(
+                "integer size exceeds the limit of {limit} bits"
+            )));
+        }
+        self.max_integer_bits_seen = self.max_integer_bits_seen.max(bits);
+        if bits > 63 {
+            let bytes = bits.div_ceil(64) * 8 + 48;
+            self.integer_bytes_left = self
+                .integer_bytes_left
+                .checked_sub(bytes)
+                .ok_or_else(|| Problem::limit("the data used up its large integer memory allowance"))?;
+        }
+        Ok(())
+    }
+
     /// Count one more value, before making it.
     fn value(&mut self) -> Result<(), Problem> {
         if self.values_left == 0 {

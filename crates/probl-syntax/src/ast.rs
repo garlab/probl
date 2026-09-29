@@ -157,7 +157,7 @@ pub struct Expr {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExprKind {
-    Int(i64),
+    Int(probl_number::Integer),
     Float(f64),
     /// Already divided by 100.
     Percent(f64),

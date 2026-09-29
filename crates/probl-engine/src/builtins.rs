@@ -5,26 +5,42 @@ use crate::continuous::{Family, Mixture, Part};
 use crate::dates;
 use crate::dist::{Budget, Counts, Dist};
 use crate::error::{OpError, OpResult};
-use crate::ops::{self, article, as_index, equals, range_len, to_prob};
+use crate::ops::{self, article, as_index, equals, range_count, range_len, to_prob};
 use crate::value::{Value, fmt_float};
+use probl_number::Integer;
 use probl_sema::Builtin;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Call a built-in on plain (non-distribution) arguments.
 pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Value> {
+    for arg in args {
+        if let Value::Int(n) = arg {
+            budget.integer_work(n, if b == Builtin::Str { n } else { &Integer::ONE }, b == Builtin::Str)?;
+        }
+    }
+    let value = call_plain_inner(b, args, budget)?;
+    if let Value::Int(n) = &value {
+        budget.integer_allocation(n.bits(), 1)?;
+    }
+    Ok(value)
+}
+
+fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Value> {
     use Builtin as B;
     let a = |i: usize| &args[i];
     match b {
         B::Min | B::Max => min_max(args, b == B::Max, budget),
         B::Abs => match a(0) {
             Value::Complex(z) => finite_float(z.abs(), "abs"),
-            v => num1(v, "abs", |x| x.abs(), |i| i.checked_abs()),
+            Value::Int(n) => Ok(Value::Int(n.abs())),
+            Value::Prob(p) => Ok(Value::Prob(p.abs())),
+            v => float1(v, "abs", |x| Some(x.abs())),
         },
         B::Floor => to_int(a(0), f64::floor),
         B::Ceil => to_int(a(0), f64::ceil),
         B::Trunc => to_int(a(0), libm::trunc),
-        B::Round => round(a(0), args.get(1)),
+        B::Round => round(a(0), args.get(1), budget),
         B::Sqrt => elementary1(a(0), "sqrt", Complex::sqrt, |x| (x >= 0.0).then(|| x.sqrt())),
         B::Cbrt => elementary1(a(0), "cbrt", Complex::cbrt, |x| Some(libm::cbrt(x))),
         B::Exp => elementary1(a(0), "exp", Complex::exp, |x| {
@@ -69,18 +85,18 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
         ),
         B::Factorial => factorial(nonnegative_int(a(0), "factorial")?, budget),
         B::Gcd | B::Lcm => {
-            let (x, y) = (
-                integer(a(0), b.name())?.unsigned_abs(),
-                integer(a(1), b.name())?.unsigned_abs(),
-            );
+            let (x, y) = (integer(a(0), b.name())?.abs(), integer(a(1), b.name())?.abs());
+            let d = gcd(x.clone(), y.clone(), budget)?;
             let result = if b == B::Gcd {
-                u128::from(gcd(x, y))
-            } else if x == 0 || y == 0 {
-                0
+                d
+            } else if x.is_zero() || y.is_zero() {
+                Integer::ZERO
             } else {
-                u128::from(x / gcd(x, y)) * u128::from(y)
+                let q = x.div_mod(&d)?.0;
+                budget.integer_work(&q, &y, true)?;
+                q.mul(&y)?
             };
-            checked_int(result, b.name()).map(Value::Int)
+            Ok(Value::Int(result))
         }
         B::EulerPhi => euler_phi(nonnegative_int(a(0), "euler_phi")?, budget),
         B::LnGamma => float1(a(0), "ln_gamma", |x| (x > 0.0).then(|| libm::lgamma(x))),
@@ -171,7 +187,7 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
                 items
                     .into_iter()
                     .enumerate()
-                    .map(|(i, x)| Value::list(vec![Value::Int(i as i64), x]))
+                    .map(|(i, x)| Value::list(vec![Value::Int((i as i64).into()), x]))
                     .collect(),
             ))
         }
@@ -262,6 +278,9 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
                 .ok_or_else(|| OpError::new(format!("`{s}` isn't a valid date")).help("write dates as \"YYYY-MM-DD\""))
         }
         B::Days => to_int(a(0), f64::round),
+        B::Weeks if matches!(a(0), Value::Int(_)) => {
+            ops::binary(probl_syntax::ast::BinOp::Mul, a(0), &Value::Int(7.into()), budget)
+        }
         B::Weeks => {
             let n = number(a(0), "weeks")?;
             to_int(&Value::Float(n * 7.0), f64::round)
@@ -281,7 +300,7 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
         B::IsFalse => Ok(Value::Bool(ops::is_certain(a(0), false))),
         B::IsTrue => Ok(Value::Bool(ops::is_certain(a(0), true))),
         B::IsListOfLen => Ok(Value::Bool(
-            matches!((a(0), a(1)), (Value::List(items), Value::Int(n)) if items.len() as i64 == *n),
+            matches!((a(0), a(1)), (Value::List(items), Value::Int(n)) if *n == items.len() as i64),
         )),
         B::Count | B::Map | B::Filter | B::Reduce | B::Print | B::Roll | B::Take => {
             unreachable!("`{}` is handled by the interpreter", b.name())
@@ -366,9 +385,9 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
         }
         B::IterItems => iter_items(v, budget),
         B::RepeatCount => match v {
-            Value::Int(n) if *n >= 0 => Ok(Value::Int(*n)),
+            Value::Int(n) if *n >= 0 => Ok(Value::Int(n.clone())),
             Value::Int(_) => Err(OpError::new("`repeat` needs a count of 0 or more")),
-            Value::Float(f) if f.fract() == 0.0 && *f >= 0.0 && *f < 9.2e18 => Ok(Value::Int(*f as i64)),
+            Value::Float(f) if f.fract() == 0.0 && *f >= 0.0 && *f < 9.2e18 => Ok(Value::Int((*f as i64).into())),
             v if v.is_uncertain() => Err(OpError::new(format!("`repeat` needs a number, not a {}", v.kind()))
                 .help("draw a value first, like `let n ~ d6`, then `repeat n { … }`")),
             other => Err(OpError::new(format!(
@@ -618,6 +637,9 @@ fn number(v: &Value, func: &str) -> OpResult<f64> {
         Value::Continuous(_) => {
             Err(expected("a number", v, func).help("draw a value first, like `let x ~ normal(0, 1)`"))
         }
+        Value::Int(n) => n
+            .to_f64()
+            .ok_or_else(|| OpError::new(format!("`{func}` needs an integer that fits in a finite float"))),
         _ => v.as_f64().ok_or_else(|| expected("a number", v, func)),
     }
 }
@@ -639,7 +661,9 @@ fn finite_float(x: f64, func: &str) -> OpResult<Value> {
 
 fn whole(v: &Value, what: &str) -> OpResult<i64> {
     match v {
-        Value::Int(i) => Ok(*i),
+        Value::Int(i) => i
+            .to_i64()
+            .ok_or_else(|| OpError::new(format!("{what} is outside the supported count range"))),
         Value::Float(f) if f.fract() == 0.0 && f.abs() < 9.2e18 => Ok(*f as i64),
         other => Err(OpError::new(format!(
             "{what} must be a whole number, not {}",
@@ -649,82 +673,112 @@ fn whole(v: &Value, what: &str) -> OpResult<i64> {
 }
 
 /// Integer mathematics must not round its inputs through floating point.
-fn integer(v: &Value, func: &str) -> OpResult<i64> {
+fn integer<'a>(v: &'a Value, func: &str) -> OpResult<&'a Integer> {
     match v {
-        Value::Int(n) => Ok(*n),
+        Value::Int(n) => Ok(n),
         other => Err(expected("an int", other, func)),
     }
 }
 
-fn nonnegative_int(v: &Value, func: &str) -> OpResult<u64> {
-    u64::try_from(integer(v, func)?).map_err(|_| OpError::new(format!("`{func}` needs nonnegative integers")))
+fn nonnegative_int<'a>(v: &'a Value, func: &str) -> OpResult<&'a Integer> {
+    let n = integer(v, func)?;
+    if n.is_negative() {
+        Err(OpError::new(format!("`{func}` needs nonnegative integers")))
+    } else {
+        Ok(n)
+    }
 }
 
-fn int_overflow(func: &str) -> OpError {
-    OpError::new(format!(
-        "integer overflow in `{func}`: the result is too large for an int"
-    ))
-}
-
-fn checked_int(n: u128, func: &str) -> OpResult<i64> {
-    i64::try_from(n).map_err(|_| int_overflow(func))
-}
-
-fn choose(n: u64, k: u64, budget: &mut Budget) -> OpResult<Value> {
+fn choose(n: &Integer, k: &Integer, budget: &mut Budget) -> OpResult<Value> {
     if k > n {
-        return Ok(Value::Int(0));
+        return Ok(Value::Int(Integer::ZERO));
     }
-    let k = k.min(n - k);
-    let mut result = 1i64;
-    for i in 1..=k {
-        budget.work(1)?;
-        // The division is exact at every step. A 128-bit intermediate
-        // holds the product of two nonnegative i64s even near the limit.
-        result = checked_int(result as u128 * u128::from(n - k + i) / u128::from(i), "choose")?;
+    let k = k.min(&n.sub(k)?).clone();
+    let steps = k
+        .to_u64()
+        .ok_or_else(|| OpError::limit("choose needs too many iterations"))?;
+    budget.work(steps)?;
+    let offset = n.sub(&k)?;
+    let mut result = Integer::ONE;
+    for i in 1..=steps {
+        let numerator = offset.add(&i.into())?;
+        let divisor = Integer::from(i);
+        // Cancel first: an intermediate product must not exceed the integer
+        // ceiling when the final binomial coefficient fits.
+        let d = gcd(numerator.clone(), divisor.clone(), budget)?;
+        let numerator = numerator.div_mod(&d)?.0;
+        let divisor = divisor.div_mod(&d)?.0;
+        budget.integer_work(&result, &divisor, true)?;
+        result = result.div_mod(&divisor)?.0;
+        budget.integer_work(&result, &numerator, true)?;
+        result = result.mul(&numerator)?;
+        budget.integer_bits(result.bits())?;
     }
     Ok(Value::Int(result))
 }
 
-fn factorial(n: u64, budget: &mut Budget) -> OpResult<Value> {
-    let mut result = 1i64;
+fn factorial(n: &Integer, budget: &mut Budget) -> OpResult<Value> {
+    let n = n
+        .to_u64()
+        .ok_or_else(|| OpError::limit("factorial exceeds the integer size limit"))?;
+    // n! contains at least n/2 factors of n/2 or more.
+    let half = n / 2;
+    let lower_bits = half.saturating_mul(63u64.saturating_sub(u64::from(half.leading_zeros())));
+    budget.integer_bits(lower_bits)?;
+    budget.work(n)?;
+    let mut result = Integer::ONE;
     for i in 2..=n {
-        budget.work(1)?;
-        // Overflow terminates even a call with an enormous n after at most 20 multiplications.
-        result = result.checked_mul(i as i64).ok_or_else(|| int_overflow("factorial"))?;
+        let factor = Integer::from(i);
+        budget.integer_work(&result, &factor, true)?;
+        result = result.mul(&factor)?;
+        budget.integer_bits(result.bits())?;
     }
     Ok(Value::Int(result))
 }
 
-fn gcd(mut a: u64, mut b: u64) -> u64 {
-    while b != 0 {
-        (a, b) = (b, a % b);
+fn gcd(mut a: Integer, mut b: Integer, budget: &mut Budget) -> OpResult<Integer> {
+    while !b.is_zero() {
+        budget.integer_work(&a, &b, true)?;
+        let r = a.div_mod(&b)?.1;
+        a = b;
+        b = r;
     }
-    a
+    Ok(a)
 }
 
-fn euler_phi(mut n: u64, budget: &mut Budget) -> OpResult<Value> {
-    if n == 0 {
+fn euler_phi(n: &Integer, budget: &mut Budget) -> OpResult<Value> {
+    if n.is_zero() {
         return Err(OpError::new("`euler_phi` needs a positive integer"));
     }
-    let mut result = n;
-    let mut divisor = 2;
-    while divisor <= n / divisor {
-        // Factoring large integers can be expensive; every attempted divisor
-        // and repeated factor is charged to the host's work budget.
-        budget.work(1)?;
-        if n % divisor == 0 {
-            result -= result / divisor;
-            while n % divisor == 0 {
-                budget.work(1)?;
-                n /= divisor;
+    let mut n = n.clone();
+    let mut result = n.clone();
+    let mut divisor = Integer::from(2);
+    loop {
+        budget.integer_work(&n, &divisor, true)?;
+        let (q, rem) = n.div_mod(&divisor)?;
+        if divisor > q {
+            break;
+        }
+        if rem.is_zero() {
+            budget.integer_work(&result, &divisor, true)?;
+            result = result.sub(&result.div_mod(&divisor)?.0)?;
+            n = q;
+            loop {
+                budget.integer_work(&n, &divisor, true)?;
+                let (q, rem) = n.div_mod(&divisor)?;
+                if !rem.is_zero() {
+                    break;
+                }
+                n = q;
             }
         }
-        divisor = if divisor == 2 { 3 } else { divisor + 2 };
+        divisor = divisor.add(&if divisor == 2 { Integer::ONE } else { 2.into() })?;
     }
     if n > 1 {
-        result -= result / n;
+        budget.integer_work(&result, &n, true)?;
+        result = result.sub(&result.div_mod(&n)?.0)?;
     }
-    Ok(Value::Int(result as i64))
+    Ok(Value::Int(result))
 }
 
 fn text(v: &Value, func: &str) -> OpResult<Arc<str>> {
@@ -741,15 +795,23 @@ fn list<'a>(v: &'a Value, func: &str) -> OpResult<&'a [Value]> {
     }
 }
 
+fn range_items(lo: &Integer, hi: &Integer, budget: &mut Budget) -> OpResult<Vec<Value>> {
+    let n = range_count(lo, hi)?;
+    budget.collection(n)?;
+    let n = usize::try_from(n).map_err(|_| OpError::limit("range has too many elements"))?;
+    budget.integer_allocation(lo.bits().max(hi.bits()), n as u64)?;
+    budget.work((n as u64).saturating_mul(lo.bits().max(hi.bits()).div_ceil(64).max(1)))?;
+    (0..n)
+        .map(|i| lo.add(&Integer::from(i)).map(Value::Int).map_err(OpError::from))
+        .collect()
+}
+
 /// The elements of a list-like value, checking that a range isn't too long
 /// to spell out.
 pub fn items(v: &Value, func: &str, budget: &mut Budget) -> OpResult<Vec<Value>> {
     match v {
         Value::List(items) => Ok(items.to_vec()),
-        Value::Range(lo, hi) => {
-            budget.collection(range_len(*lo, *hi))?;
-            Ok((*lo..=*hi).map(Value::Int).collect())
-        }
+        Value::Range(lo, hi) => range_items(lo, hi, budget),
         other => Err(expected("a list", other, func)),
     }
 }
@@ -763,15 +825,6 @@ fn sort(items: &mut [Value]) -> OpResult<()> {
         })
     });
     err.map_or(Ok(()), Err)
-}
-
-fn num1(v: &Value, func: &str, f: fn(f64) -> f64, i: fn(i64) -> Option<i64>) -> OpResult<Value> {
-    match v {
-        Value::Int(x) => i(*x).map(Value::Int).ok_or_else(|| OpError::new("integer overflow")),
-        Value::Float(x) => Ok(Value::Float(f(*x))),
-        Value::Prob(x) => Ok(Value::Prob(f(*x))),
-        other => Err(expected("a number", other, func)),
-    }
 }
 
 /// Real inputs keep their real domains; an explicit complex input requests the
@@ -817,41 +870,41 @@ fn float2(a: &Value, b: &Value, func: &str, f: fn(f64, f64) -> f64) -> OpResult<
 
 fn to_int(v: &Value, f: fn(f64) -> f64) -> OpResult<Value> {
     match v {
-        Value::Int(i) => Ok(Value::Int(*i)),
+        Value::Int(i) => Ok(Value::Int(i.clone())),
         other => {
             let x = number(other, "rounding")?;
             let r = f(x);
-            // The upper bound is exclusive: i64::MAX rounds up to 2^63 as
-            // an f64, while i64::MIN is exactly representable.
-            if !r.is_finite() || r < i64::MIN as f64 || r >= -(i64::MIN as f64) {
-                return Err(OpError::new(format!("{} is too large to be an int", fmt_float(x))));
-            }
-            Ok(Value::Int(r as i64))
+            Integer::from_f64(r)
+                .map(Value::Int)
+                .ok_or_else(|| OpError::new(format!("{} cannot be rounded to a finite int", fmt_float(x))))
         }
     }
 }
 
-fn round(v: &Value, digits: Option<&Value>) -> OpResult<Value> {
+fn round(v: &Value, digits: Option<&Value>, budget: &mut Budget) -> OpResult<Value> {
     let Some(digits) = digits else {
         return to_int(v, f64::round);
     };
     let digits = integer(digits, "round's digits")?;
     if let Value::Int(n) = v {
-        if digits >= 0 {
+        if *digits >= 0 {
             return Ok(v.clone());
         }
-        // Even i64::MIN is less than half of 10^20 in magnitude. Bound the
-        // exponent before negating it, since digits itself can be i64::MIN.
-        if digits <= -20 {
-            return Ok(Value::Int(0));
+        let places = digits.abs();
+        if places > Integer::from(probl_number::MAX_INTEGER_DIGITS) {
+            return Ok(Value::Int(Integer::ZERO));
         }
-        let scale = 10i128.pow((-digits) as u32);
-        let magnitude = i128::from(*n).abs();
-        let rounded = (magnitude + scale / 2) / scale * scale * i128::from(n.signum());
-        return i64::try_from(rounded)
-            .map(Value::Int)
-            .map_err(|_| int_overflow("round"));
+        budget.integer_work(n, n, true)?;
+        return Ok(Value::Int(n.round_decimal(places.to_u64().unwrap() as u32)?));
     }
+    // Once outside this interval the exact magnitude of digits is irrelevant.
+    let digits = if *digits > 323 {
+        324
+    } else if *digits < -308 {
+        -309
+    } else {
+        digits.to_i64().unwrap()
+    };
     float1(v, "round", |x| {
         // Beyond these bounds a decimal place cannot change a finite f64,
         // or every finite f64 rounds to zero. No unbounded powers or loops.
@@ -893,7 +946,7 @@ fn min_max(args: &[Value], want_max: bool, budget: &mut Budget) -> OpResult<Valu
                 if hi < lo {
                     return Err(OpError::new(format!("`{name}` of an empty range")));
                 }
-                return Ok(Value::Int(if want_max { *hi } else { *lo }));
+                return Ok(Value::Int(if want_max { hi.clone() } else { lo.clone() }));
             }
             Value::List(_) => items(single, name, budget)?,
             other => vec![other.clone()],
@@ -924,17 +977,15 @@ fn len(v: &Value) -> OpResult<Value> {
         Value::Str(s) => s.chars().count() as u128,
         Value::Map(m) => m.len() as u128,
         Value::Bag(b) => b.values().map(|n| *n as u128).sum(),
-        Value::Range(lo, hi) => range_len(*lo, *hi),
+        Value::Range(lo, hi) => return Ok(Value::Int(range_len(lo, hi)?)),
         other => return Err(expected("a collection", other, "len")),
     };
-    i64::try_from(n)
-        .map(Value::Int)
-        .map_err(|_| OpError::new("the length is too large to be an int"))
+    Ok(Value::Int(n.into()))
 }
 
 fn sum(v: &Value, budget: &mut Budget) -> OpResult<Value> {
     let items = items(v, "sum", budget)?;
-    let mut acc = Value::Int(0);
+    let mut acc = Value::Int(0.into());
     for x in &items {
         acc = ops::binary(probl_syntax::ast::BinOp::Add, &acc, x, budget)?;
     }
@@ -948,10 +999,14 @@ fn get(coll: &Value, key: &Value, default: Option<&Value>) -> OpResult<Value> {
             .or_else(|| m.iter().find(|(k, _)| equals(k, key)).map(|(_, v)| v))
             .cloned(),
         Value::List(items) => match key {
-            Value::Int(i) if *i >= 0 && (*i as usize) < items.len() => Some(items[*i as usize].clone()),
+            Value::Int(i) => i
+                .to_u64()
+                .and_then(|n| usize::try_from(n).ok())
+                .and_then(|n| items.get(n))
+                .cloned(),
             _ => None,
         },
-        Value::Bag(b) => Some(Value::Int(b.get(key).copied().unwrap_or(0).min(i64::MAX as u64) as i64)),
+        Value::Bag(b) => Some(Value::Int(b.get(key).copied().unwrap_or(0).into())),
         other => return Err(expected("a map or a list", other, "get")),
     };
     match (found, default) {
@@ -1029,8 +1084,8 @@ fn one_of(v: &Value, budget: &mut Budget) -> OpResult<Value> {
             ops::combine(items.iter().map(|x| (x.clone(), p)).collect(), 0.0, budget)
         }
         Value::Range(lo, hi) if hi >= lo => {
-            budget.outcomes(range_len(*lo, *hi))?;
-            Ok(Dist::uniform((*lo..=*hi).map(Value::Int).collect()).into_value())
+            budget.outcomes(range_count(lo, hi)?)?;
+            Ok(Dist::uniform(range_items(lo, hi, budget)?).into_value())
         }
         Value::Map(m) if !m.is_empty() => {
             let all_probs = m.values().all(|w| matches!(w, Value::Prob(_)));
@@ -1079,7 +1134,9 @@ fn bag(v: &Value) -> OpResult<Value> {
         Value::Map(m) => {
             for (k, n) in m.iter() {
                 let n = match n {
-                    Value::Int(n) if *n >= 0 => *n as u64,
+                    Value::Int(n) if *n >= 0 => n
+                        .to_u64()
+                        .ok_or_else(|| OpError::new("bag count exceeds the supported count range"))?,
                     other => {
                         return Err(OpError::new(format!(
                             "bag counts must be whole numbers of 0 or more, found {other:?}"

@@ -26,7 +26,7 @@ fn chance_of(src: &str, value: Value) -> f64 {
 fn a_call_that_may_call_itself_again_returns() {
     // The audit's example: it returns 1, with certainty.
     let out = outcome("fn f() -> int {\n  if 50% { return 1 }\n  return f()\n}\nreport f()");
-    assert_eq!(out.reports[0].distribution(), [(Value::Int(1), 1.0)]);
+    assert_eq!(out.reports[0].distribution(), [(Value::Int(1.into()), 1.0)]);
     assert!(out.unresolved.to_f64() <= 1e-12);
     assert_eq!(out.stats.solved_calls, 1);
     assert!(
@@ -47,9 +47,9 @@ fn exploding_dice() {
 }
 report explode()";
     near(mean(src), 4.2);
-    near(chance_of(src, Value::Int(7)), 1.0 / 36.0);
-    near(chance_of(src, Value::Int(13)), 1.0 / 216.0);
-    assert_eq!(chance_of(src, Value::Int(6)), 0.0);
+    near(chance_of(src, Value::Int(7.into())), 1.0 / 36.0);
+    near(chance_of(src, Value::Int(13.into())), 1.0 / 216.0);
+    assert_eq!(chance_of(src, Value::Int(6.into())), 0.0);
 }
 
 #[test]
@@ -124,7 +124,7 @@ while not done {
 }
 report total",
     );
-    assert_eq!(out.reports[0].distribution(), [(Value::Int(2), 1.0)]);
+    assert_eq!(out.reports[0].distribution(), [(Value::Int(2.into()), 1.0)]);
     assert!(out.stats.solved_calls >= 1);
     assert!(out.stats.solved_loops >= 1);
 }

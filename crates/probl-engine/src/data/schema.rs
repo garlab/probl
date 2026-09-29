@@ -45,7 +45,7 @@ pub fn suggest(bytes: &[u8], format: DataFormat, file: &str, limits: &InputLimit
             let mut column = Column::default();
             for line in text.lines().filter(|l| !l.trim().is_empty()) {
                 out.count()?;
-                column.add(line);
+                column.add(line, out.limits.max_integer_bits);
             }
             format!("# let {var}: list[{}] = read({file:?})\n", column.guess())
         }
@@ -161,14 +161,16 @@ impl Default for Column {
 }
 
 impl Column {
-    fn add(&mut self, text: &str) {
+    fn add(&mut self, text: &str, max_integer_bits: u64) {
         let t = text.trim();
         if t.is_empty() {
             self.empty = true;
             return;
         }
         self.values = true;
-        self.int &= t.parse::<i64>().is_ok();
+        self.int &= t
+            .parse::<probl_number::Integer>()
+            .is_ok_and(|n| n.bits() <= max_integer_bits);
         self.float &= t.parse::<f64>().is_ok_and(f64::is_finite);
         self.prob &= t
             .strip_suffix('%')
@@ -212,7 +214,7 @@ fn csv_fields(bytes: &[u8], out: &mut Output) -> Result<Vec<String>, String> {
     {
         for (column, cell) in columns.iter_mut().zip(record.iter()) {
             out.count()?;
-            column.add(cell);
+            column.add(cell, out.limits.max_integer_bits);
         }
     }
     let mut fields = Vec::new();
@@ -272,11 +274,21 @@ fn shape(value: &serde_json::Value, at: &str, out: &mut Output) -> Result<Shape,
             Shape::Unknown
         }
         J::Bool(_) => Shape::Bool,
-        J::Number(n) if n.is_i64() || n.is_u64() => Shape::Int,
-        J::Number(_) => Shape::Float,
+        J::Number(n) => {
+            let text = n.to_string();
+            if !text.contains(['.', 'e', 'E']) {
+                let n = text.parse::<probl_number::Integer>().map_err(|e| e.to_string())?;
+                if n.bits() > out.limits.max_integer_bits {
+                    return Err("integer size exceeds the input limit".into());
+                }
+                Shape::Int
+            } else {
+                Shape::Float
+            }
+        }
         J::String(s) => {
             let mut column = Column::default();
-            column.add(s);
+            column.add(s, out.limits.max_integer_bits);
             match column.guess() {
                 "date" => Shape::Date,
                 "prob" => Shape::Prob,
@@ -296,7 +308,10 @@ fn shape(value: &serde_json::Value, at: &str, out: &mut Output) -> Result<Shape,
                 None
             } else if entries.keys().all(|k| dates::parse(k).is_some()) {
                 Some("date")
-            } else if entries.keys().all(|k| k.parse::<i64>().is_ok()) {
+            } else if entries.keys().all(|k| {
+                k.parse::<probl_number::Integer>()
+                    .is_ok_and(|n| n.bits() <= out.limits.max_integer_bits)
+            }) {
                 Some("int")
             } else {
                 None

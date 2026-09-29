@@ -564,7 +564,7 @@ impl<'p> Engine<'p> {
                     unreachable!("`normal` gives a normal distribution")
                 };
                 match v {
-                    Value::Int(_) | Value::Float(_) | Value::Prob(_) => Some(Seen::Normal {
+                    Value::Int(_) | Value::Float(_) | Value::Prob(_) if v.as_f64().is_some() => Some(Seen::Normal {
                         y: v.as_f64().expect("a number"),
                         sd,
                     }),
@@ -668,7 +668,7 @@ impl<'p> Engine<'p> {
                         if let Some(counts) = self.direct_counts(f, dist, &w)? {
                             let k = counts.sample(self.sampler.as_mut().expect("sampling"));
                             let mut w = w;
-                            self.assign(f, place, Value::Int(k), &mut w, dist.span)?;
+                            self.assign(f, place, Value::Int(k.into()), &mut w, dist.span)?;
                             out.push(w);
                             continue;
                         }
@@ -1836,7 +1836,7 @@ impl<'p> Engine<'p> {
                 for (name, v) in fields {
                     updates.push((Arc::from(name.as_str()), self.eval(f, v, w)?));
                 }
-                ops::lift1(&base, &mut self.budget, |b| ops::with_fields(b, &updates)).map_err(at)
+                ops::lift1(&base, &mut self.budget, |b, _| ops::with_fields(b, &updates)).map_err(at)
             }
             ExprKind::Builtin { func, args, .. } => self.builtin(f, *func, args, w, span),
             ExprKind::Closure { func, capture_args } => Ok(Value::Closure(Arc::new(Closure {
@@ -1865,7 +1865,11 @@ impl<'p> Engine<'p> {
         Ok(match l {
             Lit::Unit => Value::Unit,
             Lit::Bool(b) => Value::Bool(*b),
-            Lit::Int(i) => Value::Int(*i),
+            Lit::Int(i) => {
+                self.budget.integer_bits(i.bits())?;
+                self.budget.work(i.bits().div_ceil(64).max(1))?;
+                Value::Int(i.clone())
+            }
             Lit::Float(x) => Value::Float(*x),
             Lit::Prob(p) => Value::Prob(*p),
             Lit::Str(s) => Value::str(s),
@@ -1931,7 +1935,7 @@ impl<'p> Engine<'p> {
 
     fn roll(&mut self, values: &[Value]) -> OpResult<Value> {
         let count = match &values[0] {
-            Value::Int(n) if (0..=1000).contains(n) => *n as u32,
+            Value::Int(n) if *n >= 0 && *n <= 1000 => n.to_u64().unwrap() as u32,
             Value::Int(_) => return Err(OpError::new("roll needs between 0 and 1000 dice")),
             v if v.is_uncertain() => {
                 return Err(OpError::new("the number of dice to roll must be a plain number")
@@ -1945,8 +1949,8 @@ impl<'p> Engine<'p> {
             }
         };
         let die = match &values[1] {
-            Value::Int(sides) if (1..=u32::MAX as i64).contains(sides) => {
-                Dist::dice(1, *sides as u32, &mut self.budget)?
+            Value::Int(sides) if *sides >= 1 && *sides <= u32::MAX as i64 => {
+                Dist::dice(1, sides.to_u64().unwrap() as u32, &mut self.budget)?
             }
             Value::Dist(d) => (**d).clone(),
             v => {
@@ -2002,7 +2006,7 @@ impl<'p> Engine<'p> {
                     }
                 }
                 Ok(if b == Builtin::Count {
-                    Value::Int(kept.len() as i64)
+                    Value::Int((kept.len() as i64).into())
                 } else {
                     Value::list(kept)
                 })

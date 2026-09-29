@@ -133,7 +133,7 @@ report "z: {p.z}"
     );
     assert_eq!(reports[1].distribution()[0].0, Value::str("found"));
     assert_eq!(reports[2].distribution()[0].0, Value::Bool(true));
-    assert_eq!(reports[3].distribution()[0].0, Value::Int(2));
+    assert_eq!(reports[3].distribution()[0].0, Value::Int(2.into()));
     assert_eq!(reports[4].distribution()[0].0, Value::str("z: complex(1.0, 2.0)"));
     assert!(compile_error("let z: complex = 1").contains("expected a complex"));
     assert!(error("fn f(z: complex) { z }\nreport f(1)").contains("complex"));

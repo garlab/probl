@@ -8,7 +8,12 @@ use crate::ops;
 use crate::value::Value;
 use probl_sema::ir::{Program, TypeSpec};
 
-pub(crate) fn plain(text: &str, ty: &TypeSpec, program: &Program) -> Result<Value, Problem> {
+pub(crate) fn plain(
+    text: &str,
+    ty: &TypeSpec,
+    program: &Program,
+    budget: &mut super::Budget,
+) -> Result<Value, Problem> {
     if *ty == TypeSpec::Str {
         return Ok(Value::str(text));
     }
@@ -18,7 +23,7 @@ pub(crate) fn plain(text: &str, ty: &TypeSpec, program: &Program) -> Result<Valu
             .help("the language has no missing values yet: only a `str` field can be empty"));
     }
     match ty {
-        TypeSpec::Int => int(t),
+        TypeSpec::Int => int(t, budget),
         TypeSpec::Float => float(t),
         TypeSpec::Prob => prob(t),
         TypeSpec::Bool => match t.to_ascii_lowercase().as_str() {
@@ -45,17 +50,20 @@ pub(crate) fn plain(text: &str, ty: &TypeSpec, program: &Program) -> Result<Valu
     }
 }
 
-fn int(t: &str) -> Result<Value, Problem> {
-    if let Ok(n) = t.parse::<i64>() {
-        return Ok(Value::Int(n));
-    }
-    let digits = t.strip_prefix(['-', '+']).unwrap_or(t);
-    if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
-        Err(Problem::new(format!("{} is too large for an int", quoted(t))).help("an int is between -2⁶³ and 2⁶³ - 1"))
-    } else if t.parse::<f64>().is_ok_and(f64::is_finite) {
-        Err(Problem::new(format!("{} isn't a whole number", quoted(t))).help("declare the field as a `float`"))
-    } else {
-        Err(Problem::new(format!("{} isn't an int", quoted(t))))
+fn int(t: &str, budget: &mut super::Budget) -> Result<Value, Problem> {
+    match t.parse::<probl_number::Integer>() {
+        Ok(n) => {
+            budget.integer(n.bits())?;
+            Ok(Value::Int(n))
+        }
+        Err(probl_number::IntError::TooLarge) => Err(Problem::limit(format!(
+            "integer size exceeds the limit of {} bits",
+            budget.limits.max_integer_bits.min(probl_number::MAX_INTEGER_BITS)
+        ))),
+        Err(_) if t.parse::<f64>().is_ok_and(f64::is_finite) => {
+            Err(Problem::new(format!("{} isn't a whole number", quoted(t))).help("declare the field as a `float`"))
+        }
+        Err(_) => Err(Problem::new(format!("{} isn't an int", quoted(t)))),
     }
 }
 

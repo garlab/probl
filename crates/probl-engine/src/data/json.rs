@@ -10,6 +10,7 @@ use crate::value::Value;
 use probl_sema::data::{field_key, is_key};
 use probl_sema::ir::TypeSpec;
 use rustc_hash::FxHashSet;
+use serde::Deserialize;
 use serde::de::{self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde_json::error::Category;
 use std::collections::BTreeMap;
@@ -84,6 +85,33 @@ impl<'de> DeserializeSeed<'de> for Seed<'_, '_, '_> {
         if let Err(p) = cx.budget.value() {
             return Err(cx.fail(p));
         }
+        // Read numeric tokens as raw JSON, never through f64 or serde's
+        // synthetic arbitrary-precision map. A user object cannot impersonate
+        // a number using a serde-private key.
+        if matches!(ty, TypeSpec::Int | TypeSpec::Float | TypeSpec::Prob) {
+            let raw = Box::<serde_json::value::RawValue>::deserialize(d)?;
+            let t = raw.get();
+            if t.starts_with('"') {
+                let s: String = serde_json::from_str(t).map_err(de::Error::custom)?;
+                return Visit { ty, cx }.visit_str(&s);
+            }
+            if t == "true" || t == "false" {
+                return Visit { ty, cx }.visit_bool(t == "true");
+            }
+            if t.starts_with('{') {
+                return Err(Visit { ty, cx }.mismatch("an object".into()));
+            }
+            if t.starts_with('[') {
+                return Err(Visit { ty, cx }.mismatch("an array".into()));
+            }
+            if t == "null" {
+                return Err(Visit { ty, cx }.mismatch("`null`".into()));
+            }
+            if *ty == TypeSpec::Int && t.contains(['.', 'e', 'E']) {
+                return Err(cx.fail(Problem::new(format!("{} isn't an int", super::quoted(t)))));
+            }
+            return text::plain(t, ty, cx.program, &mut cx.budget).map_err(|p| cx.fail(p));
+        }
         cx.depth += 1;
         let result = d.deserialize_any(Visit { ty, cx: &mut *cx });
         cx.depth -= 1;
@@ -108,7 +136,7 @@ impl Visit<'_, '_, '_> {
 
     fn int<E: de::Error>(self, n: i64) -> Result<Value, E> {
         match self.ty {
-            TypeSpec::Int => Ok(Value::Int(n)),
+            TypeSpec::Int => Ok(Value::Int(n.into())),
             TypeSpec::Float => Ok(Value::Float(n as f64)),
             TypeSpec::Prob if n == 0 || n == 1 => Ok(Value::Prob(n as f64)),
             TypeSpec::Prob => Err(self.cx.fail(
@@ -168,7 +196,7 @@ impl<'de> Visitor<'de> for Visit<'_, '_, '_> {
         match self.ty {
             TypeSpec::Str => Ok(Value::str(s)),
             TypeSpec::Date | TypeSpec::Enum(_) | TypeSpec::Prob => {
-                text::plain(s, self.ty, self.cx.program).map_err(|p| self.cx.fail(p))
+                text::plain(s, self.ty, self.cx.program, &mut self.cx.budget).map_err(|p| self.cx.fail(p))
             }
             TypeSpec::Int | TypeSpec::Float => Err(self.cx.fail(
                 Problem::new(format!("expected {}, found the string {}", self.expected(), quoted(s)))
@@ -316,7 +344,7 @@ fn record<'de, A: MapAccess<'de>>(
 /// read as the same value are an error.
 fn key<E: de::Error>(cx: &mut Cx, text: &str, ty: &TypeSpec, first: &mut BTreeMap<Value, String>) -> Result<Value, E> {
     cx.path.push(PathPart::Key(text.to_string()));
-    let v = match super::text::plain(text, ty, cx.program) {
+    let v = match super::text::plain(text, ty, cx.program, &mut cx.budget) {
         Ok(v) => v,
         Err(p) => return Err(cx.fail(p)),
     };
@@ -370,7 +398,9 @@ fn counts<'de, A: MapAccess<'de>>(cx: &mut Cx, item: &TypeSpec, mut access: A) -
             cx: &mut *cx,
         })?;
         let n = match n {
-            Value::Int(n) if n >= 0 => n as u64,
+            Value::Int(n) if n >= 0 => n
+                .to_u64()
+                .ok_or_else(|| cx.fail(Problem::new("bag count exceeds the supported count range")))?,
             _ => return Err(cx.fail(Problem::new("a count can't be negative"))),
         };
         cx.path.pop();

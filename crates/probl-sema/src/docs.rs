@@ -159,7 +159,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         B::Round => doc(
             "round(x, digits?: int)",
-            "Round to the nearest value, halves away from zero. With no `digits`, returns an int. With `digits`, rounds that many decimal places: `round(1.234, 2)` is 1.23; `round(1234, -2)` is 1200. Int inputs stay exact ints (overflow is an error); other numbers return floats. Float scaling is approximate near halfway cases. This changes the value, not its display format.",
+            "Round to the nearest value, halves away from zero. With no `digits`, returns an int. With `digits`, rounds that many decimal places: `round(1.234, 2)` is 1.23; `round(1234, -2)` is 1200. Int inputs stay exact ints (integer size and work limits apply); other numbers return floats. Float scaling is approximate near halfway cases. This changes the value, not its display format.",
         ),
         B::Sqrt => doc(
             "sqrt(x) -> float or complex",
@@ -255,11 +255,11 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         B::Choose => doc(
             "choose(n: int, k: int) -> int",
-            "The number of ways to choose `k` items from `n`, without order or replacement. Both must be nonnegative; `k > n` gives 0. The result is exact; integer overflow is an error.",
+            "The number of ways to choose `k` items from `n`, without order or replacement. Both must be nonnegative; `k > n` gives 0. The result is an arbitrary-precision int; size and work limits apply.",
         ),
         B::Factorial => doc(
             "factorial(n: int) -> int",
-            "The product of the integers from 1 to `n`; `factorial(0)` is 1. `n` must be nonnegative. The result is exact; above 20 it overflows an int. Use `ln_gamma(n + 1)` for its logarithm.",
+            "The product of the integers from 1 to `n`; `factorial(0)` is 1. `n` must be nonnegative. The result is an arbitrary-precision int, subject to size and work limits. Use `ln_gamma(n + 1)` for its logarithm.",
         ),
         B::Gcd => doc(
             "gcd(a: int, b: int) -> int",
@@ -267,7 +267,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         B::Lcm => doc(
             "lcm(a: int, b: int) -> int",
-            "The nonnegative least common multiple. Signs are ignored; if either argument is 0, the result is 0. Integer overflow is an error.",
+            "The nonnegative least common multiple. Signs are ignored; if either argument is 0, the result is 0. Integer size and work limits apply.",
         ),
         B::EulerPhi => doc(
             "euler_phi(n: int) -> int",

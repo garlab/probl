@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+probl-number.workspace = true
 ariadne.workspace = true
 
 [dev-dependencies]

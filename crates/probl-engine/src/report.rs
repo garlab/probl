@@ -180,7 +180,7 @@ impl RunStat {
                     self.record(x, share * q);
                 }
             }
-            Value::Int(_) | Value::Float(_) | Value::Prob(_) => {
+            Value::Int(_) | Value::Float(_) | Value::Prob(_) if value.as_f64().is_some() => {
                 self.numbers += share;
                 self.sum += share * value.as_f64().unwrap();
             }
@@ -630,7 +630,11 @@ fn numeric_stats(dist: &[(Value, f64)], mean_se: Option<f64>) -> Option<String> 
     let nums: Vec<(f64, f64)> = dist
         .iter()
         .map(|(v, p)| match v {
-            Value::Int(_) | Value::Float(_) | Value::Prob(_) => v.as_f64().map(|x| (x, *p)),
+            Value::Int(n) => n
+                .to_f64()
+                .filter(|x| n.cmp_f64(*x).is_some_and(|c| c.is_eq()))
+                .map(|x| (x, *p)),
+            Value::Float(x) | Value::Prob(x) => Some((*x, *p)),
             _ => None,
         })
         .collect::<Option<_>>()?;
@@ -638,6 +642,9 @@ fn numeric_stats(dist: &[(Value, f64)], mean_se: Option<f64>) -> Option<String> 
     let total: f64 = nums.iter().map(|(_, p)| p).sum();
     let mean = nums.iter().map(|(x, p)| x * p).sum::<f64>() / total;
     let sd = (nums.iter().map(|(x, p)| (x - mean).powi(2) * p).sum::<f64>() / total).sqrt();
+    if !mean.is_finite() || !sd.is_finite() {
+        return None;
+    }
     let show = |x: f64, decimals: usize| {
         if percent {
             format!("{:.2}%", x * 100.0)
@@ -677,7 +684,7 @@ fn sparkline(dist: &[(Value, f64)]) -> Option<String> {
     let ints: Vec<(i64, f64)> = dist
         .iter()
         .map(|(v, p)| match v {
-            Value::Int(i) => Some((*i, *p)),
+            Value::Int(i) => i.to_i64().map(|n| (n, *p)),
             _ => None,
         })
         .collect::<Option<_>>()?;
@@ -834,7 +841,7 @@ pub fn fraction(x: f64) -> Option<(u64, u64)> {
 
 fn display(v: &Value) -> String {
     match v {
-        Value::Int(i) => thousands(*i),
+        Value::Int(i) => integer_text(i),
         // Twelve significant digits hide rounding like 0.30000000000000004.
         Value::Float(f) if f.is_finite() => fmt_float(format!("{f:.11e}").parse().unwrap_or(*f)),
         Value::Float(f) => fmt_float(*f),
@@ -845,7 +852,7 @@ fn display(v: &Value) -> String {
 /// Integers with separators; floats with `decimals` decimals.
 fn number(v: &Value, decimals: usize) -> String {
     match v {
-        Value::Int(i) => thousands(*i),
+        Value::Int(i) => integer_text(i),
         Value::Float(f) => fixed(*f, decimals),
         other => other.to_string(),
     }
@@ -884,6 +891,12 @@ fn group(digits: &str) -> String {
         out.push(c);
     }
     out
+}
+
+fn integer_text(i: &probl_number::Integer) -> String {
+    let text = i.to_string();
+    let (sign, digits) = text.strip_prefix('-').map_or(("", text.as_str()), |d| ("-", d));
+    format!("{sign}{}", group(digits))
 }
 
 #[cfg(test)]

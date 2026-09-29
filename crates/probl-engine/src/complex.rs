@@ -89,6 +89,28 @@ impl Complex {
         Ok(result)
     }
 
+    pub fn pow_integer(self, exponent: &probl_number::Integer) -> OpResult<Self> {
+        if let Some(n) = exponent.to_i64() {
+            return self.powi(n);
+        }
+        let one = Self { re: 1.0, im: 0.0 };
+        let mut base = if exponent.is_negative() {
+            one.divided_by(self)?
+        } else {
+            self
+        };
+        let mut result = one;
+        for i in 0..exponent.bits() {
+            if exponent.magnitude_bit(i) {
+                result = result.times(base)?;
+            }
+            if i + 1 < exponent.bits() {
+                base = base.times(base)?;
+            }
+        }
+        Ok(result)
+    }
+
     pub fn abs(self) -> f64 {
         libm::hypot(self.re, self.im)
     }

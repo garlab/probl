@@ -18,6 +18,13 @@ const probl = await load(wasm);
 let failed = 0;
 const cases = probl.examples().map((e) => ({ ...e, path: `examples/${e.name}.probl` }));
 cases.push({ name: 'math', path: 'web/test/math.probl', source: await readFile(`${root}/web/test/math.probl`, 'utf8') });
+cases.push({
+  name: 'integers', path: 'web/test/integers.probl',
+  source: await readFile(`${root}/web/test/integers.probl`, 'utf8'),
+  files: Object.fromEntries(await Promise.all(['json', 'csv', 'txt'].map(async (ext) => [
+    `data/integers.${ext}`, await readFile(`${root}/web/test/data/integers.${ext}`, 'utf8'),
+  ]))),
+});
 for (const example of cases) {
   const start = performance.now();
   const answer = probl.run({ source: example.source, files: example.files });

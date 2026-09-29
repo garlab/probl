@@ -426,7 +426,7 @@ pub enum InterpPart {
 pub enum Lit {
     Unit,
     Bool(bool),
-    Int(i64),
+    Int(probl_number::Integer),
     Float(f64),
     Prob(f64),
     Str(String),

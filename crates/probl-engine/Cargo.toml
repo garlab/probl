@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+probl-number.workspace = true
 probl-syntax.workspace = true
 probl-sema.workspace = true
 rustc-hash.workspace = true

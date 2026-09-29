@@ -281,13 +281,12 @@ fn math_functions() {
         "report log2(0)",
         "report log2(-1)",
         "report asin(one_of([0, 2]))",
-        // A non-finite value from elsewhere must not produce NaN or infinity.
-        "report sin(0 ^ -1)",
     ] {
         assert!(error(src).contains("isn't defined for"), "{src}");
     }
     assert!(error("report hypot(1.5e308, 1.5e308)").contains("isn't a finite number"));
-    assert!(error("report atan2(0 ^ -1, 1)").contains("needs finite numbers"));
+    assert!(error("report atan2(0 ^ -1, 1)").contains("division by zero"));
+    assert!(error("report sin(0 ^ -1)").contains("division by zero"));
     assert!(error("report sin(true)").contains("needs a number"));
     assert!(error("report atan2(1, \"x\")").contains("needs a number"));
     assert!(error("report sin(normal(0, 1))").contains("draw a value first"));

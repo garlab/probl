@@ -25,7 +25,7 @@ pub enum Value {
     Unit,
     /// A fact: true or false in a world.
     Bool(bool),
-    Int(i64),
+    Int(probl_number::Integer),
     Float(f64),
     Complex(Complex),
     /// A probability: a number from 0 to 1. It's a parameter, not an event.
@@ -36,7 +36,7 @@ pub enum Value {
     /// A multiset: value → count.
     Bag(Arc<Hashed<Multiset>>),
     /// Integers from `.0` to `.1`, both included.
-    Range(i64, i64),
+    Range(probl_number::Integer, probl_number::Integer),
     Record(Arc<Hashed<Record>>),
     Enum(Arc<EnumValue>),
     Dist(Arc<Dist>),
@@ -396,7 +396,7 @@ impl Value {
     /// Numbers as f64: ints, floats and probabilities.
     pub fn as_f64(&self) -> Option<f64> {
         match self {
-            Value::Int(i) => Some(*i as f64),
+            Value::Int(i) => i.to_f64(),
             Value::Float(f) | Value::Prob(f) => Some(*f),
             _ => None,
         }
@@ -551,11 +551,21 @@ impl Ord for Value {
         }
         match (self, other) {
             (Value::Int(a), Value::Int(b)) => a.cmp(b),
+            (Value::Int(a), Value::Float(b) | Value::Prob(b)) => a
+                .cmp_f64(*b)
+                .unwrap_or(Ordering::Less)
+                .then_with(|| self.number_rank().cmp(&other.number_rank())),
+            (Value::Float(a) | Value::Prob(a), Value::Int(b)) => b
+                .cmp_f64(*a)
+                .unwrap_or(Ordering::Less)
+                .reverse()
+                .then_with(|| self.number_rank().cmp(&other.number_rank())),
             (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
             (a, b) if ra == 3 => {
                 // Numbers compare by value, then by kind so the order stays total.
                 let (x, y) = (a.as_f64().unwrap(), b.as_f64().unwrap());
-                x.total_cmp(&y)
+                f64::from_bits(float_key(x))
+                    .total_cmp(&f64::from_bits(float_key(y)))
                     .then_with(|| a.number_rank().cmp(&b.number_rank()))
                     .then_with(|| float_key(x).cmp(&float_key(y)))
             }
@@ -721,18 +731,22 @@ mod tests {
     use super::*;
 
     fn bag(counts: &[(i64, u64)]) -> Multiset {
-        Multiset::new(counts.iter().map(|&(v, n)| (Value::Int(v), n)).collect())
+        Multiset::new(counts.iter().map(|&(v, n)| (Value::Int(v.into()), n)).collect())
     }
 
     #[test]
     fn a_bag_keeps_its_hash_up_to_date() {
         let full = bag(&[(1, 2), (2, 1), (3, 4)]);
         // Taking values out in any order gives the bag built directly.
-        let taken = full.without(&Value::Int(3)).unwrap().without(&Value::Int(2)).unwrap();
+        let taken = full
+            .without(&Value::Int(3.into()))
+            .unwrap()
+            .without(&Value::Int(2.into()))
+            .unwrap();
         let direct = bag(&[(1, 2), (3, 3)]);
         assert_eq!(taken, direct);
         assert_eq!(taken.sum, direct.sum);
-        assert!(taken.without(&Value::Int(2)).is_none());
+        assert!(taken.without(&Value::Int(2.into())).is_none());
         // Moving a count from one value to another changes the hash.
         assert_ne!(bag(&[(1, 2), (2, 3)]).sum, bag(&[(1, 3), (2, 2)]).sum);
         assert_ne!(bag(&[(1, 1)]).sum, bag(&[(2, 1)]).sum);
@@ -742,7 +756,10 @@ mod tests {
     fn an_unshared_copy_is_equal_and_separate() {
         let row = Value::record(Record {
             ty: Some(Arc::from("Day")),
-            fields: vec![(Arc::from("n"), Value::Int(1)), (Arc::from("s"), Value::str("x"))],
+            fields: vec![
+                (Arc::from("n"), Value::Int(1.into())),
+                (Arc::from("s"), Value::str("x")),
+            ],
         });
         let original = Value::list(vec![row.clone(), row]);
         let copy = original.unshared();
@@ -763,14 +780,14 @@ mod tests {
 
     #[test]
     fn a_changed_collection_forgets_its_hash() {
-        let mut list = Hashed::new(vec![Value::Int(1)]);
+        let mut list = Hashed::new(vec![Value::Int(1.into())]);
         let before = list.hash_code();
-        list.push(Value::Int(2));
+        list.push(Value::Int(2.into()));
         assert_ne!(list.hash_code(), before);
         assert_eq!(
             list.hash_code(),
-            Hashed::new(vec![Value::Int(1), Value::Int(2)]).hash_code()
+            Hashed::new(vec![Value::Int(1.into()), Value::Int(2.into())]).hash_code()
         );
-        assert_ne!(list, Hashed::new(vec![Value::Int(1)]));
+        assert_ne!(list, Hashed::new(vec![Value::Int(1.into())]));
     }
 }

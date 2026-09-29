@@ -65,6 +65,15 @@ impl OpError {
 
 pub type OpResult<T> = std::result::Result<T, OpError>;
 
+impl From<probl_number::IntError> for OpError {
+    fn from(error: probl_number::IntError) -> Self {
+        match error {
+            probl_number::IntError::TooLarge => Self::limit(error.to_string()),
+            _ => Self::new(error.to_string()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct RuntimeError {
     pub message: String,

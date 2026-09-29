@@ -228,16 +228,15 @@ fn large_integers_are_exact() {
         &[("a.json", "[9007199254740993]")],
     );
     assert_eq!(json.to_string(), format!("[{big}]"));
-    fails(
-        "let ns: list[int] = read(\"a.json\")",
-        &[("a.json", "[18446744073709551616]")],
-        &["isn't an int"],
-    );
-    fails(
-        "let ns: list[int] = read(\"a.json\")",
-        &[("a.json", "[9223372036854775808]")],
-        &["too large for an int"],
-    );
+    for n in [
+        "18446744073709551616",
+        "9223372036854775808",
+        "123456789012345678901234567890123456789",
+    ] {
+        let data = format!("[{n}]");
+        let v = value("let ns: list[int] = read(\"a.json\")", &[("a.json", &data)]);
+        assert_eq!(v.to_string(), data);
+    }
     fails(
         "let ns: list[int] = read(\"a.json\")",
         &[("a.json", "[12.0]")],
@@ -321,7 +320,92 @@ fn json_errors_say_where() {
     check(r#"{ "price": 12.5, "#, &["isn't valid JSON"]);
     check(
         r#"{ "price": 1e400, "churn": "4%", "segments": [] }"#,
-        &["isn't valid JSON", "out of range"],
+        &["too large for a float"],
+    );
+}
+
+#[test]
+fn arbitrary_integers_round_trip_and_obey_limits() {
+    let n = "123456789012345678901234567890123456789012345678901234567890";
+    let sources = [
+        ("let x: list[int] = read(\"n.json\")", "n.json", format!("[{n}, -{n}]")),
+        ("let x: list[int] = read(\"n.txt\")", "n.txt", format!("{n}\n-{n}\n")),
+        (
+            "let x: list[{ n: int }] = read(\"n.csv\")",
+            "n.csv",
+            format!("n\n{n}\n-{n}\n"),
+        ),
+    ];
+    for (src, name, text) in &sources {
+        let v = value(src, &[(name, text)]).to_string();
+        assert!(v.contains(n) && v.contains(&format!("-{n}")), "{v}");
+        for limits in [
+            InputLimits {
+                max_integer_bits: 64,
+                ..InputLimits::default()
+            },
+            InputLimits {
+                max_integer_bytes: 10,
+                ..InputLimits::default()
+            },
+        ] {
+            assert_eq!(
+                load_limited(src, &[(name, text)], &limits).unwrap_err().kind,
+                ErrorKind::Limit
+            );
+        }
+    }
+    let src = "let x: map[int, int] = read(\"n.json\")";
+    let json = format!("{{\"{n}\": {n}}}");
+    assert_eq!(value(src, &[("n.json", &json)]).to_string(), format!("[{n}: {n}]"));
+    let duplicate = format!("{{\"{n}\": 1, \"0{n}\": 2}}");
+    assert!(
+        error(src, &[("n.json", &duplicate)])
+            .message
+            .contains("are the same int")
+    );
+    for ty in ["int", "float", "prob"] {
+        fails(
+            &format!("let x: {ty} = read(\"n.json\")"),
+            &[(
+                "n.json",
+                r#"{"$serde_json::private::Number":"123456789012345678901234567890"}"#,
+            )],
+            &["object"],
+        );
+    }
+    let oversized = format!("[{}]", "9".repeat(20_000));
+    assert_eq!(error(sources[0].0, &[("n.json", &oversized)]).kind, ErrorKind::Limit);
+    for (format, text) in [
+        (DataFormat::Json, format!("[{n}]")),
+        (DataFormat::Lines, n.to_string()),
+        (DataFormat::Csv, format!("n\n{n}\n")),
+    ] {
+        let schema = suggest(text.as_bytes(), format, "n", &InputLimits::default()).unwrap();
+        assert!(schema.contains("int"), "{schema}");
+    }
+    // A host may tighten limits after loading data, without letting a direct
+    // report of the input bypass the runtime limit.
+    let program = program(sources[0].0);
+    let inputs = load(
+        &program,
+        &mut Memory::with(&[("n.json", &sources[0].2)]),
+        &mut Snapshots::default(),
+        &InputLimits::default(),
+        None,
+    )
+    .unwrap();
+    let options = crate::Options {
+        inputs: Some(Arc::new(inputs)),
+        limits: crate::Limits {
+            max_integer_bits: 64,
+            ..crate::Limits::default()
+        },
+        ..crate::Options::default()
+    };
+    assert_eq!(
+        crate::run(&program, &options, &mut |_| {}).unwrap_err().kind,
+        ErrorKind::Limit
     );
 }
 

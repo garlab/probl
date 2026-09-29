@@ -74,6 +74,8 @@ d6   2d6   d20   3d8                  # dice: these are distributions
 
 ### Math
 
+Integers grow automatically: `factorial(30)` and `choose(100, 50)` return exact integers, and `10^100 + 1 - 10^100` is 1. There is no separate bigint syntax or type. Integer arithmetic and comparisons preserve all digits, including when comparing an integer with a float. `/`, negative powers, real math functions and mixed float/complex arithmetic produce approximations. `(10^400) / (10^400)` is 1.0, but passing `10^400` directly to `sin` is an error because it cannot be converted to a finite float. Resource limits bound integer size and computation; see [integer semantics](semantics.md#1-values-and-types).
+
 Math functions use radians: `sin(pi / 2)` is 1 and `atan2(1, -1)` is `3 * pi / 4`. The constants `pi`, `e` and `euler_gamma` are floats; they can be hidden by your own names. `euler_gamma` is the Euler–Mascheroni constant, distinct from Euler's number `e` and the `gamma(shape, scale)` distribution. Results are floating-point approximations, so test identities with a tolerance rather than exact equality.
 
 ```probl
