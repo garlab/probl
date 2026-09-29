@@ -16,6 +16,10 @@ All values are immutable: assigning or passing a collection gives an independent
 
 Wherever a probability is expected, a `float` from 0 to 1 is accepted too. Nothing else converts implicitly: in particular, a `prob` never turns into an event, and an `int` is never a condition.
 
+**Math.** `pi`, `e` and `euler_gamma` are ordinary `float` constants (π, Euler's number, and the Euler–Mascheroni constant γ). They are names, not reserved words: a program's variables, parameters, variants and functions can hide them. Assigning to an unshadowed constant is an error.
+
+`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2(y, x)`, `hypot(x, y)`, `sinh`, `cosh`, `tanh`, `log2`, `log1p` and `expm1` accept numbers and return floats. They act on each outcome of a finite distribution, like the existing math functions (section 2); draw from a continuous distribution first. Angles are in radians, including inverse-function results. `asin` and `acos` accept −1 through 1; `log2` requires a positive argument, and `log1p` requires an argument above −1. Arguments and results must be finite; invalid domains and overflow are errors. `atan2` takes the vertical coordinate first and returns an angle from −π to π; signed zeros are treated alike, and at `(0, 0)` it returns 0 by convention. These are floating-point approximations: `sin(pi)` need not be exactly zero, and `tan(pi / 2)` evaluates at the rounded argument rather than an exact pole. `log1p(x)` and `expm1(x)` preserve accuracy near zero; `hypot` avoids overflow or underflow in intermediate squares.
+
 ## 2. Events and identity
 
 A **distribution is a recipe**. Each occurrence of a distribution in an expression is an independent draw: `d6 + d6` is two dice, and `let die = d6` followed by `die + die` is also two dice.

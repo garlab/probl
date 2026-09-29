@@ -52,6 +52,20 @@ builtins! {
     Exp = "exp", 1..=1, Lift, true;
     Ln = "ln", 1..=1, Lift, true;
     Log10 = "log10", 1..=1, Lift, true;
+    Log2 = "log2", 1..=1, Lift, true;
+    Log1p = "log1p", 1..=1, Lift, true;
+    Expm1 = "expm1", 1..=1, Lift, true;
+    Sin = "sin", 1..=1, Lift, true;
+    Cos = "cos", 1..=1, Lift, true;
+    Tan = "tan", 1..=1, Lift, true;
+    Asin = "asin", 1..=1, Lift, true;
+    Acos = "acos", 1..=1, Lift, true;
+    Atan = "atan", 1..=1, Lift, true;
+    Atan2 = "atan2", 2..=2, Lift, true;
+    Hypot = "hypot", 2..=2, Lift, true;
+    Sinh = "sinh", 1..=1, Lift, true;
+    Cosh = "cosh", 1..=1, Lift, true;
+    Tanh = "tanh", 1..=1, Lift, true;
     Clamp = "clamp", 3..=3, Lift, true;
     // Text
     Str = "str", 1..=1, Lift, true;
@@ -155,5 +169,39 @@ impl Builtin {
     /// Methods that change the collection they're called on.
     pub fn is_mutating(self) -> bool {
         matches!(self, Builtin::Push | Builtin::Insert | Builtin::Remove | Builtin::Pop)
+    }
+}
+
+/// A named number. A program's own variables, variants and functions hide
+/// it, so `let e = 5` still works.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Constant {
+    Pi,
+    E,
+    EulerGamma,
+}
+
+impl Constant {
+    pub const ALL: &'static [Constant] = &[Constant::Pi, Constant::E, Constant::EulerGamma];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Constant::Pi => "pi",
+            Constant::E => "e",
+            Constant::EulerGamma => "euler_gamma",
+        }
+    }
+
+    pub fn value(self) -> f64 {
+        match self {
+            Constant::Pi => std::f64::consts::PI,
+            Constant::E => std::f64::consts::E,
+            // The Euler–Mascheroni constant: `std::f64::consts::EGAMMA` isn't stable yet.
+            Constant::EulerGamma => 0.577_215_664_901_532_9,
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Constant> {
+        Constant::ALL.iter().copied().find(|c| c.name() == name)
     }
 }

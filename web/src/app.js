@@ -531,7 +531,8 @@ async function main() {
   }
   const groups = [['Keywords', keywords], ['Reading data', [docs.read]]];
   for (const category of ['Distributions', 'Questions about distributions', 'Collections', 'Math', 'Text', 'Dates']) {
-    groups.push([category, docs.builtins.filter((b) => b.category === category)]);
+    const builtins = docs.builtins.filter((b) => b.category === category);
+    groups.push([category, category === 'Math' ? [...docs.constants, ...builtins] : builtins]);
   }
   for (const [title, items] of groups) {
     const section = document.createElement('section');

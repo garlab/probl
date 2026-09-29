@@ -187,9 +187,9 @@ fn split_comment(line: &str) -> (&str, Option<&str>) {
     (line, None)
 }
 
-/// The reference: `{"builtins": [...], "keywords": [...], "read": {...}}`,
-/// each with its `signature` and `summary`, and the built-ins with their
-/// `category`.
+/// The reference: `{"builtins": [...], "constants": [...], "keywords": [...],
+/// "read": {...}}`, each with its `signature` and `summary`, and the
+/// built-ins with their `category`.
 pub fn docs() -> String {
     let builtins: Vec<Json> = Builtin::ALL
         .iter()
@@ -211,9 +211,17 @@ pub fn docs() -> String {
             Some(json!({ "name": k, "signature": d.signature, "summary": d.summary }))
         })
         .collect();
+    let constants: Vec<Json> = probl_sema::Constant::ALL
+        .iter()
+        .map(|&c| {
+            let d = probl_sema::docs::constant(c);
+            json!({ "name": c.name(), "signature": d.signature, "summary": d.summary })
+        })
+        .collect();
     let read = probl_sema::docs::READ;
     json!({
         "builtins": builtins,
+        "constants": constants,
         "keywords": keywords,
         "read": { "name": "read", "signature": read.signature, "summary": read.summary },
     })

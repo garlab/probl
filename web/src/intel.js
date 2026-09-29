@@ -1,6 +1,6 @@
 // What the editor knows about the program: its names, from the compiler
-// (`check` in crates/probl-wasm), and the built-ins' and keywords'
-// documentation. It gives completion, descriptions on hover, going to a
+// (`check` in crates/probl-wasm), and the built-ins', constants' and
+// keywords' documentation. It gives completion, descriptions on hover, going to a
 // definition with Cmd-click, Ctrl-click or F12, and highlights of the
 // name under the cursor.
 
@@ -238,13 +238,15 @@ function card({ code, what, doc }) {
 
 /** The editor's extensions, given the reference (`docs()` from the module),
  * `names(source)`, which gives a program's symbols, or null, and
- * `showReference(name)`, which shows a built-in's or keyword's entry. Put
+ * `showReference(name)`, which shows a built-in's, constant's or keyword's entry. Put
  * them before `basicSetup`: Enter must reach them before the completion
  * list. */
 export function intelligence(docs, names, showReference) {
   const builtins = new Map(docs.builtins.map((b) => [b.name, b]));
   builtins.set('read', docs.read);
+  const constants = new Map(docs.constants.map((c) => [c.name, c]));
   const keywords = new Map(docs.keywords.map((k) => [k.name, k]));
+  const referenced = (name) => builtins.has(name) || constants.has(name) || keywords.has(name);
 
   const documented = (entry) => ({ code: entry.signature, doc: entry.summary });
   // A built-in's signature without its name, which the completion list
@@ -312,6 +314,10 @@ export function intelligence(docs, names, showReference) {
     for (const [name, b] of builtins) {
       add({ label: name, type: 'function', detail: parameters(b), info: () => card(documented(b)) });
     }
+    for (const [name, c] of constants) {
+      const value = c.signature.slice(c.signature.indexOf('=') + 1).trim();
+      add({ label: name, type: 'constant', detail: value, info: () => card(documented(c)) });
+    }
     for (const [name, k] of keywords) {
       add({ label: name, type: 'keyword', info: () => card(documented(k)), boost: -1 });
     }
@@ -326,15 +332,16 @@ export function intelligence(docs, names, showReference) {
     let content = null;
     if (def) content = describeDefinition(def);
     else if (builtins.has(word.text)) content = documented(builtins.get(word.text));
+    else if (constants.has(word.text)) content = documented(constants.get(word.text));
     else if (keywords.has(word.text)) content = documented(keywords.get(word.text));
     if (!content) return null;
     return { pos: word.from, end: word.to, above: true, create: () => ({ dom: card(content) }) };
   });
 
-  /** The built-in or keyword at `pos`, which the reference documents. */
+  /** The built-in, constant or keyword at `pos`, which the reference documents. */
   function documentedAt(state, pos) {
     const word = wordAt(state, pos);
-    if (!word || inText(state, pos, 1) || !(builtins.has(word.text) || keywords.has(word.text))) return null;
+    if (!word || inText(state, pos, 1) || !referenced(word.text)) return null;
     return word;
   }
 

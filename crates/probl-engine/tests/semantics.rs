@@ -236,6 +236,145 @@ fn dates() {
 }
 
 #[test]
+fn math_functions() {
+    for (f, expected) in [
+        ("sin", 0.5f64.sin()),
+        ("cos", 0.5f64.cos()),
+        ("tan", 0.5f64.tan()),
+        ("asin", 0.5f64.asin()),
+        ("acos", 0.5f64.acos()),
+        ("atan", 0.5f64.atan()),
+        ("sinh", 0.5f64.sinh()),
+        ("cosh", 0.5f64.cosh()),
+        ("tanh", 0.5f64.tanh()),
+        ("log2", -1.0),
+        ("log1p", 1.5f64.ln()),
+        ("expm1", 0.5f64.exp() - 1.0),
+    ] {
+        close(mean(&format!("report {f}(0.5)")), expected);
+    }
+    close(mean("report atan2(1, -1)"), 3.0 * std::f64::consts::FRAC_PI_4);
+    close(mean("report atan2(-1, 0)"), -std::f64::consts::FRAC_PI_2);
+    close(mean("report atan2(-1, -1)"), -3.0 * std::f64::consts::FRAC_PI_4);
+    close(mean("report atan2(0, 0)"), 0.0);
+    close(mean("report asin(-1)"), -std::f64::consts::FRAC_PI_2);
+    close(mean("report acos(-1)"), std::f64::consts::PI);
+    close(mean("report asin(1)"), std::f64::consts::FRAC_PI_2);
+    close(mean("report acos(1)"), 0.0);
+    close(mean("report hypot(3, 4)"), 5.0);
+    close(mean("report hypot(3e200, 4e200) / 1e200"), 5.0);
+    close(mean("report hypot(3e-200, 4e-200) / 1e-200"), 5.0);
+    close(mean("report hypot(1e308, 1e308) / 1e308"), std::f64::consts::SQRT_2);
+    // Accurate where `ln(1 + x)` and `exp(x) - 1` lose every digit.
+    assert!((mean("report log1p(1e-20)") / 1e-20 - 1.0).abs() < 1e-12);
+    assert!((mean("report expm1(1e-20)") / 1e-20 - 1.0).abs() < 1e-12);
+    close(mean("let x ~ d6\nreport sin(x)^2 + cos(x)^2"), 1.0);
+    let cos_d4 = (1..=4).map(|n| f64::from(n).cos()).sum::<f64>() / 4.0;
+    close(mean("report cos(d4)"), cos_d4);
+    for src in [
+        "report cosh(1000)",
+        "report sinh(-1000)",
+        "report expm1(1000)",
+        "report asin(1.5)",
+        "report acos(-2)",
+        "report log1p(-1)",
+        "report log2(0)",
+        "report log2(-1)",
+        "report asin(one_of([0, 2]))",
+        // A non-finite value from elsewhere must not produce NaN or infinity.
+        "report sin(0 ^ -1)",
+    ] {
+        assert!(error(src).contains("isn't defined for"), "{src}");
+    }
+    assert!(error("report hypot(1.5e308, 1.5e308)").contains("isn't a finite number"));
+    assert!(error("report atan2(0 ^ -1, 1)").contains("needs finite numbers"));
+    assert!(error("report sin(true)").contains("needs a number"));
+    assert!(error("report atan2(1, \"x\")").contains("needs a number"));
+    assert!(error("report sin(normal(0, 1))").contains("draw a value first"));
+    assert!(compile_error("report sin()").contains("takes 1 argument"));
+    assert!(compile_error("report atan2(1)").contains("takes 2 arguments"));
+}
+
+#[test]
+fn math_functions_preserve_distribution_semantics_in_both_modes() {
+    for mode in ["enumerate", "sample(runs: 1000, seed: 1)"] {
+        // Both arguments lift independently, with their original weights.
+        close(
+            mean(&format!(
+                "@mode {mode}\nreport hypot(one_of([0: 25%, 3: 75%]), one_of([0, 4]))"
+            )),
+            3.5,
+        );
+        // A drawn angle has one identity in every use, also for continuous draws.
+        close(
+            mean(&format!("@mode {mode}\nlet x ~ d6\nreport sin(x)^2 + cos(x)^2")),
+            1.0,
+        );
+    }
+    close(
+        mean("@mode sample(runs: 1000, seed: 1)\nlet x ~ uniform(-pi, pi)\nreport sin(x)^2 + cos(x)^2"),
+        1.0,
+    );
+}
+
+#[test]
+fn atan2_respects_equality_when_merging_and_memoizing() {
+    close(mean("report atan2(-0.0, -1)"), std::f64::consts::PI);
+    close(mean("report atan2(0, -0.0)"), 0.0);
+    let src = "
+        fn angle(y) { atan2(y, -1) }
+        var y = 0.0
+        if 50% { y = -0.0 }
+        report angle(y) < 0
+    ";
+    for merge in [false, true] {
+        for memoize in [false, true] {
+            let out = exec(
+                src,
+                &Options {
+                    merge,
+                    memoize,
+                    ..Options::default()
+                },
+            )
+            .unwrap();
+            close(out.reports[0].chance().unwrap(), 0.0);
+        }
+    }
+    close(chance(&format!("@mode sample(runs: 1000, seed: 1)\n{src}")), 0.0);
+}
+
+#[test]
+fn constants() {
+    close(mean("report pi"), std::f64::consts::PI);
+    close(mean("report e"), std::f64::consts::E);
+    close(mean("report euler_gamma"), 0.577_215_664_901_532_9);
+    close(mean("report sin(pi / 2) + ln(e)"), 2.0);
+    // The harmonic numbers approach ln(n) + γ.
+    close(
+        mean("var h = 0.0\nfor k in 1..10000 { h += 1 / k }\nreport h - ln(10000) - euler_gamma"),
+        1.0 / 20_000.0 - 1.0 / (12.0 * 1e8),
+    );
+    // A program's own names hide them.
+    close(mean("let e = 5\nreport e"), 5.0);
+    close(mean("fn f(pi) { pi * 2 }\nreport f(1)"), 2.0);
+    close(mean("let e = 5\nfn f() { e + 1 }\nreport f()"), 6.0);
+    close(mean("fn f() { e + 1 }\nlet e = 5\nreport f()"), 6.0);
+    close(mean("fn f() { pi }\nreport f()"), std::f64::consts::PI);
+    close(mean("let f = x -> x + e\nreport f(0)"), std::f64::consts::E);
+    close(mean("report simulate { euler_gamma }"), 0.577_215_664_901_532_9);
+    close(mean("var pi = 2\npi += 1\nreport pi"), 3.0);
+    close(mean("fn pi() { 3 }\nreport pi()"), 3.0);
+    close(mean("var total = 0\nfor e in [1, 2] { total += e }\nreport total"), 3.0);
+    close(mean("let xs = [1, 2].map(e -> e * 10)\nreport xs[1]"), 20.0);
+    close(chance("enum Letter { e, f }\nreport e == Letter.e"), 1.0);
+    assert!(compile_error("fn pi() { 3 }\nreport pi").contains("the function `pi` can't be used as a value"));
+    assert!(compile_error("pi = 3").contains("can't assign to `pi`: it's a constant"));
+    assert!(compile_error("pi()").contains("`pi` is a constant, not a function"));
+    assert!(compile_error("report pie").contains("did you mean `pi`?"));
+}
+
+#[test]
 fn declared_types_are_checked() {
     close(chance("let n: int = 3\nreport n == 3"), 1.0);
     close(

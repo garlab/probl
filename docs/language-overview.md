@@ -72,6 +72,19 @@ d6   2d6   d20   3d8                  # dice: these are distributions
 5 to 10                               # an estimate: 90% sure it's between 5 and 10
 ```
 
+### Math
+
+Math functions use radians: `sin(pi / 2)` is 1 and `atan2(1, -1)` is `3 * pi / 4`. The constants `pi`, `e` and `euler_gamma` are floats; they can be hidden by your own names. `euler_gamma` is the Euler–Mascheroni constant, distinct from Euler's number `e` and the `gamma(shape, scale)` distribution. Results are floating-point approximations, so test identities with a tolerance rather than exact equality.
+
+```probl
+@mode sample(runs: 1000, seed: 1)
+let angle ~ uniform(-pi, pi)
+report sin(angle)               # a settled angle, transformed in each run
+report cos(d6)                 # a finite distribution, transformed outcome by outcome
+```
+
+Use `log1p(x)` for `ln(1 + x)` and `expm1(x)` for `exp(x) - 1` when `x` may be tiny, and `hypot(x, y)` for a distance without squaring large or tiny numbers. Arguments outside a function's domain, such as `asin(2)`, and overflowing results are errors. Continuous distributions must be drawn before applying these functions.
+
 ### Variables
 
 ```probl
@@ -558,7 +571,8 @@ From loosest to tightest binding:
 | Distribution helpers | `take` `truncate(d, lo, hi)`\* `bins(d, n)`\* |
 | Queries | `P` `mean` `sd` `variance` `median` `quantile` `support` `cdf` `pmf` `pdf` |
 | Probability | `odds(p)` `logit(p)` `inv_logit(x)` |
-| Math | `abs` `min` `max` `clamp` `floor` `ceil` `round` `sqrt` `exp` `ln` `log10` |
+| Math | `abs` `min` `max` `clamp` `floor` `ceil` `round` `sqrt` `hypot(x, y)` `exp` `expm1` `ln` `log1p` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `sinh` `cosh` `tanh` |
+| Constants | `pi` `e` `euler_gamma`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
 | Collections | `len` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `highest(n)` `lowest(n)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
 | Text | `str` `upper` `lower` `split` `join` |
 | Dates | `date("2027-01-31")` `today()`\* `days(n)` `weeks(n)` `add_workdays(d, n)` `weekday(d)`; dates can be compared, and adding or subtracting them works in days |

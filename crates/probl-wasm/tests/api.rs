@@ -247,6 +247,10 @@ fn the_reference_documents_every_built_in() {
     for b in builtins {
         assert!(!b["summary"].as_str().unwrap().is_empty(), "{b}");
     }
+    let constants = docs["constants"].as_array().unwrap();
+    assert_eq!(constants.len(), probl_sema::Constant::ALL.len());
+    let pi = constants.iter().find(|c| c["name"] == "pi").unwrap();
+    assert_eq!(pi["signature"], "pi = 3.141592653589793");
     let keywords = docs["keywords"].as_array().unwrap();
     assert!(keywords.iter().any(|k| k["name"] == "observe"));
     assert!(docs["read"]["summary"].as_str().unwrap().contains("CSV"));

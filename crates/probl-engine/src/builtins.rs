@@ -24,6 +24,20 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
         B::Exp => float1(a(0), "exp", |x| Some(libm::exp(x)).filter(|y| y.is_finite())),
         B::Ln => float1(a(0), "ln", |x| (x > 0.0).then(|| libm::log(x))),
         B::Log10 => float1(a(0), "log10", |x| (x > 0.0).then(|| libm::log10(x))),
+        B::Log2 => float1(a(0), "log2", |x| (x > 0.0).then(|| libm::log2(x))),
+        B::Log1p => float1(a(0), "log1p", |x| (x > -1.0).then(|| libm::log1p(x))),
+        B::Expm1 => float1(a(0), "expm1", |x| Some(libm::expm1(x)).filter(|y| y.is_finite())),
+        B::Sin => float1(a(0), "sin", |x| Some(libm::sin(x))),
+        B::Cos => float1(a(0), "cos", |x| Some(libm::cos(x))),
+        B::Tan => float1(a(0), "tan", |x| Some(libm::tan(x))),
+        B::Asin => float1(a(0), "asin", |x| (-1.0..=1.0).contains(&x).then(|| libm::asin(x))),
+        B::Acos => float1(a(0), "acos", |x| (-1.0..=1.0).contains(&x).then(|| libm::acos(x))),
+        B::Atan => float1(a(0), "atan", |x| Some(libm::atan(x))),
+        B::Atan2 => float2(a(0), a(1), "atan2", libm::atan2),
+        B::Hypot => float2(a(0), a(1), "hypot", libm::hypot),
+        B::Sinh => float1(a(0), "sinh", |x| Some(libm::sinh(x)).filter(|y| y.is_finite())),
+        B::Cosh => float1(a(0), "cosh", |x| Some(libm::cosh(x)).filter(|y| y.is_finite())),
+        B::Tanh => float1(a(0), "tanh", |x| Some(libm::tanh(x))),
         B::Clamp => {
             let (lo, hi) = (a(1), a(2));
             if ops::compare(lo, hi)?.is_gt() {
@@ -542,8 +556,27 @@ fn num1(v: &Value, func: &str, f: fn(f64) -> f64, i: fn(i64) -> Option<i64>) -> 
 
 fn float1(v: &Value, func: &str, f: impl Fn(f64) -> Option<f64>) -> OpResult<Value> {
     let x = number(v, func)?;
-    f(x).map(Value::Float)
+    f(x).filter(|y| x.is_finite() && y.is_finite())
+        .map(Value::Float)
         .ok_or_else(|| OpError::new(format!("`{func}` isn't defined for {}", fmt_float(x))))
+}
+
+fn float2(a: &Value, b: &Value, func: &str, f: fn(f64, f64) -> f64) -> OpResult<Value> {
+    let (a, b) = (number(a, func)?, number(b, func)?);
+    if !a.is_finite() || !b.is_finite() {
+        return Err(OpError::new(format!("`{func}` needs finite numbers")));
+    }
+    // Value equality merges signed zeros. In particular, atan2 must not
+    // distinguish worlds (or memoized arguments) that the engine considers equal.
+    let a = if a == 0.0 { 0.0 } else { a };
+    let b = if b == 0.0 { 0.0 } else { b };
+    let value = f(a, b);
+    if !value.is_finite() {
+        return Err(OpError::new(format!(
+            "`{func}` gave a result that isn't a finite number"
+        )));
+    }
+    Ok(Value::Float(value))
 }
 
 fn to_int(v: &Value, f: fn(f64) -> f64) -> OpResult<Value> {

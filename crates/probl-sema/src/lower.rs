@@ -5,7 +5,7 @@
 //! …), and moves everything that can split worlds out of expressions into
 //! statements of its own.
 
-use crate::builtins::Builtin;
+use crate::builtins::{Builtin, Constant};
 use crate::ir::*;
 use crate::symbols::{DefKind, Definition, Symbols};
 use probl_syntax::ast::{self, BinOp, UnOp};
@@ -520,6 +520,7 @@ impl<'a> Lowerer<'a> {
                 .filter(|b| b.is_public())
                 .map(|b| b.name().to_string()),
         );
+        names.extend(Constant::ALL.iter().map(|c| c.name().to_string()));
         names.push("read".to_string());
         names
     }
@@ -1463,6 +1464,9 @@ impl<'a> Lowerer<'a> {
                             self.error(e.span, format!("can't {action} `{name}` here"))
                                 .note("functions, lambdas and `simulate` blocks can read outside variables but only change their own")
                                 .help("return the new value instead");
+                        } else if Constant::from_name(name).is_some() {
+                            self.error(e.span, format!("can't {action} `{name}`: it's a constant"))
+                                .help(format!("declare a variable of your own with `var {name} = …`"));
                         } else {
                             self.unknown_name(name, e.span);
                         }
@@ -2172,6 +2176,9 @@ impl<'a> Lowerer<'a> {
             self.refer_variant(&variant, span);
             return lit(variant, span);
         }
+        if let Some(c) = Constant::from_name(name).filter(|_| !self.fn_by_name.contains_key(name)) {
+            return lit(Lit::Float(c.value()), span);
+        }
         if self.fn_by_name.contains_key(name) || Builtin::from_name(name).is_some() {
             self.error(span, format!("the function `{name}` can't be used as a value"))
                 .help(format!("call it, or wrap it in a lambda: `x -> {name}(x)`"));
@@ -2483,6 +2490,9 @@ impl<'a> Lowerer<'a> {
         if self.record_by_name.contains_key(&name.name) {
             self.error(name.span, format!("`{}` is a record type", name.name))
                 .help(format!("create one with braces: `{} {{ field: value }}`", name.name));
+        } else if Constant::from_name(&name.name).is_some() {
+            self.error(name.span, format!("`{}` is a constant, not a function", name.name))
+                .help(format!("use `{}` without parentheses", name.name));
         } else {
             let suggestion = closest(&name.name, &self.visible_names());
             let d = self.error(name.span, format!("unknown function `{}`", name.name));

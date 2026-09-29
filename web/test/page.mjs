@@ -418,6 +418,44 @@ try {
   offered = await texts('.cm-tooltip-autocomplete li');
   expect(offered.length === 0, 'there’s no completion in a comment', offered.join(', '));
 
+  // Constants are documented names, and a program can still hide them.
+  const math = 'report sin(pi / 2)\nreport euler_gamma';
+  await editor.evaluate((src) => window.playground.setSource(src), math);
+  card = await hover(math.indexOf('pi') + 1);
+  expect(card.code === 'pi = 3.141592653589793', 'hovering a constant shows its value', JSON.stringify(card));
+  await unhover();
+  await cursor(math.indexOf('pi') + 1);
+  await editor.keyboard.press('F12');
+  const constantEntry = await editor.evaluate(() => ({
+    tab: document.querySelector('[role="tab"][aria-selected="true"]').dataset.pane,
+    current: document.querySelector('#entries .entry.current')?.dataset.names,
+  }));
+  expect(
+    constantEntry.tab === 'reference' && constantEntry.current === 'pi',
+    'F12 on a constant opens its reference entry',
+    JSON.stringify(constantEntry),
+  );
+  await editor.evaluate(() => document.querySelector('[data-pane="output"]').click());
+  await cursor(math.length);
+  offered = await completions('\nreport euler_');
+  details = await texts('.cm-tooltip-autocomplete li .cm-completionDetail');
+  expect(
+    offered[0] === 'euler_gamma' && details[0] === '0.5772156649015329',
+    'completion offers constants with their values',
+    `${offered.join(', ')}\n${details.join(', ')}`,
+  );
+  await editor.keyboard.press('Escape');
+  const shadowed = 'let pi = 3\nreport pi';
+  await editor.evaluate((src) => window.playground.setSource(src), shadowed);
+  await cursor(shadowed.lastIndexOf('pi') + 1);
+  await becomes(editor, () => document.querySelectorAll('.cm-probl-same').length === 2);
+  card = await hover(shadowed.lastIndexOf('pi') + 1);
+  expect(card.code === 'let pi = 3', 'a local name hides a constant on hover', JSON.stringify(card));
+  await unhover();
+  await editor.keyboard.press('F12');
+  went = await selected();
+  expect(went === 'pi on line 1', 'a local constant name goes to its declaration', went);
+
   // Typing a program as a person would, faster than the checker checks.
   const typed = () => editor.evaluate(() => window.playground.getSource());
   await editor.evaluate(() => window.playground.setSource(''));

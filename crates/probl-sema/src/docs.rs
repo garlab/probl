@@ -1,7 +1,7 @@
 //! Documentation of the built-in functions and the keywords: what an editor
 //! shows on hover and when completing, and the playground's reference.
 
-use crate::Builtin;
+use crate::{Builtin, Constant};
 
 /// How something is used, and what it does, in a sentence or two.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,9 +19,31 @@ const fn doc(signature: &'static str, summary: &'static str) -> Option<Doc> {
 pub fn category(b: Builtin) -> &'static str {
     use Builtin as B;
     match b {
-        B::Min | B::Max | B::Abs | B::Floor | B::Ceil | B::Round | B::Sqrt | B::Exp | B::Ln | B::Log10 | B::Clamp => {
-            "Math"
-        }
+        B::Min
+        | B::Max
+        | B::Abs
+        | B::Floor
+        | B::Ceil
+        | B::Round
+        | B::Sqrt
+        | B::Exp
+        | B::Ln
+        | B::Log10
+        | B::Log2
+        | B::Log1p
+        | B::Expm1
+        | B::Sin
+        | B::Cos
+        | B::Tan
+        | B::Asin
+        | B::Acos
+        | B::Atan
+        | B::Atan2
+        | B::Hypot
+        | B::Sinh
+        | B::Cosh
+        | B::Tanh
+        | B::Clamp => "Math",
         B::Str | B::Upper | B::Lower | B::Split | B::Join | B::Print => "Text",
         B::Len
         | B::Sum
@@ -115,6 +137,41 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Exp => doc("exp(x) -> float", "e to the power `x`."),
         B::Ln => doc("ln(x) -> float", "The natural logarithm. `x` must be above 0."),
         B::Log10 => doc("log10(x) -> float", "The base-10 logarithm. `x` must be above 0."),
+        B::Log2 => doc("log2(x) -> float", "The base-2 logarithm. `x` must be above 0."),
+        B::Log1p => doc(
+            "log1p(x) -> float",
+            "`ln(1 + x)`, accurate even when `x` is tiny. `x` must be above −1.",
+        ),
+        B::Expm1 => doc(
+            "expm1(x) -> float",
+            "`exp(x) − 1`, accurate even when `x` is tiny: for a Poisson process with constant `rate`, the chance of at least one event in time `t` is `-expm1(-rate * t)`.",
+        ),
+        B::Sin => doc("sin(x) -> float", "The sine of `x`, an angle in radians."),
+        B::Cos => doc("cos(x) -> float", "The cosine of `x`, an angle in radians."),
+        B::Tan => doc("tan(x) -> float", "The tangent of `x`, an angle in radians."),
+        B::Asin => doc(
+            "asin(x) -> float",
+            "The angle whose sine is `x`, in radians, from −pi/2 to pi/2. `x` must be from −1 to 1.",
+        ),
+        B::Acos => doc(
+            "acos(x) -> float",
+            "The angle whose cosine is `x`, in radians, from 0 to pi. `x` must be from −1 to 1.",
+        ),
+        B::Atan => doc(
+            "atan(x) -> float",
+            "The angle whose tangent is `x`, in radians, between −pi/2 and pi/2.",
+        ),
+        B::Atan2 => doc(
+            "atan2(y, x) -> float",
+            "The angle from the x-axis to the point (`x`, `y`), in radians, from −pi to pi. Unlike `atan(y / x)`, it knows the quadrant, and `x` can be 0. Signed zeros are treated alike; `atan2(0, 0)` is 0 by convention.",
+        ),
+        B::Hypot => doc(
+            "hypot(x, y) -> float",
+            "`sqrt(x^2 + y^2)`, the distance from the origin to (`x`, `y`), without overflowing on the way.",
+        ),
+        B::Sinh => doc("sinh(x) -> float", "The hyperbolic sine."),
+        B::Cosh => doc("cosh(x) -> float", "The hyperbolic cosine."),
+        B::Tanh => doc("tanh(x) -> float", "The hyperbolic tangent, between −1 and 1."),
         B::Clamp => doc("clamp(x, lo, hi)", "`x`, kept between `lo` and `hi`."),
         // Text
         B::Str => doc("str(x) -> str", "`x` as text, as `print` shows it."),
@@ -332,6 +389,22 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         | B::Last
         | B::DropLast => None,
     }
+}
+
+/// The documentation of a named number.
+pub fn constant(c: Constant) -> Doc {
+    let (signature, summary) = match c {
+        Constant::Pi => (
+            "pi = 3.141592653589793",
+            "π: a half turn, in radians. `sin(pi / 2)` is 1.",
+        ),
+        Constant::E => ("e = 2.718281828459045", "Euler's number, the base of `exp` and `ln`."),
+        Constant::EulerGamma => (
+            "euler_gamma = 0.5772156649015329",
+            "The Euler–Mascheroni constant γ: how far `1 + 1/2 + … + 1/n` ends up above `ln(n)`.",
+        ),
+    };
+    Doc { signature, summary }
 }
 
 /// `read`, which isn't a built-in function: it's how a program's data comes

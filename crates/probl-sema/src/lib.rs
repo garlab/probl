@@ -13,7 +13,7 @@ pub mod lower;
 pub mod pretty;
 pub mod symbols;
 
-pub use builtins::Builtin;
+pub use builtins::{Builtin, Constant};
 pub use liveness::{Liveness, SlotSet, analyze};
 pub use lower::{lower, lower_with_symbols};
 

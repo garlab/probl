@@ -1,0 +1,15 @@
+# Numerical and sampling parity between the native and WebAssembly engines.
+@mode sample(runs: 1000, seed: 19)
+
+report [pi, e, euler_gamma] as "constants"
+report [sin(0.5), cos(0.5), tan(0.5)] as "trigonometry"
+report [asin(-1), acos(-1), atan(0.5), atan2(1, -1), atan2(0, 0)] as "inverse angles"
+report [atan2(-0.0, -1), atan2(0, -0.0)] as "signed zeros"
+report [sinh(0.5), cosh(0.5), tanh(0.5)] as "hyperbolic"
+report [log2(0.5), log1p(1e-20), expm1(1e-20)] as "logarithms and exponentials"
+report [hypot(3e200, 4e200) / 1e200, hypot(3e-200, 4e-200) / 1e-200] as "scaled distances"
+report [sin(1e300), cos(1e300), tan(1e300)] as "large angles"
+report hypot(one_of([0: 25%, 3: 75%]), one_of([0, 4])) as "independent arguments"
+let angle ~ uniform(-pi, pi)
+report sin(angle) as "random angle"
+report abs(sin(angle)^2 + cos(angle)^2 - 1) < 1e-12 as "one angle, two uses"

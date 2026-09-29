@@ -58,7 +58,7 @@ export async function load(module, { onPrint = () => {}, onProgress = () => {} }
     run: (request) => JSON.parse(call(exports.probl_run, JSON.stringify(request))),
     /** `[{name, title, source, files}]` */
     examples: () => JSON.parse(call(exports.probl_examples)),
-    /** The reference: `{builtins, keywords, read}`. */
+    /** The reference: `{builtins, constants, keywords, read}`. */
     docs: () => JSON.parse(call(exports.probl_docs)),
     version: () => call(exports.probl_version),
     /** Bytes of memory the module holds, which only grows. */

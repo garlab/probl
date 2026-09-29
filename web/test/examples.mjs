@@ -16,11 +16,13 @@ const cli = `${root}/target/release/probl`;
 
 const probl = await load(wasm);
 let failed = 0;
-for (const example of probl.examples()) {
+const cases = probl.examples().map((e) => ({ ...e, path: `examples/${e.name}.probl` }));
+cases.push({ name: 'math', path: 'web/test/math.probl', source: await readFile(`${root}/web/test/math.probl`, 'utf8') });
+for (const example of cases) {
   const start = performance.now();
   const answer = probl.run({ source: example.source, files: example.files });
   const time = performance.now() - start;
-  const expected = execFileSync(cli, ['run', `examples/${example.name}.probl`], { cwd: root, encoding: 'utf8' });
+  const expected = execFileSync(cli, ['run', example.path], { cwd: root, encoding: 'utf8' });
   const actual = answer.output === undefined ? JSON.stringify(answer.error) : `${answer.output}\n`;
   const same = actual === expected;
   failed += !same;
