@@ -87,6 +87,8 @@ Use `log1p(x)` for `ln(1 + x)` and `expm1(x)` for `exp(x) - 1` when `x` may be t
 
 The inverse hyperbolic functions are `asinh(x)` (any finite number), `acosh(x)` (`x >= 1`) and `atanh(x)` (`-1 < x < 1`). Like the forward functions, they return floats.
 
+`cbrt(x)` gives the real cube root, including negative inputs: `cbrt(-8)` is −2. `exp2(x)` gives 2 to the power `x`, complementing `log2`. Both return floats; overflow is an error, and very small results may underflow to zero.
+
 `round(x)` rounds to an int, with halves away from zero. Give an integer `digits` to select decimal places; negative values round tens, hundreds, and so on. With `digits`, ints stay exact ints, while floats and probabilities return floats. Binary floating-point scaling can affect results near halfway cases. Rounding changes the value, not its display format.
 
 ```probl
@@ -95,9 +97,12 @@ report round(1.125, 2)     # 1.13: halves away from zero
 report round(1234, -2)     # 1200
 report round(1.5)          # 2, an int
 report round(1.5, 0)       # 2, a float
+report trunc(-1.9)         # -1, an int: drop the fractional part toward zero
 ```
 
 Integer mathematics stays exact: `choose`, `factorial`, `gcd`, `lcm` and `euler_phi` take ints and return ints, with an error if the result is too large. `factorial` supports 0 through 20; `ln_gamma(n + 1)` gives the logarithm of a larger factorial without forming it. `ln_gamma(x)` requires positive `x`. `erf(x)` is the error function used in normal probabilities.
+
+Use `erfc(x)` when you need `1 - erf(x)`: it computes the complement directly, preserving small tails that subtraction would lose. For example, `erfc(8)` is about 1.12e-29, while `1 - erf(8)` rounds to zero. The standard normal probability above `x` is `erfc(x / sqrt(2)) / 2`.
 
 ```probl
 report choose(52, 5)       # 2,598,960 five-card hands
@@ -595,8 +600,8 @@ From loosest to tightest binding:
 | Distribution helpers | `take` `truncate(d, lo, hi)`\* `bins(d, n)`\* |
 | Queries | `P` `mean` `sd` `variance` `median` `quantile` `support` `cdf` `pmf` `pdf` |
 | Probability | `odds(p)` `logit(p)` `inv_logit(x)` |
-| Math | `abs` `min` `max` `clamp` `floor` `ceil` `round(x, digits?)` `sqrt` `hypot(x, y)` `exp` `expm1` `ln` `log1p` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `sinh` `cosh` `tanh` `asinh` `acosh` `atanh` |
-| Integer and special functions | `choose(n, k)` `factorial(n)` `gcd(a, b)` `lcm(a, b)` `euler_phi(n)` `ln_gamma(x)` `erf(x)` |
+| Math | `abs` `min` `max` `clamp` `floor` `ceil` `trunc` `round(x, digits?)` `sqrt` `cbrt` `hypot(x, y)` `exp` `exp2` `expm1` `ln` `log1p` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `sinh` `cosh` `tanh` `asinh` `acosh` `atanh` |
+| Integer and special functions | `choose(n, k)` `factorial(n)` `gcd(a, b)` `lcm(a, b)` `euler_phi(n)` `ln_gamma(x)` `erf(x)` `erfc(x)` |
 | Constants | `pi` `e` `euler_gamma`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
 | Collections | `len` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `highest(n)` `lowest(n)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
 | Text | `str` `upper` `lower` `split` `join` |

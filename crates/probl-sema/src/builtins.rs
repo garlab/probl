@@ -47,9 +47,12 @@ builtins! {
     Abs = "abs", 1..=1, Lift, true;
     Floor = "floor", 1..=1, Lift, true;
     Ceil = "ceil", 1..=1, Lift, true;
+    Trunc = "trunc", 1..=1, Lift, true;
     Round = "round", 1..=2, Lift, true;
     Sqrt = "sqrt", 1..=1, Lift, true;
+    Cbrt = "cbrt", 1..=1, Lift, true;
     Exp = "exp", 1..=1, Lift, true;
+    Exp2 = "exp2", 1..=1, Lift, true;
     Ln = "ln", 1..=1, Lift, true;
     Log10 = "log10", 1..=1, Lift, true;
     Log2 = "log2", 1..=1, Lift, true;
@@ -76,6 +79,7 @@ builtins! {
     EulerPhi = "euler_phi", 1..=1, Lift, true;
     LnGamma = "ln_gamma", 1..=1, Lift, true;
     Erf = "erf", 1..=1, Lift, true;
+    Erfc = "erfc", 1..=1, Lift, true;
     Clamp = "clamp", 3..=3, Lift, true;
     // Text
     Str = "str", 1..=1, Lift, true;

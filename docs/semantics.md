@@ -22,6 +22,10 @@ Wherever a probability is expected, a `float` from 0 to 1 is accepted too. Nothi
 
 **Rounding.** `round(x)` returns the nearest `int`, with halves away from zero, as before. `round(x, digits)` requires an `int` for `digits`: positive values select decimal places, zero selects whole numbers, and negative values select tens, hundreds, and so on. With explicit `digits`, an `int` input returns an exact `int` (overflow is an error); a `float` or `prob` input returns a `float`, including when `digits` is zero. For example, `round(1.125, 2)` is 1.13, `round(-1250, -2)` is −1300, and `round(1.5, 0)` is the float 2.0. Float rounding scales by powers of ten and rounds halves away from zero; binary representation and scaling can affect results near halfway cases. Arguments and float results must be finite. Arbitrarily large positive `digits` leave a finite value unchanged, and sufficiently negative `digits` give zero, without unbounded work. Both arguments lift over finite distributions. Rounding changes the value, not the number of digits printed; it is not a fixed-decimal type or a formatting function.
 
+`trunc(x)` drops the fractional part toward zero and returns an `int`: `trunc(-1.9)` is −1. Like `floor`, `ceil` and one-argument `round`, it preserves integer inputs exactly, accepts finite numeric inputs, and errors when the integer result is outside the signed 64-bit range. It lifts over finite distributions.
+
+`cbrt(x)` returns the real cube root as a float, including for negative inputs; `cbrt(-8)` is −2. `exp2(x)` returns 2ˣ as a float and is the inverse of `log2`. Both accept finite numbers and lift over finite distributions. Overflow is an error; very small floating-point results may underflow to zero.
+
 **Integer and special functions.** The following functions also act on each outcome of a finite distribution. The integer functions require `int` arguments (not floats, even whole-valued ones), and return exact `int` results. A result outside the signed 64-bit range is an overflow error; it is never rounded into a float.
 
 | Function | Domain and result |
@@ -33,6 +37,7 @@ Wherever a probability is expected, a `float` from 0 to 1 is accepted too. Nothi
 | `euler_phi(n)` | Positive integer. The number of integers from 1 through n coprime to n, with `euler_phi(1) = 1`. Factorization consumes the host's work budget and may reach its limit for large inputs. |
 | `ln_gamma(x)` | Positive finite number. Returns a float approximating ln Γ(x), with `ln_gamma(n + 1) = ln(n!)` for nonnegative integers n. Nonpositive arguments and non-finite results are errors. This does not change the `gamma(shape, scale)` distribution constructor. |
 | `erf(x)` | Finite number. Returns the error function as a float: (2 / √π) ∫₀ˣ exp(−t²) dt, from −1 to 1. |
+| `erfc(x)` | Finite number. Returns the complementary error function as a float, from 0 to 2. Computes 1 − erf(x) directly to preserve small tails; extremely small results may underflow to zero. For the standard normal, the probability above x is `erfc(x / sqrt(2)) / 2`. |
 
 The selection, factorial, sign and zero conventions follow the corresponding [Python integer math functions](https://docs.python.org/3/library/math.html#number-theoretic-functions), with Probl's fixed integer range and two-argument `gcd`/`lcm`. Mathematical definitions: [NIST's gamma function](https://dlmf.nist.gov/5.2) and [Euler's totient](https://dlmf.nist.gov/27.2).
 

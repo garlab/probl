@@ -24,9 +24,12 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Abs
         | B::Floor
         | B::Ceil
+        | B::Trunc
         | B::Round
         | B::Sqrt
+        | B::Cbrt
         | B::Exp
+        | B::Exp2
         | B::Ln
         | B::Log10
         | B::Log2
@@ -53,6 +56,7 @@ pub fn category(b: Builtin) -> &'static str {
         | B::EulerPhi
         | B::LnGamma
         | B::Erf
+        | B::Erfc
         | B::Clamp => "Math",
         B::Str | B::Upper | B::Lower | B::Split | B::Join | B::Print => "Text",
         B::Len
@@ -139,12 +143,24 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Abs => doc("abs(x)", "The absolute value. An int stays an int."),
         B::Floor => doc("floor(x) -> int", "`x` rounded down, as an int."),
         B::Ceil => doc("ceil(x) -> int", "`x` rounded up, as an int."),
+        B::Trunc => doc(
+            "trunc(x) -> int",
+            "Drop the fractional part, rounding toward zero: `trunc(-1.9)` is -1. Int inputs stay exact. Non-finite values and results outside the int range are errors.",
+        ),
         B::Round => doc(
             "round(x, digits?: int)",
             "Round to the nearest value, halves away from zero. With no `digits`, returns an int. With `digits`, rounds that many decimal places: `round(1.234, 2)` is 1.23; `round(1234, -2)` is 1200. Int inputs stay exact ints (overflow is an error); other numbers return floats. Float scaling is approximate near halfway cases. This changes the value, not its display format.",
         ),
         B::Sqrt => doc("sqrt(x) -> float", "The square root. It's an error below 0."),
+        B::Cbrt => doc(
+            "cbrt(x) -> float",
+            "The real cube root, including negative inputs: `cbrt(-8)` is -2. `x` must be finite.",
+        ),
         B::Exp => doc("exp(x) -> float", "e to the power `x`."),
+        B::Exp2 => doc(
+            "exp2(x) -> float",
+            "2 to the power `x`, the inverse of `log2`. `x` must be finite; overflow is an error, and very small results may underflow to zero.",
+        ),
         B::Ln => doc("ln(x) -> float", "The natural logarithm. `x` must be above 0."),
         B::Log10 => doc("log10(x) -> float", "The base-10 logarithm. `x` must be above 0."),
         B::Log2 => doc("log2(x) -> float", "The base-2 logarithm. `x` must be above 0."),
@@ -221,6 +237,10 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Erf => doc(
             "erf(x) -> float",
             "The error function: `2 / sqrt(pi)` times the integral of `exp(-t^2)` from 0 to `x`. For the standard normal, `cdf(normal(0, 1), x)` is `(1 + erf(x / sqrt(2))) / 2`.",
+        ),
+        B::Erfc => doc(
+            "erfc(x) -> float",
+            "The complementary error function, `1 - erf(x)`, computed directly to preserve small tails. For a standard normal, the probability above `x` is `erfc(x / sqrt(2)) / 2`. `x` must be finite; very small results may underflow to zero.",
         ),
         B::Clamp => doc("clamp(x, lo, hi)", "`x`, kept between `lo` and `hi`."),
         // Text

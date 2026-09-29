@@ -23,6 +23,85 @@ fn float(src: &str) -> f64 {
 }
 
 #[test]
+fn erfc_preserves_small_tails() {
+    close(float("report erfc(0)"), 1.0);
+    close(float("report erfc(1)"), 0.157_299_207_050_285_13);
+    close(float("report erfc(-1)"), 1.842_700_792_949_714_8);
+    close(float("report erfc(8) / 1.1224297172982928e-29"), 1.0);
+    // Subtracting the rounded erf value loses this tail completely.
+    assert_eq!(float("report 1 - erf(8)"), 0.0);
+    assert_eq!(float("report erfc(30)"), 0.0);
+    assert_eq!(float("report erfc(-30)"), 2.0);
+    for x in [0.125, 0.5, 2.0, 8.0] {
+        close(mean(&format!("report erfc({x}) + erfc(-{x})")), 2.0);
+    }
+}
+
+#[test]
+fn cube_roots_and_base_two_exponentials_handle_extreme_scales() {
+    for (expression, expected) in [
+        ("cbrt(-8)", -2.0),
+        ("cbrt(0)", 0.0),
+        ("cbrt(27)", 3.0),
+        ("cbrt(12.5%)", 0.5),
+        ("cbrt(-1e300) / 1e100", -1.0),
+        ("cbrt(1e-300) / 1e-100", 1.0),
+        ("exp2(0)", 1.0),
+        ("exp2(-3)", 0.125),
+        ("exp2(10)", 1024.0),
+        ("exp2(0.5)", std::f64::consts::SQRT_2),
+    ] {
+        close(float(&format!("report {expression}")), expected);
+    }
+    assert_eq!(float("report exp2(1023)"), f64::from_bits(2046u64 << 52));
+    assert_eq!(float("report exp2(-1074)"), f64::from_bits(1));
+    assert_eq!(float("report exp2(-1075)"), 0.0);
+    for x in [0.125, 1.0, 3.0, 100.0] {
+        close(mean(&format!("report exp2(log2({x}))")), x);
+    }
+}
+
+#[test]
+fn trunc_rounds_toward_zero_and_integer_rounding_uses_the_full_range() {
+    for (expression, expected) in [
+        ("trunc(1.9)", 1),
+        ("trunc(-1.9)", -1),
+        ("trunc(-1e-300)", 0),
+        ("trunc(90%)", 0),
+        ("trunc(9007199254740993)", 9_007_199_254_740_993),
+        ("trunc(9223372036854775807)", i64::MAX),
+        ("trunc(-9223372036854775807 - 1)", i64::MIN),
+    ] {
+        assert_eq!(integer(&format!("report {expression}")), expected);
+    }
+    // All four functions share the float-to-int conversion. The old decimal
+    // cutoff rejected valid values near the boundary; casts must never saturate.
+    for name in ["trunc", "floor", "ceil", "round"] {
+        assert_eq!(
+            integer(&format!("report {name}(9.223372036854775e18)")),
+            9_223_372_036_854_774_784
+        );
+        assert_eq!(integer(&format!("report {name}(-9.223372036854776e18)")), i64::MIN);
+        for input in ["9.223372036854776e18", "-9.223372036854778e18", "1e308", "0 ^ -1"] {
+            assert!(error(&format!("report {name}({input})")).contains("too large to be an int"));
+        }
+    }
+}
+
+#[test]
+fn libm_batch_checks_domains_types_and_arities() {
+    for name in ["erfc", "cbrt", "exp2", "trunc"] {
+        assert!(error(&format!("report {name}(true)")).contains("needs a number"));
+        assert!(compile_error(&format!("report {name}()")).contains("takes"));
+        assert!(compile_error(&format!("report {name}(1, 2)")).contains("takes"));
+        assert!(error(&format!("report {name}(normal(0, 1))")).contains("draw a value first"));
+    }
+    for expression in ["erfc(0 ^ -1)", "cbrt(0 ^ -1)", "exp2(0 ^ -1)", "exp2(1024)"] {
+        assert!(error(&format!("report {expression}")).contains("isn't defined for"));
+    }
+}
+
+#[test]
 fn round_retains_the_one_argument_form_and_supports_decimal_places() {
     assert_eq!(integer("report round(1.5)"), 2);
     assert_eq!(integer("report round(-1.5)"), -2);
@@ -313,6 +392,10 @@ fn integer_work_respects_host_limits() {
 fn functions_lift_over_distributions_in_both_modes() {
     for mode in ["enumerate", "sample(runs: 1000, seed: 1)"] {
         for (expression, expected) in [
+            ("erfc(one_of([-1, 1]))", 1.0),
+            ("cbrt(one_of([-8, 27]))", 0.5),
+            ("exp2(d2)", 3.0),
+            ("trunc(one_of([-1.9, 2.9]))", 0.5),
             ("round(one_of([1.125, 2.125]), 2)", 1.63),
             ("round(1.25, one_of([0, 1]))", 1.15),
             ("asinh(one_of([-1, 1]))", 0.0),

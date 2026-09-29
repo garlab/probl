@@ -19,9 +19,12 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
         B::Abs => num1(a(0), "abs", |x| x.abs(), |i| i.checked_abs()),
         B::Floor => to_int(a(0), f64::floor),
         B::Ceil => to_int(a(0), f64::ceil),
+        B::Trunc => to_int(a(0), libm::trunc),
         B::Round => round(a(0), args.get(1)),
         B::Sqrt => float1(a(0), "sqrt", |x| (x >= 0.0).then(|| x.sqrt())),
+        B::Cbrt => float1(a(0), "cbrt", |x| Some(libm::cbrt(x))),
         B::Exp => float1(a(0), "exp", |x| Some(libm::exp(x)).filter(|y| y.is_finite())),
+        B::Exp2 => float1(a(0), "exp2", |x| Some(libm::exp2(x))),
         B::Ln => float1(a(0), "ln", |x| (x > 0.0).then(|| libm::log(x))),
         B::Log10 => float1(a(0), "log10", |x| (x > 0.0).then(|| libm::log10(x))),
         B::Log2 => float1(a(0), "log2", |x| (x > 0.0).then(|| libm::log2(x))),
@@ -64,6 +67,7 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
         B::EulerPhi => euler_phi(nonnegative_int(a(0), "euler_phi")?, budget),
         B::LnGamma => float1(a(0), "ln_gamma", |x| (x > 0.0).then(|| libm::lgamma(x))),
         B::Erf => float1(a(0), "erf", |x| Some(libm::erf(x))),
+        B::Erfc => float1(a(0), "erfc", |x| Some(libm::erfc(x))),
         B::Clamp => {
             let (lo, hi) = (a(1), a(2));
             if ops::compare(lo, hi)?.is_gt() {
@@ -690,7 +694,9 @@ fn to_int(v: &Value, f: fn(f64) -> f64) -> OpResult<Value> {
         other => {
             let x = number(other, "rounding")?;
             let r = f(x);
-            if !r.is_finite() || r.abs() > 9.2e18 {
+            // The upper bound is exclusive: i64::MAX rounds up to 2^63 as
+            // an f64, while i64::MIN is exactly representable.
+            if !r.is_finite() || r < i64::MIN as f64 || r >= -(i64::MIN as f64) {
                 return Err(OpError::new(format!("{} is too large to be an int", fmt_float(x))));
             }
             Ok(Value::Int(r as i64))
