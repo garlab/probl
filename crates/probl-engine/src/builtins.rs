@@ -15,6 +15,9 @@ use std::sync::Arc;
 /// Call a built-in on plain (non-distribution) arguments.
 pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Value> {
     for arg in args {
+        if let Value::Str(s) = arg {
+            budget.string_work(s)?;
+        }
         if let Value::Int(n) = arg {
             if matches!(b, Builtin::BitLength | Builtin::ILog2) {
                 // The stored length and highest word suffice, even for a bigint.
@@ -151,25 +154,69 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
                 Ok(a(0).clone())
             }
         }
-        B::Str => Ok(Value::str(&a(0).to_string())),
-        B::Upper => text(a(0), "upper").map(|s| Value::str(&s.to_uppercase())),
-        B::Lower => text(a(0), "lower").map(|s| Value::str(&s.to_lowercase())),
+        B::Str => crate::text::formatted(a(0), budget),
+        B::Upper | B::Lower => crate::text::case(&text(a(0), b.name())?, b == B::Upper, budget),
+        B::Trim | B::TrimStart | B::TrimEnd => {
+            let s = text(a(0), b.name())?;
+            let set = args.get(1).map(|v| text(v, b.name())).transpose()?;
+            let set = set
+                .as_ref()
+                .map(|s| {
+                    let mut set = rustc_hash::FxHashSet::default();
+                    for c in s.chars() {
+                        if !set.contains(&c) {
+                            budget.collection(set.len() as u128 + 1)?;
+                            set.insert(c);
+                        }
+                    }
+                    Ok::<_, OpError>(set)
+                })
+                .transpose()?;
+            let matches = |c: char| set.as_ref().map_or_else(|| c.is_whitespace(), |set| set.contains(&c));
+            let trimmed = match b {
+                B::TrimStart => s.trim_start_matches(matches),
+                B::TrimEnd => s.trim_end_matches(matches),
+                _ => s.trim_matches(matches),
+            };
+            crate::text::value(trimmed, budget)
+        }
+        B::StartsWith | B::EndsWith => {
+            let (s, part) = (text(a(0), b.name())?, text(a(1), b.name())?);
+            Ok(Value::Bool(if b == B::StartsWith {
+                s.starts_with(&*part)
+            } else {
+                s.ends_with(&*part)
+            }))
+        }
+        B::Chars => crate::text::chars(&text(a(0), "chars")?, budget).map(Value::list),
         B::Split => {
             let (s, sep) = (text(a(0), "split")?, text(a(1), "split")?);
-            let parts = if sep.is_empty() {
-                s.chars().map(|c| Value::str(&c.to_string())).collect()
-            } else {
-                s.split(&*sep).map(Value::str).collect()
-            };
+            if sep.is_empty() {
+                return crate::text::chars(&s, budget).map(Value::list);
+            }
+            let mut parts = Vec::new();
+            for part in s.split(&*sep) {
+                budget.collection(parts.len() as u128 + 1)?;
+                parts.push(crate::text::value(part, budget)?);
+            }
             Ok(Value::list(parts))
         }
         B::Join => {
             let items = list(a(0), "join")?;
             let sep = text(a(1), "join")?;
-            let parts: Vec<String> = items.iter().map(|v| v.to_string()).collect();
-            Ok(Value::str(&parts.join(&sep)))
+            budget.collection(items.len() as u128)?;
+            budget.work(items.len() as u64)?;
+            let mut out = String::new();
+            for (i, item) in items.iter().enumerate() {
+                if i != 0 {
+                    crate::text::push(&mut out, &sep, budget)?;
+                }
+                crate::text::push_value(&mut out, item, budget)?;
+            }
+            Ok(Value::str(&out))
         }
         B::Len => len(a(0)),
+        B::Slice => slice(a(0), a(1), args.get(2), budget),
         B::Sum => sum(a(0), budget),
         B::Count if args.len() == 1 => len(a(0)),
         B::Sort | B::SortDesc => {
@@ -181,7 +228,10 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             Ok(Value::list(items))
         }
         B::Reverse => match a(0) {
-            Value::Str(s) => Ok(Value::str(&s.chars().rev().collect::<String>())),
+            Value::Str(s) => {
+                budget.string_allocation(s.len())?;
+                Ok(Value::str(&s.chars().rev().collect::<String>()))
+            }
             v => {
                 let mut items = items(v, "reverse", budget)?;
                 items.reverse();
@@ -198,7 +248,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             v => Err(expected("a map", v, "values")),
         },
         B::Get => get(a(0), a(1), args.get(2)),
-        B::Contains => ops::contains(a(0), a(1)).map(Value::Bool),
+        B::Contains => ops::contains(a(0), a(1), budget).map(Value::Bool),
         B::Highest | B::Lowest => extremes(a(0), args.get(1), b == B::Highest, budget),
         B::Enumerate => {
             let items = items(a(0), "enumerate", budget)?;
@@ -639,7 +689,7 @@ fn iter_items(v: &Value, budget: &mut Budget) -> OpResult<Value> {
                     .collect(),
             ))
         }
-        Value::Str(s) => Ok(Value::list(s.chars().map(|c| Value::str(&c.to_string())).collect())),
+        Value::Str(s) => crate::text::chars(s, budget).map(Value::list),
         v if v.is_uncertain() => Err(OpError::new(format!("can't loop over a {}", v.kind()))
             .help("draw a value first with `~`, or loop over `support(…)`")),
         other => Err(OpError::new(format!("can't loop over {}", article(&other.kind())))),
@@ -829,9 +879,14 @@ fn range_items(lo: &Integer, hi: &Integer, budget: &mut Budget) -> OpResult<Vec<
 /// to spell out.
 pub fn items(v: &Value, func: &str, budget: &mut Budget) -> OpResult<Vec<Value>> {
     match v {
-        Value::List(items) => Ok(items.to_vec()),
+        Value::List(items) => {
+            budget.collection(items.len() as u128)?;
+            budget.work(items.len() as u64)?;
+            Ok(items.to_vec())
+        }
         Value::Range(lo, hi) => range_items(lo, hi, budget),
-        other => Err(expected("a list", other, func)),
+        Value::Str(s) => crate::text::chars(s, budget),
+        other => Err(expected("a list, range or string", other, func)),
     }
 }
 
@@ -988,6 +1043,50 @@ fn min_max(args: &[Value], want_max: bool, budget: &mut Budget) -> OpResult<Valu
         });
     }
     best.ok_or_else(|| OpError::new(format!("`{name}` of an empty list")))
+}
+
+fn slice(v: &Value, start: &Value, end: Option<&Value>, budget: &mut Budget) -> OpResult<Value> {
+    let start = integer(start, "slice")?;
+    let end = end.map(|v| integer(v, "slice")).transpose()?;
+    let length: Integer = match v {
+        Value::List(xs) => xs.len().into(),
+        Value::Str(s) => s.chars().count().into(),
+        Value::Range(lo, hi) => {
+            budget.integer_work(lo, hi, false)?;
+            range_len(lo, hi)?
+        }
+        other => return Err(expected("a list, range or string", other, "slice")),
+    };
+    let end = end.unwrap_or(&length);
+    if start.is_negative() || start > end || end > &length {
+        return Err(OpError::new("`slice` needs 0 <= start <= end <= length"));
+    }
+    Ok(match v {
+        Value::Range(lo, _) => {
+            // Empty slices have a canonical empty range. Subtract one from the
+            // offset before adding, so a slice ending at the largest int works.
+            let (first, last) = if start == end {
+                (Integer::ZERO, (-1).into())
+            } else {
+                (lo.add(start)?, lo.add(&end.sub(&Integer::ONE)?)?)
+            };
+            budget.integer_allocation(first.bits(), 1)?;
+            budget.integer_allocation(last.bits(), 1)?;
+            Value::Range(first, last)
+        }
+        Value::List(xs) => {
+            let (start, end) = (start.to_u64().unwrap() as usize, end.to_u64().unwrap() as usize);
+            budget.collection((end - start) as u128)?;
+            budget.work((end - start) as u64)?;
+            Value::list(xs[start..end].to_vec())
+        }
+        Value::Str(s) => {
+            let (start, end) = (start.to_u64().unwrap() as usize, end.to_u64().unwrap() as usize);
+            let boundary = |n| s.char_indices().nth(n).map_or(s.len(), |(i, _)| i);
+            crate::text::value(&s[boundary(start)..boundary(end)], budget)?
+        }
+        _ => unreachable!(),
+    })
 }
 
 fn len(v: &Value) -> OpResult<Value> {

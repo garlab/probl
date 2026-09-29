@@ -99,11 +99,18 @@ builtins! {
     Str = "str", 1..=1, Lift, true;
     Upper = "upper", 1..=1, Lift, true;
     Lower = "lower", 1..=1, Lift, true;
+    Trim = "trim", 1..=2, Lift, true;
+    TrimStart = "trim_start", 1..=2, Lift, true;
+    TrimEnd = "trim_end", 1..=2, Lift, true;
+    StartsWith = "starts_with", 2..=2, Lift, true;
+    EndsWith = "ends_with", 2..=2, Lift, true;
+    Chars = "chars", 1..=1, Lift, true;
     Split = "split", 2..=2, Lift, true;
     Join = "join", 2..=2, Lift, true;
     Print = "print", 0..=ANY, Raw, true;
     // Collections
     Len = "len", 1..=1, Lift, true;
+    Slice = "slice", 2..=3, Lift, true;
     Sum = "sum", 1..=1, Lift, true;
     Count = "count", 1..=2, Lift, true;
     Map = "map", 2..=2, Lift, true;

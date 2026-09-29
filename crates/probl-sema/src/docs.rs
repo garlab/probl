@@ -72,8 +72,20 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Arg
         | B::Cis
         | B::Clamp => "Math",
-        B::Str | B::Upper | B::Lower | B::Split | B::Join | B::Print => "Text",
+        B::Str
+        | B::Upper
+        | B::Lower
+        | B::Trim
+        | B::TrimStart
+        | B::TrimEnd
+        | B::StartsWith
+        | B::EndsWith
+        | B::Chars
+        | B::Split
+        | B::Join
+        | B::Print => "Text",
         B::Len
+        | B::Slice
         | B::Sum
         | B::Count
         | B::Map
@@ -345,11 +357,41 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Clamp => doc("clamp(x, lo, hi)", "`x`, kept between `lo` and `hi`."),
         // Text
         B::Str => doc("str(x) -> str", "`x` as text, as `print` shows it."),
-        B::Upper => doc("upper(s: str) -> str", "The text in capitals."),
-        B::Lower => doc("lower(s: str) -> str", "The text in lowercase."),
+        B::Upper => doc(
+            "upper(s: str) -> str",
+            "Unicode uppercase, independent of locale. May change length: upper(\"ß\") is \"SS\".",
+        ),
+        B::Lower => doc(
+            "lower(s: str) -> str",
+            "Unicode lowercase, independent of locale. May change length; this is not case folding or normalization.",
+        ),
+        B::Trim => doc(
+            "trim(s: str, chars: str?) -> str",
+            "Remove leading and trailing Unicode whitespace. With chars, remove any of its Unicode scalars instead: \"abbacacb\".trim(\"ab\") is \"cac\". An empty set leaves the text unchanged. Returns a new value.",
+        ),
+        B::TrimStart => doc(
+            "trim_start(s: str, chars: str?) -> str",
+            "Remove leading Unicode whitespace, or any leading scalars in chars when supplied. chars is a set, not a literal prefix; an empty set leaves the text unchanged.",
+        ),
+        B::TrimEnd => doc(
+            "trim_end(s: str, chars: str?) -> str",
+            "Remove trailing Unicode whitespace, or any trailing scalars in chars when supplied. chars is a set, not a literal suffix; an empty set leaves the text unchanged.",
+        ),
+        B::StartsWith => doc(
+            "starts_with(s: str, prefix: str) -> bool",
+            "Whether the text starts with the exact prefix, without normalization or case conversion. The empty prefix always matches.",
+        ),
+        B::EndsWith => doc(
+            "ends_with(s: str, suffix: str) -> bool",
+            "Whether the text ends with the exact suffix, without normalization or case conversion. The empty suffix always matches.",
+        ),
+        B::Chars => doc(
+            "chars(s: str) -> list[str]",
+            "One string per Unicode scalar value, in order. Combining marks and emoji components may be separate elements. chars(\"\") is []; equivalent to split(s, \"\").",
+        ),
         B::Split => doc(
             "split(s: str, sep: str) -> list[str]",
-            "The text cut at each `sep`. With `\"\"` as `sep`, its characters.",
+            "The text cut at each literal sep, preserving empty fields. With \"\" as sep, one string per Unicode scalar value (like chars); splitting empty text that way gives [].",
         ),
         B::Join => doc(
             "join(xs: list, sep: str) -> str",
@@ -362,7 +404,11 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         // Collections
         B::Len => doc(
             "len(xs) -> int",
-            "How many items a list, map, range or bag has (repeats count), or how many characters a string has.",
+            "How many items a list, map, range or bag has (repeats count), or how many Unicode scalar values a string has. String length is not a byte count or a count of grapheme clusters.",
+        ),
+        B::Slice => doc(
+            "slice(xs, start: int, end: int?)",
+            "A sequence from start (inclusive) to end (exclusive, defaults to length). Requires 0 <= start <= end <= length. Strings count Unicode scalar values and return strings; lists return lists; ranges stay compact ranges. Equal bounds give an empty result. Does not mutate xs.",
         ),
         B::Sum => doc("sum(xs: list)", "The items added up; 0 for an empty list."),
         B::Count => doc(
@@ -370,20 +416,29 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "How many items there are, or how many pass `test`: `count(rolls, r -> r == 6)`.",
         ),
         B::Map => doc(
-            "map(xs: list, f) -> list",
-            "`f` applied to each item: `map(xs, x -> x * 2)`, or `xs.map(x -> x * 2)`. The function can't draw or branch on chances.",
+            "map(xs, f) -> list",
+            "f applied to each element of a list, range or string. String elements are one-scalar strings; the result is always a list. The function can't draw or branch on chances.",
         ),
         B::Filter => doc(
-            "filter(xs: list, test) -> list",
-            "The items for which `test` is true: `filter(xs, x -> x > 0)`.",
+            "filter(xs, test) -> list",
+            "The elements of a list, range or string for which test is true. String elements are one-scalar strings; the result is always a list. Use join(result, \"\") to rebuild text.",
         ),
         B::Reduce => doc(
-            "reduce(xs: list, start, f)",
-            "The items combined one by one, starting from `start`: `reduce(xs, 0, (total, x) -> total + x)`.",
+            "reduce(xs, start, f)",
+            "The elements of a list, range or string combined one by one, starting from start. String elements are one-scalar strings.",
         ),
-        B::Sort => doc("sort(xs: list) -> list", "The items, smallest first."),
-        B::SortDesc => doc("sort_desc(xs: list) -> list", "The items, largest first."),
-        B::Reverse => doc("reverse(xs)", "A list's items in reverse order, or a string backwards."),
+        B::Sort => doc(
+            "sort(xs) -> list",
+            "The elements of a list, range or string, smallest first. Text uses Unicode scalar order, not locale collation.",
+        ),
+        B::SortDesc => doc(
+            "sort_desc(xs) -> list",
+            "The elements of a list, range or string, largest first.",
+        ),
+        B::Reverse => doc(
+            "reverse(xs)",
+            "A list or range reversed into a list, or a string with its Unicode scalars reversed into a string. May separate combining marks and emoji components.",
+        ),
         B::Keys => doc("keys(m) -> list", "A map's keys, or a bag's distinct items, in order."),
         B::Values => doc("values(m: map) -> list", "A map's values, in the order of their keys."),
         B::Get => doc(
@@ -403,12 +458,12 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "The smallest item, or the `n` smallest, smallest first.",
         ),
         B::Enumerate => doc(
-            "enumerate(xs: list) -> list",
-            "`[index, item]` pairs, counting from 0: `for [i, x] in enumerate(xs) { … }`.",
+            "enumerate(xs) -> list",
+            "[index, item] pairs for a list, range or string, counting from 0. String positions and elements count Unicode scalar values.",
         ),
         B::Zip => doc(
-            "zip(xs: list, ys: list) -> list",
-            "`[x, y]` pairs of items at the same index, as many as the shorter list has.",
+            "zip(xs, ys) -> list",
+            "[x, y] pairs at matching positions of two lists, ranges or strings, as many as the shorter sequence has. String elements are one-scalar strings.",
         ),
         B::Push => doc("xs.push(x)", "Adds `x` at the end of the list variable `xs`."),
         B::Insert => doc(

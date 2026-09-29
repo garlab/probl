@@ -73,6 +73,41 @@ d6   2d6   d20   3d8                  # dice: these are distributions
 5 to 10                               # an estimate: 90% sure it's between 5 and 10
 ```
 
+### Text and sequences
+
+Strings are immutable Unicode text, stored as UTF-8. Length, indexing, iteration and slicing count Unicode scalar values, with each element represented by a one-scalar string. For example, `len("🙂")` is 1 and `"a🙂b"[1]` is `"🙂"`. A displayed character can contain several scalars: `len("é")` is 2 (an `e` followed by a combining accent), and `len("🇫🇷")` is 2. Slices and reversal can separate these components. Text equality is exact, without automatic Unicode normalization; precomposed `"é"` and decomposed `"é"` are different strings.
+
+Use `slice(xs, start, end)` for a string, list or range. Start is inclusive, end exclusive, and omitting end selects the rest. Both bounds must be ints with `0 <= start <= end <= len(xs)`; invalid bounds are errors. Equal bounds give an empty result. Slicing preserves the sequence type, including compact ranges.
+
+```probl
+report "a🙂bc".slice(1, 3)           # "🙂b"
+report [10, 20, 30].slice(1)        # [20, 30]
+report slice(10..20, 2, 5)          # 12..14
+report " \t hello\n".trim()         # "hello"
+report "__foo__".trim("_")         # "foo"
+report "abbacacb".trim("ab")        # "cac"
+report "__foo__".trim_start("_")   # "foo__"
+report "__foo__".trim_end("_")     # "__foo"
+report "hello".starts_with("he")   # true
+report "hello".ends_with("lo")     # true
+report chars("a🙂")                # ["a", "🙂"]
+```
+
+Trimming removes Unicode whitespace by default, including tabs and newlines. An optional second argument supplies the set of scalars to remove instead. It is not a substring: order and repetition in the set do not matter. An empty set removes nothing. These functions return new values and leave their inputs unchanged. `upper` and `lower` use Unicode mappings independent of locale and may change length, such as `"ß".upper()` giving `"SS"`.
+
+`map`, `filter`, `reduce`, `count`, sorting, `enumerate` and `zip` also accept strings, using scalar elements. `map`, `filter` and sorting return lists; use `join` to turn a list back into text. `reverse` of a string returns a string. Functions lift over finite distributions, and integer ranges stay compact until an operation needs to materialize their elements.
+
+```probl
+report "aß".map(c -> upper(c))          # ["A", "SS"]
+report "abca".filter(c -> c != "a")     # ["b", "c"]
+report "abca".filter(c -> c != "a").join("") # "bc"
+report enumerate("a🙂")                # [[0, "a"], [1, "🙂"]]
+report split("a,,b,", ",")             # ["a", "", "b", ""]
+report split("é", "")                 # ["e", "́"], like chars("é")
+```
+
+Separators, prefixes and suffixes are literal text; there are no regular expressions. Splitting on a nonempty separator preserves empty fields. Splitting on `""` gives scalar elements, and returns `[]` for empty text. Text operations respect string byte, collection size and work limits; see [text semantics and limits](semantics.md).
+
 ### Math
 
 Integers grow automatically: `factorial(30)` and `choose(100, 50)` return exact integers, and `10^100 + 1 - 10^100` is 1. There is no separate bigint syntax or type. Integer arithmetic and comparisons preserve all digits, including when comparing an integer with a float. `/`, negative powers, real math functions and mixed float/complex arithmetic produce approximations. `(10^400) / (10^400)` is 1.0, but passing `10^400` directly to `sin` is an error because it cannot be converted to a finite float. Resource limits bound integer size and computation; see [integer semantics](semantics.md#1-values-and-types).
@@ -651,8 +686,8 @@ From loosest to tightest binding:
 | Integer and special functions | `choose(n, k)` `factorial(n)` `gcd(a, b)` `lcm(a, b)` `euler_phi(n)` `ln_gamma(x)` `erf(x)` `erfc(x)` |
 | Complex numbers | `complex(re, im?)` `real(z)` `imag(z)` `conj(z)` `abs(z)` `abs2(z)` `arg(z)` `cis(theta)` |
 | Constants | `pi` `e` `euler_gamma`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
-| Collections | `len` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `highest(n)` `lowest(n)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
-| Text | `str` `upper` `lower` `split` `join` |
+| Collections | `len` `slice(xs, start, end?)` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `highest(n)` `lowest(n)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
+| Text | `str` `upper` `lower` `trim(s, chars?)` `trim_start(s, chars?)` `trim_end(s, chars?)` `starts_with` `ends_with` `chars` `split` `join` |
 | Dates | `date("2027-01-31")` `today()`\* `days(n)` `weeks(n)` `add_workdays(d, n)` `weekday(d)`; dates can be compared, and adding or subtracting them works in days |
 | Debugging | `print` |
 

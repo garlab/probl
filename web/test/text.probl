@@ -1,0 +1,26 @@
+# UTF-8 storage; positions count Unicode scalar values.
+let s = "a🙂é🇫🇷"
+report [len(s), s[1], chars(s), reverse(s), slice(s, 1, 4)]
+report "é" != "é"
+report one_of(["é", "é"])
+report [upper("Straße"), lower("İ"), lower("ΟΣ ΟΣΑ")]
+report ["__foo__".trim("_"), "abbacacb".trim("ab")]
+report [trim_start("abbacacb", "ab"), trim_end("abbacacb", "ab")]
+report [trim(" \t hello \n"), trim(" x ", ""), trim("🙂foo🙂", "🙂")]
+report [starts_with(s, "a🙂"), ends_with(s, "🇫🇷"), starts_with("", "")]
+report [split("a,,b,", ","), split("", ","), split("", ""), split("é", "")]
+report slice([10, 20, 30], 1)
+report [slice(10..20, 2, 5), slice(10..20, 11), len(slice(0..10^100, 1))]
+report map("aß", c -> upper(c))
+report filter(s, c -> c != "a").join("")
+report reduce("a🙂", "", (text, c) -> text + c)
+report count("a🙂a", c -> c == "a")
+report [sort("baé"), sort_desc("baé"), enumerate("a🙂"), zip("a🙂b", 10..11)]
+report trim(one_of(["_a_", "_b_"]), "_")
+report slice("a🙂b", one_of([0, 1]), 2)
+report map(one_of(["a🙂", "b🙂"]), c -> len(c))
+report filter(one_of(["a🙂", "b🙂"]), c -> c == "🙂")
+var rebuilt = ""
+for c in s { rebuilt += c }
+report rebuilt == s
+report "values: {[1, true, "🙂"]}"

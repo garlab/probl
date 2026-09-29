@@ -88,12 +88,16 @@ impl Snapshots {
 #[derive(Debug)]
 pub struct Inputs {
     max_integer_bits: u64,
+    max_string_bytes: usize,
     manifest: Vec<Input>,
     values: Vec<Value>,
     sources: Vec<SourceInfo>,
 }
 
 impl Inputs {
+    pub(crate) fn max_string_bytes(&self) -> usize {
+        self.max_string_bytes
+    }
     pub(crate) fn max_integer_bits(&self) -> u64 {
         self.max_integer_bits
     }
@@ -139,6 +143,7 @@ pub fn load(
             values_left: limits.max_values,
             integer_bytes_left: limits.max_integer_bytes,
             max_integer_bits_seen: 0,
+            max_string_bytes_seen: 0,
             limits,
             cancel,
             ticks: 0,
@@ -194,6 +199,7 @@ pub fn load(
         .collect();
     Ok(Inputs {
         max_integer_bits: cx.budget.max_integer_bits_seen,
+        max_string_bytes: cx.budget.max_string_bytes_seen,
         manifest: program.inputs.clone(),
         values,
         sources,
@@ -309,6 +315,7 @@ struct Budget<'a> {
     values_left: u64,
     integer_bytes_left: u64,
     max_integer_bits_seen: u64,
+    max_string_bytes_seen: usize,
     limits: &'a InputLimits,
     cancel: Option<&'a AtomicBool>,
     ticks: u32,

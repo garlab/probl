@@ -18,6 +18,7 @@ const probl = await load(wasm);
 let failed = 0;
 const cases = probl.examples().map((e) => ({ ...e, path: `examples/${e.name}.probl` }));
 cases.push({ name: 'math', path: 'web/test/math.probl', source: await readFile(`${root}/web/test/math.probl`, 'utf8') });
+cases.push({ name: 'text', path: 'web/test/text.probl', source: await readFile(`${root}/web/test/text.probl`, 'utf8') });
 cases.push({
   name: 'integers', path: 'web/test/integers.probl',
   source: await readFile(`${root}/web/test/integers.probl`, 'utf8'),

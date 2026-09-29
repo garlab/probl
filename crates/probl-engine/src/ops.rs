@@ -287,8 +287,12 @@ pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<
         BinOp::And | BinOp::Or => unreachable!("`and` and `or` are evaluated lazily by the interpreter"),
         BinOp::To => unreachable!("`to` is lowered to a built-in"),
         BinOp::Range | BinOp::RangeExcl => range(op, a, b, budget),
-        BinOp::In => lift2(a, b, budget, |x, coll, _| contains(coll, x).map(Value::Bool)),
-        BinOp::NotIn => lift2(a, b, budget, |x, coll, _| contains(coll, x).map(|c| Value::Bool(!c))),
+        BinOp::In => lift2(a, b, budget, |x, coll, budget| {
+            contains(coll, x, budget).map(Value::Bool)
+        }),
+        BinOp::NotIn => lift2(a, b, budget, |x, coll, budget| {
+            contains(coll, x, budget).map(|c| Value::Bool(!c))
+        }),
         _ => lift2(a, b, budget, |x, y, budget| binary_plain(op, x, y, budget)),
     }
 }
@@ -304,6 +308,9 @@ fn binary_plain(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResul
         for v in [a, b] {
             if let Value::Int(n) = v {
                 budget.integer_work(n, &Integer::ONE, false)?;
+            }
+            if let Value::Str(s) = v {
+                budget.string_work(s)?;
             }
         }
     }
@@ -327,8 +334,20 @@ fn binary_plain(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResul
 
 fn add(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
     match (a, b) {
-        (Value::Str(x), Value::Str(y)) => Ok(Value::str(&format!("{x}{y}"))),
+        (Value::Str(x), Value::Str(y)) => {
+            let size = x
+                .len()
+                .checked_add(y.len())
+                .ok_or_else(|| OpError::limit("string size overflow"))?;
+            budget.string_size(size)?;
+            let mut out = String::new();
+            crate::text::push(&mut out, x, budget)?;
+            crate::text::push(&mut out, y, budget)?;
+            Ok(Value::str(&out))
+        }
         (Value::List(x), Value::List(y)) => {
+            budget.collection(x.len() as u128 + y.len() as u128)?;
+            budget.work(x.len() as u64 + y.len() as u64)?;
             let mut items = x.to_vec();
             items.extend(y.iter().cloned());
             Ok(Value::list(items))
@@ -639,7 +658,13 @@ pub fn compare(a: &Value, b: &Value) -> OpResult<std::cmp::Ordering> {
 }
 
 /// Whether `item` is in `coll` (for `in`).
-pub fn contains(coll: &Value, item: &Value) -> OpResult<bool> {
+pub fn contains(coll: &Value, item: &Value, budget: &mut Budget) -> OpResult<bool> {
+    if let Value::Str(s) = coll {
+        budget.string_work(s)?;
+        if let Value::Str(s) = item {
+            budget.string_work(s)?;
+        }
+    }
     Ok(match coll {
         Value::List(items) => items.iter().any(|x| equals(x, item)),
         Value::Map(m) => m.contains_key(item) || m.keys().any(|k| equals(k, item)),
@@ -724,7 +749,7 @@ pub fn field(v: &Value, name: &str, budget: &mut Budget) -> OpResult<Value> {
 
 pub fn index(coll: &Value, i: &Value, budget: &mut Budget) -> OpResult<Value> {
     lift2(coll, i, budget, |c, i, budget| {
-        let v = index_plain(c, i)?;
+        let v = index_plain(c, i, budget)?;
         if let (Value::Range(lo, hi), Value::Int(n)) = (c, &v) {
             budget.integer_work(lo, hi, false)?;
             budget.integer_allocation(n.bits(), 1)?;
@@ -733,7 +758,7 @@ pub fn index(coll: &Value, i: &Value, budget: &mut Budget) -> OpResult<Value> {
     })
 }
 
-pub fn index_plain(coll: &Value, i: &Value) -> OpResult<Value> {
+pub fn index_plain(coll: &Value, i: &Value, budget: &mut Budget) -> OpResult<Value> {
     match coll {
         Value::List(items) => {
             let k = as_index(i, items.len() as u128)?;
@@ -754,9 +779,10 @@ pub fn index_plain(coll: &Value, i: &Value) -> OpResult<Value> {
             Ok(Value::Int(n))
         }
         Value::Str(s) => {
-            let chars: Vec<char> = s.chars().collect();
-            let k = as_index(i, chars.len() as u128)?;
-            Ok(Value::str(&chars[k as usize].to_string()))
+            budget.string_work(s)?;
+            let k = as_index(i, s.chars().count() as u128)?;
+            let c = s.chars().nth(k as usize).expect("checked scalar index");
+            crate::text::value(c.encode_utf8(&mut [0; 4]), budget)
         }
         Value::Map(m) => m
             .get(i)

@@ -14,6 +14,7 @@ pub mod interp;
 mod math;
 pub mod ops;
 pub mod report;
+mod text;
 pub mod value;
 pub mod weight;
 pub mod world;
@@ -45,6 +46,10 @@ pub struct Limits {
     pub max_integer_bits: u64,
     /// Cumulative allowance for large integer results (including shared copies).
     pub max_integer_bytes: u64,
+    /// Maximum UTF-8 bytes in one string.
+    pub max_string_bytes: usize,
+    /// Cumulative UTF-8 payload bytes produced by the runtime (not live memory).
+    pub max_string_alloc_bytes: u64,
     /// Worlds one statement may produce.
     pub max_worlds: usize,
     /// Outcomes of one distribution, or of combining distributions.
@@ -77,6 +82,8 @@ impl Default for Limits {
         Limits {
             max_integer_bits: probl_number::MAX_INTEGER_BITS,
             max_integer_bytes: 256 * 1024 * 1024,
+            max_string_bytes: 16 * 1024 * 1024,
+            max_string_alloc_bytes: 256 * 1024 * 1024,
             max_worlds: 10_000_000,
             max_outcomes: 2_000_000,
             max_collection: 10_000_000,
@@ -290,6 +297,8 @@ fn run_here(
         budget: Budget {
             max_integer_bits: limits.max_integer_bits,
             integer_bytes_left: Arc::new(AtomicU64::new(limits.max_integer_bytes)),
+            max_string_bytes: limits.max_string_bytes,
+            string_bytes_left: Arc::new(AtomicU64::new(limits.max_string_alloc_bytes)),
             cancel: options.cancel.clone(),
             max_outcomes: limits.max_outcomes,
             max_collection: limits.max_collection,
@@ -437,6 +446,12 @@ fn inputs<'a>(program: &Program, options: &'a Options) -> Result<&'a [Value], Ru
     };
     match &options.inputs {
         Some(inputs) if inputs.fit(program) => {
+            if inputs.max_string_bytes() > options.limits.max_string_bytes {
+                return Err(RuntimeError::limit(
+                    first.span,
+                    "an input string exceeds the runtime string size limit",
+                ));
+            }
             if inputs.max_integer_bits() > options.limits.max_integer_bits {
                 return Err(RuntimeError::limit(
                     first.span,

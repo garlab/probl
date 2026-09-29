@@ -15,6 +15,7 @@ pub(crate) fn plain(
     budget: &mut super::Budget,
 ) -> Result<Value, Problem> {
     if *ty == TypeSpec::Str {
+        budget.max_string_bytes_seen = budget.max_string_bytes_seen.max(text.len());
         return Ok(Value::str(text));
     }
     let t = text.trim();

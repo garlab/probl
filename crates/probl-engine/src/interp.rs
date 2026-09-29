@@ -1851,8 +1851,11 @@ impl<'p> Engine<'p> {
                 let mut text = String::new();
                 for part in parts {
                     match part {
-                        InterpPart::Lit(s) => text.push_str(s),
-                        InterpPart::Expr(e) => text.push_str(&self.eval(f, e, w)?.to_string()),
+                        InterpPart::Lit(s) => crate::text::push(&mut text, s, &mut self.budget).map_err(at)?,
+                        InterpPart::Expr(e) => {
+                            let value = self.eval(f, e, w)?;
+                            crate::text::push_value(&mut text, &value, &mut self.budget).map_err(at)?;
+                        }
                     }
                 }
                 Ok(Value::str(&text))
@@ -1872,7 +1875,7 @@ impl<'p> Engine<'p> {
             }
             Lit::Float(x) => Value::Float(*x),
             Lit::Prob(p) => Value::Prob(*p),
-            Lit::Str(s) => Value::str(s),
+            Lit::Str(s) => crate::text::value(s, &mut self.budget)?,
             Lit::Dice { count, sides } => {
                 if let Some(d) = self.dice.get(&(*count, *sides)) {
                     return Ok(d.clone());
@@ -1893,8 +1896,13 @@ impl<'p> Engine<'p> {
         let at = |err: OpError| err.at(span);
         match b {
             Builtin::Print => {
-                let text: Vec<String> = values.iter().map(|v| v.to_string()).collect();
-                let text = text.join(" ");
+                let mut text = String::new();
+                for (i, value) in values.iter().enumerate() {
+                    if i != 0 {
+                        crate::text::push(&mut text, " ", &mut self.budget).map_err(at)?;
+                    }
+                    crate::text::push_value(&mut text, value, &mut self.budget).map_err(at)?;
+                }
                 let line = if w.weight == Weight::ONE {
                     text
                 } else {

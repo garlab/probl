@@ -77,6 +77,53 @@ fn fails(src: &str, files: &[(&str, &str)], expected: &[&str]) {
 const DAY: &str = "type Day = { day: date, visitors: int, signups: int }\nlet pilot: list[Day] = read(\"pilot.csv\")\n";
 
 #[test]
+fn loaded_strings_obey_runtime_utf8_byte_limits() {
+    for (src, path, text) in [
+        (
+            r#"let xs: list[str] = read("s.json"); report xs"#,
+            "s.json",
+            r#"["🙂"]"#,
+        ),
+        (r#"let xs: list[str] = read("s.txt"); report xs"#, "s.txt", "🙂\n"),
+        (
+            r#"let xs: list[{s: str}] = read("s.csv"); report xs"#,
+            "s.csv",
+            "s\n🙂\n",
+        ),
+        (
+            r#"let xs: map[str, int] = read("s.json"); report xs"#,
+            "s.json",
+            r#"{"🙂": 1}"#,
+        ),
+    ] {
+        let program = program(src);
+        let inputs = load(
+            &program,
+            &mut Memory::with(&[(path, text)]),
+            &mut Snapshots::default(),
+            &InputLimits::default(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(inputs.max_string_bytes(), 4);
+        let mut options = crate::Options {
+            inputs: Some(Arc::new(inputs)),
+            limits: crate::Limits {
+                max_string_bytes: 3,
+                ..crate::Limits::default()
+            },
+            ..crate::Options::default()
+        };
+        assert_eq!(
+            crate::run(&program, &options, &mut |_| {}).unwrap_err().kind,
+            ErrorKind::Limit
+        );
+        options.limits.max_string_bytes = 4;
+        assert!(crate::run(&program, &options, &mut |_| {}).is_ok());
+    }
+}
+
+#[test]
 fn csv_rows_become_records() {
     let v = value(
         DAY,

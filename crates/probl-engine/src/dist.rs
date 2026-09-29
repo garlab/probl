@@ -34,6 +34,9 @@ pub struct Budget {
     pub max_integer_bits: u64,
     /// Cumulative allowance for produced large integer payloads, shared by runs.
     pub integer_bytes_left: Arc<AtomicU64>,
+    pub max_string_bytes: usize,
+    /// Cumulative string payload allowance, shared by sampled workers.
+    pub string_bytes_left: Arc<AtomicU64>,
     pub cancel: Option<Arc<AtomicBool>>,
     /// The most outcomes one distribution (or combination) may have.
     pub max_outcomes: usize,
@@ -51,6 +54,8 @@ impl Budget {
         Budget {
             max_integer_bits: probl_number::MAX_INTEGER_BITS,
             integer_bytes_left: Arc::new(AtomicU64::new(u64::MAX)),
+            max_string_bytes: usize::MAX,
+            string_bytes_left: Arc::new(AtomicU64::new(u64::MAX)),
             cancel: None,
             max_outcomes: usize::MAX,
             max_collection: usize::MAX,
@@ -67,6 +72,31 @@ impl Budget {
             )));
         }
         Ok(())
+    }
+
+    pub fn string_size(&self, bytes: usize) -> OpResult<()> {
+        if bytes > self.max_string_bytes {
+            return Err(OpError::limit(format!(
+                "string size exceeds the limit of {} UTF-8 bytes",
+                self.max_string_bytes
+            )));
+        }
+        Ok(())
+    }
+
+    /// Charge a scan before doing it, in units of 64 UTF-8 bytes.
+    pub fn string_work(&mut self, s: &str) -> OpResult<()> {
+        self.string_size(s.len())?;
+        self.work((s.len() as u64).div_ceil(64).max(1))
+    }
+
+    /// Reserve payload bytes before allocation or growing a text builder.
+    pub fn string_allocation(&self, bytes: usize) -> OpResult<()> {
+        self.string_size(bytes)?;
+        self.string_bytes_left
+            .fetch_update(Atomic::Relaxed, Atomic::Relaxed, |left| left.checked_sub(bytes as u64))
+            .map(|_| ())
+            .map_err(|_| OpError::limit("the run used up its string memory allowance"))
     }
 
     /// Reserve before materializing a collection, or after a single bounded

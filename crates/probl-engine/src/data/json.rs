@@ -194,7 +194,10 @@ impl<'de> Visitor<'de> for Visit<'_, '_, '_> {
 
     fn visit_str<E: de::Error>(self, s: &str) -> Result<Value, E> {
         match self.ty {
-            TypeSpec::Str => Ok(Value::str(s)),
+            TypeSpec::Str => {
+                self.cx.budget.max_string_bytes_seen = self.cx.budget.max_string_bytes_seen.max(s.len());
+                Ok(Value::str(s))
+            }
             TypeSpec::Date | TypeSpec::Enum(_) | TypeSpec::Prob => {
                 text::plain(s, self.ty, self.cx.program, &mut self.cx.budget).map_err(|p| self.cx.fail(p))
             }

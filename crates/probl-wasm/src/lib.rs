@@ -24,6 +24,8 @@ use std::sync::Arc;
 pub fn limits() -> Limits {
     Limits {
         max_integer_bytes: 64 * 1024 * 1024,
+        max_string_bytes: 4 * 1024 * 1024,
+        max_string_alloc_bytes: 64 * 1024 * 1024,
         max_worlds: 1_000_000,
         max_outcomes: 1_000_000,
         max_collection: 1_000_000,
