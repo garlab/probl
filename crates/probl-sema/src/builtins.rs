@@ -47,7 +47,7 @@ builtins! {
     Abs = "abs", 1..=1, Lift, true;
     Floor = "floor", 1..=1, Lift, true;
     Ceil = "ceil", 1..=1, Lift, true;
-    Round = "round", 1..=1, Lift, true;
+    Round = "round", 1..=2, Lift, true;
     Sqrt = "sqrt", 1..=1, Lift, true;
     Exp = "exp", 1..=1, Lift, true;
     Ln = "ln", 1..=1, Lift, true;
@@ -66,6 +66,9 @@ builtins! {
     Sinh = "sinh", 1..=1, Lift, true;
     Cosh = "cosh", 1..=1, Lift, true;
     Tanh = "tanh", 1..=1, Lift, true;
+    Asinh = "asinh", 1..=1, Lift, true;
+    Acosh = "acosh", 1..=1, Lift, true;
+    Atanh = "atanh", 1..=1, Lift, true;
     Choose = "choose", 2..=2, Lift, true;
     Factorial = "factorial", 1..=1, Lift, true;
     Gcd = "gcd", 2..=2, Lift, true;

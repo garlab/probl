@@ -14,6 +14,124 @@ fn integer(src: &str) -> i64 {
     }
 }
 
+fn float(src: &str) -> f64 {
+    let values = distribution(src);
+    match values.as_slice() {
+        [(Value::Float(n), p)] if *p == 1.0 => *n,
+        _ => panic!("expected one float from {src}: {values:?}"),
+    }
+}
+
+#[test]
+fn round_retains_the_one_argument_form_and_supports_decimal_places() {
+    assert_eq!(integer("report round(1.5)"), 2);
+    assert_eq!(integer("report round(-1.5)"), -2);
+    assert_eq!(integer("report round(9007199254740993)"), 9_007_199_254_740_993);
+    for (expression, expected) in [
+        ("round(1.234, 2)", 1.23),
+        ("round(1.125, 2)", 1.13),
+        ("round(-1.125, 2)", -1.13),
+        ("round(1.5, 0)", 2.0),
+        ("round(-1.5, 0)", -2.0),
+        ("round(1250.0, -2)", 1300.0),
+        ("round(-1250.0, -2)", -1300.0),
+        ("round(12.5%, 2)", 0.13),
+        ("round(1e308, 2)", 1e308),
+        ("round(1e308, -308)", 1e308),
+        ("round(1e308, -309)", 0.0),
+        ("round(1.234, 323)", 1.234),
+        ("round(1.234, 9223372036854775807)", 1.234),
+        ("round(1.234, -9223372036854775807 - 1)", 0.0),
+    ] {
+        assert_eq!(float(&format!("report {expression}")), expected, "{expression}");
+    }
+    close(float("report round(1.234e-300, 302) / 1e-300"), 1.23);
+    close(float("report round(1.234e-310, 312) / 1e-310"), 1.23);
+    assert_eq!(float("report round(5e-324, 323)"), 0.0);
+    assert_eq!(float("report round(5e-324, 324)"), f64::from_bits(1));
+    assert!(error("report round(1.79e308, -308)").contains("isn't defined for"));
+    assert!(error("report round(1e308)").contains("too large to be an int"));
+}
+
+#[test]
+fn round_keeps_integer_inputs_exact_and_checks_overflow() {
+    for (expression, expected) in [
+        ("round(9007199254740993, 2)", 9_007_199_254_740_993),
+        ("round(9007199254740993, -1)", 9_007_199_254_740_990),
+        ("round(9007199254740995, -1)", 9_007_199_254_741_000),
+        ("round(-1250, -2)", -1300),
+        ("round(1250, -2)", 1300),
+        ("round(9223372036854775807, 0)", i64::MAX),
+        ("round(-9223372036854775807 - 1, 0)", i64::MIN),
+        ("round(9223372036854775807, -20)", 0),
+        ("round(-9223372036854775807 - 1, -20)", 0),
+        ("round(100, -9223372036854775807 - 1)", 0),
+        ("round(100, 9223372036854775807)", 100),
+    ] {
+        assert_eq!(integer(&format!("report {expression}")), expected, "{expression}");
+    }
+    for expression in [
+        "round(9223372036854775807, -1)",
+        "round(-9223372036854775807 - 1, -1)",
+        "round(9223372036854775807, -19)",
+    ] {
+        assert!(error(&format!("report {expression}")).contains("integer overflow"));
+    }
+}
+
+#[test]
+fn inverse_hyperbolic_functions_match_values_and_invert_the_forward_functions() {
+    close(float("report asinh(0)"), 0.0);
+    close(float("report asinh(1)"), 0.881_373_587_019_543);
+    close(float("report acosh(1)"), 0.0);
+    close(float("report acosh(2)"), 1.316_957_896_924_816_6);
+    close(float("report atanh(0.5)"), 0.549_306_144_334_054_8);
+    for x in [-3.0, -1.0, 0.0, 0.5, 3.0] {
+        close(mean(&format!("report asinh(sinh({x}))")), x);
+        close(mean(&format!("report acosh(cosh({x}))")), x.abs());
+        close(mean(&format!("report atanh(tanh({x}))")), x);
+    }
+    close(float("report asinh(1e-300) / 1e-300"), 1.0);
+    close(float("report atanh(1e-300) / 1e-300"), 1.0);
+    close(float("report asinh(1e308)"), 709.889_355_822_726);
+    close(float("report acosh(1e308)"), 709.889_355_822_726);
+}
+
+#[test]
+fn rounding_and_inverse_hyperbolic_domains_and_arities_are_checked() {
+    for expression in [
+        "round(1, 1.0)",
+        "round(1, true)",
+        "round(1, 50%)",
+        "round(true, 2)",
+        "asinh(true)",
+        "acosh(\"1\")",
+        "atanh([])",
+    ] {
+        assert!(error(&format!("report {expression}")).contains("needs"), "{expression}");
+    }
+    for expression in [
+        "round(0 ^ -1, 2)",
+        "round(0 ^ -1, 9223372036854775807)",
+        "asinh(0 ^ -1)",
+        "acosh(0.999)",
+        "acosh(-1)",
+        "acosh(0 ^ -1)",
+        "atanh(-1)",
+        "atanh(1)",
+        "atanh(2)",
+        "atanh(0 ^ -1)",
+    ] {
+        assert!(
+            error(&format!("report {expression}")).contains("isn't defined for"),
+            "{expression}"
+        );
+    }
+    for expression in ["round()", "round(1, 2, 3)", "asinh()", "acosh(1, 2)", "atanh()"] {
+        assert!(compile_error(&format!("report {expression}")).contains("takes"));
+    }
+}
+
 #[test]
 fn combinations_and_factorials_are_exact() {
     for (n, k, expected) in [
@@ -195,6 +313,11 @@ fn integer_work_respects_host_limits() {
 fn functions_lift_over_distributions_in_both_modes() {
     for mode in ["enumerate", "sample(runs: 1000, seed: 1)"] {
         for (expression, expected) in [
+            ("round(one_of([1.125, 2.125]), 2)", 1.63),
+            ("round(1.25, one_of([0, 1]))", 1.15),
+            ("asinh(one_of([-1, 1]))", 0.0),
+            ("acosh(one_of([1, 2]))", 0.658_478_948_462_408_3),
+            ("atanh(one_of([-0.5, 0.5]))", 0.0),
             ("choose(d2 + 2, 2)", 4.5),
             ("factorial(d3)", 3.0),
             ("gcd(d2, d2)", 1.25),

@@ -19,7 +19,7 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
         B::Abs => num1(a(0), "abs", |x| x.abs(), |i| i.checked_abs()),
         B::Floor => to_int(a(0), f64::floor),
         B::Ceil => to_int(a(0), f64::ceil),
-        B::Round => to_int(a(0), f64::round),
+        B::Round => round(a(0), args.get(1)),
         B::Sqrt => float1(a(0), "sqrt", |x| (x >= 0.0).then(|| x.sqrt())),
         B::Exp => float1(a(0), "exp", |x| Some(libm::exp(x)).filter(|y| y.is_finite())),
         B::Ln => float1(a(0), "ln", |x| (x > 0.0).then(|| libm::log(x))),
@@ -38,6 +38,9 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
         B::Sinh => float1(a(0), "sinh", |x| Some(libm::sinh(x)).filter(|y| y.is_finite())),
         B::Cosh => float1(a(0), "cosh", |x| Some(libm::cosh(x)).filter(|y| y.is_finite())),
         B::Tanh => float1(a(0), "tanh", |x| Some(libm::tanh(x))),
+        B::Asinh => float1(a(0), "asinh", |x| Some(libm::asinh(x))),
+        B::Acosh => float1(a(0), "acosh", |x| (x >= 1.0).then(|| libm::acosh(x))),
+        B::Atanh => float1(a(0), "atanh", |x| (x.abs() < 1.0).then(|| libm::atanh(x))),
         B::Choose => choose(
             nonnegative_int(a(0), "choose")?,
             nonnegative_int(a(1), "choose")?,
@@ -693,6 +696,60 @@ fn to_int(v: &Value, f: fn(f64) -> f64) -> OpResult<Value> {
             Ok(Value::Int(r as i64))
         }
     }
+}
+
+fn round(v: &Value, digits: Option<&Value>) -> OpResult<Value> {
+    let Some(digits) = digits else {
+        return to_int(v, f64::round);
+    };
+    let digits = integer(digits, "round's digits")?;
+    if let Value::Int(n) = v {
+        if digits >= 0 {
+            return Ok(v.clone());
+        }
+        // Even i64::MIN is less than half of 10^20 in magnitude. Bound the
+        // exponent before negating it, since digits itself can be i64::MIN.
+        if digits <= -20 {
+            return Ok(Value::Int(0));
+        }
+        let scale = 10i128.pow((-digits) as u32);
+        let magnitude = i128::from(*n).abs();
+        let rounded = (magnitude + scale / 2) / scale * scale * i128::from(n.signum());
+        return i64::try_from(rounded)
+            .map(Value::Int)
+            .map_err(|_| int_overflow("round"));
+    }
+    float1(v, "round", |x| {
+        // Beyond these bounds a decimal place cannot change a finite f64,
+        // or every finite f64 rounds to zero. No unbounded powers or loops.
+        if digits > 323 || x == 0.0 {
+            return Some(x);
+        }
+        if digits < -308 {
+            return Some(0.0);
+        }
+        let rounded = if digits >= 0 {
+            // Splitting the scale supports subnormals (up to 323 places)
+            // without forming an infinite power of ten.
+            let high = libm::pow(10.0, digits.min(308) as f64);
+            let low = libm::pow(10.0, (digits - 308).max(0) as f64);
+            let scaled = (x * high) * low;
+            // At this precision the decimal adjustment is smaller than half
+            // an f64 step; scaling back could only introduce a new error.
+            if scaled.abs() >= 1e16 || x.fract() == 0.0 {
+                return Some(x);
+            }
+            (scaled.round() / low) / high
+        } else {
+            let scale = libm::pow(10.0, -digits as f64);
+            let scaled = x / scale;
+            if scaled.abs() >= 1e16 {
+                return Some(x);
+            }
+            scaled.round() * scale
+        };
+        Some(rounded)
+    })
 }
 
 fn min_max(args: &[Value], want_max: bool, budget: &mut Budget) -> OpResult<Value> {

@@ -43,6 +43,9 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Sinh
         | B::Cosh
         | B::Tanh
+        | B::Asinh
+        | B::Acosh
+        | B::Atanh
         | B::Choose
         | B::Factorial
         | B::Gcd
@@ -137,8 +140,8 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Floor => doc("floor(x) -> int", "`x` rounded down, as an int."),
         B::Ceil => doc("ceil(x) -> int", "`x` rounded up, as an int."),
         B::Round => doc(
-            "round(x) -> int",
-            "`x` rounded to the nearest int, halves away from zero.",
+            "round(x, digits?: int)",
+            "Round to the nearest value, halves away from zero. With no `digits`, returns an int. With `digits`, rounds that many decimal places: `round(1.234, 2)` is 1.23; `round(1234, -2)` is 1200. Int inputs stay exact ints (overflow is an error); other numbers return floats. Float scaling is approximate near halfway cases. This changes the value, not its display format.",
         ),
         B::Sqrt => doc("sqrt(x) -> float", "The square root. It's an error below 0."),
         B::Exp => doc("exp(x) -> float", "e to the power `x`."),
@@ -179,6 +182,18 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Sinh => doc("sinh(x) -> float", "The hyperbolic sine."),
         B::Cosh => doc("cosh(x) -> float", "The hyperbolic cosine."),
         B::Tanh => doc("tanh(x) -> float", "The hyperbolic tangent, between −1 and 1."),
+        B::Asinh => doc(
+            "asinh(x) -> float",
+            "The inverse hyperbolic sine, for any finite number.",
+        ),
+        B::Acosh => doc(
+            "acosh(x) -> float",
+            "The nonnegative inverse hyperbolic cosine. `x` must be at least 1.",
+        ),
+        B::Atanh => doc(
+            "atanh(x) -> float",
+            "The inverse hyperbolic tangent. `x` must be strictly between −1 and 1; the endpoints are errors.",
+        ),
         B::Choose => doc(
             "choose(n: int, k: int) -> int",
             "The number of ways to choose `k` items from `n`, without order or replacement. Both must be nonnegative; `k > n` gives 0. The result is exact; integer overflow is an error.",
