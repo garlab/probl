@@ -393,7 +393,7 @@ impl Counts {
                 } else if p >= 1.0 {
                     exactly(n)
                 } else {
-                    libm::exp(
+                    crate::math::exp(
                         libm::lgamma(n + 1.0) - libm::lgamma(k + 1.0) - libm::lgamma(n - k + 1.0)
                             + k * libm::log(p)
                             + (n - k) * libm::log1p(-p),
@@ -404,7 +404,7 @@ impl Counts {
                 if rate <= 0.0 {
                     exactly(0.0)
                 } else {
-                    libm::exp(k * libm::log(rate) - rate - libm::lgamma(k + 1.0))
+                    crate::math::exp(k * libm::log(rate) - rate - libm::lgamma(k + 1.0))
                 }
             }
             Counts::Geometric { p } => {
@@ -413,7 +413,7 @@ impl Counts {
                 } else if p >= 1.0 {
                     exactly(1.0)
                 } else {
-                    p * libm::exp((k - 1.0) * libm::log1p(-p))
+                    p * crate::math::exp((k - 1.0) * libm::log1p(-p))
                 }
             }
         }

@@ -171,7 +171,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         B::Exp => doc(
             "exp(x) -> float or complex",
-            "e to the power `x`. Complex inputs give `exp(real(x)) * cis(imag(x))`; overflow is an error.",
+            "e to the power `x`. At exactly 1, the result equals the built-in constant `e` exactly. Complex inputs give `exp(real(x)) * cis(imag(x))`; overflow is an error.",
         ),
         B::Exp2 => doc(
             "exp2(x) -> float or complex",

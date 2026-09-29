@@ -124,7 +124,7 @@ impl Complex {
         if self.im == 0.0 && self.re >= 0.0 {
             return Self::new(libm::cbrt(self.re), 0.0);
         }
-        let r = libm::exp(log_hypot(self.re, self.im) / 3.0);
+        let r = crate::math::exp(log_hypot(self.re, self.im) / 3.0);
         let theta = self.arg() / 3.0;
         Self::new(r * libm::cos(theta), r * libm::sin(theta))
     }
@@ -183,7 +183,7 @@ impl Complex {
             let s = libm::sin(self.im / 2.0);
             Self::new(
                 libm::expm1(self.re) * libm::cos(self.im) - 2.0 * s * s,
-                libm::exp(self.re) * libm::sin(self.im),
+                crate::math::exp(self.re) * libm::sin(self.im),
             )
         } else {
             let z = self.exp()?;
@@ -211,7 +211,7 @@ impl Complex {
         if self.im.abs() > 20.0 {
             // Divide the double-angle formula by exp(2*|y|). Taking sin/cos
             // of x first also avoids overflow when forming the angle 2*x.
-            let t = libm::exp(-2.0 * self.im.abs());
+            let t = crate::math::exp(-2.0 * self.im.abs());
             let den = 1.0 + 2.0 * (c * c - s * s) * t + t * t;
             Self::new(4.0 * s * c * t / den, ((1.0 - t * t) / den).copysign(self.im))
         } else {
@@ -355,9 +355,9 @@ fn exp_times(x: f64, factor: f64) -> f64 {
     if factor == 0.0 {
         0.0
     } else if x > 700.0 {
-        (libm::exp(700.0) * factor) * libm::exp(x - 700.0)
+        (crate::math::exp(700.0) * factor) * crate::math::exp(x - 700.0)
     } else {
-        libm::exp(x) * factor
+        crate::math::exp(x) * factor
     }
 }
 

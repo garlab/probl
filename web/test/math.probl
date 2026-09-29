@@ -2,6 +2,8 @@
 @mode sample(runs: 1000, seed: 19)
 
 report [pi, e, euler_gamma] as "constants"
+report [exp(1) == e, exp(1) - e, e - exp(1), exp(complex(1)) == complex(e)] as "Euler constant consistency"
+report [mean(lognormal(0.5, 1)) == e, exp(0.9999999999999998) < e, exp(1.0000000000000002) > e] as "exponential rounding"
 report [sin(0.5), cos(0.5), tan(0.5)] as "trigonometry"
 report [asin(-1), acos(-1), atan(0.5), atan2(1, -1), atan2(0, 0)] as "inverse angles"
 report [atan2(-0.0, -1), atan2(0, -0.0)] as "signed zeros"

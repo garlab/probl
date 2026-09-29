@@ -40,7 +40,7 @@ impl Weight {
         const LN2_LO: f64 = 1.908_214_929_270_587_7e-10;
         let k = libm::round(l / std::f64::consts::LN_2);
         let r = (l - k * LN2_HI) - k * LN2_LO;
-        normalize(libm::exp(r), k as i64)
+        normalize(crate::math::exp(r), k as i64)
     }
 
     pub fn is_zero(self) -> bool {

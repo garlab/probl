@@ -157,7 +157,7 @@ impl Family {
     pub fn mean(&self) -> f64 {
         match *self {
             Family::Normal { mean, .. } => mean,
-            Family::Lognormal { mu, sigma } => libm::exp(mu + sigma * sigma / 2.0),
+            Family::Lognormal { mu, sigma } => crate::math::exp(mu + sigma * sigma / 2.0),
             Family::Uniform { lo, hi } => (lo + hi) / 2.0,
             Family::Beta { a, b } => a / (a + b),
             Family::Gamma { shape, scale } => shape * scale,
@@ -175,7 +175,7 @@ impl Family {
             Family::Normal { sd, .. } => sd * sd,
             Family::Lognormal { mu, sigma } => {
                 let s2 = sigma * sigma;
-                libm::expm1(s2) * libm::exp(2.0 * mu + s2)
+                libm::expm1(s2) * crate::math::exp(2.0 * mu + s2)
             }
             Family::Uniform { lo, hi } => (hi - lo).powi(2) / 12.0,
             Family::Beta { a, b } => a * b / ((a + b).powi(2) * (a + b + 1.0)),
@@ -223,13 +223,13 @@ impl Family {
                     };
                 }
                 let y = x / scale;
-                libm::exp((shape - 1.0) * libm::log(y) - y - libm::lgamma(shape)) / scale
+                crate::math::exp((shape - 1.0) * libm::log(y) - y - libm::lgamma(shape)) / scale
             }
             Family::Exponential { rate } => {
                 if x < 0.0 {
                     0.0
                 } else {
-                    rate * libm::exp(-rate * x)
+                    rate * crate::math::exp(-rate * x)
                 }
             }
             Family::Triangular { lo, mode, hi } => {
@@ -303,7 +303,7 @@ impl Family {
         }
         match *self {
             Family::Normal { mean, sd } => mean + sd * std_normal_quantile(p),
-            Family::Lognormal { mu, sigma } => libm::exp(mu + sigma * std_normal_quantile(p)),
+            Family::Lognormal { mu, sigma } => crate::math::exp(mu + sigma * std_normal_quantile(p)),
             Family::Uniform { lo, hi } => lo + p * (hi - lo),
             Family::Exponential { rate } => -libm::log1p(-p) / rate,
             Family::Triangular { lo, mode, hi } => {
@@ -329,7 +329,7 @@ impl Family {
     pub fn sample(&self, rng: &mut Rng) -> f64 {
         match *self {
             Family::Normal { mean, sd } => mean + sd * rng.normal(),
-            Family::Lognormal { mu, sigma } => libm::exp(mu + sigma * rng.normal()),
+            Family::Lognormal { mu, sigma } => crate::math::exp(mu + sigma * rng.normal()),
             Family::Uniform { lo, hi } => lo + (hi - lo) * rng.uniform(),
             Family::Beta { a, b } => rng.beta(a, b),
             Family::Gamma { shape, scale } => scale * rng.gamma(shape),
@@ -388,7 +388,7 @@ impl fmt::Display for Family {
 // ── Special functions ────────────────────────────────────────────────────
 
 fn std_normal_pdf(z: f64) -> f64 {
-    libm::exp(-z * z / 2.0) / libm::sqrt(2.0 * PI)
+    crate::math::exp(-z * z / 2.0) / libm::sqrt(2.0 * PI)
 }
 
 pub fn std_normal_cdf(z: f64) -> f64 {
@@ -435,12 +435,12 @@ fn beta_pdf(a: f64, b: f64, x: f64) -> f64 {
         return if edge < 1.0 {
             f64::INFINITY
         } else if edge == 1.0 {
-            libm::exp(libm::lgamma(a + b) - libm::lgamma(a) - libm::lgamma(b))
+            crate::math::exp(libm::lgamma(a + b) - libm::lgamma(a) - libm::lgamma(b))
         } else {
             0.0
         };
     }
-    libm::exp(
+    crate::math::exp(
         (a - 1.0) * libm::log(x) + (b - 1.0) * libm::log1p(-x) + libm::lgamma(a + b)
             - libm::lgamma(a)
             - libm::lgamma(b),
@@ -487,8 +487,9 @@ pub fn beta_cdf(a: f64, b: f64, x: f64) -> f64 {
     if x >= 1.0 {
         return 1.0;
     }
-    let front =
-        libm::exp(libm::lgamma(a + b) - libm::lgamma(a) - libm::lgamma(b) + a * libm::log(x) + b * libm::log1p(-x));
+    let front = crate::math::exp(
+        libm::lgamma(a + b) - libm::lgamma(a) - libm::lgamma(b) + a * libm::log(x) + b * libm::log1p(-x),
+    );
     if x < (a + 1.0) / (a + b + 2.0) {
         front * beta_fraction(a, b, x) / a
     } else {
@@ -545,7 +546,7 @@ pub fn gamma_cdf(a: f64, x: f64) -> f64 {
     if x <= 0.0 {
         return 0.0;
     }
-    let front = libm::exp(-x + a * libm::log(x) - libm::lgamma(a));
+    let front = crate::math::exp(-x + a * libm::log(x) - libm::lgamma(a));
     if x < a + 1.0 {
         let (mut sum, mut term, mut n) = (1.0 / a, 1.0 / a, a);
         for _ in 0..10_000 {

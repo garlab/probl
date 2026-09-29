@@ -28,7 +28,7 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
         B::Sqrt => elementary1(a(0), "sqrt", Complex::sqrt, |x| (x >= 0.0).then(|| x.sqrt())),
         B::Cbrt => elementary1(a(0), "cbrt", Complex::cbrt, |x| Some(libm::cbrt(x))),
         B::Exp => elementary1(a(0), "exp", Complex::exp, |x| {
-            Some(libm::exp(x)).filter(|y| y.is_finite())
+            Some(crate::math::exp(x)).filter(|y| y.is_finite())
         }),
         B::Exp2 => elementary1(a(0), "exp2", Complex::exp2, |x| Some(libm::exp2(x))),
         B::Ln => elementary1(a(0), "ln", Complex::ln, |x| (x > 0.0).then(|| libm::log(x))),
@@ -254,7 +254,7 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
             }
             Ok(Value::Float(libm::log(p / (1.0 - p))))
         }
-        B::InvLogit => Ok(Value::Prob(1.0 / (1.0 + libm::exp(-number(a(0), "inv_logit")?)))),
+        B::InvLogit => Ok(Value::Prob(1.0 / (1.0 + crate::math::exp(-number(a(0), "inv_logit")?)))),
         B::Date => {
             let s = text(a(0), "date")?;
             dates::parse(&s)

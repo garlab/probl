@@ -23,6 +23,35 @@ fn float(src: &str) -> f64 {
 }
 
 #[test]
+fn exp_at_one_agrees_exactly_with_the_correctly_rounded_constant() {
+    for expression in ["e", "exp(1)", "exp(1.0)", "exp(100%)", "real(exp(complex(1)))"] {
+        assert_eq!(
+            float(&format!("report {expression}")).to_bits(),
+            std::f64::consts::E.to_bits(),
+            "{expression}"
+        );
+    }
+    for expression in ["exp(1) - e", "e - exp(1)", "imag(exp(complex(1)))"] {
+        assert_eq!(float(&format!("report {expression}")), 0.0, "{expression}");
+    }
+    // The same numerical convention applies inside analytic distributions.
+    assert_eq!(float("report mean(lognormal(0.5, 1))"), std::f64::consts::E);
+    for mode in ["enumerate", "sample(runs: 100, seed: 7)"] {
+        for source in [
+            "report exp(d1) == e",
+            "report exp(complex(d1)) == complex(e)",
+            "let x ~ d1\nreport exp(x) == e",
+            "let e = 0\nreport exp(1) == 2.718281828459045",
+        ] {
+            assert_eq!(chance(&format!("@mode {mode}\n{source}")), 1.0, "{source}");
+        }
+    }
+    // Inputs near 1 must retain their differences; no epsilon snapping.
+    assert_eq!(chance("report exp(0.9999999999999998) < e"), 1.0);
+    assert_eq!(chance("report exp(1.0000000000000002) > e"), 1.0);
+}
+
+#[test]
 fn erfc_preserves_small_tails() {
     close(float("report erfc(0)"), 1.0);
     close(float("report erfc(1)"), 0.157_299_207_050_285_13);
