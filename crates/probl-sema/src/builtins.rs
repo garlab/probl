@@ -66,6 +66,13 @@ builtins! {
     Sinh = "sinh", 1..=1, Lift, true;
     Cosh = "cosh", 1..=1, Lift, true;
     Tanh = "tanh", 1..=1, Lift, true;
+    Choose = "choose", 2..=2, Lift, true;
+    Factorial = "factorial", 1..=1, Lift, true;
+    Gcd = "gcd", 2..=2, Lift, true;
+    Lcm = "lcm", 2..=2, Lift, true;
+    EulerPhi = "euler_phi", 1..=1, Lift, true;
+    LnGamma = "ln_gamma", 1..=1, Lift, true;
+    Erf = "erf", 1..=1, Lift, true;
     Clamp = "clamp", 3..=3, Lift, true;
     // Text
     Str = "str", 1..=1, Lift, true;

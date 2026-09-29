@@ -38,6 +38,29 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
         B::Sinh => float1(a(0), "sinh", |x| Some(libm::sinh(x)).filter(|y| y.is_finite())),
         B::Cosh => float1(a(0), "cosh", |x| Some(libm::cosh(x)).filter(|y| y.is_finite())),
         B::Tanh => float1(a(0), "tanh", |x| Some(libm::tanh(x))),
+        B::Choose => choose(
+            nonnegative_int(a(0), "choose")?,
+            nonnegative_int(a(1), "choose")?,
+            budget,
+        ),
+        B::Factorial => factorial(nonnegative_int(a(0), "factorial")?, budget),
+        B::Gcd | B::Lcm => {
+            let (x, y) = (
+                integer(a(0), b.name())?.unsigned_abs(),
+                integer(a(1), b.name())?.unsigned_abs(),
+            );
+            let result = if b == B::Gcd {
+                u128::from(gcd(x, y))
+            } else if x == 0 || y == 0 {
+                0
+            } else {
+                u128::from(x / gcd(x, y)) * u128::from(y)
+            };
+            checked_int(result, b.name()).map(Value::Int)
+        }
+        B::EulerPhi => euler_phi(nonnegative_int(a(0), "euler_phi")?, budget),
+        B::LnGamma => float1(a(0), "ln_gamma", |x| (x > 0.0).then(|| libm::lgamma(x))),
+        B::Erf => float1(a(0), "erf", |x| Some(libm::erf(x))),
         B::Clamp => {
             let (lo, hi) = (a(1), a(2));
             if ops::compare(lo, hi)?.is_gt() {
@@ -505,6 +528,85 @@ fn whole(v: &Value, what: &str) -> OpResult<i64> {
             article(&other.kind())
         ))),
     }
+}
+
+/// Integer mathematics must not round its inputs through floating point.
+fn integer(v: &Value, func: &str) -> OpResult<i64> {
+    match v {
+        Value::Int(n) => Ok(*n),
+        other => Err(expected("an int", other, func)),
+    }
+}
+
+fn nonnegative_int(v: &Value, func: &str) -> OpResult<u64> {
+    u64::try_from(integer(v, func)?).map_err(|_| OpError::new(format!("`{func}` needs nonnegative integers")))
+}
+
+fn int_overflow(func: &str) -> OpError {
+    OpError::new(format!(
+        "integer overflow in `{func}`: the result is too large for an int"
+    ))
+}
+
+fn checked_int(n: u128, func: &str) -> OpResult<i64> {
+    i64::try_from(n).map_err(|_| int_overflow(func))
+}
+
+fn choose(n: u64, k: u64, budget: &mut Budget) -> OpResult<Value> {
+    if k > n {
+        return Ok(Value::Int(0));
+    }
+    let k = k.min(n - k);
+    let mut result = 1i64;
+    for i in 1..=k {
+        budget.work(1)?;
+        // The division is exact at every step. A 128-bit intermediate
+        // holds the product of two nonnegative i64s even near the limit.
+        result = checked_int(result as u128 * u128::from(n - k + i) / u128::from(i), "choose")?;
+    }
+    Ok(Value::Int(result))
+}
+
+fn factorial(n: u64, budget: &mut Budget) -> OpResult<Value> {
+    let mut result = 1i64;
+    for i in 2..=n {
+        budget.work(1)?;
+        // Overflow terminates even a call with an enormous n after at most 20 multiplications.
+        result = result.checked_mul(i as i64).ok_or_else(|| int_overflow("factorial"))?;
+    }
+    Ok(Value::Int(result))
+}
+
+fn gcd(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
+}
+
+fn euler_phi(mut n: u64, budget: &mut Budget) -> OpResult<Value> {
+    if n == 0 {
+        return Err(OpError::new("`euler_phi` needs a positive integer"));
+    }
+    let mut result = n;
+    let mut divisor = 2;
+    while divisor <= n / divisor {
+        // Factoring large integers can be expensive; every attempted divisor
+        // and repeated factor is charged to the host's work budget.
+        budget.work(1)?;
+        if n % divisor == 0 {
+            result -= result / divisor;
+            while n % divisor == 0 {
+                budget.work(1)?;
+                n /= divisor;
+            }
+        }
+        divisor = if divisor == 2 { 3 } else { divisor + 2 };
+    }
+    if n > 1 {
+        result -= result / n;
+    }
+    Ok(Value::Int(result as i64))
 }
 
 fn text(v: &Value, func: &str) -> OpResult<Arc<str>> {

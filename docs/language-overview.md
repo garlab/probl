@@ -85,6 +85,18 @@ report cos(d6)                 # a finite distribution, transformed outcome by o
 
 Use `log1p(x)` for `ln(1 + x)` and `expm1(x)` for `exp(x) - 1` when `x` may be tiny, and `hypot(x, y)` for a distance without squaring large or tiny numbers. Arguments outside a function's domain, such as `asin(2)`, and overflowing results are errors. Continuous distributions must be drawn before applying these functions.
 
+Integer mathematics stays exact: `choose`, `factorial`, `gcd`, `lcm` and `euler_phi` take ints and return ints, with an error if the result is too large. `factorial` supports 0 through 20; `ln_gamma(n + 1)` gives the logarithm of a larger factorial without forming it. `ln_gamma(x)` requires positive `x`. `erf(x)` is the error function used in normal probabilities.
+
+```probl
+report choose(52, 5)       # 2,598,960 five-card hands
+report factorial(6)        # 720 orders of six items
+report gcd(54, 24)         # 6
+report lcm(6, 8)           # 24
+report euler_phi(12)       # 4: the coprime integers are 1, 5, 7, 11
+report ln_gamma(101)       # ln(100!), approximately 363.74
+report erf(1)              # approximately 0.8427
+```
+
 ### Variables
 
 ```probl
@@ -572,6 +584,7 @@ From loosest to tightest binding:
 | Queries | `P` `mean` `sd` `variance` `median` `quantile` `support` `cdf` `pmf` `pdf` |
 | Probability | `odds(p)` `logit(p)` `inv_logit(x)` |
 | Math | `abs` `min` `max` `clamp` `floor` `ceil` `round` `sqrt` `hypot(x, y)` `exp` `expm1` `ln` `log1p` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `sinh` `cosh` `tanh` |
+| Integer and special functions | `choose(n, k)` `factorial(n)` `gcd(a, b)` `lcm(a, b)` `euler_phi(n)` `ln_gamma(x)` `erf(x)` |
 | Constants | `pi` `e` `euler_gamma`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
 | Collections | `len` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `highest(n)` `lowest(n)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
 | Text | `str` `upper` `lower` `split` `join` |

@@ -20,6 +20,20 @@ Wherever a probability is expected, a `float` from 0 to 1 is accepted too. Nothi
 
 `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2(y, x)`, `hypot(x, y)`, `sinh`, `cosh`, `tanh`, `log2`, `log1p` and `expm1` accept numbers and return floats. They act on each outcome of a finite distribution, like the existing math functions (section 2); draw from a continuous distribution first. Angles are in radians, including inverse-function results. `asin` and `acos` accept −1 through 1; `log2` requires a positive argument, and `log1p` requires an argument above −1. Arguments and results must be finite; invalid domains and overflow are errors. `atan2` takes the vertical coordinate first and returns an angle from −π to π; signed zeros are treated alike, and at `(0, 0)` it returns 0 by convention. These are floating-point approximations: `sin(pi)` need not be exactly zero, and `tan(pi / 2)` evaluates at the rounded argument rather than an exact pole. `log1p(x)` and `expm1(x)` preserve accuracy near zero; `hypot` avoids overflow or underflow in intermediate squares.
 
+**Integer and special functions.** The following functions also act on each outcome of a finite distribution. The integer functions require `int` arguments (not floats, even whole-valued ones), and return exact `int` results. A result outside the signed 64-bit range is an overflow error; it is never rounded into a float.
+
+| Function | Domain and result |
+|---|---|
+| `choose(n, k)` | Nonnegative integers. The binomial coefficient, counting selections without order or replacement. `k > n` gives 0; `choose(n, 0)` is 1. |
+| `factorial(n)` | Nonnegative integer. The product 1 × … × n, with `factorial(0) = 1`. `factorial(20)` fits; larger arguments overflow. |
+| `gcd(a, b)` | Two integers, signs ignored. The nonnegative greatest common divisor; `gcd(0, 0) = 0`. |
+| `lcm(a, b)` | Two integers, signs ignored. The nonnegative least common multiple; either argument being zero gives 0. |
+| `euler_phi(n)` | Positive integer. The number of integers from 1 through n coprime to n, with `euler_phi(1) = 1`. Factorization consumes the host's work budget and may reach its limit for large inputs. |
+| `ln_gamma(x)` | Positive finite number. Returns a float approximating ln Γ(x), with `ln_gamma(n + 1) = ln(n!)` for nonnegative integers n. Nonpositive arguments and non-finite results are errors. This does not change the `gamma(shape, scale)` distribution constructor. |
+| `erf(x)` | Finite number. Returns the error function as a float: (2 / √π) ∫₀ˣ exp(−t²) dt, from −1 to 1. |
+
+The selection, factorial, sign and zero conventions follow the corresponding [Python integer math functions](https://docs.python.org/3/library/math.html#number-theoretic-functions), with Probl's fixed integer range and two-argument `gcd`/`lcm`. Mathematical definitions: [NIST's gamma function](https://dlmf.nist.gov/5.2) and [Euler's totient](https://dlmf.nist.gov/27.2).
+
 ## 2. Events and identity
 
 A **distribution is a recipe**. Each occurrence of a distribution in an expression is an independent draw: `d6 + d6` is two dice, and `let die = d6` followed by `die + die` is also two dice.

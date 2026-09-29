@@ -43,6 +43,13 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Sinh
         | B::Cosh
         | B::Tanh
+        | B::Choose
+        | B::Factorial
+        | B::Gcd
+        | B::Lcm
+        | B::EulerPhi
+        | B::LnGamma
+        | B::Erf
         | B::Clamp => "Math",
         B::Str | B::Upper | B::Lower | B::Split | B::Join | B::Print => "Text",
         B::Len
@@ -172,6 +179,34 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Sinh => doc("sinh(x) -> float", "The hyperbolic sine."),
         B::Cosh => doc("cosh(x) -> float", "The hyperbolic cosine."),
         B::Tanh => doc("tanh(x) -> float", "The hyperbolic tangent, between −1 and 1."),
+        B::Choose => doc(
+            "choose(n: int, k: int) -> int",
+            "The number of ways to choose `k` items from `n`, without order or replacement. Both must be nonnegative; `k > n` gives 0. The result is exact; integer overflow is an error.",
+        ),
+        B::Factorial => doc(
+            "factorial(n: int) -> int",
+            "The product of the integers from 1 to `n`; `factorial(0)` is 1. `n` must be nonnegative. The result is exact; above 20 it overflows an int. Use `ln_gamma(n + 1)` for its logarithm.",
+        ),
+        B::Gcd => doc(
+            "gcd(a: int, b: int) -> int",
+            "The nonnegative greatest common divisor. Signs are ignored, and `gcd(0, 0)` is 0. A result too large for an int is an error.",
+        ),
+        B::Lcm => doc(
+            "lcm(a: int, b: int) -> int",
+            "The nonnegative least common multiple. Signs are ignored; if either argument is 0, the result is 0. Integer overflow is an error.",
+        ),
+        B::EulerPhi => doc(
+            "euler_phi(n: int) -> int",
+            "Euler's totient: how many integers from 1 through `n` are coprime to `n`. `n` must be positive; `euler_phi(1)` is 1. Factoring large inputs can reach the run's work limit.",
+        ),
+        B::LnGamma => doc(
+            "ln_gamma(x) -> float",
+            "The natural logarithm of the gamma function, for positive `x`. For integer `n >= 0`, `ln_gamma(n + 1)` is `ln(n!)`, without forming the factorial. `gamma(shape, scale)` remains the distribution constructor.",
+        ),
+        B::Erf => doc(
+            "erf(x) -> float",
+            "The error function: `2 / sqrt(pi)` times the integral of `exp(-t^2)` from 0 to `x`. For the standard normal, `cdf(normal(0, 1), x)` is `(1 + erf(x / sqrt(2))) / 2`.",
+        ),
         B::Clamp => doc("clamp(x, lo, hi)", "`x`, kept between `lo` and `hi`."),
         // Text
         B::Str => doc("str(x) -> str", "`x` as text, as `print` shows it."),
