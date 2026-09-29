@@ -72,6 +72,8 @@ builtins! {
     Asinh = "asinh", 1..=1, Lift, true;
     Acosh = "acosh", 1..=1, Lift, true;
     Atanh = "atanh", 1..=1, Lift, true;
+    BitLength = "bit_length", 1..=1, Lift, true;
+    ILog2 = "ilog2", 1..=1, Lift, true;
     Choose = "choose", 2..=2, Lift, true;
     Factorial = "factorial", 1..=1, Lift, true;
     Gcd = "gcd", 2..=2, Lift, true;

@@ -12,3 +12,8 @@ report (10^400 + 1) div 3
 report [(10^400) / (10^400), (10^400)^-1, complex(0, 1)^(10^400 + 1)]
 report len(0..10^100)
 report one_of([10^100: 25%, 10^100 + 1: 75%])
+report [0b111, 0xfab101, 0XFA_B101, -0x8000_0000_0000_0000, 0xffff_ffff_ffff_ffff + 1]
+report [bit_length(0), bit_length(-0b111), bit_length(0x000f), ilog2(0b100000)]
+report [ilog2(2^100 - 1), ilog2(2^100), ilog2(10^400), bit_length(10^400)]
+report bit_length(d4)
+report ilog2(one_of([0x8, 0x9, 0xf]))

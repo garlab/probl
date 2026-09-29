@@ -16,7 +16,13 @@ use std::sync::Arc;
 pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Value> {
     for arg in args {
         if let Value::Int(n) = arg {
-            budget.integer_work(n, if b == Builtin::Str { n } else { &Integer::ONE }, b == Builtin::Str)?;
+            if matches!(b, Builtin::BitLength | Builtin::ILog2) {
+                // The stored length and highest word suffice, even for a bigint.
+                budget.integer_bits(n.bits())?;
+                budget.work(1)?;
+            } else {
+                budget.integer_work(n, if b == Builtin::Str { n } else { &Integer::ONE }, b == Builtin::Str)?;
+            }
         }
     }
     let value = call_plain_inner(b, args, budget)?;
@@ -78,6 +84,14 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::Atanh => elementary1(a(0), "atanh", Complex::atanh, |x| {
             (x.abs() < 1.0).then(|| libm::atanh(x))
         }),
+        B::BitLength => Ok(Value::Int(integer(a(0), "bit_length")?.bits().into())),
+        B::ILog2 => {
+            let n = integer(a(0), "ilog2")?;
+            if n.is_zero() || n.is_negative() {
+                return Err(OpError::new("`ilog2` needs a positive integer"));
+            }
+            Ok(Value::Int((n.bits() - 1).into()))
+        }
         B::Choose => choose(
             nonnegative_int(a(0), "choose")?,
             nonnegative_int(a(1), "choose")?,

@@ -8,6 +8,114 @@ use probl_number::Integer;
 use std::collections::{BTreeSet, HashSet};
 
 #[test]
+fn bit_length_and_integer_log_are_exact() {
+    for (n, bits) in [
+        ("0", 0),
+        ("1", 1),
+        ("-1", 1),
+        ("7", 3),
+        ("-7", 3),
+        ("8", 4),
+        ("-9223372036854775808", 64),
+        ("2^100 - 1", 100),
+        ("2^100", 101),
+        ("10^400", 1329),
+        ("0b0001", 1),
+        ("0x000f", 4),
+    ] {
+        assert_eq!(chance(&format!("report bit_length({n}) == {bits}")), 1.0, "{n}");
+        if bits != 0 {
+            assert_eq!(chance(&format!("report ilog2(abs({n})) == {}", bits - 1)), 1.0, "{n}");
+        }
+    }
+    // Adjacent powers must stay distinct despite rounding in floating log2.
+    for k in [1, 2, 31, 53, 63, 64, 100, 1000] {
+        assert_eq!(
+            chance(&format!(
+                "report ilog2(2^{k} - 1) == {} and ilog2(2^{k}) == {k} and ilog2(2^{k} + 1) == {k}",
+                k - 1
+            )),
+            1.0
+        );
+    }
+    for mode in ["enumerate", "sample(runs: 200, seed: 8)"] {
+        for expression in [
+            "bit_length(one_of([-7, -4, 4, 7])) == 3",
+            "ilog2(one_of([8, 9, 15])) == 3",
+        ] {
+            assert_eq!(chance(&format!("@mode {mode}\nreport {expression}")), 1.0);
+        }
+    }
+    assert_eq!(
+        distribution("report bit_length(d4)"),
+        vec![
+            (Value::Int(1.into()), 0.25),
+            (Value::Int(2.into()), 0.5),
+            (Value::Int(3.into()), 0.25)
+        ]
+    );
+}
+
+#[test]
+fn bit_queries_check_domains_and_take_constant_work() {
+    for name in ["bit_length", "ilog2"] {
+        for input in ["1.0", "true", "50%", "complex(1)", "\"7\"", "[]"] {
+            assert!(error(&format!("report {name}({input})")).contains("needs an int"));
+        }
+        for args in ["", "1, 2"] {
+            assert!(compile_error(&format!("report {name}({args})")).contains("takes"));
+        }
+    }
+    for n in ["0", "-1", "-10^400"] {
+        assert!(error(&format!("report ilog2({n})")).contains("positive integer"));
+    }
+    let n = Integer::from_radix_digits(&"f".repeat(16384), 16).unwrap();
+    for (f, expected) in [
+        (probl_sema::Builtin::BitLength, 65536),
+        (probl_sema::Builtin::ILog2, 65535),
+    ] {
+        let mut budget = probl_engine::dist::Budget {
+            work_left: 1,
+            ..probl_engine::dist::Budget::unlimited()
+        };
+        let result = probl_engine::builtins::call_plain(f, &[Value::Int(n.clone())], &mut budget).unwrap();
+        assert_eq!(result, Value::Int(expected.into()));
+    }
+}
+
+#[test]
+fn radix_literals_are_ordinary_exact_integers() {
+    for expression in [
+        "0b111 == 7",
+        "0xfab101 == 16429313",
+        "0XFA_B101 == 0xfab101",
+        "0B111_001 == 57",
+        "0xffff_ffff_ffff_ffff + 1 == 2^64",
+        "-0x8000000000000000 == -9223372036854775808",
+        "0x1_0000_0000_0000_0000_0000_0000 == 2^96",
+        "0x1e3 == 483",
+        "0x2d6 == 726",
+        "-0x2^2 == -4",
+        "len(0b1..0b11) == 3",
+        "len(0x0..<0xF) == 15",
+        "0xff.bit_length() == 8",
+        "[0xff: 7][255] == 7",
+        "str(0b111) == \"7\"",
+        "\"{0xff}\" == \"255\"",
+        "(match -0xff { -0xFF => 1, _ => 0 }) == 1",
+    ] {
+        assert_eq!(chance(&format!("report {expression}")), 1.0, "{expression}");
+    }
+    for expression in ["0b1.1", "0x1.8", "0x10%", "0b10%", "0b1e3"] {
+        assert!(!compile_error(&format!("report {expression}")).is_empty());
+    }
+    for (prefix, digits) in [("0b", "1".repeat(65536)), ("0x", "f".repeat(16384))] {
+        assert_eq!(chance(&format!("report bit_length({prefix}{digits}) == 65536")), 1.0);
+        assert!(compile_error(&format!("report {prefix}1{digits}")).contains("integer size"));
+    }
+}
+
+#[test]
 fn arithmetic_and_rounding_stay_exact() {
     for expression in [
         "9223372036854775807 + 1 == 9223372036854775808",

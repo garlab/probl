@@ -49,6 +49,8 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Asinh
         | B::Acosh
         | B::Atanh
+        | B::BitLength
+        | B::ILog2
         | B::Choose
         | B::Factorial
         | B::Gcd
@@ -187,7 +189,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         B::Log2 => doc(
             "log2(x) -> float or complex",
-            "The base-2 logarithm. Real inputs must be positive; nonzero complex inputs give the principal value `ln(x)/ln(2)`.",
+            "The approximate base-2 logarithm. Real inputs must be positive; nonzero complex inputs give the principal value `ln(x)/ln(2)`. For the exact floor on a positive integer, use `ilog2(n)`.",
         ),
         B::Log1p => doc(
             "log1p(x) -> float or complex",
@@ -252,6 +254,14 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Atanh => doc(
             "atanh(x) -> float or complex",
             "The inverse hyperbolic tangent. Real inputs must be strictly between −1 and 1. Complex inputs give the principal value, with cuts on the real axis outside [−1, 1]; ±1 are errors. Exact cut values use the upper side.",
+        ),
+        B::BitLength => doc(
+            "bit_length(n: int) -> int",
+            "The number of binary digits in the magnitude of `n`, ignoring its sign and leading zeros. `bit_length(0)` is 0; `bit_length(-7)` is 3. Exact and constant-time for arbitrary-precision integers.",
+        ),
+        B::ILog2 => doc(
+            "ilog2(n: int) -> int",
+            "The exact floor of log base 2 of a positive integer: `ilog2(31)` is 4, and `ilog2(32)` is 5. Zero and negatives are errors. Uses integer bits, with no float conversion; constant-time even for bigints.",
         ),
         B::Choose => doc(
             "choose(n: int, k: int) -> int",

@@ -52,6 +52,35 @@ impl Integer {
     pub const ZERO: Self = Self(Repr::Small(0));
     pub const ONE: Self = Self(Repr::Small(1));
 
+    /// Parse unsigned binary or hexadecimal digits (no prefix or separators).
+    /// Check the significant bit count before allocating a bigint. Decimal
+    /// parsing remains separate so data files keep their decimal-only contract.
+    pub fn from_radix_digits(digits: &str, radix: u32) -> Result<Self, IntError> {
+        let valid = match radix {
+            2 => digits.bytes().all(|b| matches!(b, b'0' | b'1')),
+            16 => digits.bytes().all(|b| b.is_ascii_hexdigit()),
+            _ => false,
+        };
+        if digits.is_empty() || !valid {
+            return Err(IntError::Invalid);
+        }
+        let digits = digits.trim_start_matches('0');
+        if digits.is_empty() {
+            return Ok(Self::ZERO);
+        }
+        let first = (digits.as_bytes()[0] as char).to_digit(radix).expect("validated digit");
+        let bits = (digits.len() as u64 - 1)
+            .saturating_mul(u64::from(radix.trailing_zeros()))
+            .saturating_add(u64::from(32 - first.leading_zeros()));
+        if bits > MAX_INTEGER_BITS {
+            return Err(IntError::TooLarge);
+        }
+        if let Ok(n) = i64::from_str_radix(digits, radix) {
+            return Ok(n.into());
+        }
+        Self::from_big(BigInt::parse_bytes(digits.as_bytes(), radix).ok_or(IntError::Invalid)?)
+    }
+
     pub fn from_big(value: BigInt) -> Result<Self, IntError> {
         if let Some(n) = value.to_i64() {
             return Ok(n.into());
@@ -368,6 +397,43 @@ impl fmt::Debug for Integer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn radix_parsing_is_exact_and_checks_limits_before_allocation() {
+        for bits in [0, 1, 31, 32, 53, 63, 64, 65, 127, 1024, 65535] {
+            let n: BigInt = (BigInt::from(1) << bits) - 1u32;
+            let expected = Integer::from_big(n.clone()).unwrap();
+            for radix in [2, 16] {
+                let digits = n.to_str_radix(radix);
+                assert_eq!(Integer::from_radix_digits(&digits, radix).unwrap(), expected);
+                assert_eq!(
+                    Integer::from_radix_digits(&format!("000{digits}"), radix).unwrap(),
+                    expected
+                );
+            }
+        }
+        for (radix, digits) in [(2, "1".repeat(65536)), (16, "f".repeat(16384))] {
+            assert_eq!(
+                Integer::from_radix_digits(&digits, radix).unwrap().bits(),
+                MAX_INTEGER_BITS
+            );
+            assert_eq!(
+                Integer::from_radix_digits(&format!("1{digits}"), radix),
+                Err(IntError::TooLarge)
+            );
+        }
+        for radix in [2, 16] {
+            assert_eq!(
+                Integer::from_radix_digits(&"0".repeat(100_000), radix).unwrap(),
+                Integer::ZERO
+            );
+            for digits in ["", "_1", "1_", "-1", "+1", "1g"] {
+                assert_eq!(Integer::from_radix_digits(digits, radix), Err(IntError::Invalid));
+            }
+        }
+        assert_eq!(Integer::from_radix_digits("1", 0), Err(IntError::Invalid));
+        assert!("0xff".parse::<Integer>().is_err()); // data parsing stays decimal
+    }
 
     #[test]
     fn signed_arithmetic_matches_wider_machine_integers() {

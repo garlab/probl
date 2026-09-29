@@ -87,6 +87,17 @@ impl Lexer<'_> {
 
     fn number(&mut self) {
         let lo = self.pos;
+        if self.peek(0) == b'0' {
+            let radix = match self.peek(1) {
+                b'b' | b'B' => Some(2),
+                b'x' | b'X' => Some(16),
+                _ => None,
+            };
+            if let Some(radix) = radix {
+                self.radix_number(radix);
+                return;
+            }
+        }
         self.digits();
         let mut is_float = false;
         if self.peek(0) == b'.' && self.peek(1).is_ascii_digit() {
@@ -151,6 +162,37 @@ impl Lexer<'_> {
                 Err(err) => {
                     self.error(lo, self.pos, err.to_string());
                 }
+            }
+        }
+    }
+
+    fn radix_number(&mut self, radix: u32) {
+        let lo = self.pos;
+        self.pos += 2;
+        let digits_lo = self.pos;
+        // Consume an entire malformed literal so `0b102` or `0xffg` doesn't
+        // silently become a valid integer followed by another token.
+        self.word_tail();
+        let raw = &self.src[digits_lo..self.pos];
+        let name = if radix == 2 { "binary" } else { "hexadecimal" };
+        let valid_separators = !raw.starts_with('_') && !raw.ends_with('_') && !raw.contains("__");
+        let digits = raw.replace('_', "");
+        let parsed = if valid_separators {
+            probl_number::Integer::from_radix_digits(&digits, radix)
+        } else {
+            Err(probl_number::IntError::Invalid)
+        };
+        match parsed {
+            Ok(n) => self.push(Tok::Int(n), lo),
+            Err(probl_number::IntError::Invalid) => {
+                self.error(lo, self.pos, format!("invalid {name} integer literal")).help(if radix == 2 {
+                    "write `0b` followed by binary digits (0 or 1), with optional underscores between digits"
+                } else {
+                    "write `0x` followed by hexadecimal digits (0–9, a–f or A–F), with optional underscores between digits"
+                });
+            }
+            Err(err) => {
+                self.error(lo, self.pos, err.to_string());
             }
         }
     }
@@ -508,6 +550,52 @@ mod tests {
                 Tok::Eof
             ]
         );
+    }
+
+    #[test]
+    fn binary_and_hexadecimal_integers() {
+        assert_eq!(
+            toks("0b111 0B10_01 0xfab101 0XFA_B101 0xdead_beef 0x1e3 0xd6"),
+            vec![
+                Tok::Int(7.into()),
+                Tok::Int(9.into()),
+                Tok::Int(0xfab101.into()),
+                Tok::Int(0xfab101.into()),
+                Tok::Int(0xdead_beefu64.into()),
+                Tok::Int(0x1e3.into()),
+                Tok::Int(0xd6.into()),
+                Tok::Eof
+            ]
+        );
+        assert_eq!(
+            toks("0b1..0xF 0x0..<0B10 -0xff 0x1.bit_length()"),
+            vec![
+                Tok::Int(1.into()),
+                Tok::DotDot,
+                Tok::Int(15.into()),
+                Tok::Int(0.into()),
+                Tok::DotDotLt,
+                Tok::Int(2.into()),
+                Tok::Minus,
+                Tok::Int(255.into()),
+                Tok::Int(1.into()),
+                Tok::Dot,
+                Tok::Ident("bit_length".into()),
+                Tok::LParen,
+                Tok::RParen,
+                Tok::Eof
+            ]
+        );
+        for src in [
+            "0x", "0b", "0X_1", "0b_1", "0b2", "0b102", "0b1d6", "0xfg", "0xf_", "0b1__0", "0x1p4",
+        ] {
+            let (tokens, diags) = lex(src, 40);
+            assert_eq!(diags.len(), 1, "{src}: {diags:?}");
+            assert!(diags[0].message.contains("integer literal"), "{src}");
+            assert_eq!(diags[0].span, Span::new(0, src.len()).shifted(40));
+            // No valid prefix is emitted from a malformed number.
+            assert_eq!(tokens.len(), 1, "{src}: {tokens:?}");
+        }
     }
 
     #[test]

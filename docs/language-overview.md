@@ -61,6 +61,7 @@ Probl reads like a small modern scripting language: braces, no semicolons, `#` c
 
 ```probl
 42   1_000_000   3.14   2.5e-3       # int and float
+0b111   0xfab101   0xFA_B101          # binary and hex integers
 30%   12.5%   -5%                     # percentages: 30% is 0.3
 "hello, {name}"                       # strings, with interpolation
 true   false                          # facts
@@ -115,6 +116,10 @@ report euler_phi(12)       # 4: the coprime integers are 1, 5, 7, 11
 report ln_gamma(101)       # ln(100!), approximately 363.74
 report erf(1)              # approximately 0.8427
 ```
+
+`bit_length(n)` counts binary digits in an integer's magnitude: `bit_length(0)` is 0 and `bit_length(-7)` is 3. `ilog2(n)` gives the exact floor of the base-2 logarithm of a positive integer. Both work directly on bigints in constant time; `ilog2(2^100 - 1)` is exactly 99.
+
+Binary (`0b`/`0B`) and hexadecimal (`0x`/`0X`) literals produce ordinary integers, regardless of size. Underscores may separate digits, as in `0b1111_0000`; hexadecimal digits accept either case. Use `-0xff` for a negative value. Prefixes and leading zeros do not fix a width: `bit_length(0x000f)` is 4. Reports still show integers in decimal.
 
 ### Complex numbers
 
