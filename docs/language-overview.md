@@ -121,6 +121,19 @@ report erf(1)              # approximately 0.8427
 
 Binary (`0b`/`0B`) and hexadecimal (`0x`/`0X`) literals produce ordinary integers, regardless of size. Underscores may separate digits, as in `0b1111_0000`; hexadecimal digits accept either case. Use `-0xff` for a negative value. Prefixes and leading zeros do not fix a width: `bit_length(0x000f)` is 4. Reports still show integers in decimal.
 
+Use functions for bit operations; `^` remains exponentiation. They require `int` arguments, work exactly on bigints, and lift over finite distributions.
+
+```probl
+report bit_and(0b1010, 0b1100)    # 8
+report bit_or(0b1010, 0b1100)     # 14
+report bit_xor(0b1010, 0b1100)    # 6
+report bit_not(0)                 # -1
+report bit_count(-0b1011)          # 3: count ones in the magnitude
+report bit_and(bit_not(10), 0xff) # 245: an eight-bit complement
+```
+
+AND, OR, XOR and NOT use infinite two's-complement sign extension, so `bit_not(n)` is `-n - 1`. Use a mask such as `0xff` when you want a fixed width. `bit_count` ignores the sign, like `bit_length`. Integer size, work and memory limits apply.
+
 ### Complex numbers
 
 Use `complex(re, im)` for complex numeric data. The imaginary component defaults to zero. Arithmetic supports real and complex operands; powers take integer exponents. `abs` gives the magnitude, `abs2` its square, `conj` the conjugate, and `arg` the phase in radians. `cis(theta)` constructs a unit-magnitude phase, up to floating-point rounding.

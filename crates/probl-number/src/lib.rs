@@ -140,6 +140,38 @@ impl Integer {
             Repr::Large(n) => n.value.bits(),
         }
     }
+    /// Count set bits in the magnitude, ignoring the sign.
+    pub fn bit_count(&self) -> u64 {
+        match &self.0 {
+            Repr::Small(n) => u64::from(n.unsigned_abs().count_ones()),
+            Repr::Large(n) => n.value.magnitude().count_ones(),
+        }
+    }
+    /// Signed bit operations use infinite two's-complement sign extension.
+    pub fn bit_and(&self, rhs: &Self) -> Result<Self, IntError> {
+        if let (Some(a), Some(b)) = (self.to_i64(), rhs.to_i64()) {
+            return Ok((a & b).into());
+        }
+        Self::from_big(self.big().as_ref() & rhs.big().as_ref())
+    }
+    pub fn bit_or(&self, rhs: &Self) -> Result<Self, IntError> {
+        if let (Some(a), Some(b)) = (self.to_i64(), rhs.to_i64()) {
+            return Ok((a | b).into());
+        }
+        Self::from_big(self.big().as_ref() | rhs.big().as_ref())
+    }
+    pub fn bit_xor(&self, rhs: &Self) -> Result<Self, IntError> {
+        if let (Some(a), Some(b)) = (self.to_i64(), rhs.to_i64()) {
+            return Ok((a ^ b).into());
+        }
+        Self::from_big(self.big().as_ref() ^ rhs.big().as_ref())
+    }
+    pub fn bit_not(&self) -> Result<Self, IntError> {
+        if let Some(n) = self.to_i64() {
+            return Ok((!n).into());
+        }
+        Self::from_big(!self.big().as_ref())
+    }
     pub fn is_negative(&self) -> bool {
         match &self.0 {
             Repr::Small(n) => *n < 0,
@@ -433,6 +465,53 @@ mod tests {
         }
         assert_eq!(Integer::from_radix_digits("1", 0), Err(IntError::Invalid));
         assert!("0xff".parse::<Integer>().is_err()); // data parsing stays decimal
+    }
+
+    #[test]
+    fn bit_operations_match_signed_machine_integers_across_storage_boundaries() {
+        let values = [
+            i128::MIN,
+            i64::MIN as i128 - 1,
+            i64::MIN as i128,
+            -101,
+            -1,
+            0,
+            1,
+            101,
+            i64::MAX as i128,
+            i64::MAX as i128 + 1,
+            i128::MAX,
+        ];
+        for a in values {
+            let x = Integer::from(a);
+            assert_eq!(x.bit_not().unwrap(), Integer::from(!a));
+            assert_eq!(x.bit_count(), u64::from(a.unsigned_abs().count_ones()));
+            for b in values {
+                let y = Integer::from(b);
+                assert_eq!(x.bit_and(&y).unwrap(), Integer::from(a & b));
+                assert_eq!(x.bit_or(&y).unwrap(), Integer::from(a | b));
+                assert_eq!(x.bit_xor(&y).unwrap(), Integer::from(a ^ b));
+            }
+            // Results that fit in i64 must regain the inline representation.
+            assert_eq!(x.bit_xor(&x).unwrap().to_i64(), Some(0));
+            assert_eq!(x.bit_or(&(-1).into()).unwrap().to_i64(), Some(-1));
+        }
+    }
+
+    #[test]
+    fn bit_operations_obey_the_magnitude_ceiling() {
+        let max = Integer::from_radix_digits(&"f".repeat(16384), 16).unwrap();
+        assert_eq!(max.bit_count(), MAX_INTEGER_BITS);
+        assert_eq!(max.negated().bit_count(), MAX_INTEGER_BITS);
+        assert_eq!(max.bit_not(), Err(IntError::TooLarge));
+        assert_eq!(max.bit_xor(&(-1).into()), Err(IntError::TooLarge));
+        assert_eq!(max.bit_and(&(-1).into()).unwrap(), max);
+        assert_eq!(max.bit_or(&(-1).into()).unwrap().to_i64(), Some(-1));
+        let below = max.sub(&Integer::ONE).unwrap();
+        assert_eq!(max.negated().bit_not().unwrap(), below);
+        assert_eq!(below.bit_not().unwrap(), max.negated());
+        // AND can also require one more magnitude bit for negative operands.
+        assert_eq!(max.negated().bit_and(&(-2).into()), Err(IntError::TooLarge));
     }
 
     #[test]

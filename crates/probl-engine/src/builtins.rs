@@ -85,6 +85,11 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             (x.abs() < 1.0).then(|| libm::atanh(x))
         }),
         B::BitLength => Ok(Value::Int(integer(a(0), "bit_length")?.bits().into())),
+        B::BitAnd => Ok(Value::Int(integer(a(0), b.name())?.bit_and(integer(a(1), b.name())?)?)),
+        B::BitOr => Ok(Value::Int(integer(a(0), b.name())?.bit_or(integer(a(1), b.name())?)?)),
+        B::BitXor => Ok(Value::Int(integer(a(0), b.name())?.bit_xor(integer(a(1), b.name())?)?)),
+        B::BitNot => Ok(Value::Int(integer(a(0), b.name())?.bit_not()?)),
+        B::BitCount => Ok(Value::Int(integer(a(0), b.name())?.bit_count().into())),
         B::ILog2 => {
             let n = integer(a(0), "ilog2")?;
             if n.is_zero() || n.is_negative() {

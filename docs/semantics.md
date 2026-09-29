@@ -43,6 +43,11 @@ For real inputs, `cbrt(x)` returns the real cube root as a float, including for 
 | Function | Domain and result |
 |---|---|
 | `bit_length(n)` | Integer, signs ignored. The number of binary digits in its magnitude, excluding leading zeros and any sign bit; `bit_length(0) = 0`, `bit_length(-7) = 3`. This is not a machine word size or a two's-complement width. |
+| `bit_and(a, b)` | Two integers. Bitwise AND: `bit_and(0b1010, 0b1100) = 8`. |
+| `bit_or(a, b)` | Two integers. Bitwise OR: `bit_or(0b1010, 0b1100) = 14`. |
+| `bit_xor(a, b)` | Two integers. Bitwise exclusive OR: `bit_xor(0b1010, 0b1100) = 6`. |
+| `bit_not(n)` | Integer. Bitwise complement, equal to `-n - 1`: `bit_not(0) = -1`. |
+| `bit_count(n)` | Integer, signs ignored. The number of set bits in its magnitude: `bit_count(0) = 0`, `bit_count(-0b1011) = 3`. |
 | `ilog2(n)` | Positive integer. The exact floor of its base-2 logarithm; `ilog2(1) = 0`, `ilog2(31) = 4`, `ilog2(32) = 5`. Zero and negatives are errors. |
 | `choose(n, k)` | Nonnegative integers. The binomial coefficient, counting selections without order or replacement. `k > n` gives 0; `choose(n, 0)` is 1. |
 | `factorial(n)` | Nonnegative integer. The product 1 × … × n, with `factorial(0) = 1`. `factorial(30)` is exactly 265252859812191058636308480000000; size and work limits apply. |
@@ -54,6 +59,8 @@ For real inputs, `cbrt(x)` returns the real cube root as a float, including for 
 | `erfc(x)` | Finite number. Returns the complementary error function as a float, from 0 to 2. Computes 1 − erf(x) directly to preserve small tails; extremely small results may underflow to zero. For the standard normal, the probability above x is `erfc(x / sqrt(2)) / 2`. |
 
 `bit_length` and `ilog2` inspect the stored integer magnitude in constant time, including for bigints, and each charges one unit of work for that inspection. For positive integers, `ilog2(n) = bit_length(n) - 1`. Both require an actual `int` and lift over finite distributions. They never convert through a float: `ilog2(2^100 - 1)` is 99 even though `floor(log2(2^100 - 1))` rounds to 100. The approximate `log2` function retains its float and complex behavior.
+
+`bit_and`, `bit_or`, `bit_xor` and `bit_not` operate as if signed integers had infinitely many two's-complement sign bits. There is no implicit word size: `bit_and(-1, 0xff)` is 255, while `bit_not(0x000f)` is −16. For a fixed-width complement, mask the result: `bit_and(bit_not(0b1010), 0xff)` is 245. `bit_count` instead counts the ones in the absolute value, consistent with `bit_length`; it does not count sign-extension bits. All five functions work directly on bigints and charge work proportional to operand bit length. Integer size and memory limits also apply: a signed bit operation can increase the magnitude by one bit, and exceeding the limit is an error. The `^` operator remains exponentiation.
 
 The selection, factorial, sign and zero conventions follow the corresponding [Python integer math functions](https://docs.python.org/3/library/math.html#number-theoretic-functions), with Probl's integer resource limits and two-argument `gcd`/`lcm`. Mathematical definitions: [NIST's gamma function](https://dlmf.nist.gov/5.2) and [Euler's totient](https://dlmf.nist.gov/27.2).
 

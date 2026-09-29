@@ -17,3 +17,14 @@ report [bit_length(0), bit_length(-0b111), bit_length(0x000f), ilog2(0b100000)]
 report [ilog2(2^100 - 1), ilog2(2^100), ilog2(10^400), bit_length(10^400)]
 report bit_length(d4)
 report ilog2(one_of([0x8, 0x9, 0xf]))
+report [bit_and(0b1010, 0b1100), bit_or(0b1010, 0b1100), bit_xor(0b1010, 0b1100)]
+report [bit_and(-1, 0xff), bit_or(-8, 3), bit_xor(-1, 0xff), bit_not(0)]
+report [bit_not(-2^4096), bit_xor(2^4096 + 3, 2^4096 + 5), bit_and(-2^100, 2^101 - 1)]
+report [bit_count(0), bit_count(-0b1011), bit_count(-0x8000_0000_0000_0000), bit_count(2^4096 - 1)]
+report bit_and(one_of([2^100, 2^100 + 1]), 1)
+report bit_or(one_of([2, 3]), 4)
+report bit_xor(one_of([0, 1]), one_of([0, 1]))
+report bit_not(one_of([-1, 0]))
+report bit_count(one_of([-3, 4]))
+let bits ~ one_of([2^100, -2^100 - 1])
+report bit_xor(bits, bits) == 0 and bit_not(bits) == -bits - 1

@@ -84,6 +84,151 @@ fn bit_queries_check_domains_and_take_constant_work() {
 }
 
 #[test]
+fn bit_operations_are_exact_signed_integers() {
+    for expression in [
+        "bit_and(0b1010, 0b1100) == 8",
+        "bit_or(0b1010, 0b1100) == 14",
+        "bit_xor(0b1010, 0b1100) == 6",
+        "bit_and(-1, 0xff) == 255",
+        "bit_or(-8, 3) == -5",
+        "bit_xor(-1, 0xff) == -256",
+        "bit_not(0) == -1",
+        "bit_not(-1) == 0",
+        "bit_not(0x000f) == -16",
+        "bit_and(bit_not(0b1010), 0xff) == 245",
+        "bit_count(0) == 0",
+        "bit_count(-0b1011) == 3",
+        "bit_count(-0x8000_0000_0000_0000) == 1",
+        "bit_count(2^4096 - 1) == 4096",
+        "bit_count(-2^4096) == 1",
+        "bit_and(-2^100, 2^101 - 1) == 2^100",
+        "bit_or(-2^100, 2^100 - 1) == -1",
+        "bit_xor(2^4096 + 3, 2^4096 + 5) == 6",
+        "bit_not(-2^4096) == 2^4096 - 1",
+        "bit_not(bit_and(2^100 + 3, -2^200 + 7)) == bit_or(bit_not(2^100 + 3), bit_not(-2^200 + 7))",
+        "[bit_xor(2^100, 2^100): 7][0] == 7",
+        "0xff.bit_count() == 8",
+        "0xff.bit_and(0x0f) == 15",
+    ] {
+        assert_eq!(chance(&format!("report {expression}")), 1.0, "{expression}");
+    }
+}
+
+#[test]
+fn bit_operations_lift_and_preserve_draw_correlation() {
+    for (src, values) in [
+        ("report bit_and(one_of([2^100, 2^100 + 1]), 1)", [0, 1]),
+        ("report bit_or(one_of([2, 3]), 4)", [6, 7]),
+        ("report bit_xor(one_of([0, 1]), one_of([0, 1]))", [0, 1]),
+        ("report bit_not(one_of([-1, 0]))", [-1, 0]),
+        ("report bit_count(one_of([-3, 4]))", [1, 2]),
+    ] {
+        assert_eq!(
+            distribution(src),
+            values
+                .into_iter()
+                .map(|n| (Value::Int(n.into()), 0.5))
+                .collect::<Vec<_>>(),
+            "{src}"
+        );
+    }
+    for mode in ["enumerate", "sample(runs: 200, seed: 8)"] {
+        assert_eq!(
+            chance(&format!(
+                "@mode {mode}\nlet n ~ one_of([2^100, -2^100 - 1])\nreport bit_xor(n, n) == 0 and bit_not(n) == -n - 1"
+            )),
+            1.0
+        );
+    }
+}
+
+#[test]
+fn bit_operations_require_integer_arguments_and_correct_arity() {
+    for (name, arity) in [
+        ("bit_and", 2),
+        ("bit_or", 2),
+        ("bit_xor", 2),
+        ("bit_not", 1),
+        ("bit_count", 1),
+    ] {
+        for input in ["1.0", "true", "50%", "complex(1)", "\"7\"", "[]"] {
+            let args = if arity == 1 {
+                input.to_owned()
+            } else {
+                format!("{input}, 1")
+            };
+            assert!(error(&format!("report {name}({args})")).contains("needs an int"));
+            if arity == 2 {
+                assert!(error(&format!("report {name}(1, {input})")).contains("needs an int"));
+            }
+        }
+        for args in ["", "1", "1, 2", "1, 2, 3"] {
+            if args.split(',').filter(|s| !s.is_empty()).count() != arity {
+                assert!(compile_error(&format!("report {name}({args})")).contains("takes"));
+            }
+        }
+    }
+}
+
+#[test]
+fn bit_operations_obey_size_work_and_memory_budgets() {
+    use probl_engine::builtins::call_plain;
+    use probl_engine::dist::Budget;
+    use probl_sema::Builtin as B;
+
+    let n = Integer::from_radix_digits(&"f".repeat(16384), 16).unwrap();
+    for f in [B::BitAnd, B::BitOr, B::BitXor, B::BitNot, B::BitCount] {
+        let mut budget = Budget {
+            work_left: 1,
+            ..Budget::unlimited()
+        };
+        let args = if matches!(f, B::BitNot | B::BitCount) {
+            vec![Value::Int(n.clone())]
+        } else {
+            vec![Value::Int(n.clone()), Value::Int(0.into())]
+        };
+        assert_eq!(call_plain(f, &args, &mut budget).unwrap_err().kind, ErrorKind::Limit);
+    }
+    let mut budget = Budget::unlimited();
+    assert_eq!(
+        call_plain(B::BitCount, &[Value::Int(n)], &mut budget).unwrap(),
+        Value::Int(65536.into())
+    );
+    let options = Options {
+        limits: Limits {
+            max_integer_bits: 64,
+            ..Limits::default()
+        },
+        ..Options::default()
+    };
+    for expr in [
+        "bit_not(0xffff_ffff_ffff_ffff)",
+        "bit_xor(-1, 0xffff_ffff_ffff_ffff)",
+        "bit_and(-0xffff_ffff_ffff_ffff, -2)",
+    ] {
+        assert_eq!(
+            exec_raw(&format!("report {expr}"), &options).unwrap_err().kind,
+            ErrorKind::Limit
+        );
+    }
+    for f in [B::BitAnd, B::BitOr, B::BitXor, B::BitNot] {
+        let mut budget = Budget {
+            integer_bytes_left: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            ..Budget::unlimited()
+        };
+        let n = Value::Int(Integer::from(2).pow(100).unwrap());
+        let args = match f {
+            B::BitNot => vec![n],
+            B::BitAnd => vec![n, Value::Int((-1).into())],
+            _ => vec![n, Value::Int(0.into())],
+        };
+        let err = call_plain(f, &args, &mut budget).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Limit);
+        assert!(err.message.contains("memory allowance"));
+    }
+}
+
+#[test]
 fn radix_literals_are_ordinary_exact_integers() {
     for expression in [
         "0b111 == 7",

@@ -73,6 +73,11 @@ builtins! {
     Acosh = "acosh", 1..=1, Lift, true;
     Atanh = "atanh", 1..=1, Lift, true;
     BitLength = "bit_length", 1..=1, Lift, true;
+    BitAnd = "bit_and", 2..=2, Lift, true;
+    BitOr = "bit_or", 2..=2, Lift, true;
+    BitXor = "bit_xor", 2..=2, Lift, true;
+    BitNot = "bit_not", 1..=1, Lift, true;
+    BitCount = "bit_count", 1..=1, Lift, true;
     ILog2 = "ilog2", 1..=1, Lift, true;
     Choose = "choose", 2..=2, Lift, true;
     Factorial = "factorial", 1..=1, Lift, true;

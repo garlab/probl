@@ -50,6 +50,11 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Acosh
         | B::Atanh
         | B::BitLength
+        | B::BitAnd
+        | B::BitOr
+        | B::BitXor
+        | B::BitNot
+        | B::BitCount
         | B::ILog2
         | B::Choose
         | B::Factorial
@@ -258,6 +263,26 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::BitLength => doc(
             "bit_length(n: int) -> int",
             "The number of binary digits in the magnitude of `n`, ignoring its sign and leading zeros. `bit_length(0)` is 0; `bit_length(-7)` is 3. Exact and constant-time for arbitrary-precision integers.",
+        ),
+        B::BitAnd => doc(
+            "bit_and(a: int, b: int) -> int",
+            "The bitwise AND of two integers, using infinite two's-complement sign extension. For example, bit_and(-1, 0xff) is 255. Integer size and work limits apply.",
+        ),
+        B::BitOr => doc(
+            "bit_or(a: int, b: int) -> int",
+            "The bitwise OR of two integers, using infinite two's-complement sign extension. For example, bit_or(0b1010, 0b0101) is 15. Integer size and work limits apply.",
+        ),
+        B::BitXor => doc(
+            "bit_xor(a: int, b: int) -> int",
+            "The bitwise exclusive OR of two integers, using infinite two's-complement sign extension. For example, bit_xor(0b1010, 0b1100) is 6. Integer size and work limits apply.",
+        ),
+        B::BitNot => doc(
+            "bit_not(n: int) -> int",
+            "The bitwise complement of an integer, equal to -n - 1. There is no implicit word size: bit_not(0) is -1. Use a mask for a fixed-width result, such as bit_and(bit_not(n), 0xff) for eight bits. Integer size and work limits apply.",
+        ),
+        B::BitCount => doc(
+            "bit_count(n: int) -> int",
+            "The number of set bits in an integer's magnitude, ignoring its sign: bit_count(0) is 0 and bit_count(-0b1011) is 3. Works directly on bigints, with work proportional to their bit length.",
         ),
         B::ILog2 => doc(
             "ilog2(n: int) -> int",
