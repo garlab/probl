@@ -1,0 +1,21 @@
+# Calendar behavior must be identical in the native engine and WebAssembly.
+report today
+report today == simulate { let n ~ d6; today + n - n }
+report date(2024, 2, 29) == date("2024-02-29")
+report date("0001-01-01").weekday()
+report date("9999-12-31").end_of_month()
+report date("1969-12-31") + days(1)
+report date("2024-03-01") - date("2024-02-28")
+report date("2024-01-31").add_months(one_of([-1, 1, 2]))
+report date("2024-02-29").add_years(one_of([1, 4]))
+report date(2024, 2, one_of([28, 29]))
+report date("2024-02-29").year()
+report date("2024-02-29").month()
+report date("2024-02-29").day()
+report date("2024-02-29").start_of_month()
+let holidays = [date("2026-10-05"), date("2026-10-02"), date("2026-10-02"), date("2026-10-03")]
+report date("2026-10-01").add_workdays(1, holidays)
+report date("2026-10-06").add_workdays(-1, holidays)
+report date("2026-10-02").is_workday(holidays)
+report date("2026-10-03").add_workdays(0)
+report date("2000-01-03").add_workdays(1_000_000)

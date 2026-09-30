@@ -1,0 +1,27 @@
+# Delivery forecast: will an order arrive before the promised date?
+# `today` is captured once for the whole execution, including every world.
+# Reproduce the output below with: probl run examples/11_delivery_dates.probl --today 2026-09-29
+
+let ordered = today
+# This warehouse has a planned closure; calendars are explicit model inputs.
+let holidays = [date("2026-10-02")]
+let preparation ~ one_of([1: 50%, 2: 30%, 3: 20%])
+let transit ~ one_of([2: 75%, 4: 25%])
+let dispatched = ordered.add_workdays(preparation, holidays)
+let delivered = dispatched.add_workdays(transit, holidays)
+let promised = date("2026-10-07")
+
+report ordered as "forecast date"
+report delivered as "delivery date"
+report delivered <= promised as "on time"
+report delivered - ordered as "calendar days to delivery"
+report delivered.is_workday(holidays) as "arrives on an open day"
+
+# ── Output
+# enumerated
+#
+# forecast date                2026-09-29
+# delivery date                5% 2026-10-05 · median 2026-10-06 · 95% 2026-10-08
+# on time                      87.50%
+# calendar days to delivery    mean 7.20 · sd 1.17 · 5% 6 · median 7 · 95% 9 · 6 █▅▆▂▂ 10
+# arrives on an open day       100.00%

@@ -54,8 +54,12 @@ export async function load(module, { onPrint = () => {}, onProgress = () => {} }
   return {
     /** `{diagnostics: [...]}` for a program's source. */
     check: (source) => JSON.parse(call(exports.probl_check, source)),
-    /** Run `{source, mode?, runs?, seed?, conjugate?, files?}`. */
-    run: (request) => JSON.parse(call(exports.probl_run, JSON.stringify(request))),
+    /** Run `{source, today?, mode?, runs?, seed?, conjugate?, files?}`.
+     * Snapshot the UTC date once, before entering WASM; an explicit date replays a run. */
+    run: (request) => {
+      const today = request.today === undefined ? new Date().toISOString().slice(0, 10) : request.today;
+      return JSON.parse(call(exports.probl_run, JSON.stringify({ ...request, today })));
+    },
     /** `[{name, title, source, files}]` */
     examples: () => JSON.parse(call(exports.probl_examples)),
     /** The reference: `{builtins, constants, keywords, read}`. */

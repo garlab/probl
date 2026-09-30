@@ -1,0 +1,10 @@
+---
+source: crates/probl-syntax/tests/parser.rs
+expression: tree
+---
+(let first_invoice = (call date 2027 1 31))
+(let collection_delay ~ (call one_of [0: 60%, 10: 30%, 35: 10%]))
+(var receipts = [])
+(for offset (..< 0 3) (block (let due = (.add_months first_invoice offset)) (.push receipts (record (amount 1200) (paid (+ due (call days collection_delay)))))))
+(for offset (..< 0 4) (block (let month = (.start_of_month (.add_months first_invoice offset))) (let cutoff = (.end_of_month month)) (var collected = 0) (for receipt receipts (block (if (<= (. receipt paid) cutoff) (block (+= collected (. receipt amount)))))) (report collected by month as "cash collected by month end")))
+(report (.map receipts (-> (r) (.start_of_month (. r paid)))) as "receipt months")

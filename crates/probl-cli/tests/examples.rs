@@ -102,6 +102,7 @@ fn run(file: &SourceFile, path: &Path) -> Run {
     );
     let options = match inputs {
         Ok(inputs) => Options {
+            today: probl_engine::dates::parse("2026-09-29"),
             inputs: Some(Arc::new(inputs)),
             ..Options::default()
         },

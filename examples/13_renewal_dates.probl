@@ -1,0 +1,27 @@
+# Contract renewal: what is the chance of notice reaching us before renewal?
+# A leap-day anniversary clamps to February's last day in a non-leap year.
+
+let signed = date("2024-02-29")
+let renewal = signed.add_years(3)
+let notice_deadline = renewal - days(30)
+let response_delay ~ one_of([20: 50%, 30: 35%, 45: 15%])
+let response = notice_deadline + days(response_delay)
+
+report renewal as "renewal"
+report notice_deadline as "send notice by"
+report response <= renewal as "response before renewal"
+report response.year() as "response year"
+report response.month() as "response month"
+report response.day() as "response day"
+report signed as "original signing date"
+
+# ── Output
+# enumerated
+#
+# renewal                    2027-02-28
+# send notice by             2027-01-29
+# response before renewal    85.00%
+# response year              2,027
+# response month             mean 2.15 · sd 0.36 · 5% 2 · median 2 · 95% 3 · 2 █▂ 3
+# response day               mean 21.05 · sd 5.20 · 5% 15 · median 18 · 95% 28 · 15 ▃  █         ▆ 28
+# original signing date      2024-02-29

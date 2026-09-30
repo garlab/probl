@@ -1,0 +1,16 @@
+---
+source: crates/probl-syntax/tests/parser.rs
+expression: tree
+---
+(let ordered = today)
+(let holidays = [(call date "2026-10-02")])
+(let preparation ~ (call one_of [1: 50%, 2: 30%, 3: 20%]))
+(let transit ~ (call one_of [2: 75%, 4: 25%]))
+(let dispatched = (.add_workdays ordered preparation holidays))
+(let delivered = (.add_workdays dispatched transit holidays))
+(let promised = (call date "2026-10-07"))
+(report ordered as "forecast date")
+(report delivered as "delivery date")
+(report (<= delivered promised) as "on time")
+(report (- delivered ordered) as "calendar days to delivery")
+(report (.is_workday delivered holidays) as "arrives on an open day")

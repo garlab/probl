@@ -2185,7 +2185,10 @@ impl<'a> Lowerer<'a> {
             return lit(variant, span);
         }
         if let Some(c) = Constant::from_name(name).filter(|_| !self.fn_by_name.contains_key(name)) {
-            return lit(Lit::Float(c.value()), span);
+            return match c.value() {
+                Some(value) => lit(Lit::Float(value), span),
+                None => builtin(Builtin::RunDate, vec![], span),
+            };
         }
         if self.fn_by_name.contains_key(name) || Builtin::from_name(name).is_some() {
             self.error(span, format!("the function `{name}` can't be used as a value"))
@@ -2517,8 +2520,10 @@ impl<'a> Lowerer<'a> {
 
     fn check_arity(&mut self, b: Builtin, n: usize, span: Span) {
         let (min, max) = b.arity();
-        if n < min || n > max {
-            let expected = if min == max {
+        if n < min || n > max || (b == Builtin::Date && n == 2) {
+            let expected = if b == Builtin::Date {
+                "one ISO string or three integers (year, month, day)".to_string()
+            } else if min == max {
                 format!("{min} argument{}", plural(min))
             } else if max == usize::MAX {
                 format!("at least {min} argument{}", plural(min))

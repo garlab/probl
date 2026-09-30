@@ -1,0 +1,16 @@
+---
+source: crates/probl-syntax/tests/parser.rs
+expression: tree
+---
+(let signed = (call date "2024-02-29"))
+(let renewal = (.add_years signed 3))
+(let notice_deadline = (- renewal (call days 30)))
+(let response_delay ~ (call one_of [20: 50%, 30: 35%, 45: 15%]))
+(let response = (+ notice_deadline (call days response_delay)))
+(report renewal as "renewal")
+(report notice_deadline as "send notice by")
+(report (<= response renewal) as "response before renewal")
+(report (.year response) as "response year")
+(report (.month response) as "response month")
+(report (.day response) as "response day")
+(report signed as "original signing date")

@@ -322,7 +322,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             number(a(1), "normal_range")?,
         )),
         B::To => continuous(Family::estimate(number(a(0), "to")?, number(a(1), "to")?)),
-        B::Mixture | B::Truncate | B::Bins | B::Today => {
+        B::Mixture | B::Truncate | B::Bins => {
             Err(OpError::unsupported(format!("`{}` isn't implemented yet", b.name())))
         }
         B::Odds => {
@@ -341,10 +341,21 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         }
         B::InvLogit => Ok(Value::Prob(1.0 / (1.0 + crate::math::exp(-number(a(0), "inv_logit")?)))),
         B::Date => {
-            let s = text(a(0), "date")?;
-            dates::parse(&s)
-                .map(Value::Date)
-                .ok_or_else(|| OpError::new(format!("`{s}` isn't a valid date")).help("write dates as \"YYYY-MM-DD\""))
+            let date = match args.len() {
+                1 => dates::parse(&text(a(0), "date")?),
+                3 => dates::from_parts(
+                    date_count(a(0), "date")?,
+                    date_count(a(1), "date")?,
+                    date_count(a(2), "date")?,
+                ),
+                _ => {
+                    return Err(OpError::new(
+                        "`date` takes one ISO string or three integers (year, month, day)",
+                    ));
+                }
+            };
+            date.map(Value::Date)
+                .ok_or_else(|| OpError::new("invalid date; use YYYY-MM-DD within 0001-01-01..9999-12-31"))
         }
         B::Days => to_int(a(0), f64::round),
         B::Weeks if matches!(a(0), Value::Int(_)) => {
@@ -354,24 +365,54 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             let n = number(a(0), "weeks")?;
             to_int(&Value::Float(n * 7.0), f64::round)
         }
-        B::AddWorkdays => match a(0) {
-            Value::Date(d) => {
-                let n = whole(a(1), "add_workdays")?;
-                budget.work(n.unsigned_abs())?;
-                Ok(Value::Date(dates::add_workdays(*d, n)))
-            }
-            v => Err(expected("a date", v, "add_workdays")),
-        },
-        B::Weekday => match a(0) {
-            Value::Date(d) => Ok(Value::str(dates::WEEKDAYS[dates::weekday(*d) as usize])),
-            v => Err(expected("a date", v, "weekday")),
-        },
+        B::AddWorkdays => {
+            let d = date_value(a(0), b.name())?;
+            let n = date_count(a(1), b.name())?;
+            let holidays = holiday_calendar(args.get(2), b.name(), budget)?;
+            date_result(dates::add_workdays_with_holidays(d, n, &holidays))
+        }
+        B::IsWorkday => {
+            let d = date_value(a(0), b.name())?;
+            let holidays = holiday_calendar(args.get(1), b.name(), budget)?;
+            Ok(Value::Bool(
+                dates::weekday(d) < 5 && holidays.binary_search(&d).is_err(),
+            ))
+        }
+        B::AddMonths | B::AddYears => {
+            let d = date_value(a(0), b.name())?;
+            let n = date_count(a(1), b.name())?;
+            date_result(if b == B::AddMonths {
+                dates::add_months(d, n)
+            } else {
+                dates::add_years(d, n)
+            })
+        }
+        B::StartOfMonth | B::EndOfMonth => {
+            let d = date_value(a(0), b.name())?;
+            date_result(if b == B::StartOfMonth {
+                dates::start_of_month(d)
+            } else {
+                dates::end_of_month(d)
+            })
+        }
+        B::Year | B::Month | B::Day => {
+            let (y, m, d) = dates::to_civil(date_value(a(0), b.name())? as i64);
+            Ok(Value::Int(match b {
+                B::Year => y.into(),
+                B::Month => m.into(),
+                _ => d.into(),
+            }))
+        }
+        B::Weekday => crate::text::value(
+            dates::WEEKDAYS[dates::weekday(date_value(a(0), b.name())?) as usize],
+            budget,
+        ),
         B::IsFalse => Ok(Value::Bool(ops::is_certain(a(0), false))),
         B::IsTrue => Ok(Value::Bool(ops::is_certain(a(0), true))),
         B::IsListOfLen => Ok(Value::Bool(
             matches!((a(0), a(1)), (Value::List(items), Value::Int(n)) if *n == items.len() as i64),
         )),
-        B::Count | B::Map | B::Filter | B::Reduce | B::Print | B::Roll | B::Take => {
+        B::RunDate | B::Count | B::Map | B::Filter | B::Reduce | B::Print | B::Roll | B::Take => {
             unreachable!("`{}` is handled by the interpreter", b.name())
         }
         B::P
@@ -694,6 +735,45 @@ fn iter_items(v: &Value, budget: &mut Budget) -> OpResult<Value> {
             .help("draw a value first with `~`, or loop over `support(…)`")),
         other => Err(OpError::new(format!("can't loop over {}", article(&other.kind())))),
     }
+}
+
+fn date_count(v: &Value, func: &str) -> OpResult<i64> {
+    integer(v, func)?
+        .to_i64()
+        .ok_or_else(|| OpError::new("date out of range"))
+}
+
+fn date_value(v: &Value, func: &str) -> OpResult<i32> {
+    match v {
+        Value::Date(d) if dates::valid(*d) => Ok(*d),
+        Value::Date(_) => Err(OpError::new("date out of range")),
+        _ => Err(expected("a date", v, func)),
+    }
+}
+
+fn date_result(date: Option<i32>) -> OpResult<Value> {
+    date.map(Value::Date)
+        .ok_or_else(|| OpError::new("date out of range (0001-01-01..9999-12-31)"))
+}
+
+fn holiday_calendar(v: Option<&Value>, func: &str, budget: &mut Budget) -> OpResult<Vec<i32>> {
+    let Some(v) = v else {
+        return Ok(Vec::new());
+    };
+    let values = list(v, func)?;
+    budget.collection(values.len() as u128)?;
+    let log = (values.len() as u64).checked_ilog2().unwrap_or(0) as u64 + 1;
+    budget.work((values.len() as u64).saturating_mul(log))?;
+    let mut holidays = Vec::new();
+    for value in values.iter() {
+        let d = date_value(value, func)?;
+        if dates::weekday(d) < 5 {
+            holidays.push(d);
+        }
+    }
+    holidays.sort_unstable();
+    holidays.dedup();
+    Ok(holidays)
 }
 
 fn expected(what: &str, v: &Value, func: &str) -> OpError {

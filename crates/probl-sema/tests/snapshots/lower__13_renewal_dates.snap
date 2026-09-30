@@ -1,0 +1,17 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: ir(&src)
+---
+fn#0 the top level ()
+  signed_0 = date("2024-02-29")    [live: signed_0]
+  renewal_1 = add_years(signed_0, 3)    [live: signed_0 renewal_1]
+  notice_deadline_2 = (- renewal_1 days(30))    [live: signed_0 renewal_1 notice_deadline_2]
+  response_delay_3 ~ one_of([20: 50%, 30: 35%, 45: 15%])    [live: signed_0 renewal_1 notice_deadline_2 response_delay_3]
+  response_4 = (+ notice_deadline_2 days(response_delay_3))    [live: signed_0 renewal_1 notice_deadline_2 response_4]
+  report renewal_1 as "renewal"    [live: signed_0 renewal_1 notice_deadline_2 response_4]
+  report notice_deadline_2 as "send notice by"    [live: signed_0 renewal_1 response_4]
+  report (<= response_4 renewal_1) as "response before renewal"    [live: signed_0 response_4]
+  report year(response_4) as "response year"    [live: signed_0 response_4]
+  report month(response_4) as "response month"    [live: signed_0 response_4]
+  report day(response_4) as "response day"    [live: signed_0]
+  report signed_0 as "original signing date"    [live: ]

@@ -99,9 +99,14 @@ impl Default for Limits {
     }
 }
 
-/// How the engine runs. The defaults are what `probl run` uses.
+/// How the engine runs. The defaults are what `probl run` uses, except that
+/// the CLI also supplies an execution-date snapshot.
 #[derive(Clone, Debug)]
 pub struct Options {
+    /// Execution-date snapshot, as days since 1970-01-01. The host captures
+    /// it once or supplies a replay date. The engine never reads a clock.
+    /// Required only when the program evaluates the `today` constant.
+    pub today: Option<i32>,
     /// Merge worlds that reach the same state (turning it off is only useful
     /// for testing that merging doesn't change results).
     pub merge: bool,
@@ -145,6 +150,7 @@ impl std::fmt::Debug for Progress {
 impl Default for Options {
     fn default() -> Options {
         Options {
+            today: None,
             merge: true,
             memoize: true,
             epsilon: None,
@@ -162,6 +168,8 @@ impl Default for Options {
 
 #[derive(Clone, Debug)]
 pub struct Outcome {
+    /// The execution-date snapshot supplied by the host, for reproducibility.
+    pub today: Option<i32>,
     /// The summary line and the reports, as printed by `probl run`.
     pub output: String,
     pub stats: Stats,
@@ -262,6 +270,12 @@ fn run_here(
     options: &Options,
     print: &mut (dyn FnMut(&str) + Send),
 ) -> Result<Outcome, RuntimeError> {
+    if options.today.is_some_and(|d| !dates::valid(d)) {
+        return Err(RuntimeError::new(
+            Default::default(),
+            "execution date must be within 0001-01-01..9999-12-31",
+        ));
+    }
     let settings = &program.settings;
     let mode = options.mode.clone().unwrap_or_else(|| settings.mode.clone());
     let sample = match mode {
@@ -286,6 +300,7 @@ fn run_here(
     }
     let limits = &options.limits;
     let config = interp::Config {
+        today: options.today,
         epsilon: options.epsilon.unwrap_or(settings.epsilon),
         merging: options.merge,
         memoizing: options.memoize,
@@ -377,6 +392,7 @@ fn run_here(
         format!("{header}\n\n{body}")
     };
     Ok(Outcome {
+        today: options.today,
         output,
         stats: engine.stats.clone(),
         unresolved,
@@ -757,6 +773,7 @@ fn sampled(
         format!("{header}\n\n{body}")
     };
     Ok(Outcome {
+        today: options.today,
         output,
         stats: engine.stats.clone(),
         unresolved,

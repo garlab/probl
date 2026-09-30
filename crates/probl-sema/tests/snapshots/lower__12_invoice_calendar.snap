@@ -1,0 +1,47 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: ir(&src)
+---
+fn#0 the top level ()
+  first_invoice_0 = date(2027, 1, 31)    [live: first_invoice_0]
+  collection_delay_1 ~ one_of([0: 60%, 10: 30%, 35: 10%])    [live: first_invoice_0 collection_delay_1]
+  receipts_2 = []    [live: first_invoice_0 collection_delay_1 receipts_2]
+  $3 = $iter_items((..< 0 3))    [live: first_invoice_0 collection_delay_1 receipts_2 $3]
+  $4 = 0    [live: first_invoice_0 collection_delay_1 receipts_2 $3 $4]
+  loop (bounded) {    [live at head: first_invoice_0 collection_delay_1 receipts_2 $3 $4]
+    if (>= $4 len($3)) {
+      break    [live: first_invoice_0 collection_delay_1 receipts_2 $3 $4]
+    }
+    offset_5 = $3[$4]    [live: first_invoice_0 collection_delay_1 receipts_2 $3 $4 offset_5]
+    $4 = (+ $4 1)    [live: first_invoice_0 collection_delay_1 receipts_2 $3 $4 offset_5]
+    due_6 = add_months(first_invoice_0, offset_5)    [live: first_invoice_0 collection_delay_1 receipts_2 $3 $4 due_6]
+    receipts_2 = push(receipts_2, { amount: 1200, paid: (+ due_6 days(collection_delay_1)) })    [live: first_invoice_0 collection_delay_1 receipts_2 $3 $4]
+  }
+  $7 = $iter_items((..< 0 4))    [live: first_invoice_0 receipts_2 $7]
+  $8 = 0    [live: first_invoice_0 receipts_2 $7 $8]
+  loop (bounded) {    [live at head: first_invoice_0 receipts_2 $7 $8]
+    if (>= $8 len($7)) {
+      break    [live: first_invoice_0 receipts_2 $7 $8]
+    }
+    offset_9 = $7[$8]    [live: first_invoice_0 receipts_2 $7 $8 offset_9]
+    $8 = (+ $8 1)    [live: first_invoice_0 receipts_2 $7 $8 offset_9]
+    month_10 = start_of_month(add_months(first_invoice_0, offset_9))    [live: first_invoice_0 receipts_2 $7 $8 month_10]
+    cutoff_11 = end_of_month(month_10)    [live: first_invoice_0 receipts_2 $7 $8 month_10 cutoff_11]
+    collected_12 = 0    [live: first_invoice_0 receipts_2 $7 $8 month_10 cutoff_11 collected_12]
+    $13 = $iter_items(receipts_2)    [live: first_invoice_0 receipts_2 $7 $8 month_10 cutoff_11 collected_12 $13]
+    $14 = 0    [live: first_invoice_0 receipts_2 $7 $8 month_10 cutoff_11 collected_12 $13 $14]
+    loop (bounded) {    [live at head: first_invoice_0 receipts_2 $7 $8 month_10 cutoff_11 collected_12 $13 $14]
+      if (>= $14 len($13)) {
+        break    [live: first_invoice_0 receipts_2 $7 $8 month_10 cutoff_11 collected_12 $13 $14]
+      }
+      receipt_15 = $13[$14]    [live: first_invoice_0 receipts_2 $7 $8 month_10 cutoff_11 collected_12 $13 $14 receipt_15]
+      $14 = (+ $14 1)    [live: first_invoice_0 receipts_2 $7 $8 month_10 cutoff_11 collected_12 $13 $14 receipt_15]
+      if (<= receipt_15.paid cutoff_11) {
+        collected_12 = (+ collected_12 receipt_15.amount)    [live: first_invoice_0 receipts_2 $7 $8 month_10 cutoff_11 collected_12 $13 $14]
+      }
+    }
+    report collected_12 by month_10 as "cash collected by month end"    [live: first_invoice_0 receipts_2 $7 $8]
+  }
+  report map(receipts_2, closure fn#1 []) as "receipt months"    [live: ]
+fn#1 a lambda (r_0)
+  return start_of_month(r_0.paid)    [live: ]

@@ -113,6 +113,7 @@ The same rules apply to a CSV cell, a line, and a JSON string read as a date, an
 - **Text is kept exactly as written**, whether a CSV cell is quoted or not: ` ACME ` and `" ACME "` are the same string. Other types allow spaces around the value.
 - **Integers are read as integers,** never through a float, so `9007199254740993` stays exact. Integers beyond ±2⁶³ remain exact, up to the host's integer size and memory limits (65,536 magnitude bits by default). JSON integers are parsed from their original decimal tokens; the playground passes data files as text, never through JavaScript `Number`. Decimal points and exponent notation still require a `float` field.
 - **Floats are finite.** JSON floats are parsed with correct rounding, so any float written by a correct writer reads back as the same number.
+- **Dates are Gregorian calendar days**, written exactly `YYYY-MM-DD`, within `0001-01-01` through `9999-12-31`. Invalid dates, times and timezone suffixes are errors. This is the same validation as the `date` constructor.
 - **An empty value is an error**, except in a `str` field, where it's `""`. The language has no missing values yet.
 - **Errors suggest the fix,** such as "`30` isn't between 0 and 1: did you mean `30%`?".
 

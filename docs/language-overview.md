@@ -108,6 +108,35 @@ report split("é", "")                 # ["e", "́"], like chars("é")
 
 Separators, prefixes and suffixes are literal text; there are no regular expressions. Splitting on a nonempty separator preserves empty fields. Splitting on `""` gives scalar elements, and returns `[]` for empty text. Text operations respect string byte, collection size and work limits; see [text semantics and limits](semantics.md).
 
+### Dates
+
+Dates are immutable Gregorian calendar dates, without a time of day or timezone. Construct one with `date("2027-01-31")` or `date(2027, 1, 31)`. Years run from 1 through 9999; strings require exactly `YYYY-MM-DD`. Invalid dates are errors.
+
+`today` is a value captured once at the start of execution, shared by every world, function and nested `simulate`. It never advances while a model runs. The command line and playground use the UTC date by default. Pin it with `probl run model.probl --today 2026-09-29` to reproduce a forecast; `--stats` records the date used. A REPL session keeps its initial date throughout the session. Like the math constants, `today` can be hidden by a program's own name.
+
+```probl
+let holidays = [date("2026-10-02")]
+let delivery = today.add_workdays(3, holidays)
+report delivery
+report delivery <= today + weeks(1)
+report delivery.is_workday(holidays)
+```
+
+Adding or subtracting an integer shifts by calendar days; subtracting two dates gives an integer day count. `days(n)` rounds to a whole day and `weeks(n)` rounds `7*n`. `add_workdays(d, n, holidays?)` counts Monday–Friday, excluding any dates in the optional holiday list. It does not count the starting date; a negative count goes backwards and zero leaves the date unchanged. No national holidays are assumed. `weekday(d)` returns an English name such as `"Monday"`.
+
+```probl
+let anchor = date(2027, 1, 31)
+report anchor.add_months(1)      # 2027-02-28
+report anchor.add_months(2)      # 2027-03-31
+report anchor.start_of_month()  # 2027-01-01
+report anchor.end_of_month()    # 2027-01-31
+report date(2024, 2, 29).add_years(1)  # 2025-02-28
+report anchor.year()           # 2027; also month() and day()
+report anchor                  # still 2027-01-31
+```
+
+`add_months` and `add_years` clamp to the last valid day of the target month. Consequently, adding one month twice may differ from adding two months once. For recurring schedules, compute each date from the original anchor, as in the [invoice example](../examples/12_invoice_calendar.probl). These functions, component extraction and workday helpers also lift over finite distributions. Month/year/workday counts and constructor components must be ints. All transformations return new dates and reject results outside the supported range.
+
 ### Math
 
 Integers grow automatically: `factorial(30)` and `choose(100, 50)` return exact integers, and `10^100 + 1 - 10^100` is 1. There is no separate bigint syntax or type. Integer arithmetic and comparisons preserve all digits, including when comparing an integer with a float. `/`, negative powers, real math functions and mixed float/complex arithmetic produce approximations. `(10^400) / (10^400)` is 1.0, but passing `10^400` directly to `sin` is an error because it cannot be converted to a finite float. Resource limits bound integer size and computation; see [integer semantics](semantics.md#1-values-and-types).
@@ -572,8 +601,11 @@ Probl borrows `a to b` estimates from Squiggle, dice notation from AnyDice and t
 | [`08_signup_forecast.probl`](../examples/08_signup_forecast.probl) | forecasting | `observe … from`, learning a rate, then forecasting with it |
 | [`09_roadmap.probl`](../examples/09_roadmap.probl) | forecasting | risks and dates: a forecast of this project's own plan |
 | [`10_quantum_key.probl`](../examples/10_quantum_key.probl) | physics | quantum key distribution: a measurement as branching worlds, `observe` inside `simulate`, Bayes' rule for an eavesdropper |
+| [`11_delivery_dates.probl`](../examples/11_delivery_dates.probl) | forecasting | delivery uncertainty from `today`, weekends, explicit holidays and deadline probability |
+| [`12_invoice_calendar.probl`](../examples/12_invoice_calendar.probl) | forecasting | recurring invoices anchored to a calendar day, payment delays and monthly cash-flow buckets |
+| [`13_renewal_dates.probl`](../examples/13_renewal_dates.probl) | forecasting | leap-day renewals, notice periods and uncertain response dates |
 
-Every example ends with the output it should produce, and those outputs are golden tests. The enumerated ones were checked against independent reference calculations, and must be printed exactly. The sampled ones come from an independent reference simulation, so the engine's numbers must agree with them within their sampling error: estimates within five standard errors, other numbers within 4%.
+Every example ends with the output it should produce, and those outputs are golden tests. The enumerated ones were checked against independent reference calculations, and must be printed exactly. Tests pin `today` to `2026-09-29`; use `--today 2026-09-29` to reproduce date-dependent output. The sampled ones come from an independent reference simulation, so the engine's numbers must agree with them within their sampling error: estimates within five standard errors, other numbers within 4%.
 
 ---
 
@@ -685,10 +717,10 @@ From loosest to tightest binding:
 | Math | `abs` `min` `max` `clamp` `floor` `ceil` `trunc` `round(x, digits?)` `sqrt` `cbrt` `hypot(x, y)` `exp` `exp2` `expm1` `ln` `log1p` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `sinh` `cosh` `tanh` `asinh` `acosh` `atanh` |
 | Integer and special functions | `choose(n, k)` `factorial(n)` `gcd(a, b)` `lcm(a, b)` `euler_phi(n)` `ln_gamma(x)` `erf(x)` `erfc(x)` |
 | Complex numbers | `complex(re, im?)` `real(z)` `imag(z)` `conj(z)` `abs(z)` `abs2(z)` `arg(z)` `cis(theta)` |
-| Constants | `pi` `e` `euler_gamma`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
+| Constants | `pi` `e` `euler_gamma` `today`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
 | Collections | `len` `slice(xs, start, end?)` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `highest(n)` `lowest(n)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
 | Text | `str` `upper` `lower` `trim(s, chars?)` `trim_start(s, chars?)` `trim_end(s, chars?)` `starts_with` `ends_with` `chars` `split` `join` |
-| Dates | `date("2027-01-31")` `today()`\* `days(n)` `weeks(n)` `add_workdays(d, n)` `weekday(d)`; dates can be compared, and adding or subtracting them works in days |
+| Dates | `date("2027-01-31")` or `date(year, month, day)`; `days(n)` `weeks(n)` `add_workdays(d, n, holidays?)` `is_workday(d, holidays?)` `weekday(d)` `add_months(d, n)` `add_years(d, n)` `start_of_month(d)` `end_of_month(d)` `year(d)` `month(d)` `day(d)` |
 | Debugging | `print` |
 
 \* Planned, not built yet.

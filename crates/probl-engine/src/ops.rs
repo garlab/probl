@@ -377,9 +377,7 @@ fn sub(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
 }
 
 fn date_plus(d: i32, n: i64) -> OpResult<Value> {
-    (d as i64)
-        .checked_add(n)
-        .and_then(|x| i32::try_from(x).ok())
+    crate::dates::add_days(d, n)
         .map(Value::Date)
         .ok_or_else(|| OpError::new("date out of range"))
 }

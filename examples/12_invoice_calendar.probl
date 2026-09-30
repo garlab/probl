@@ -1,0 +1,35 @@
+# Invoice cash flow: how much is collected by the end of each month?
+# Calendar months are not fixed day counts. Derive recurring dates from the
+# original anchor, so February's shorter month doesn't change March's due date.
+
+let first_invoice = date(2027, 1, 31)
+# One payer's behavior is shared across invoices: their delays are correlated.
+let collection_delay ~ one_of([0: 60%, 10: 30%, 35: 10%])
+var receipts = []
+for offset in 0..<3 {
+  let due = first_invoice.add_months(offset)
+  receipts.push({ amount: 1200, paid: due + days(collection_delay) })
+}
+
+for offset in 0..<4 {
+  let month = first_invoice.add_months(offset).start_of_month()
+  let cutoff = month.end_of_month()
+  var collected = 0
+  for receipt in receipts {
+    if (receipt.paid <= cutoff) { collected += receipt.amount }
+  }
+  report collected by month as "cash collected by month end"
+}
+report receipts.map(r -> r.paid.start_of_month()) as "receipt months"
+
+# ── Output
+# enumerated
+#
+# cash collected by month end (per visit)
+#        month      5%     25%   median     75%     95%
+#   2027-01-01       0       0    1,200   1,200   1,200
+#   2027-02-01       0   1,200    2,400   2,400   2,400
+#   2027-03-01   1,200   2,400    3,600   3,600   3,600
+#   2027-04-01   2,400   3,600    3,600   3,600   3,600
+#
+# receipt months    [2027-01-01, 2027-02-01, 2027-03-01] 60.00% · [2027-02-01, 2027-03-01, 2027-04-01] 30.00% · [2027-03-01, 2027-04-01, 2027-05-01] 10.00%

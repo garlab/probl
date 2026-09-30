@@ -238,6 +238,8 @@ pub fn docs() -> String {
 ///   which override the program's `@mode` as on the command line;
 /// - `"conjugate"`: `false` to sample without exact updates;
 /// - `"files"`: `{path: text}`, the files `read` may read.
+/// - `"today"`: `"YYYY-MM-DD"`, the date captured by the host for this execution.
+///   Required when a program uses `today`; the JavaScript wrapper supplies UTC.
 ///
 /// `print` receives what the program prints, as it prints it, and
 /// `progress`, when sampling, how many runs are done after each batch, and
@@ -269,6 +271,17 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
         progress,
         ..Options::default()
     };
+    if let Some(today) = request.get("today") {
+        options.today = match today.as_str().and_then(probl_engine::dates::parse) {
+            Some(d) => Some(d),
+            None => {
+                return failed(RuntimeError::new(
+                    Default::default(),
+                    "today must be YYYY-MM-DD within 0001-01-01..9999-12-31",
+                ));
+            }
+        };
+    }
     if !program.inputs.is_empty() {
         let mut files = Files(request["files"].as_object().cloned().unwrap_or_default());
         match data::load(&program, &mut files, &mut Snapshots::default(), &input_limits(), None) {
@@ -293,7 +306,7 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
                 stats["runs"] = json!(sampled.runs);
                 stats["effective_runs"] = json!(sampled.effective);
             }
-            json!({ "output": outcome.output, "stats": stats, "diagnostics": diagnostics }).to_string()
+            json!({ "output": outcome.output, "today": outcome.today.map(probl_engine::dates::format), "stats": stats, "diagnostics": diagnostics }).to_string()
         }
         Err(e) => failed(e),
     }
@@ -406,6 +419,9 @@ pub fn examples() -> String {
         example!("08_signup_forecast"),
         example!("09_roadmap"),
         example!("10_quantum_key"),
+        example!("11_delivery_dates"),
+        example!("12_invoice_calendar"),
+        example!("13_renewal_dates"),
     ];
     let data = json!({ "data/pilot.csv": include_str!("../../../examples/data/pilot.csv") });
     let list: Vec<Json> = all

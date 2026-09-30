@@ -85,6 +85,7 @@ impl Stats {
 /// How the engine runs, with the host's limits already applied.
 #[derive(Clone, Debug)]
 pub struct Config {
+    pub today: Option<i32>,
     pub epsilon: f64,
     pub merging: bool,
     pub memoizing: bool,
@@ -1895,6 +1896,10 @@ impl<'p> Engine<'p> {
         }
         let at = |err: OpError| err.at(span);
         match b {
+            Builtin::RunDate => self.config.today.map(Value::Date).ok_or_else(|| {
+                RuntimeError::new(span, "the host did not supply an execution date for `today`")
+                    .with_help("set Options.today, or supply today in the WASM request")
+            }),
             Builtin::Print => {
                 let mut text = String::new();
                 for (i, value) in values.iter().enumerate() {

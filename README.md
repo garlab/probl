@@ -35,10 +35,13 @@ cargo run --release -p probl-cli -- run examples/02_craps.probl --fractions   # 
 cargo run --release -p probl-cli -- run examples/07_launch_forecast.probl      # sampled
 cargo run --release -p probl-cli -- run examples/02_craps.probl --runs 100000  # sampled too
 cargo run --release -p probl-cli -- run examples/08_signup_forecast.probl      # reads examples/data/pilot.csv
+cargo run --release -p probl-cli -- run examples/11_delivery_dates.probl --today 2026-09-29  # replay a dated forecast
 cargo run --release -p probl-cli -- schema examples/data/pilot.csv            # a type to read it with
 cargo run --release -p probl-cli -- repl
 cargo test --all
 ```
+
+Calendar models can use immutable dates and `today`, captured once in UTC at execution start. Pin it with `--today YYYY-MM-DD` for reproducible runs; `--stats` records the date used. The [delivery](examples/11_delivery_dates.probl), [invoice](examples/12_invoice_calendar.probl) and [renewal](examples/13_renewal_dates.probl) examples cover working days, holidays, month-end cash flow and leap-year arithmetic.
 
 The playground runs the same engine in the browser, compiled to WebAssembly. Beside the editor are the language guide, with programs to run, and a reference. The editor completes names, describes them on hover, and goes to their definitions with Cmd-click or Ctrl-click. It needs Node, and Rust's WebAssembly target:
 

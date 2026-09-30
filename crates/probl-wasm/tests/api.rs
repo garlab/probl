@@ -22,6 +22,21 @@ fn examples() -> Vec<Value> {
         .clone()
 }
 
+#[test]
+fn execution_date_is_supplied_by_the_host_and_returned_for_replay() {
+    for stamp in ["2024-02-29", "2026-09-29"] {
+        let (out, _) = run(json!({ "source": "report today", "today": stamp }));
+        assert_eq!(out["today"], stamp);
+        assert!(out["output"].as_str().unwrap().contains(stamp));
+    }
+    let (missing, _) = run(json!({ "source": "report today" }));
+    assert_eq!(missing["error"]["kind"], "language");
+    for bad in [json!("2026-02-29"), json!(123), json!(null)] {
+        let (out, _) = run(json!({ "source": "report today", "today": bad }));
+        assert_eq!(out["error"]["kind"], "language");
+    }
+}
+
 /// The files of an example, for the engine's own loader.
 struct Given(serde_json::Map<String, Value>);
 
@@ -39,16 +54,19 @@ impl Resolver for Given {
 #[test]
 fn the_examples_print_what_the_command_line_prints() {
     let all = examples();
-    assert_eq!(all.len(), 10);
+    assert_eq!(all.len(), 13);
     for example in all {
         let source = example["source"].as_str().unwrap();
-        let (answer, _) = run(json!({ "source": source, "files": example["files"] }));
+        let (answer, _) = run(json!({ "source": source, "today": "2026-09-29", "files": example["files"] }));
         let output = answer["output"]
             .as_str()
             .unwrap_or_else(|| panic!("{}: {answer}", example["name"]));
         // The engine as `probl run` calls it, on every thread.
         let program = probl_sema::compile(source).0.unwrap();
-        let mut options = Options::default();
+        let mut options = Options {
+            today: probl_engine::dates::parse("2026-09-29"),
+            ..Options::default()
+        };
         if !program.inputs.is_empty() {
             let mut files = Given(example["files"].as_object().unwrap().clone());
             let inputs = data::load(

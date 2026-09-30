@@ -140,8 +140,21 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Odds
         | B::Logit
         | B::InvLogit => "Questions about distributions",
-        B::Date | B::Today | B::Days | B::Weeks | B::AddWorkdays | B::Weekday => "Dates",
-        B::IterItems
+        B::Date
+        | B::Days
+        | B::Weeks
+        | B::AddWorkdays
+        | B::IsWorkday
+        | B::AddMonths
+        | B::AddYears
+        | B::StartOfMonth
+        | B::EndOfMonth
+        | B::Year
+        | B::Month
+        | B::Day
+        | B::Weekday => "Dates",
+        B::RunDate
+        | B::IterItems
         | B::RepeatCount
         | B::IsFalse
         | B::IsTrue
@@ -591,24 +604,50 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         // Dates
         B::Date => doc(
-            "date(s: str) -> date",
-            "A date from its ISO form: `date(\"2027-01-31\")`.",
+            "date(s: str) -> date or date(year: int, month: int, day: int) -> date",
+            "An immutable Gregorian calendar date. Parse exactly YYYY-MM-DD or supply three integer components. Years are 1 through 9999; impossible dates are errors. Dates have no time of day or time zone.",
         ),
-        B::Today => doc("today() -> date", "Not implemented yet."),
         B::Days => doc(
             "days(n) -> int",
             "`n` days, rounded to a whole number, to add to or subtract from a date: `start + days(3)`.",
         ),
         B::Weeks => doc("weeks(n) -> int", "`n` weeks, as a whole number of days."),
         B::AddWorkdays => doc(
-            "add_workdays(d: date, n: int) -> date",
-            "The date `n` working days, Monday to Friday, after `d` (before it for a negative `n`).",
+            "add_workdays(d: date, n: int, holidays: list[date]?) -> date",
+            "Move by n Monday–Friday days, excluding any listed holidays. The starting date isn't counted; zero leaves it unchanged even on a closed day. Negative n goes back. Holiday order and duplicates do not matter; no regional holidays are assumed.",
         ),
+        B::IsWorkday => doc(
+            "is_workday(d: date, holidays: list[date]?) -> bool",
+            "Whether d is Monday–Friday and absent from the optional holiday list. Calendars are explicit data; no regional holidays are assumed.",
+        ),
+        B::AddMonths => doc(
+            "add_months(d: date, n: int) -> date",
+            "Move by n calendar months, clamping the day to the last valid day of the target month. January 31 plus one month is February 28 or 29. Derive recurring dates from the original anchor to avoid drift after clamping.",
+        ),
+        B::AddYears => doc(
+            "add_years(d: date, n: int) -> date",
+            "Move by n calendar years, clamping February 29 to February 28 in a non-leap year. Negative n goes back. The original date is unchanged.",
+        ),
+        B::StartOfMonth => doc(
+            "start_of_month(d: date) -> date",
+            "The first day of d's month, as a new date.",
+        ),
+        B::EndOfMonth => doc(
+            "end_of_month(d: date) -> date",
+            "The last day of d's month, including leap-year February.",
+        ),
+        B::Year => doc("year(d: date) -> int", "The Gregorian year, from 1 to 9999."),
+        B::Month => doc(
+            "month(d: date) -> int",
+            "The month number, January = 1 through December = 12.",
+        ),
+        B::Day => doc("day(d: date) -> int", "The day of the month, from 1 to 31."),
         B::Weekday => doc(
             "weekday(d: date) -> str",
             "The day of the week: `\"Monday\"` to `\"Sunday\"`.",
         ),
-        B::IterItems
+        B::RunDate
+        | B::IterItems
         | B::RepeatCount
         | B::IsFalse
         | B::IsTrue
@@ -619,7 +658,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
     }
 }
 
-/// The documentation of a named number.
+/// The documentation of a named value.
 pub fn constant(c: Constant) -> Doc {
     let (signature, summary) = match c {
         Constant::Pi => (
@@ -630,6 +669,10 @@ pub fn constant(c: Constant) -> Doc {
         Constant::EulerGamma => (
             "euler_gamma = 0.5772156649015329",
             "The Euler–Mascheroni constant γ: how far `1 + 1/2 + … + 1/n` ends up above `ln(n)`.",
+        ),
+        Constant::Today => (
+            "today = execution date (date)",
+            "The immutable date captured once by the host for this execution, shared by every world, sample, function and simulate block. The CLI and playground use UTC by default; --today YYYY-MM-DD or a host-supplied date makes reruns reproducible. This is a value, not a function. A program's own bindings may hide it.",
         ),
     };
     Doc { signature, summary }

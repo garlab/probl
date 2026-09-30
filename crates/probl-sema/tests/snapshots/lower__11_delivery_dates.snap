@@ -1,0 +1,17 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: ir(&src)
+---
+fn#0 the top level ()
+  ordered_0 = $run_date()    [live: ordered_0]
+  holidays_1 = [date("2026-10-02")]    [live: ordered_0 holidays_1]
+  preparation_2 ~ one_of([1: 50%, 2: 30%, 3: 20%])    [live: ordered_0 holidays_1 preparation_2]
+  transit_3 ~ one_of([2: 75%, 4: 25%])    [live: ordered_0 holidays_1 preparation_2 transit_3]
+  dispatched_4 = add_workdays(ordered_0, preparation_2, holidays_1)    [live: ordered_0 holidays_1 transit_3 dispatched_4]
+  delivered_5 = add_workdays(dispatched_4, transit_3, holidays_1)    [live: ordered_0 holidays_1 delivered_5]
+  promised_6 = date("2026-10-07")    [live: ordered_0 holidays_1 delivered_5 promised_6]
+  report ordered_0 as "forecast date"    [live: ordered_0 holidays_1 delivered_5 promised_6]
+  report delivered_5 as "delivery date"    [live: ordered_0 holidays_1 delivered_5 promised_6]
+  report (<= delivered_5 promised_6) as "on time"    [live: ordered_0 holidays_1 delivered_5]
+  report (- delivered_5 ordered_0) as "calendar days to delivery"    [live: holidays_1 delivered_5]
+  report is_workday(delivered_5, holidays_1) as "arrives on an open day"    [live: ]

@@ -18,6 +18,28 @@ All values are immutable: assigning or passing a collection gives an independent
 
 Wherever a probability is expected, a `float` from 0 to 1 is accepted too. Nothing else converts implicitly: in particular, a `prob` never turns into an event, and an `int` is never a condition.
 
+**Dates and the execution snapshot.** A `date` is an immutable day in the proleptic Gregorian calendar, from **0001-01-01 through 9999-12-31**, stored as an integer day offset from 1970-01-01. It contains no time, timezone or locale. `date(s)` requires exactly ten ASCII characters in `YYYY-MM-DD` form; `date(year, month, day)` requires three ints. Both reject invalid dates instead of normalizing them. File readers use the same date validation, after their usual trimming of non-string fields. Dates compare chronologically and have exact identity as map keys and distribution outcomes.
+
+`today` is a shadowable constant of type `date`, supplied by the host once per execution. All worlds, sampling batches, threads, function calls and nested `simulate` evaluations see that same value. The engine and compiler never read the clock. The CLI and JavaScript host capture the UTC date before execution; `probl run --today YYYY-MM-DD` or the JavaScript request's `today` field replaces that snapshot for replay or a scenario. The REPL retains one snapshot for its entire session, including input reloads. `Options.today` supplies the engine's integer day offset; a host that omits it gets a language error if the program evaluates `today`. The returned `Outcome.today` and WASM response's ISO `today` field record the snapshot, and CLI `--stats` prints it. Reproducibility includes this input as well as source, data, seed and engine version. `today()` and assignment to an unshadowed `today` are compile errors.
+
+Date transformations return values without changing their arguments and lift over finite distributions. Results outside the supported date range are errors.
+
+| Operation | Contract |
+|---|---|
+| `d + n`, `d - n` | Shift by `n` calendar days, where `n` is an int. `n + d` also works. |
+| `a - b` for two dates | An exact signed integer day count. |
+| `days(n)`, `weeks(n)` | Round `n` or `7*n` to an int, halves away from zero; these are day counts, not a separate duration type. |
+| `add_months(d, n)`, `add_years(d, n)` | Shift by an integer number of calendar months or years, clamping the day to the target month's last valid day. Negative and zero counts are allowed. |
+| `start_of_month(d)`, `end_of_month(d)` | First or last date of the same calendar month. |
+| `year(d)`, `month(d)`, `day(d)` | Integer components; month and day are one-based. |
+| `weekday(d)` | An English name from `"Monday"` through `"Sunday"`. |
+| `is_workday(d, holidays?)` | Whether `d` is Monday–Friday and absent from the optional holiday list. |
+| `add_workdays(d, n, holidays?)` | Move by `n` open weekdays, excluding the starting date. Negative counts go backwards; zero returns the starting date even if closed. |
+
+The holiday argument must be a list of dates. Order and duplicate dates do not matter, weekend entries do not remove extra weekdays, and no national or regional holidays are implicit. Workday counts must be ints. Weekday-only shifts take constant time; explicit holiday calendars require work proportional to sorting and scanning their entries, charged to the work and collection budgets.
+
+Clamping makes month/year arithmetic non-invertible and non-associative: January 31 plus one month plus one month can give March 28, whereas January 31 plus two months gives March 31. Recurrences should derive each occurrence from the original anchor. There is no generic fixed-length `months(n)` or `years(n)` duration. This follows the default constrained arithmetic of [Temporal.PlainDate](https://tc39.es/proposal-temporal/docs/plaindate.html#add); the supported year range matches [Python's date](https://docs.python.org/3/library/datetime.html#date-objects).
+
 **Text and sequences.** Strings are immutable, valid Unicode text stored as UTF-8. Source files and text data use UTF-8; malformed input is an error. There is no separate character type. String length, indexing, iteration, slicing, `chars`, `split(s, "")` and `reverse` all use **Unicode scalar values**, with each element represented by a one-scalar string. This is neither byte indexing nor grapheme-cluster indexing: `len("🙂")` is 1, `len("🇫🇷")` is 2, and `len("é")` is 2 (an `e` followed by a combining acute accent). Slicing and reversal can separate combining marks or emoji components while always preserving valid UTF-8. Grapheme segmentation is not currently exposed; see [Unicode text segmentation](https://www.unicode.org/reports/tr29/) for the distinction.
 
 Equality, hashing, substring search and prefix/suffix tests compare exact text, without normalization or case folding. Precomposed `"é"` and decomposed `"é"` are distinct map keys and distribution outcomes. Ordering is lexicographic Unicode scalar order, not locale collation. `upper` and `lower` use the Rust standard library's Unicode mappings, independent of locale, and can change length: `upper("ß")` is `"SS"`, and `lower("İ")` is an `i` followed by a combining dot. Native and WASM builds use the same Rust Unicode tables; updating the toolchain can update those tables. No transformation mutates its input.
@@ -296,7 +318,7 @@ Anything else, such as arithmetic (`normal(0, 1) * 2`) or comparing two continuo
 - **Weights come from evidence.** `observe` multiplies a run's weight as in section 7 (likelihood weighting). A run that is ruled out has weight zero.
 - **Runs are independent.** They don't merge, and calls aren't memoized, so every call makes its own choices. A function may call itself with the same arguments: each call chooses its own path. Unbounded loops aren't cut short; the iteration limit still applies.
 - **`simulate` is enumerated.** Inside each run, a `simulate` block is computed exactly, by enumeration, as in section 8, so its result has no sampling error. A block that enumeration can't compute (because it draws from a continuous distribution, say) is an error, even when sampling: estimates inside estimates aren't supported yet.
-- **Reproducible.** The same program, seed and version of Probl give the same output on any machine, with any number of threads. Runs go in batches of 1,000, each with a random stream of its own, derived from the seed and the batch's number. Batches may run at the same time, but they're combined in order: the estimates, what `print` shows and the first error are those of running them one after another. Only whether a run reaches a host's limit on work, which the threads share, can depend on timing.
+- **Reproducible.** The same program, input data, execution-date snapshot, seed and version of Probl give the same output on any machine, with any number of threads. Runs go in batches of 1,000, each with a random stream of its own, derived from the seed and the batch's number. Batches may run at the same time, but they're combined in order: the estimates, what `print` shows and the first error are those of running them one after another. Only whether a run reaches a host's limit on work, which the threads share, can depend on timing.
 - The missing mass of infinite discrete distributions (below 10⁻¹⁸, section 10) is ignored.
 
 **Estimates.** Let the runs end with weights w₁…wₙ. A run's weight when it reaches a report is its final weight, since no observation may follow a report (section 7). A report's estimates are averages over the runs, weighted and normalized:
@@ -338,7 +360,7 @@ When few runs carry the weight (a small effective sample size), this estimate is
 
 - **Before running.** The data is read before the program runs, as a value of the declared type `T`. Data that doesn't fit `T` is an error, and the program doesn't run.
 - **A constant.** The value is the same in every world and every run, as if it had been written in the program. Reading it splits nothing and weighs nothing: it isn't evidence. To condition on data, `observe` it.
-- **Part of the input.** The same program, data and seed give the same output.
+- **Part of the input.** The same program, data, execution-date snapshot and seed give the same output for a given engine version.
 
 ## 16. Not specified yet
 

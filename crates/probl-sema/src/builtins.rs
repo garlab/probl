@@ -171,11 +171,19 @@ builtins! {
     Logit = "logit", 1..=1, Lift, true;
     InvLogit = "inv_logit", 1..=1, Lift, true;
     // Dates
-    Date = "date", 1..=1, Lift, true;
-    Today = "today", 0..=0, Raw, true;
+    Date = "date", 1..=3, Lift, true;
+    RunDate = "$run_date", 0..=0, Raw, false;
     Days = "days", 1..=1, Lift, true;
     Weeks = "weeks", 1..=1, Lift, true;
-    AddWorkdays = "add_workdays", 2..=2, Lift, true;
+    AddWorkdays = "add_workdays", 2..=3, Lift, true;
+    IsWorkday = "is_workday", 1..=2, Lift, true;
+    AddMonths = "add_months", 2..=2, Lift, true;
+    AddYears = "add_years", 2..=2, Lift, true;
+    StartOfMonth = "start_of_month", 1..=1, Lift, true;
+    EndOfMonth = "end_of_month", 1..=1, Lift, true;
+    Year = "year", 1..=1, Lift, true;
+    Month = "month", 1..=1, Lift, true;
+    Day = "day", 1..=1, Lift, true;
     Weekday = "weekday", 1..=1, Lift, true;
     // Internal helpers used by the lowering pass
     /// Checks a `for` loop's collection and turns it into something indexable.
@@ -207,33 +215,37 @@ impl Builtin {
     }
 }
 
-/// A named number. A program's own variables, variants and functions hide
+/// A named value. A program's own variables, variants and functions hide
 /// it, so `let e = 5` still works.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Constant {
     Pi,
     E,
     EulerGamma,
+    Today,
 }
 
 impl Constant {
-    pub const ALL: &'static [Constant] = &[Constant::Pi, Constant::E, Constant::EulerGamma];
+    pub const ALL: &'static [Constant] = &[Constant::Pi, Constant::E, Constant::EulerGamma, Constant::Today];
 
     pub fn name(self) -> &'static str {
         match self {
             Constant::Pi => "pi",
             Constant::E => "e",
             Constant::EulerGamma => "euler_gamma",
+            Constant::Today => "today",
         }
     }
 
-    pub fn value(self) -> f64 {
-        match self {
+    /// Static numeric values; `today` is supplied by the execution context.
+    pub fn value(self) -> Option<f64> {
+        Some(match self {
             Constant::Pi => std::f64::consts::PI,
             Constant::E => std::f64::consts::E,
             // The Euler–Mascheroni constant: `std::f64::consts::EGAMMA` isn't stable yet.
             Constant::EulerGamma => 0.577_215_664_901_532_9,
-        }
+            Constant::Today => return None,
+        })
     }
 
     pub fn from_name(name: &str) -> Option<Constant> {

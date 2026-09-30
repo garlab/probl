@@ -80,6 +80,9 @@ enum Command {
     /// Run a program and print its reports.
     Run {
         file: PathBuf,
+        /// Pin the execution-date snapshot (`today`); defaults to the UTC date at launch.
+        #[arg(long, value_parser = parse_execution_date, value_name = "YYYY-MM-DD")]
+        today: Option<i32>,
         /// Also print the simplest fraction near each probability, like ≈ 244/495 (a hint, not a proof).
         #[arg(long)]
         fractions: bool,
@@ -164,6 +167,7 @@ fn main() -> ExitCode {
     match cli.command {
         Command::Run {
             file,
+            today,
             fractions,
             epsilon,
             stats,
@@ -182,7 +186,15 @@ fn main() -> ExitCode {
             no_memo,
             no_solve,
         } => {
+            let today = match today.map(Ok).unwrap_or_else(execution_date) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
             let mut options = Options {
+                today: Some(today),
                 merge: !no_merge,
                 memoize: !no_memo,
                 epsilon,
@@ -229,6 +241,23 @@ fn main() -> ExitCode {
         Command::Repl => repl(),
         Command::Ir { file } => ir_file(&file),
     }
+}
+
+fn parse_execution_date(s: &str) -> Result<i32, String> {
+    probl_engine::dates::parse(s).ok_or_else(|| "expected YYYY-MM-DD within 0001-01-01..9999-12-31".to_string())
+}
+
+/// The CLI reads the clock once. Neither the compiler nor engine reads it.
+fn execution_date() -> Result<i32, String> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let seconds = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => i128::from(d.as_secs()),
+        Err(e) => -i128::from(e.duration().as_secs()) - i128::from(e.duration().subsec_nanos() != 0),
+    };
+    i64::try_from(seconds)
+        .ok()
+        .and_then(probl_engine::dates::from_unix_seconds)
+        .ok_or_else(|| "the system clock is outside the supported date range".to_string())
 }
 
 fn color() -> bool {
@@ -311,6 +340,12 @@ fn run_file(path: &PathBuf, options: &mut Options, limits: &InputLimits, stats: 
         Ok(outcome) => {
             println!("{}", outcome.output);
             if stats {
+                if let Some(today) = outcome.today {
+                    eprintln!(
+                        "execution date: {} (UTC default; --today overrides it)",
+                        probl_engine::dates::format(today)
+                    );
+                }
                 let s = &outcome.stats;
                 let mut line = format!(
                     "stats: peak {} worlds · {} world-steps · {} calls ({} reused)",
@@ -435,6 +470,13 @@ fn ir_file(path: &PathBuf) -> ExitCode {
 /// A session is a growing program: each input is appended and the whole
 /// program runs again, printing only the reports the new input added.
 fn repl() -> ExitCode {
+    let today = match execution_date() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     println!(
         "Probl {} — type an expression to see its distribution; Ctrl-D to quit.",
         env!("CARGO_PKG_VERSION")
@@ -480,7 +522,10 @@ fn repl() -> ExitCode {
             continue;
         };
         let before = probl_sema::compile(&session).0.map_or(0, |p| p.reports.len());
-        let mut options = Options::default();
+        let mut options = Options {
+            today: Some(today),
+            ..Options::default()
+        };
         if !program.inputs.is_empty() {
             let limits = input_limits(None, &options);
             let Some(inputs) = load_data(&program, &mut files, &mut snapshots, &limits, None, &file) else {
