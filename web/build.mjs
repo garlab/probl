@@ -1,11 +1,13 @@
 // Build the playground into web/dist: the WebAssembly module, the page's
-// scripts bundled with esbuild, and the guide. `--serve` also serves it on
-// port 8000.
+// scripts bundled with Bun, and the guide. `bun run serve` (serve.mjs)
+// serves it, and builds it again when its sources change.
+//
+// Everything is made before web/dist is replaced, so a build that fails
+// leaves the last one in place.
 
-import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as esbuild from 'esbuild';
 import { marked } from 'marked';
 import { highlight } from './src/probl-lang.js';
 import { load } from './src/probl.js';
@@ -14,28 +16,24 @@ const web = fileURLToPath(new URL('.', import.meta.url));
 const root = fileURLToPath(new URL('..', import.meta.url));
 const dist = `${web}dist`;
 
-execFileSync('cargo', ['build', '-q', '-p', 'probl-wasm', '--target', 'wasm32-unknown-unknown', '--profile', 'wasm'], {
-  cwd: root,
-  stdio: 'inherit',
-});
-rmSync(dist, { recursive: true, force: true });
-mkdirSync(dist);
-copyFileSync(`${root}target/wasm32-unknown-unknown/wasm/probl_wasm.wasm`, `${dist}/probl.wasm`);
-copyFileSync(`${web}index.html`, `${dist}/index.html`);
-copyFileSync(`${web}src/style.css`, `${dist}/style.css`);
-await esbuild.build({
-  entryPoints: [`${web}src/app.js`, `${web}src/worker.js`],
-  outdir: dist,
-  bundle: true,
+const cargo = Bun.spawnSync(
+  ['cargo', 'build', '-q', '-p', 'probl-wasm', '--target', 'wasm32-unknown-unknown', '--profile', 'wasm'],
+  { cwd: root, stdio: ['inherit', 'inherit', 'inherit'] },
+);
+if (!cargo.success) process.exit(1);
+const wasm = readFileSync(`${root}target/wasm32-unknown-unknown/wasm/probl_wasm.wasm`);
+const bundle = await Bun.build({
+  entrypoints: [`${web}src/app.js`, `${web}src/worker.js`],
   minify: true,
+  // Scripts, not modules: the page loads app.js with a <script>, and it
+  // starts worker.js as a classic worker.
   format: 'iife',
-  target: 'es2022',
-  logLevel: 'warning',
+  target: 'browser',
 });
 
 // The guide: the language overview, as HTML. Its complete programs, as the
 // module itself checks them, get a button to run them.
-const probl = await load(readFileSync(`${dist}/probl.wasm`));
+const probl = await load(wasm);
 const escape = (text) => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 // Section anchors as GitHub makes them, which the overview's links use.
 const slug = (text) =>
@@ -72,10 +70,12 @@ marked.use({
 });
 const overview = marked.parse(readFileSync(`${root}docs/language-overview.md`, 'utf8'));
 const contents = `<nav class="contents" aria-label="Contents"><p>Contents</p><ul>${sections.join('')}</ul></nav>\n`;
-writeFileSync(`${dist}/guide.html`, overview.replace('</blockquote>\n', `</blockquote>\n${contents}`));
+const guide = overview.replace('</blockquote>\n', `</blockquote>\n${contents}`);
 
-if (process.argv.includes('--serve')) {
-  const context = await esbuild.context({});
-  const { port } = await context.serve({ servedir: dist, port: 8000 });
-  console.log(`http://localhost:${port}`);
-}
+rmSync(dist, { recursive: true, force: true });
+mkdirSync(dist);
+writeFileSync(`${dist}/probl.wasm`, wasm);
+copyFileSync(`${web}index.html`, `${dist}/index.html`);
+copyFileSync(`${web}src/style.css`, `${dist}/style.css`);
+for (const output of bundle.outputs) await Bun.write(`${dist}/${basename(output.path)}`, output);
+writeFileSync(`${dist}/guide.html`, guide);

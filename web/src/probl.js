@@ -1,6 +1,6 @@
 // Probl's WebAssembly module (crates/probl-wasm), called with text.
 //
-// Works in browsers, in workers and in Node. The module's functions take and
+// Works in browsers, in workers, and in Bun or Node. The module's functions take and
 // give JSON: `check` gives a program's diagnostics, `run` runs it, and
 // `examples` gives the bundled examples.
 

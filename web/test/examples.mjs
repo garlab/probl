@@ -3,7 +3,7 @@
 //
 //   cargo build -p probl-wasm --target wasm32-unknown-unknown --profile wasm
 //   cargo build --release -p probl-cli
-//   node web/test/examples.mjs
+//   bun web/test/examples.mjs
 
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';

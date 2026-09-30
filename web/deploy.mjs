@@ -1,8 +1,8 @@
 // Deploy the playground to Cloudflare Pages: build it, create the Pages
 // project the first time, and upload web/dist with wrangler.
 //
-//   npm run deploy                  # production
-//   npm run deploy -- --preview     # a preview, named after the git branch
+//   bun run deploy                  # production
+//   bun run deploy --preview        # a preview, named after the git branch
 //
 // It needs, from the environment or from web/.env (which git ignores):
 //
@@ -11,7 +11,8 @@
 //   CLOUDFLARE_ACCOUNT_ID     the account's ID
 //   CLOUDFLARE_PAGES_PROJECT  the project's name (probl-playground if unset)
 //
-// Building needs what `npm run build` needs: Rust, with the wasm32 target.
+// Building needs what `bun run build` needs: Rust, with the wasm32 target.
+// Wrangler runs under Bun too.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';

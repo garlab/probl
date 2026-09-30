@@ -1,20 +1,20 @@
 // The playground in real browsers, headless: every example prints what
 // `probl run` prints; stopping, limits, errors in the editor and share
 // links work; and so do completion, descriptions on hover, going to a
-// definition, the reference and the guide. Needs `npm run build`, `cargo
+// definition, the reference and the guide. Needs `bun run build`, `cargo
 // build --release -p probl-cli`, and Chrome or Firefox where macOS puts
 // them (or PROBL_CHROME and PROBL_FIREFOX).
 //
-//   node test/page.mjs            # Chrome
-//   node test/page.mjs firefox    # Firefox
+//   bun test/page.mjs             # Chrome
+//   bun test/page.mjs firefox     # Firefox
 //
 // It tests web/dist, served here, or the page at PROBL_URL, such as a
 // deployment.
 
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import * as esbuild from 'esbuild';
 import puppeteer from 'puppeteer-core';
+import { serveFiles } from '../serve.mjs';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const firefox = process.argv.includes('firefox');
@@ -22,10 +22,8 @@ const browserPath = firefox
   ? process.env.PROBL_FIREFOX ?? '/Applications/Firefox.app/Contents/MacOS/firefox'
   : process.env.PROBL_CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
-const server = process.env.PROBL_URL ? null : await esbuild.context({});
-const url = server
-  ? `http://127.0.0.1:${(await server.serve({ servedir: `${root}web/dist`, port: 0 })).port}/`
-  : new URL('./', process.env.PROBL_URL).href;
+const server = process.env.PROBL_URL ? null : serveFiles(`${root}web/dist`);
+const url = server ? `http://127.0.0.1:${server.port}/` : new URL('./', process.env.PROBL_URL).href;
 const browser = await puppeteer.launch({
   browser: firefox ? 'firefox' : 'chrome',
   executablePath: browserPath,
@@ -706,7 +704,7 @@ try {
   expect(widths[0] <= widths[1], 'on a phone, the page fits the screen', widths.join(' > '));
 } finally {
   await browser.close();
-  await server?.dispose();
+  await server?.stop(true);
 }
 
 console.log(failures ? `${failures} failed` : 'all passed');

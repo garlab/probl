@@ -1,6 +1,6 @@
 # Plan: a playground in the browser
 
-> September 2026. The [implementation plan](implementation-plan.md) had "a WebAssembly build and a browser playground" in phase 7; this plans it as a project of its own. **Phases 1 and 2 are built:** the engine runs in WebAssembly and prints exactly what the command line prints, and the page works in Chrome and Firefox (sections [Phase 1, as built](#phase-1-as-built) and [Phase 2, as built](#phase-2-as-built)). The open questions at the end were answered with the proposals. It's hosted on Cloudflare Pages, deployed with `npm run deploy` (section [Hosting, as built](#hosting-as-built)); continuous integration is next.
+> September 2026. The [implementation plan](implementation-plan.md) had "a WebAssembly build and a browser playground" in phase 7; this plans it as a project of its own. **Phases 1 and 2 are built:** the engine runs in WebAssembly and prints exactly what the command line prints, and the page works in Chrome and Firefox (sections [Phase 1, as built](#phase-1-as-built) and [Phase 2, as built](#phase-2-as-built)). The open questions at the end were answered with the proposals. It's hosted on Cloudflare Pages, deployed with `bun run deploy` (section [Hosting, as built](#hosting-as-built)); continuous integration is next.
 
 ## How hard is it?
 
@@ -109,7 +109,7 @@ So the slowest examples would take 2–4 seconds in the browser, with a progress
 
 ## Building and hosting
 
-- **Tools:** the `wasm32-unknown-unknown` target, and nothing else for the module (see [Phase 1, as built](#phase-1-as-built)). The page uses CodeMirror 6 for the editor and esbuild to bundle it: a handful of npm packages, with a lockfile.
+- **Tools:** the `wasm32-unknown-unknown` target, and nothing else for the module (see [Phase 1, as built](#phase-1-as-built)). The page uses CodeMirror 6 for the editor, and Bun to install its packages, bundle it and run its scripts: a handful of npm packages, with a lockfile.
 - **Size:** the module includes the parser, the engine, the diagnostics renderer, and the CSV and JSON readers: 1.1 MB, and 400 KB compressed, without `wasm-opt`.
 - **The stack:** the call-depth limit keeps recursion within what the browser allows (see [Phase 1, as built](#phase-1-as-built)).
 - **Hosting:** static files, since everything runs in the browser. Any static host works, provided it serves `.wasm` as `application/wasm`. It's on Cloudflare Pages (see [Hosting, as built](#hosting-as-built)).
@@ -117,7 +117,7 @@ So the slowest examples would take 2–4 seconds in the browser, with a progress
 
 ## Tests
 
-- **The same output as the command line.** Every example runs through the WebAssembly build in Node, and must print exactly what `probl run` prints: enumerated and sampled alike, byte for byte. This is what the move to `libm` is for, and it guards the promise that a seed gives the same output everywhere.
+- **The same output as the command line.** Every example runs through the WebAssembly build in Bun, and must print exactly what `probl run` prints: enumerated and sampled alike, byte for byte. This is what the move to `libm` is for, and it guards the promise that a seed gives the same output everywhere.
 - **The API:** diagnostics, runtime errors, printed lines, progress, refused paths and each limit, tested natively.
 - **The worker:** stopping, timing out, and a crash, which must leave the page working.
 - **Browsers:** a smoke test in Chrome, Firefox and Safari. It loads the page, runs each example and checks the summary line. It also finds each browser's deepest recursion, which sets the call-depth limit.
@@ -170,7 +170,7 @@ So the slowest examples would take 2–4 seconds in the browser, with a progress
 
 ## Phase 2, as built
 
-`web/`: `npm run build` builds the module and bundles the page into `web/dist`, and `npm run serve` serves it on port 8000.
+`web/`: `bun run build` builds the module and bundles the page into `web/dist`, and `bun run serve` serves it on port 8000. It builds again when a source changes (the page's, the language overview, or the crates and examples that make the module), and the open page reloads once the new build is ready. It was first built with npm and esbuild; it moved to Bun in September 2026.
 
 - **The page:**
   - CodeMirror, with Probl's highlighting, and compile errors underlined as you type.
@@ -190,7 +190,7 @@ So the slowest examples would take 2–4 seconds in the browser, with a progress
   - Once you edit an example or a linked program, the menu and the address stop naming it, so reloading keeps your edits.
   - When an example or the guide replaces a program of your own, the status line says that undo (⌘Z or Ctrl+Z) brings it back. Each program loaded is one step in the undo history.
 - **Sizes:** the page's script is 406 KB, 132 KB compressed, mostly CodeMirror; the module is 1.1 MB, 400 KB compressed.
-- **Tested in headless Chrome and Firefox** (`node web/test/page.mjs`, with `firefox` for Firefox):
+- **Tested in headless Chrome and Firefox** (`bun web/test/page.mjs`, with `firefox` for Firefox):
   - every example prints exactly what `probl run` prints;
   - a long run shows its progress, stops, and the next run works;
   - 149 nested calls work, and 200 are the limit's error;
@@ -237,13 +237,13 @@ Beside the output are two more tabs: the language overview as a **guide**, and a
 
 The playground is deployed to Cloudflare Pages with wrangler, a development dependency of `web/`.
 
-- **`npm run deploy`** (`web/deploy.mjs`) deploys what's in the working tree:
+- **`bun run deploy`** (`web/deploy.mjs`) deploys what's in the working tree:
   - It checks the credentials and finds the project through Cloudflare's API, before the build. If the project doesn't exist, it creates it with wrangler, with `main` as its production branch.
   - It builds, and uploads `web/dist` with `wrangler pages deploy`, with the commit's hash and message. It warns if the working tree has uncommitted changes.
   - Without flags, it deploys to production. With `--preview`, it deploys a preview named after the current git branch.
-- **Credentials** come from the environment or from `web/.env`, which git ignores: `CLOUDFLARE_API_TOKEN`, a token with *Account · Cloudflare Pages · Edit*, and `CLOUDFLARE_ACCOUNT_ID`. `CLOUDFLARE_PAGES_PROJECT` names the project, `probl-playground` by default. Wrangler needs Node 22 or later.
+- **Credentials** come from the environment or from `web/.env`, which git ignores: `CLOUDFLARE_API_TOKEN`, a token with *Account · Cloudflare Pages · Edit*, and `CLOUDFLARE_ACCOUNT_ID`. `CLOUDFLARE_PAGES_PROJECT` names the project, `probl-playground` by default. `deploy.mjs` runs wrangler with Bun.
 - **Served as Cloudflare serves it:** under `wrangler pages dev`, which serves files as Pages does, every browser test passes in Chrome and Firefox. `probl.wasm` is served as `application/wasm`, and `guide.html` redirects to `/guide`, which `fetch` follows. Every file is revalidated on each load (`max-age=0, must-revalidate`), so a new deployment shows at once.
-- **Testing a deployment:** `PROBL_URL=https://probl-playground.pages.dev node test/page.mjs` runs the browser tests against it.
+- **Testing a deployment:** `PROBL_URL=https://probl-playground.pages.dev bun test/page.mjs` runs the browser tests against it.
 - **For continuous integration:** the same script, with the two variables as secrets. Pull requests could deploy previews with `--preview`, then run the browser tests against them.
 
 ## Open questions

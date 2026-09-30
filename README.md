@@ -43,15 +43,17 @@ cargo test --all
 
 Calendar models can use immutable dates and `today`, captured once in UTC at execution start. Pin it with `--today YYYY-MM-DD` for reproducible runs; `--stats` records the date used. The [delivery](examples/11_delivery_dates.probl), [invoice](examples/12_invoice_calendar.probl) and [renewal](examples/13_renewal_dates.probl) examples cover working days, holidays, month-end cash flow and leap-year arithmetic.
 
-The playground runs the same engine in the browser, compiled to WebAssembly. Beside the editor are the language guide, with programs to run, and a reference. The editor completes names, describes them on hover, and goes to their definitions with Cmd-click or Ctrl-click. It needs Node, and Rust's WebAssembly target:
+The playground runs the same engine in the browser, compiled to WebAssembly. Beside the editor are the language guide, with programs to run, and a reference. The editor completes names, describes them on hover, and goes to their definitions with Cmd-click or Ctrl-click. It needs [Bun](https://bun.sh), and Rust's WebAssembly target:
 
 ```sh
 rustup target add wasm32-unknown-unknown
-cd web && npm install && npm run serve        # then open http://localhost:8000
-npm test                                      # every example in Node, then the page in headless Chrome
+cd web && bun install && bun run serve        # then open http://localhost:8000
+bun run test                                  # every example in Bun, then the page in headless Chrome
 ```
 
-It's deployed to Cloudflare Pages with wrangler. `npm run deploy` checks the credentials, creates the Pages project the first time, builds, and uploads `web/dist`. It needs Node 22 or later, and two variables, from the environment or from `web/.env`, which git ignores:
+`bun run serve` builds the playground again whenever its sources change: the page's scripts and styles, the language overview, or the Rust crates and examples that make the WebAssembly module. The open page then reloads by itself, and keeps the program in the editor. A build that fails is reported in the terminal, and the page keeps the last one.
+
+It's deployed to Cloudflare Pages with wrangler. `bun run deploy` checks the credentials, creates the Pages project the first time, builds, and uploads `web/dist`. It needs two variables, from the environment or from `web/.env`, which git ignores:
 
 - `CLOUDFLARE_API_TOKEN`: an API token with the permission *Account · Cloudflare Pages · Edit*.
 - `CLOUDFLARE_ACCOUNT_ID`: the account's ID.
@@ -59,9 +61,9 @@ It's deployed to Cloudflare Pages with wrangler. `npm run deploy` checks the cre
 
 ```sh
 cd web
-npm run deploy                                # production: the project's production branch, main
-npm run deploy -- --preview                   # a preview, named after the current git branch
-PROBL_URL=https://probl-playground.pages.dev node test/page.mjs   # test the deployed page
+bun run deploy                                # production: the project's production branch, main
+bun run deploy --preview                      # a preview, named after the current git branch
+PROBL_URL=https://probl-playground.pages.dev bun test/page.mjs   # test the deployed page
 ```
 
 - [Language overview](docs/language-overview.md): the model, the syntax, and a tour of the language
