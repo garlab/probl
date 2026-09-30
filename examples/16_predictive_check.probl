@@ -1,0 +1,38 @@
+# Model checking: can one conversion rate explain the variation between days?
+
+@mode sample(runs: 10_000, seed: 19)
+
+# Synthetic data: eight days, ten visitors each. Visitors are assumed conditionally
+# independent with ONE common rate. The check asks whether that assumption fits.
+let counts = [0, 1, 0, 1, 5, 6, 5, 6]
+let visitors = 10
+let rate ~ beta(1, 1)
+for successes in counts {
+  observe successes from binomial(visitors, rate)
+}
+
+# Replicate a whole eight-day dataset at a shared posterior rate; do not draw
+# a new rate for each day. A plain loop makes the random effects explicit.
+var replicated = []
+repeat len(counts) {
+  let successes ~ binomial(visitors, rate)
+  replicated.push(successes)
+}
+fn spread(xs) { max(xs) - min(xs) }
+
+report rate * 100 as "common conversion rate (%)"
+report sum(replicated) as "sign-ups in a replicated pilot"
+report spread(replicated) as "replicated range across days"
+report spread(replicated) >= spread(counts) as "replicated range at least observed"
+
+# A posterior predictive tail probability is a model diagnostic, not the
+# probability this model is true or a calibrated frequentist p-value.
+# A richer follow-up would allow day-specific rates or campaign effects.
+
+# ── Output (sampled; seed 19) ─────────────────────────────────────────────
+# sample · 10,000 runs · seed 19 · evidence 2.13e-11 (± 0.00%) · effective sample size 10,000
+#
+# common conversion rate (%)            mean 30.52 ± 0.05 · sd 5.00 · 5% 22.56 · median 30.35 · 95% 39.10
+# sign-ups in a replicated pilot        mean 24.40 ± 0.06 · sd 5.71 · 5% 15 · median 24 · 95% 34
+# replicated range across days          mean 4.02 ± 0.01 · sd 1.20 · 5% 2 · median 4 · 95% 6 · 1 ▁▂▇█▆▃▁▁▁ 9
+# replicated range at least observed    10.7% ± 0.3%

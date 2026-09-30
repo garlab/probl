@@ -1,0 +1,53 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: ir(&src)
+---
+fn#0 the top level ()
+  demand_model_0 = one_of([20: 25%, 40: 50%, 60: 25%])    [live: demand_model_0]
+  quantities_1 = [20, 40, 60]    [live: demand_model_0 quantities_1]
+  chosen_2 = quantities_1[0]    [live: demand_model_0 quantities_1 chosen_2]
+  best_expected_3 = mean(simulate fn#2 [demand_model_0, chosen_2])    [live: demand_model_0 quantities_1 chosen_2 best_expected_3]
+  $4 = $iter_items(quantities_1)    [live: demand_model_0 quantities_1 chosen_2 best_expected_3 $4]
+  $5 = 0    [live: demand_model_0 quantities_1 chosen_2 best_expected_3 $4 $5]
+  loop (bounded) {    [live at head: demand_model_0 quantities_1 chosen_2 best_expected_3 $4 $5]
+    if (>= $5 len($4)) {
+      break    [live: demand_model_0 quantities_1 chosen_2 best_expected_3 $4 $5]
+    }
+    quantity_6 = $4[$5]    [live: demand_model_0 quantities_1 chosen_2 best_expected_3 $4 $5 quantity_6]
+    $5 = (+ $5 1)    [live: demand_model_0 quantities_1 chosen_2 best_expected_3 $4 $5 quantity_6]
+    expected_7 = mean(simulate fn#3 [demand_model_0, quantity_6])    [live: demand_model_0 quantities_1 chosen_2 best_expected_3 $4 $5 quantity_6 expected_7]
+    if (> expected_7 best_expected_3) {
+      chosen_2 = quantity_6    [live: demand_model_0 quantities_1 chosen_2 $4 $5 quantity_6 expected_7]
+      best_expected_3 = expected_7    [live: demand_model_0 quantities_1 chosen_2 best_expected_3 $4 $5 quantity_6 expected_7]
+    }
+    report expected_7 by quantity_6 as "expected profit by order"    [live: demand_model_0 quantities_1 chosen_2 best_expected_3 $4 $5]
+  }
+  perfect_8 = simulate fn#4 [demand_model_0, quantities_1]    [live: demand_model_0 quantities_1 chosen_2 best_expected_3 perfect_8]
+  report chosen_2 as "order chosen before demand"    [live: demand_model_0 quantities_1 chosen_2 best_expected_3 perfect_8]
+  report (- mean(perfect_8) best_expected_3) as "value of perfect information"    [live: demand_model_0 quantities_1 chosen_2]
+  demand_9 ~ demand_model_0    [live: quantities_1 chosen_2 demand_9]
+  $10 = call fn#1 profit(chosen_2, demand_9)    [live: quantities_1 demand_9 $10]
+  actual_11 = $10    [live: quantities_1 demand_9 actual_11]
+  report actual_11 as "profit from chosen order"    [live: quantities_1 demand_9 actual_11]
+  $12 = call fn#1 profit(20, demand_9)    [live: quantities_1 demand_9 actual_11 $12]
+  report (- actual_11 $12) as "gain over ordering 20"    [live: quantities_1 demand_9 actual_11]
+  report (- max(map(quantities_1, closure fn#6 [demand_9])) actual_11) as "regret after demand"    [live: ]
+fn#1 profit (order_0, demand_1)
+  return (- (+ (* 10 min(order_0, demand_1)) (* 2 max((- order_0 demand_1), 0))) (* 6 order_0))    [live: ]
+fn#2 a simulate block () captures [demand_model_0 <- parent slot 0, chosen_2 <- parent slot 2]
+  d_1 ~ demand_model_0    [live: d_1 chosen_2]
+  $3 = call fn#1 profit(chosen_2, d_1)    [live: $3]
+  return $3    [live: ]
+fn#3 a simulate block () captures [demand_model_0 <- parent slot 0, quantity_2 <- parent slot 6]
+  d_1 ~ demand_model_0    [live: d_1 quantity_2]
+  $3 = call fn#1 profit(quantity_2, d_1)    [live: $3]
+  return $3    [live: ]
+fn#4 a simulate block () captures [demand_model_0 <- parent slot 0, quantities_2 <- parent slot 1]
+  d_1 ~ demand_model_0    [live: d_1 quantities_2]
+  return max(map(quantities_2, closure fn#5 [d_1]))    [live: ]
+fn#5 a lambda (q_0) captures [d_1 <- parent slot 1]
+  $2 = call fn#1 profit(q_0, d_1)    [live: $2]
+  return $2    [live: ]
+fn#6 a lambda (q_0) captures [demand_1 <- parent slot 9]
+  $2 = call fn#1 profit(q_0, demand_1)    [live: $2]
+  return $2    [live: ]

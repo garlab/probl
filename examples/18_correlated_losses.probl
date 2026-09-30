@@ -1,0 +1,40 @@
+# Shared hazards: equal average losses can hide very different tail risk.
+
+# Three synthetic sites, each losing 100 units when hit. A common hazard hits
+# all sites with probability 2%; otherwise each has an independent 1% local
+# hazard. Costs and probabilities are illustrative, not calibrated estimates.
+let shared_loss = simulate {
+  let common ~ bernoulli(2%)
+  var total = 0
+  repeat 3 {
+    let local ~ bernoulli(1%)
+    if common or local { total += 100 }
+  }
+  total
+}
+
+# Same marginal risk per site, but incorrectly assume sites are independent.
+let site_risk = 2% + 98% * 1%
+let independent_loss = 100 * binomial(3, site_risk)
+report mean(shared_loss) as "mean loss with common hazard"
+report mean(independent_loss) as "mean loss assuming independence"
+report shared_loss >= 200 as "multiple sites hit with common hazard"
+report independent_loss >= 200 as "multiple sites hit assuming independence"
+report quantile(shared_loss, 99%) as "99th percentile with common hazard"
+report quantile(independent_loss, 99%) as "99th percentile assuming independence"
+
+# Excess over a 100-unit reserve is useful even when quantiles jump at atoms.
+report mean(max(shared_loss - 100, 0)) as "expected loss above reserve"
+report mean(max(independent_loss - 100, 0)) as "expected excess assuming independence"
+
+# ── Output ─────────────────────────────────────────────
+# enumerated
+#
+# mean loss with common hazard                8.94
+# mean loss assuming independence             8.94
+# multiple sites hit with common hazard       2.03%
+# multiple sites hit assuming independence    0.26%
+# 99th percentile with common hazard          300
+# 99th percentile assuming independence       100
+# expected loss above reserve                 4.029302
+# expected excess assuming independence       0.2637656408

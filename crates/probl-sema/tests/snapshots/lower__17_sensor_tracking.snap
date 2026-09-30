@@ -1,0 +1,45 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: ir(&src)
+---
+fn#0 the top level ()
+  readings_0 = [false, true, true, false]    [live: readings_0]
+  belief_1 = bernoulli(10%)    [live: readings_0 belief_1]
+  $2 = $iter_items((.. 1 len(readings_0)))    [live: readings_0 belief_1 $2]
+  $3 = 0    [live: readings_0 belief_1 $2 $3]
+  loop (bounded) {    [live at head: readings_0 belief_1 $2 $3]
+    if (>= $3 len($2)) {
+      break    [live: readings_0 belief_1 $2 $3]
+    }
+    step_4 = $2[$3]    [live: readings_0 belief_1 $2 $3 step_4]
+    $3 = (+ $3 1)    [live: readings_0 belief_1 $2 $3 step_4]
+    alarm_5 = readings_0[(- step_4 1)]    [live: readings_0 belief_1 $2 $3 step_4 alarm_5]
+    belief_1 = simulate fn#1 [belief_1, alarm_5]    [live: readings_0 belief_1 $2 $3 step_4]
+    report (* P(belief_1) 100) by step_4 as "failure probability after reading (%)"    [live: readings_0 belief_1 $2 $3]
+  }
+  tomorrow_6 = simulate fn#2 [belief_1]    [live: tomorrow_6]
+  report tomorrow_6 as "failure probability at next step"    [live: ]
+fn#1 a simulate block () captures [belief_0 <- parent slot 1, alarm_4 <- parent slot 5]
+  previous_1 ~ belief_0    [live: previous_1 alarm_4]
+  if previous_1 {
+    $2 = 80%    [live: $2 alarm_4]
+  } else {
+    $2 = 5%    [live: $2 alarm_4]
+  }
+  failed_3 ~ bernoulli($2)    [live: failed_3 alarm_4]
+  if failed_3 {
+    $5 = 90%    [live: failed_3 alarm_4 $5]
+  } else {
+    $5 = 10%    [live: failed_3 alarm_4 $5]
+  }
+  observe alarm_4 from bernoulli($5)    [live: failed_3]
+  return failed_3    [live: ]
+fn#2 a simulate block () captures [belief_0 <- parent slot 1]
+  failed_1 ~ belief_0    [live: failed_1]
+  if failed_1 {
+    $2 = 80%    [live: $2]
+  } else {
+    $2 = 5%    [live: $2]
+  }
+  next_3 ~ bernoulli($2)    [live: next_3]
+  return next_3    [live: ]

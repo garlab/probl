@@ -43,6 +43,8 @@ cargo test --all
 
 Calendar models can use immutable dates and `today`, captured once in UTC at execution start. Pin it with `--today YYYY-MM-DD` for reproducible runs; `--stats` records the date used. The [delivery](examples/11_delivery_dates.probl), [invoice](examples/12_invoice_calendar.probl) and [renewal](examples/13_renewal_dates.probl) examples cover working days, holidays, month-end cash flow and leap-year arithmetic.
 
+The newer examples explore [stock decisions](examples/14_stock_decision.probl), [service queues](examples/15_service_queue.probl), [predictive model checks](examples/16_predictive_check.probl), [sensor tracking](examples/17_sensor_tracking.probl) and [correlated losses](examples/18_correlated_losses.probl). The [use-case review](docs/use-case-gaps.md) describes what they can express today and which language improvements they motivate.
+
 The playground runs the same engine in the browser, compiled to WebAssembly. Beside the editor are the language guide, with programs to run, and a reference. The editor completes names, describes them on hover, and goes to their definitions with Cmd-click or Ctrl-click. It needs [Bun](https://bun.sh), and Rust's WebAssembly target:
 
 ```sh
@@ -75,4 +77,4 @@ PROBL_URL=https://probl-playground.pages.dev bun test/page.mjs   # test the depl
 - [Implementation plan](docs/implementation-plan.md): status, architecture, phases, testing and risks
 - [Project audit](docs/project-audit.md): the review that led to the reference semantics
 - [Benchmarks](docs/benchmarks.md): realistic models, what they cost, and what to build next (`cargo run --release -p probl-bench`)
-- [Examples](examples/): ten sample programs with their expected output, from a tour of the language to a revenue forecast and quantum cryptography
+- [Examples](examples/): eighteen sample programs with their expected output, covering games, forecasts, calendars, decisions, monitoring and risk

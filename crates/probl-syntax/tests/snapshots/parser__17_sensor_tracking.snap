@@ -1,0 +1,9 @@
+---
+source: crates/probl-syntax/tests/parser.rs
+expression: tree
+---
+(let readings = [false true true false])
+(var belief = (call bernoulli 10%))
+(for step (.. 1 (call len readings)) (block (let alarm = (index readings (- step 1))) (= belief (simulate (block (let previous ~ belief) (let failed ~ (call bernoulli (if previous (block 80%) (block 5%)))) (observe alarm from (call bernoulli (if failed (block 90%) (block 10%)))) failed))) (report (* (call P belief) 100) by step as "failure probability after reading (%)")))
+(let tomorrow = (simulate (block (let failed ~ belief) (let next ~ (call bernoulli (if failed (block 80%) (block 5%)))) next)))
+(report tomorrow as "failure probability at next step")

@@ -1,0 +1,16 @@
+---
+source: crates/probl-syntax/tests/parser.rs
+expression: tree
+---
+(@mode (call sample runs: 2000 seed: 19))
+(var arrivals = [])
+(var services = [])
+(var clock = 0.0)
+(repeat 24 (block (let gap ~ (call exponential 0.8)) (let service ~ (call exponential 1)) (+= clock gap) (.push arrivals clock) (.push services service)))
+(fn queue (arrivals, services, agents) (block (var available = (.map (.. 1 agents) (-> (n) 0.0))) (var total_wait = 0.0) (var long_waits = 0) (for job (..< 0 (call len arrivals)) (block (= available (call sort available)) (let start = (call max (index arrivals job) (index available 0))) (let wait = (- start (index arrivals job))) (+= total_wait wait) (if (> wait 2) (block (+= long_waits 1))) (= (index available 0) (+ start (index services job))))) (record (mean_wait (/ total_wait (call len arrivals))) (long_waits long_waits))))
+(let one = (call queue arrivals services 1))
+(let two = (call queue arrivals services 2))
+(report (. one mean_wait) as "one agent: average wait (min)")
+(report (. two mean_wait) as "two agents: average wait (min)")
+(report (- (. one mean_wait) (. two mean_wait)) as "average wait saved (min)")
+(report (> (. two long_waits) 0) as "any wait over two minutes with two agents")

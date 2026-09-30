@@ -1,0 +1,32 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: ir(&src)
+---
+fn#0 the top level ()
+  shared_loss_0 = simulate fn#1 []    [live: shared_loss_0]
+  site_risk_1 = (+ 2% (* 98% 1%))    [live: shared_loss_0 site_risk_1]
+  independent_loss_2 = (* 100 binomial(3, site_risk_1))    [live: shared_loss_0 independent_loss_2]
+  report mean(shared_loss_0) as "mean loss with common hazard"    [live: shared_loss_0 independent_loss_2]
+  report mean(independent_loss_2) as "mean loss assuming independence"    [live: shared_loss_0 independent_loss_2]
+  report (>= shared_loss_0 200) as "multiple sites hit with common hazard"    [live: shared_loss_0 independent_loss_2]
+  report (>= independent_loss_2 200) as "multiple sites hit assuming independence"    [live: shared_loss_0 independent_loss_2]
+  report quantile(shared_loss_0, 99%) as "99th percentile with common hazard"    [live: shared_loss_0 independent_loss_2]
+  report quantile(independent_loss_2, 99%) as "99th percentile assuming independence"    [live: shared_loss_0 independent_loss_2]
+  report mean(max((- shared_loss_0 100), 0)) as "expected loss above reserve"    [live: independent_loss_2]
+  report mean(max((- independent_loss_2 100), 0)) as "expected excess assuming independence"    [live: ]
+fn#1 a simulate block ()
+  total_1 = 0    [live: total_1]
+  $2 = $repeat_count(3)    [live: total_1 $2]
+  $3 = 0    [live: total_1 $2 $3]
+  common_0 ~ bernoulli(2%)    [live: common_0 total_1 $2 $3]
+  loop (bounded) {    [live at head: common_0 total_1 $2 $3]
+    if (>= $3 $2) {
+      break    [live: common_0 total_1 $2 $3]
+    }
+    $3 = (+ $3 1)    [live: common_0 total_1 $2 $3]
+    local_4 ~ bernoulli(1%)    [live: common_0 total_1 $2 $3 local_4]
+    if (or common_0 local_4) {
+      total_1 = (+ total_1 100)    [live: common_0 total_1 $2 $3]
+    }
+  }
+  return total_1    [live: ]

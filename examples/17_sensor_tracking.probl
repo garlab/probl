@@ -1,0 +1,43 @@
+# Sensor tracking: infer a machine's hidden condition from a noisy alarm history.
+
+# Synthetic two-state Markov model. At each step the condition can change BEFORE
+# the alarm is read. A failed machine recovers with probability 20% per step;
+# a healthy one fails with probability 5%. Alarm sensitivity is 90%, with 10%
+# false positives. Readings are conditionally independent given the states.
+let readings = [false, true, true, false]
+var belief = bernoulli(10%)
+
+# Carry the whole posterior distribution between steps, without drawing it in
+# the outer world. Each simulation normalizes after this reading; no history
+# needs to be replayed. Its evidence remains local to that simulation.
+for step in 1..len(readings) {
+  let alarm = readings[step - 1]
+  belief = simulate {
+    let previous ~ belief
+    let failed ~ bernoulli(if previous { 80% } else { 5% })
+    observe alarm from bernoulli(if failed { 90% } else { 10% })
+    failed
+  }
+  report P(belief) * 100 by step as "failure probability after reading (%)"
+}
+
+# These are filtered estimates: each uses only readings available at that step.
+# Estimating an earlier state using later readings would instead be smoothing.
+let tomorrow = simulate {
+  let failed ~ belief
+  let next ~ bernoulli(if failed { 80% } else { 5% })
+  next
+}
+report tomorrow as "failure probability at next step"
+
+# ── Output ─────────────────────────────────────────────
+# enumerated
+#
+# failure probability after reading (%)
+#   step      5%     25%   median     75%     95%
+#      1    1.56    1.56     1.56    1.56    1.56
+#      2   37.19   37.19    37.19   37.19   37.19
+#      3   81.52   81.52    81.52   81.52   81.52
+#      4   17.83   17.83    17.83   17.83   17.83
+#
+# failure probability at next step    18.37%

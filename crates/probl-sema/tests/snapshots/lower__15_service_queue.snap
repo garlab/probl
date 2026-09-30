@@ -1,0 +1,53 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: ir(&src)
+---
+fn#0 the top level ()
+  arrivals_0 = []    [live: arrivals_0]
+  services_1 = []    [live: arrivals_0 services_1]
+  clock_2 = 0.0    [live: arrivals_0 services_1 clock_2]
+  $3 = $repeat_count(24)    [live: arrivals_0 services_1 clock_2 $3]
+  $4 = 0    [live: arrivals_0 services_1 clock_2 $3 $4]
+  loop (bounded) {    [live at head: arrivals_0 services_1 clock_2 $3 $4]
+    if (>= $4 $3) {
+      break    [live: arrivals_0 services_1 clock_2 $3 $4]
+    }
+    $4 = (+ $4 1)    [live: arrivals_0 services_1 clock_2 $3 $4]
+    gap_5 ~ exponential(0.8)    [live: arrivals_0 services_1 clock_2 $3 $4 gap_5]
+    service_6 ~ exponential(1)    [live: arrivals_0 services_1 clock_2 $3 $4 gap_5 service_6]
+    clock_2 = (+ clock_2 gap_5)    [live: arrivals_0 services_1 clock_2 $3 $4 service_6]
+    arrivals_0 = push(arrivals_0, clock_2)    [live: arrivals_0 services_1 clock_2 $3 $4 service_6]
+    services_1 = push(services_1, service_6)    [live: arrivals_0 services_1 clock_2 $3 $4]
+  }
+  $7 = call fn#1 queue(arrivals_0, services_1, 1)    [live: arrivals_0 services_1 $7]
+  one_8 = $7    [live: arrivals_0 services_1 one_8]
+  $9 = call fn#1 queue(arrivals_0, services_1, 2)    [live: one_8 $9]
+  two_10 = $9    [live: one_8 two_10]
+  report one_8.mean_wait as "one agent: average wait (min)"    [live: one_8 two_10]
+  report two_10.mean_wait as "two agents: average wait (min)"    [live: one_8 two_10]
+  report (- one_8.mean_wait two_10.mean_wait) as "average wait saved (min)"    [live: two_10]
+  report (> two_10.long_waits 0) as "any wait over two minutes with two agents"    [live: ]
+fn#1 queue (arrivals_0, services_1, agents_2)
+  available_3 = map((.. 1 agents_2), closure fn#2 [])    [live: arrivals_0 services_1 available_3]
+  total_wait_4 = 0.0    [live: arrivals_0 services_1 available_3 total_wait_4]
+  long_waits_5 = 0    [live: arrivals_0 services_1 available_3 total_wait_4 long_waits_5]
+  $6 = $iter_items((..< 0 len(arrivals_0)))    [live: arrivals_0 services_1 available_3 total_wait_4 long_waits_5 $6]
+  $7 = 0    [live: arrivals_0 services_1 available_3 total_wait_4 long_waits_5 $6 $7]
+  loop (bounded) {    [live at head: arrivals_0 services_1 available_3 total_wait_4 long_waits_5 $6 $7]
+    if (>= $7 len($6)) {
+      break    [live: arrivals_0 services_1 available_3 total_wait_4 long_waits_5 $6 $7]
+    }
+    job_8 = $6[$7]    [live: arrivals_0 services_1 available_3 total_wait_4 long_waits_5 $6 $7 job_8]
+    $7 = (+ $7 1)    [live: arrivals_0 services_1 available_3 total_wait_4 long_waits_5 $6 $7 job_8]
+    available_3 = sort(available_3)    [live: arrivals_0 services_1 available_3 total_wait_4 long_waits_5 $6 $7 job_8]
+    start_9 = max(arrivals_0[job_8], available_3[0])    [live: arrivals_0 services_1 available_3 total_wait_4 long_waits_5 $6 $7 job_8 start_9]
+    wait_10 = (- start_9 arrivals_0[job_8])    [live: arrivals_0 services_1 available_3 total_wait_4 long_waits_5 $6 $7 job_8 start_9 wait_10]
+    total_wait_4 = (+ total_wait_4 wait_10)    [live: arrivals_0 services_1 available_3 total_wait_4 long_waits_5 $6 $7 job_8 start_9 wait_10]
+    if (> wait_10 2) {
+      long_waits_5 = (+ long_waits_5 1)    [live: arrivals_0 services_1 available_3 total_wait_4 long_waits_5 $6 $7 job_8 start_9]
+    }
+    available_3[0] = (+ start_9 services_1[job_8])    [live: arrivals_0 services_1 available_3 total_wait_4 long_waits_5 $6 $7]
+  }
+  return { mean_wait: (/ total_wait_4 len(arrivals_0)), long_waits: long_waits_5 }    [live: ]
+fn#2 a lambda (n_0)
+  return 0.0    [live: ]

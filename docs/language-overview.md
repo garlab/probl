@@ -449,7 +449,7 @@ report sick                                   # 10.71%
 - The **evidence** is the weight that survives: the probability of all the observations. Reports are normalized over it, and the run summary shows it (8.87% above). Observations inside a function count; those inside `simulate` don't (section 7).
 - If the observations rule out every world, the evidence is impossible, and the run stops with an error rather than printing reports that mean nothing.
 
-**No `observe` may follow a `report`.** The compiler rejects a program in which one could, including through a loop or a function that observes, so every report sees all the evidence. (Reports that update as evidence arrives, as in filtering, are future work.)
+**No `observe` may follow a `report`.** The compiler rejects a program in which one could, including through a loop or a function that observes, so every report sees all the evidence. A small finite-state filter can instead carry a distribution and condition it inside a fresh `simulate` scope for each reading, as in the [sensor example](../examples/17_sensor_tracking.probl). Those observations stay local to that simulation; the outer reports do not accumulate their evidence.
 
 ## 6. Reports
 
@@ -604,8 +604,13 @@ Probl borrows `a to b` estimates from Squiggle, dice notation from AnyDice and t
 | [`11_delivery_dates.probl`](../examples/11_delivery_dates.probl) | forecasting | delivery uncertainty from `today`, weekends, explicit holidays and deadline probability |
 | [`12_invoice_calendar.probl`](../examples/12_invoice_calendar.probl) | forecasting | recurring invoices anchored to a calendar day, payment delays and monthly cash-flow buckets |
 | [`13_renewal_dates.probl`](../examples/13_renewal_dates.probl) | forecasting | leap-day renewals, notice periods and uncertain response dates |
+| [`14_stock_decision.probl`](../examples/14_stock_decision.probl) | decisions | expected profit, choosing before uncertainty resolves, perfect information and regret |
+| [`15_service_queue.probl`](../examples/15_service_queue.probl) | operations | continuous arrivals and service times, shared scenarios for staffing comparisons |
+| [`16_predictive_check.probl`](../examples/16_predictive_check.probl) | model checking | replicate a dataset from a fitted rate and compare variation between days |
+| [`17_sensor_tracking.probl`](../examples/17_sensor_tracking.probl) | monitoring | noisy observations of a hidden state, incremental exact filtering and next-state prediction |
+| [`18_correlated_losses.probl`](../examples/18_correlated_losses.probl) | risk | common hazards, equal marginal risks, different joint tails and reserve shortfalls |
 
-Every example ends with the output it should produce, and those outputs are golden tests. The enumerated ones were checked against independent reference calculations, and must be printed exactly. Tests pin `today` to `2026-09-29`; use `--today 2026-09-29` to reproduce date-dependent output. The sampled ones come from an independent reference simulation, so the engine's numbers must agree with them within their sampling error: estimates within five standard errors, other numbers within 4%.
+Every example ends with the output it should produce, and those outputs are golden tests. The enumerated ones were checked against independent reference calculations, and must be printed exactly. Tests pin `today` to `2026-09-29`; use `--today 2026-09-29` to reproduce date-dependent output. Sampled output is compared within five standard errors for estimates, and 4% for other numbers. Examples 07–09 use independent reference simulations as their baselines; examples 15–16 record seeded engine output, with their headline results also checked independently. See the [use-case review](use-case-gaps.md) for the new examples' validation and the limitations they expose.
 
 ---
 

@@ -1,0 +1,51 @@
+# Staffing a help desk: compare one and two agents on the same arriving jobs.
+
+@mode sample(runs: 2_000, seed: 19)
+
+# A short batch starts with an empty queue. Times are elapsed minutes, not dates.
+# Arrivals are Poisson (rate 0.8/minute); service times are exponential (mean 1).
+# Jobs are FIFO, agents identical, no breaks or abandonment. This is a transient
+# batch experiment, not a steady-state queue estimate.
+var arrivals = []
+var services = []
+var clock = 0.0
+repeat 24 {
+  let gap ~ exponential(0.8)
+  let service ~ exponential(1)
+  clock += gap
+  arrivals.push(clock)
+  services.push(service)
+}
+
+fn queue(arrivals, services, agents) {
+  var available = (1..agents).map(n -> 0.0)
+  var total_wait = 0.0
+  var long_waits = 0
+  for job in 0..<len(arrivals) {
+    # Sorting a tiny list is enough here; a large event simulator wants a heap.
+    available = sort(available)
+    let start = max(arrivals[job], available[0])
+    let wait = start - arrivals[job]
+    total_wait += wait
+    if wait > 2 { long_waits += 1 }
+    available[0] = start + services[job]
+  }
+  { mean_wait: total_wait / len(arrivals), long_waits }
+}
+
+# Reusing jobs across policies is deliberate. An independently generated second
+# queue would answer a different question about the distribution of the change.
+let one = queue(arrivals, services, 1)
+let two = queue(arrivals, services, 2)
+report one.mean_wait as "one agent: average wait (min)"
+report two.mean_wait as "two agents: average wait (min)"
+report one.mean_wait - two.mean_wait as "average wait saved (min)"
+report two.long_waits > 0 as "any wait over two minutes with two agents"
+
+# ── Output (sampled; seed 19) ─────────────────────────────────────────────
+# sample · 2,000 runs · seed 19
+#
+# one agent: average wait (min)                mean 1.88 ± 0.04 · sd 1.66 · 5% 0.33 · median 1.36 · 95% 5.41
+# two agents: average wait (min)               mean 0.16 · sd 0.22 · 5% 0.00 · median 0.09 · 95% 0.57
+# average wait saved (min)                     mean 1.73 ± 0.03 · sd 1.49 · 5% 0.32 · median 1.24 · 95% 4.97
+# any wait over two minutes with two agents    14.6% ± 0.8%

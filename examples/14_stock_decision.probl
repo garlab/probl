@@ -1,0 +1,49 @@
+# Stock decisions: choose an order before demand is known, and price perfect information.
+
+# A single selling period; synthetic demand, no lead time or replenishment.
+# Unsold units recover 2 each. All amounts use the same arbitrary money unit.
+let demand_model = one_of([20: 25%, 40: 50%, 60: 25%])
+let quantities = [20, 40, 60]
+fn profit(order, demand) {
+  10 * min(order, demand) + 2 * max(order - demand, 0) - 6 * order
+}
+
+# Choose with the forecast, before settling the demand that will occur.
+# Strict > keeps the first candidate on a tie.
+var chosen = quantities[0]
+var best_expected = mean(simulate { let d ~ demand_model; profit(chosen, d) })
+for quantity in quantities {
+  let expected = mean(simulate { let d ~ demand_model; profit(quantity, d) })
+  if expected > best_expected { chosen = quantity; best_expected = expected }
+  report expected by quantity as "expected profit by order"
+}
+
+# A clairvoyant decision is a bound on information's value, not an available policy.
+let perfect = simulate {
+  let d ~ demand_model
+  max(quantities.map(q -> profit(q, d)))
+}
+report chosen as "order chosen before demand"
+report mean(perfect) - best_expected as "value of perfect information"
+
+# Compare policies on ONE shared future, preserving their relationship.
+let demand ~ demand_model
+let actual = profit(chosen, demand)
+report actual as "profit from chosen order"
+report actual - profit(20, demand) as "gain over ordering 20"
+report max(quantities.map(q -> profit(q, demand))) - actual as "regret after demand"
+
+# ── Output ─────────────────────────────────────────────
+# enumerated
+#
+# expected profit by order
+#   quantity      5%     25%   median     75%     95%
+#         20   80.00   80.00    80.00   80.00   80.00
+#         40     120     120      120     120     120
+#         60   80.00   80.00    80.00   80.00   80.00
+#
+# order chosen before demand      40
+# value of perfect information    40.0
+# profit from chosen order        mean 120 · sd 69 · 5% 0 · median 160 · 95% 160
+# gain over ordering 20           mean 40.00 · sd 69.28 · 5% -80 · median 80 · 95% 80
+# regret after demand             mean 40.00 · sd 40.00 · 5% 0 · median 0 · 95% 80

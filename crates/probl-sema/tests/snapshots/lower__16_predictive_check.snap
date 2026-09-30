@@ -1,0 +1,38 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: ir(&src)
+---
+fn#0 the top level ()
+  counts_0 = [0, 1, 0, 1, 5, 6, 5, 6]    [live: counts_0]
+  visitors_1 = 10    [live: counts_0 visitors_1]
+  rate_2 ~ beta(1, 1)    [live: counts_0 visitors_1 rate_2]
+  $3 = $iter_items(counts_0)    [live: counts_0 visitors_1 rate_2 $3]
+  $4 = 0    [live: counts_0 visitors_1 rate_2 $3 $4]
+  loop (bounded) {    [live at head: counts_0 visitors_1 rate_2 $3 $4]
+    if (>= $4 len($3)) {
+      break    [live: counts_0 visitors_1 rate_2 $3 $4]
+    }
+    successes_5 = $3[$4]    [live: counts_0 visitors_1 rate_2 $3 $4 successes_5]
+    $4 = (+ $4 1)    [live: counts_0 visitors_1 rate_2 $3 $4 successes_5]
+    observe successes_5 from binomial(visitors_1, rate_2)    [live: counts_0 visitors_1 rate_2 $3 $4]
+  }
+  replicated_6 = []    [live: counts_0 visitors_1 rate_2 replicated_6]
+  $7 = $repeat_count(len(counts_0))    [live: counts_0 visitors_1 rate_2 replicated_6 $7]
+  $8 = 0    [live: counts_0 visitors_1 rate_2 replicated_6 $7 $8]
+  loop (bounded) {    [live at head: counts_0 visitors_1 rate_2 replicated_6 $7 $8]
+    if (>= $8 $7) {
+      break    [live: counts_0 visitors_1 rate_2 replicated_6 $7 $8]
+    }
+    $8 = (+ $8 1)    [live: counts_0 visitors_1 rate_2 replicated_6 $7 $8]
+    successes_9 ~ binomial(visitors_1, rate_2)    [live: counts_0 visitors_1 rate_2 replicated_6 $7 $8 successes_9]
+    replicated_6 = push(replicated_6, successes_9)    [live: counts_0 visitors_1 rate_2 replicated_6 $7 $8]
+  }
+  report (* rate_2 100) as "common conversion rate (%)"    [live: counts_0 replicated_6]
+  report sum(replicated_6) as "sign-ups in a replicated pilot"    [live: counts_0 replicated_6]
+  $10 = call fn#1 spread(replicated_6)    [live: counts_0 replicated_6 $10]
+  report $10 as "replicated range across days"    [live: counts_0 replicated_6]
+  $11 = call fn#1 spread(replicated_6)    [live: counts_0 $11]
+  $12 = call fn#1 spread(counts_0)    [live: $11 $12]
+  report (>= $11 $12) as "replicated range at least observed"    [live: ]
+fn#1 spread (xs_0)
+  return (- max(xs_0) min(xs_0))    [live: ]

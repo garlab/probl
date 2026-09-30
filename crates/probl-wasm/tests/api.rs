@@ -54,7 +54,7 @@ impl Resolver for Given {
 #[test]
 fn the_examples_print_what_the_command_line_prints() {
     let all = examples();
-    assert_eq!(all.len(), 13);
+    assert_eq!(all.len(), 18);
     for example in all {
         let source = example["source"].as_str().unwrap();
         let (answer, _) = run(json!({ "source": source, "today": "2026-09-29", "files": example["files"] }));
