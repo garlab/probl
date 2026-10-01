@@ -2,6 +2,8 @@
 
 Reviewed 30 September 2026 against `a0c0255`, before adding examples 14–18. The examples were written and executed first; the recommendations below come from using them and trying natural extensions. This review adds examples, documentation and playground integration. It does not change language semantics or inference algorithms.
 
+**Follow-up, 1 October 2026:** callback restrictions now apply in both modes, sparse or constant sampled probabilities no longer print zero error as certainty, report/key support is shown when low, and tiny nonzero summaries retain their scale. Repeated-key classification from the earlier review is also corrected. These fixes have [regression tests](../crates/probl-engine/tests/reporting_regressions.rs); the findings below describe the reviewed version. Observation helpers still force delayed parameters, and the model/result-interface recommendations remain open.
+
 **Focus next on trustworthy, reusable models and useful query results.** Probl now expresses much more than dice games and marginal forecasts: decisions, operations, model checking, monitoring and correlated risk all fit its core. Draw identity, ordinary stateful code and immutable values work well together. The limits become visible when turning a small, self-contained program into a reusable model, extending its evidence, or consuming its answers elsewhere.
 
 The most consequential design decision is the boundary between **a probabilistic computation, a distribution value and an inference result**. Settle that boundary, along with function effects and correlation, before modules and reusable modeling libraries grow around accidental behavior. More scalar math is a lower priority for these use cases.

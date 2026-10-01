@@ -68,5 +68,5 @@ report diagnosis as "sick, given a positive test"
 # rain or late                        44.00%
 # rain and rain                       30.00%
 # rolls until a six                   mean 6.00 · sd 5.48 · 5% 1 · median 4 · 95% 17
-# random walk after 1,000 steps       mean 0.00 · sd 31.62 · 5% -52 · median 0 · 95% 52
+# random walk after 1,000 steps       mean ≈0 · sd 31.62 · 5% -52 · median 0 · 95% 52
 # sick, given a positive test         10.71%

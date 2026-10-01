@@ -109,9 +109,13 @@ impl Sums {
 /// What the finished runs reported for one key, summed.
 #[derive(Clone, Debug, Default)]
 struct Moments {
-    /// Σ w and Σ w² over the runs that reached the report.
-    weight: Weight,
-    squares: Weight,
+    contributing_runs: u64,
+    /// Wilson intervals require one ordinary Bernoulli observation per run
+    /// and equal weights, rather than integrated or weighted contributions.
+    not_bernoulli: bool,
+    bernoulli_weight: Option<Weight>,
+    successes: u64,
+    integrated: bool,
     /// Facts: a is P(true), b the probability of a fact.
     facts: Base,
     yes: Sums,
@@ -129,8 +133,12 @@ struct Moments {
 
 impl Moments {
     fn absorb(&mut self, other: Moments) {
-        self.weight += other.weight;
-        self.squares += other.squares;
+        self.not_bernoulli |= other.not_bernoulli
+            || matches!((self.bernoulli_weight, other.bernoulli_weight), (Some(a), Some(b)) if a != b);
+        self.bernoulli_weight = self.bernoulli_weight.or(other.bernoulli_weight);
+        self.contributing_runs += other.contributing_runs;
+        self.successes += other.successes;
+        self.integrated |= other.integrated;
         self.facts.absorb(other.facts);
         self.yes.absorb(other.yes);
         self.numbers.absorb(other.numbers);
@@ -154,6 +162,9 @@ pub struct RunStat {
     /// The run's weight (its final weight: no observation follows a report).
     pub weight: Weight,
     pub visits: u32,
+    /// At least one visit supplied a distribution whose outcomes were
+    /// integrated, instead of an ordinary sampled value.
+    integrated: bool,
     /// The probability that the reported fact was true.
     pub yes: f64,
     /// The probability that the reported value was a fact.
@@ -288,8 +299,15 @@ impl Acc {
         let m = self.moments.get_or_insert_with(Moments::default);
         for (_, run) in self.runs.drain() {
             let w = run.weight;
-            m.weight += w;
-            m.squares += w * w;
+            m.contributing_runs += 1;
+            m.not_bernoulli |= run.visits != 1
+                || run.facts != 1.0
+                || run.integrated
+                || (run.yes != 0.0 && run.yes != 1.0)
+                || m.bernoulli_weight.is_some_and(|previous| previous != w);
+            m.bernoulli_weight.get_or_insert(w);
+            m.successes += (run.yes == 1.0) as u64;
+            m.integrated |= run.integrated;
             m.facts.add(w, run.facts);
             m.yes.add(w, run.yes, run.facts);
             m.numbers.add(w, run.numbers);
@@ -323,13 +341,41 @@ impl Acc {
         self.moments.clone().unwrap_or_default()
     }
 
-    /// When sampling: how many equally weighted runs the estimates are worth.
+    /// Number of independent runs contributing to this report/key. Multiple
+    /// visits in one run count once.
+    pub fn contributing_runs(&self) -> u64 {
+        self.moments.as_ref().map_or(0, |m| m.contributing_runs)
+    }
+
+    /// When sampling: effective sample size using the report denominator's
+    /// per-run contributions, including visit multiplicity.
     pub fn effective(&self) -> f64 {
         let m = self.moments();
-        if m.squares.is_zero() {
+        let base = if self.is_event() {
+            m.facts
+        } else if self.facts.is_zero()
+            && !m.numbers.b.is_zero()
+            && self
+                .values
+                .keys()
+                .all(|v| matches!(v, Value::Int(_) | Value::Float(_) | Value::Prob(_)))
+        {
+            m.numbers
+        } else {
+            m.visits
+        };
+        if base.bb.is_zero() {
             return 0.0;
         }
-        (m.weight * m.weight).ratio(m.squares)
+        (base.b * base.b).ratio(base.bb).min(m.contributing_runs as f64)
+    }
+
+    fn chance_interval95(&self, kind: ReportKind) -> Option<(f64, f64)> {
+        let m = self.moments.as_ref()?;
+        if kind == ReportKind::PerVisit || m.not_bernoulli || m.contributing_runs == 0 {
+            return None;
+        }
+        Some(wilson95(m.successes, m.contributing_runs))
     }
 
     /// When sampling: the standard error of `chance`.
@@ -377,6 +423,7 @@ impl Sink {
             let stat = acc.runs.entry(run).or_insert_with(|| RunStat {
                 weight,
                 visits: 0,
+                integrated: false,
                 yes: 0.0,
                 facts: 0.0,
                 sum: 0.0,
@@ -384,6 +431,7 @@ impl Sink {
                 others: Vec::new(),
             });
             stat.visits += 1;
+            stat.integrated |= matches!(value, Value::Dist(_));
             stat.record(value, 1.0);
         }
     }
@@ -446,6 +494,9 @@ pub struct Format {
     pub program_total: Weight,
     /// When sampling: the sum of the runs' squared weights.
     pub run_squares: Option<Weight>,
+    /// The model may condition outer worlds. Equal weights observed so far
+    /// alone do not establish an ordinary binomial sampling scheme.
+    pub weighted: bool,
 }
 
 /// Print every report in source order.
@@ -484,7 +535,7 @@ pub fn render(program: &Program, sinks: &[Sink], format: Format) -> String {
         if sink.groups.is_empty() {
             writeln!(out, "  (never reached)").unwrap();
         } else {
-            out.push_str(&table(site.key_label.as_deref().unwrap_or(""), sink, format));
+            out.push_str(&table(site.key_label.as_deref().unwrap_or(""), sink, format, site.kind));
         }
         out.push('\n');
     }
@@ -531,7 +582,7 @@ fn reach_note(kind: ReportKind, sink: &Sink, format: Format) -> String {
 
 fn value_text(acc: &Acc, format: Format) -> String {
     if acc.is_event() {
-        return chance_text(acc, format);
+        return chance_text(acc, format, ReportKind::Once);
     }
     let dist = acc.distribution();
     let mean_se = acc.sampled().then(|| acc.mean_se().1);
@@ -562,14 +613,44 @@ fn value_text(acc: &Acc, format: Format) -> String {
         )
         .unwrap();
     }
+    text.push_str(&reliability_note(acc));
     text
 }
 
 /// A probability, or the range it lies in when unresolved weight is visible;
 /// when sampling, an estimate and its standard error.
-fn chance_text(acc: &Acc, format: Format) -> String {
+fn chance_text(acc: &Acc, format: Format, kind: ReportKind) -> String {
     if acc.sampled() {
-        return estimate(acc.chance(), acc.chance_se());
+        let p = acc.chance();
+        let se = acc.chance_se();
+        let mut text = if let Some((lo, hi)) = acc
+            .chance_interval95(kind)
+            .filter(|_| !format.weighted)
+            .filter(|_| p == 0.0 || p == 1.0 || acc.contributing_runs() < 30)
+        {
+            format!(
+                "{} (95% Wilson interval {}–{}; {} contributing runs)",
+                pct(p, format),
+                pct(lo, format),
+                pct(hi, format),
+                thousands(acc.contributing_runs() as i64)
+            )
+        } else if se == 0.0 {
+            let note = if acc.moments.as_ref().is_some_and(|m| m.integrated) {
+                "zero empirical MC error; integrated outcomes"
+            } else {
+                "MC error not estimable"
+            };
+            format!(
+                "{} ({note}; {} contributing runs)",
+                pct(p, format),
+                thousands(acc.contributing_runs() as i64)
+            )
+        } else {
+            estimate(p, se)
+        };
+        text.push_str(&reliability_note(acc));
+        return text;
     }
     let (lo, hi) = acc.chance_bounds(format.unresolved);
     if hi - lo >= 0.00005 {
@@ -580,6 +661,36 @@ fn chance_text(acc: &Acc, format: Format) -> String {
         return format!("{}–{}", pct(lo, plain), pct(hi, plain));
     }
     pct(acc.chance(), format)
+}
+
+/// Two-sided 95% Wilson score interval for ordinary independent Bernoulli
+/// observations. Not an interval for importance-weighted or integrated data.
+fn wilson95(successes: u64, trials: u64) -> (f64, f64) {
+    let n = trials as f64;
+    let p = successes as f64 / n;
+    let z2 = 1.959963984540054_f64.powi(2);
+    let denominator = 1.0 + z2 / n;
+    let center = (p + z2 / (2.0 * n)) / denominator;
+    let half = (z2 * (p * (1.0 - p) / n + z2 / (4.0 * n * n))).sqrt() / denominator;
+    (
+        if successes == 0 { 0.0 } else { (center - half).max(0.0) },
+        if successes == trials {
+            1.0
+        } else {
+            (center + half).min(1.0)
+        },
+    )
+}
+
+fn reliability_note(acc: &Acc) -> String {
+    if !acc.sampled() || acc.effective() >= 30.0 {
+        return String::new();
+    }
+    format!(
+        " (low sample support: {} contributing runs; effective sample size {})",
+        thousands(acc.contributing_runs() as i64),
+        fixed(acc.effective(), 1)
+    )
 }
 
 fn categorical(dist: &[(Value, f64)], format: Format) -> String {
@@ -603,7 +714,7 @@ fn categorical_sampled(acc: &Acc, dist: &[(Value, f64)]) -> String {
     let shown = by_chance.len().min(12);
     let mut parts: Vec<String> = by_chance[..shown]
         .iter()
-        .map(|(v, p)| format!("{} {}", display(v), estimate(*p, acc.value_se(v, *p))))
+        .map(|(v, p)| format!("{} {}", display(v), sampled_value_text(acc, v, *p)))
         .collect();
     if by_chance.len() > shown {
         parts.push(format!("… {} more", by_chance.len() - shown));
@@ -611,16 +722,25 @@ fn categorical_sampled(acc: &Acc, dist: &[(Value, f64)]) -> String {
     parts.join(" · ")
 }
 
+fn sampled_value_text(acc: &Acc, value: &Value, p: f64) -> String {
+    let se = acc.value_se(value, p);
+    if se == 0.0 {
+        format!("{}% (MC error not estimable)", fixed(p * 100.0, 2))
+    } else {
+        estimate(p, se)
+    }
+}
+
 /// A sampled probability and its standard error, rounded to the error's
 /// precision: `46.1% ± 0.3%` (docs/semantics.md, section 14).
 pub fn estimate(p: f64, se: f64) -> String {
-    let (p, se) = (p * 100.0, se * 100.0);
+    let se = se * 100.0;
     let decimals = if se < 0.005 {
         2
     } else {
         (-libm::log10(se).floor()).clamp(0.0, 2.0) as usize
     };
-    format!("{p:.decimals$}% ± {se:.decimals$}%")
+    format!("{} ± {}%", fmt_percent(p, decimals), fixed(se, decimals))
 }
 
 /// `mean · sd · 5% · median · 95%`, and a sparkline for small integer ranges.
@@ -646,13 +766,22 @@ fn numeric_stats(dist: &[(Value, f64)], mean_se: Option<f64>) -> Option<String> 
         return None;
     }
     let show = |x: f64, decimals: usize| {
-        if percent {
-            format!("{:.2}%", x * 100.0)
-        } else {
-            fixed(x, decimals)
-        }
+        if percent { fmt_percent(x, 2) } else { fixed(x, decimals) }
     };
     let decimals = if mean.abs().max(sd) < 100.0 { 2 } else { 0 };
+    // Mixed-sign sums can leave a platform-dependent residue below their
+    // floating-point summation resolution. Mark that summary approximately
+    // zero, without changing the value or hiding genuinely small-scale data.
+    let roundoff_factor = (nums.len() as f64 + 2.0) * f64::EPSILON;
+    let absolute_mean = nums.iter().map(|(x, p)| x.abs() * p).sum::<f64>() / total;
+    let cancellation = nums.iter().any(|(x, _)| *x < 0.0)
+        && nums.iter().any(|(x, _)| *x > 0.0)
+        && mean.abs() <= absolute_mean * roundoff_factor / (1.0 - roundoff_factor);
+    let shown_mean = if cancellation {
+        if percent { "≈0%" } else { "≈0" }.to_string()
+    } else {
+        show(mean, decimals)
+    };
     let [a, b, c] = [0.05, 0.5, 0.95].map(|q| {
         let v = quantile(dist, q);
         if percent {
@@ -662,10 +791,14 @@ fn numeric_stats(dist: &[(Value, f64)], mean_se: Option<f64>) -> Option<String> 
         }
     });
     let mean_text = match mean_se {
-        Some(se) if se * if percent { 100.0 } else { 1.0 } >= 0.5 * libm::pow(10.0, -(decimals as f64)) => {
-            format!("{} ± {}", show(mean, decimals), show(se, decimals))
+        Some(se)
+            if se > 0.0
+                && (se * if percent { 100.0 } else { 1.0 } >= 0.5 * libm::pow(10.0, -(decimals as f64))
+                    || (mean != 0.0 && mean.abs() * if percent { 100.0 } else { 1.0 } < 0.005)) =>
+        {
+            format!("{} ± {}", shown_mean, show(se, decimals))
         }
-        _ => show(mean, decimals),
+        _ => shown_mean,
     };
     let mut text = format!(
         "mean {mean_text} · sd {} · 5% {a} · median {b} · 95% {c}",
@@ -716,7 +849,7 @@ fn quantile(dist: &[(Value, f64)], q: f64) -> Value {
 }
 
 /// A report table: one row per `by` key.
-fn table(key_label: &str, sink: &Sink, format: Format) -> String {
+fn table(key_label: &str, sink: &Sink, format: Format, kind: ReportKind) -> String {
     let groups: Vec<(&Value, &Acc)> = sink.groups.iter().collect();
     let keys: Vec<String> = groups.iter().map(|(k, _)| display(k)).collect();
     let mut rows: Vec<Vec<String>> = Vec::new();
@@ -725,7 +858,7 @@ fn table(key_label: &str, sink: &Sink, format: Format) -> String {
     if groups.iter().all(|(_, a)| a.is_event()) {
         header = Vec::new();
         for (key, (_, acc)) in keys.iter().zip(&groups) {
-            rows.push(vec![key.clone(), chance_text(acc, format)]);
+            rows.push(vec![key.clone(), chance_text(acc, format, kind)]);
         }
     } else {
         let dists: Vec<Vec<(Value, f64)>> = groups.iter().map(|(_, a)| a.distribution()).collect();
@@ -754,7 +887,7 @@ fn table(key_label: &str, sink: &Sink, format: Format) -> String {
                 for c in &columns {
                     let p = d.iter().find(|(v, _)| v == c).map_or(0.0, |(_, p)| *p);
                     row.push(if acc.sampled() {
-                        estimate(p, acc.value_se(c, p))
+                        sampled_value_text(acc, c, p)
                     } else {
                         pct(p, format)
                     });
@@ -764,6 +897,17 @@ fn table(key_label: &str, sink: &Sink, format: Format) -> String {
         }
     }
 
+    // Reliability belongs to a key, not to the whole table. Include it for
+    // numeric/date/categorical rows too, where no probability cell carries it.
+    let mut header = header;
+    if !groups.iter().all(|(_, a)| a.is_event()) && groups.iter().any(|(_, a)| !reliability_note(a).is_empty()) {
+        if !header.is_empty() {
+            header.push("reliability".to_string());
+        }
+        for (row, (_, acc)) in rows.iter_mut().zip(&groups) {
+            row.push(reliability_note(acc).trim().to_string());
+        }
+    }
     let mut all = Vec::new();
     if !header.is_empty() {
         let mut h = vec![key_label.to_string()];
@@ -799,7 +943,7 @@ fn table(key_label: &str, sink: &Sink, format: Format) -> String {
 
 /// A probability as a percentage with two decimals.
 pub fn pct(p: f64, format: Format) -> String {
-    let text = format!("{:.2}%", p * 100.0);
+    let text = fmt_percent(p, 2);
     let text = if text == "-0.00%" { "0.00%".to_string() } else { text };
     if format.fractions {
         if let Some((n, d)) = fraction(p) {
@@ -809,6 +953,17 @@ pub fn pct(p: f64, format: Format) -> String {
         }
     }
     text
+}
+
+fn fmt_percent(p: f64, decimals: usize) -> String {
+    // Keep a nonzero tail visible rather than rounding an interval endpoint
+    // or a nearly certain event to exactly 100%.
+    let decimals = if p > 0.0 && p < 1.0 && (1.0 - p) * 100.0 < 0.5 * libm::pow(10.0, -(decimals as f64)) {
+        (-libm::log10((1.0 - p) * 100.0).floor() + 2.0).clamp(decimals as f64, 14.0) as usize
+    } else {
+        decimals
+    };
+    format!("{}%", fixed(p * 100.0, decimals))
 }
 
 /// The simplest fraction within 1e-13 of `x` with a denominator of at most a
@@ -859,6 +1014,9 @@ fn number(v: &Value, decimals: usize) -> String {
 }
 
 fn fixed(x: f64, decimals: usize) -> String {
+    if x != 0.0 && x.abs() < 0.5 * libm::pow(10.0, -(decimals as f64)) {
+        return format!("{x:.2e}");
+    }
     let text = format!("{:.*}", decimals, x);
     let text = if text.starts_with('-') && text.trim_start_matches(['-', '0', '.']).is_empty() {
         text[1..].to_string()
@@ -909,6 +1067,7 @@ mod tests {
             unresolved: Weight::ZERO,
             program_total: Weight::ONE,
             run_squares: None,
+            weighted: false,
         }
     }
 
@@ -931,9 +1090,81 @@ mod tests {
         assert_eq!(thousands(-1000), "-1,000");
         assert_eq!(thousands(i64::MIN), "-9,223,372,036,854,775,808");
         assert_eq!(fixed(3.375, 2), "3.38");
-        assert_eq!(fixed(-0.001, 2), "0.00");
+        assert_eq!(fixed(-0.001, 2), "-1.00e-3");
+        assert_eq!(fixed(-0.0, 2), "0.00");
         assert_eq!(fixed(92282.9, 0), "92,283");
         assert_eq!(pct(0.4929292929, plain()), "49.29%");
+        assert_eq!(pct(1e-10, plain()), "1.00e-8%");
+        assert_eq!(estimate(1e-10, 1e-12), "1.00e-8% ± 1.00e-10%");
+        assert_eq!(number(&Value::Float(-1e-10), 2), "-1.00e-10");
+        assert_ne!(pct(1.0 - 1e-10, plain()), "100.00%");
+        assert_eq!(pct(1.0, plain()), "100.00%");
+    }
+
+    #[test]
+    fn wilson_intervals_cover_boundaries_and_an_interior_reference() {
+        let close = |a: f64, b: f64| assert!((a - b).abs() < 1e-12, "{a} != {b}");
+        let (lo, hi) = wilson95(2, 2);
+        close(lo, 0.342380227506653);
+        assert_eq!(hi, 1.0);
+        let (lo, hi) = wilson95(0, 1000);
+        assert_eq!(lo, 0.0);
+        close(hi, 0.0038267584855551234);
+        let (lo, hi) = wilson95(50, 100);
+        close(lo, 0.4038315303659956);
+        close(hi, 0.5961684696340044);
+        assert!(wilson95(0, 1).1 > 0.79);
+    }
+
+    #[test]
+    fn report_counts_and_intervals_merge_across_batches() {
+        let mut combined = Sink::default();
+        for _ in 0..3 {
+            let mut batch = Sink::default();
+            for run in 0..1000 {
+                batch.add(Value::Unit, &Value::Bool(true), Weight::ONE, Some(run));
+            }
+            batch.end_batch();
+            combined.absorb(batch);
+        }
+        let acc = &combined.groups[&Value::Unit];
+        assert_eq!(acc.contributing_runs(), 3000);
+        assert!((acc.effective() - 3000.0).abs() < 1e-8);
+        assert_eq!(acc.chance_interval95(ReportKind::Once), Some(wilson95(3000, 3000)));
+        assert_eq!(acc.chance_interval95(ReportKind::PerVisit), None);
+
+        // Each batch has equal weights, but their union does not.
+        let mut weighted = Sink::default();
+        weighted.add(Value::Unit, &Value::Bool(true), Weight::new(0.1), Some(0));
+        weighted.end_batch();
+        combined.absorb(weighted);
+        let acc = &combined.groups[&Value::Unit];
+        assert_eq!(acc.contributing_runs(), 3001);
+        assert_eq!(acc.chance_interval95(ReportKind::Once), None);
+    }
+
+    #[test]
+    fn repeated_visits_do_not_inflate_independent_sample_counts() {
+        let mut sink = Sink::default();
+        sink.add(Value::Unit, &Value::Bool(false), Weight::ONE, Some(0));
+        for _ in 0..9 {
+            sink.add(Value::Unit, &Value::Bool(true), Weight::ONE, Some(1));
+        }
+        sink.end_batch();
+        let acc = &sink.groups[&Value::Unit];
+        assert_eq!(acc.contributing_runs(), 2);
+        assert!((acc.effective() - 100.0 / 82.0).abs() < 1e-12);
+        assert_eq!(acc.chance_interval95(ReportKind::Once), None);
+        assert!(reliability_note(acc).contains("2 contributing runs"));
+
+        // A partially resolved numeric distribution contributes its resolved
+        // mass to the mean's denominator, rather than one whole visit.
+        let partial = crate::dist::Dist::from_pairs(vec![(Value::Float(1.0), 0.1)], 0.9).into_value();
+        let mut numeric = Sink::default();
+        numeric.add(Value::Unit, &partial, Weight::ONE, Some(0));
+        numeric.add(Value::Unit, &Value::Float(1.0), Weight::ONE, Some(1));
+        numeric.end_batch();
+        assert!((numeric.groups[&Value::Unit].effective() - 1.21 / 1.01).abs() < 1e-12);
     }
 
     #[test]
@@ -948,6 +1179,6 @@ mod tests {
             unresolved: Weight::new(0.005),
             ..plain()
         };
-        assert_eq!(chance_text(acc, format), "0.00%–99.80%");
+        assert_eq!(chance_text(acc, format, ReportKind::Once), "0.00%–99.80%");
     }
 }

@@ -426,19 +426,19 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Sum => doc("sum(xs: list)", "The items added up; 0 for an empty list."),
         B::Count => doc(
             "count(xs) -> int or count(xs, test) -> int",
-            "How many items there are, or how many pass `test`: `count(rolls, r -> r == 6)`.",
+            "How many items there are, or how many pass `test`: `count(rolls, r -> r == 6)`. The test cannot draw, observe or branch on uncertainty outside a local simulate scope, in either execution mode.",
         ),
         B::Map => doc(
             "map(xs, f) -> list",
-            "f applied to each element of a list, range or string. String elements are one-scalar strings; the result is always a list. The function can't draw or branch on chances.",
+            "f applied to each element of a list, range or string. String elements are one-scalar strings; the result is always a list. The function cannot draw, observe or branch on uncertainty outside a local simulate scope, in either execution mode.",
         ),
         B::Filter => doc(
             "filter(xs, test) -> list",
-            "The elements of a list, range or string for which test is true. String elements are one-scalar strings; the result is always a list. Use join(result, \"\") to rebuild text.",
+            "The elements of a list, range or string for which test is true. String elements are one-scalar strings; the result is always a list. Use join(result, \"\") to rebuild text. The test cannot draw, observe or branch on uncertainty outside a local simulate scope, in either execution mode.",
         ),
         B::Reduce => doc(
             "reduce(xs, start, f)",
-            "The elements of a list, range or string combined one by one, starting from start. String elements are one-scalar strings.",
+            "The elements of a list, range or string combined one by one, starting from start. String elements are one-scalar strings. The function cannot draw, observe or branch on uncertainty outside a local simulate scope, in either execution mode.",
         ),
         B::Sort => doc(
             "sort(xs) -> list",

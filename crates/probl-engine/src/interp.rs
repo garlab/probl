@@ -261,6 +261,9 @@ pub struct Engine<'p> {
     sampler: Option<Rng>,
     /// How many `simulate` blocks are being enumerated inside a sampled run.
     nested: usize,
+    /// Dynamic effect boundary for collection callbacks. Effects inside an
+    /// explicit `simulate` are local to that computation instead.
+    callback: Option<&'static str>,
 }
 
 impl<'p> Engine<'p> {
@@ -317,6 +320,7 @@ impl<'p> Engine<'p> {
             stats: Stats::default(),
             sampler,
             nested: 0,
+            callback: None,
         }
     }
 
@@ -629,6 +633,12 @@ impl<'p> Engine<'p> {
 
     fn exec_stmt(&mut self, f: FnId, stmt: &'p Stmt, worlds: Vec<World>) -> Result<Flow> {
         let span = stmt.span;
+        if matches!(
+            stmt.kind,
+            StmtKind::Draw { .. } | StmtKind::Take { .. } | StmtKind::Observe { .. } | StmtKind::Chance { .. }
+        ) {
+            self.check_callback_effect(span)?;
+        }
         let n = worlds.len();
         self.stats.world_steps += n as u64;
         self.stats.peak_worlds = self.stats.peak_worlds.max(n);
@@ -779,6 +789,9 @@ impl<'p> Engine<'p> {
                 let (mut yes, mut no) = (Vec::new(), Vec::new());
                 for w in worlds {
                     let c = self.eval_condition(f, cond, &w)?;
+                    if (c.yes > 0.0 && c.no > 0.0) || c.missing > 0.0 {
+                        self.check_callback_effect(cond.span)?;
+                    }
                     if let Some(rng) = &mut self.sampler {
                         // One branch, chosen with its probability.
                         match rng.choose([c.yes, c.no].into_iter()) {
@@ -1387,7 +1400,9 @@ impl<'p> Engine<'p> {
         let fun = &prog.functions[func as usize];
         // When sampling, every call makes its own choices (section 14).
         let sampling = self.sampler.is_some();
-        let memoizable = self.config.memoizing && !sampling && !fun.effects.prints;
+        // A cached result does not prove a callback's effects were permitted:
+        // a draw or observation can collapse to one outcome of weight one.
+        let memoizable = self.config.memoizing && !sampling && !fun.effects.prints && self.callback.is_none();
         let call_key = (func, key);
         if memoizable {
             if let Some(r) = self.memo.get(&call_key) {
@@ -1631,10 +1646,12 @@ impl<'p> Engine<'p> {
         let saved_densities = self.densities;
         // Enumerated, even when sampling (section 14).
         let sampler = self.sampler.take();
+        let callback = self.callback.take();
         self.nested += sampler.is_some() as usize;
         let result = self.call(func, key, span);
         self.nested -= sampler.is_some() as usize;
         self.sampler = sampler;
+        self.callback = callback;
         // Observations inside `simulate` condition its result only.
         self.observed = saved_observed;
         self.densities = saved_densities;
@@ -1664,7 +1681,7 @@ impl<'p> Engine<'p> {
     }
 
     /// Call a closure that must not split worlds (used by `map`, `filter`, …).
-    fn call_pure(&mut self, closure: &Value, args: Vec<Value>, what: &str, span: Span) -> Result<Value> {
+    fn call_pure(&mut self, closure: &Value, args: Vec<Value>, what: &'static str, span: Span) -> Result<Value> {
         let Value::Closure(c) = closure else {
             return Err(RuntimeError::new(
                 span,
@@ -1677,7 +1694,10 @@ impl<'p> Engine<'p> {
         self.check_arity(c, args.len(), span)?;
         let mut key = args;
         key.extend(c.captured.iter().cloned());
-        let result = self.call(c.func, key, span)?;
+        let previous = self.callback.replace(what);
+        let result = self.call(c.func, key, span);
+        self.callback = previous;
+        let result = result?;
         if !result.pending.is_empty() {
             return Err(OpError::unsupported(format!(
                 "a function given to `{what}` that comes back to a call still running isn't supported yet"
@@ -1694,6 +1714,17 @@ impl<'p> Engine<'p> {
     }
 
     // ── Places ───────────────────────────────────────────────────────────
+
+    fn check_callback_effect(&self, span: Span) -> Result<()> {
+        match self.callback {
+            Some(what) => Err(RuntimeError::new(
+                span,
+                format!("the function given to `{what}` can't branch on chances, draw values or observe"),
+            )
+            .with_help("use a loop for probabilistic traversal, or `simulate` for a local distribution")),
+            None => Ok(()),
+        }
+    }
 
     fn assign(&mut self, f: FnId, place: &Place, v: Value, w: &mut World, span: Span) -> Result<()> {
         if place.path.is_empty() {

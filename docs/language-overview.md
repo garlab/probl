@@ -326,6 +326,8 @@ fn attack(a: Fighter, target: Fighter) -> int {
 let doubled = [3, 5, 8].map(x -> x * 2)   # lambdas; x.f(y) is the same as f(x, y)
 ```
 
+Collection callbacks (`map`, `filter`, `count`, `reduce`) cannot execute draws, observations or probabilistic branches in the caller's worlds. This restriction is the same in enumeration and sampling, including helper calls. Use a loop for random traversal. A callback can compute a local distribution with `simulate`, or transform an existing distribution without drawing it.
+
 Functions can branch, draw and observe, so calling one can split the caller's world. A call doesn't normalize anything: the splits and observations inside a function become part of the caller's weights. There is one restriction: **a function can read anything in scope, but it can only assign its own local variables.** It returns whatever it changes. That keeps every function a *probabilistic function of its inputs*, so the engine can compute the distribution of `attack(hero, goblin)` once and reuse it in every world and every round. (A function that calls `print`, directly or not, runs every time instead: its output is debug output, one line per world that runs it.)
 
 ### Types
@@ -469,11 +471,13 @@ What gets printed depends on the type:
 | anything else | each value with its probability: `sun 70.00% · rain 30.00%` |
 | `… by key` | one row per key: a table, or a fan chart over time |
 
-A report inside a branch describes only the worlds that pass through it, and says what share of the weight that was: `win  100.00% (reached in 1.00% of worlds)`. A report inside a loop needs `by`. When the key is the loop's variable (`for month in 1..18 { report mrr by month }`), each world reports once per key; with any other key, every visit counts, and the label says `(per visit)`. `report` is only allowed at the top level of a program, not inside functions or `simulate`. For debugging, `print(x)` prints once per world that runs it (worlds that have merged count once).
+A report inside a branch describes only the worlds that pass through it, and says what share of the weight that was: `win  100.00% (reached in 1.00% of worlds)`. A report inside a loop needs `by`. A single loop over a directly written integer range, keyed by its own variable (`for month in 1..18 { report mrr by month }`), contributes at most once per world/key. Other cases, including nested loops and collections that might repeat elements, are conservatively labelled `(per visit)`. Every visit counts; no duplicates are removed. `report` is only allowed at the top level of a program, not inside functions or `simulate`. For debugging, `print(x)` prints once per world that runs it (worlds that have merged count once).
 
 When a loop left some weight unresolved, a probability it could visibly change is printed as the range it must lie in, such as `0.00%–99.80%`; means and quantiles get a note instead, since a rare, very large value could move them anywhere. `--fractions` adds the simplest fraction near each probability: `49.29% (≈ 244/495)`. It's a hint for recognizing an answer, not a proof: weights are floating-point numbers.
 
-When sampling, each probability comes with its standard error, rounded to its precision: `33.0% ± 0.2%`. A mean shows its standard error when it's visible at the printed precision (`mean 3.40 ± 0.01`); standard deviations and quantiles have none.
+When sampling, probabilities normally come with a standard error: `33.0% ± 0.2%`. An ordinary unweighted Bernoulli report instead shows a labelled 95% Wilson interval when fewer than 30 runs contributed or all outcomes agree. Two successes from two contributing runs give an interval of about 34.24%–100%. Weighted and repeated-visit reports do not use that interval. A zero computed error is labelled `MC error not estimable` for ordinary sampled probabilities; directly reported finite distributions instead identify their integrated outcomes and zero empirical error. Neither establishes that unseen outcomes are impossible. Reports and table rows with fewer than 30 effective contributions show their contributing-run count and effective sample size.
+
+A mean shows its standard error when visible at the printed precision (`mean 3.40 ± 0.01`); standard deviations and quantiles have none. Small nonzero summaries and table cells use scientific notation instead of rounding to zero, and probabilities just below one retain their nonzero tail. A mean limited by floating-point cancellation is shown as `≈0`, without changing its value. The [reference semantics](semantics.md#14-sampling) details eligibility and reliability limits.
 
 ## 7. `simulate`: distributions from code
 

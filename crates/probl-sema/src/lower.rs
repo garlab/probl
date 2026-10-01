@@ -89,8 +89,8 @@ struct Ctx {
 
 #[derive(Clone, Debug, PartialEq)]
 enum LoopKind {
-    /// A `for` loop; the name of its variable if the pattern is a plain name.
-    For(Option<String>),
+    /// A `for` loop; its binding slot only when iteration keys are provably unique.
+    For(Option<SlotId>),
     Other,
 }
 
@@ -1527,11 +1527,6 @@ impl<'a> Lowerer<'a> {
         out.push(set_items);
         out.push(set_index);
 
-        let var = match &pattern.kind {
-            ast::PatternKind::Name(name) => Some(name.clone()),
-            _ => None,
-        };
-        self.cur().loops.push(LoopKind::For(var));
         let end = body.span.hi;
         self.push_scope();
         let mut inner = Vec::new();
@@ -1552,6 +1547,21 @@ impl<'a> Lowerer<'a> {
             span: pattern.span,
         };
         self.bind_pattern(pattern, element, false, &mut inner);
+        // Integer ranges never repeat elements. For arbitrary collections,
+        // aliases or nested loops, conservatively count visits. Compare slots,
+        // not names: a binding inside the body may shadow the iteration key.
+        let unique = matches!(
+            &iter.kind,
+            ast::ExprKind::Binary {
+                op: BinOp::Range | BinOp::RangeExcl,
+                ..
+            }
+        );
+        let var = match &pattern.kind {
+            ast::PatternKind::Name(name) if unique => self.lookup(name).map(|b| b.slot),
+            _ => None,
+        };
+        self.cur().loops.push(LoopKind::For(var));
         let incr = self.stmt(
             span,
             StmtKind::Set {
@@ -1598,9 +1608,9 @@ impl<'a> Lowerer<'a> {
         let v = values.next().unwrap();
         let key = values.next();
         let site = self.reports.len() as u32;
-        let kind = match (self.ctx[0].loops.last(), by.map(|k| &k.kind)) {
-            (None, _) => ReportKind::Once,
-            (Some(LoopKind::For(Some(var))), Some(ast::ExprKind::Name(key))) if key == var => ReportKind::PerKey,
+        let kind = match (self.ctx[0].loops.as_slice(), key.as_ref().map(|k| &k.kind)) {
+            ([], _) => ReportKind::Once,
+            ([LoopKind::For(Some(var))], Some(ExprKind::Slot(key))) if key == var => ReportKind::PerKey,
             _ => ReportKind::PerVisit,
         };
         self.reports.push(ReportSite {

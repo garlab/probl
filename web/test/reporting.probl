@@ -1,0 +1,22 @@
+# Native/WASM parity for report reliability, precision and callback boundaries.
+@mode sample(runs: 1_000, seed: 1)
+
+let visited ~ bernoulli(0.1%)
+if visited {
+  let outcome ~ bernoulli(50%)
+  report outcome as "rare branch"
+  report 1e-10 by 0 as "sparse numeric table"
+  report "seen" by 0 as "sparse categorical table"
+}
+report d6 > 3 as "integrated probability"
+report one_of([1e-10, 3e-10]) as "tiny summary"
+report one_of([-1.0, 1.0]) as "cancellation"
+report one_of([-1.0: 0.5 - 5e-11, 1.0: 0.5 + 5e-11]) as "tiny signal"
+for key in 1..2 {
+  report one_of([-3e-10, -1e-10]) by key as "tiny table"
+}
+let doubled ~ bernoulli(50%)
+for key in if doubled { [1, 1] } else { [1] } {
+  report doubled by key as "repeated keys"
+}
+report [1, 2].map(x -> mean(simulate { let r ~ d6; observe r > 3; r + x }))

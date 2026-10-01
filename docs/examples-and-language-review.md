@@ -1,5 +1,7 @@
 **Examples and language review**
 
+Follow-up, 1 October 2026: R1's repeated-key classification and R2's sparse-report certainty/precision issues are fixed, as is D2's mode-dependent callback restriction. See the [current semantics](semantics.md) and [regression tests](../crates/probl-engine/tests/reporting_regressions.rs). Other findings below remain a record of the reviewed version and are not all resolved by that change.
+
 Reviewed on 27 September 2026 against `5fa1619`. Scope: all ten programs in `examples/`, the current [semantics](semantics.md), and implementation paths relevant to the findings below. This is a design review, with targeted execution checks, not a full security audit. No example or engine code was changed.
 
 **Assessment: Probl now has a coherent core and a useful niche. Keep it. The next work should make composition and reported answers trustworthy before adding more inference algorithms.**

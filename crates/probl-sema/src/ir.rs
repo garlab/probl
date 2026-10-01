@@ -120,8 +120,8 @@ pub struct ReportSite {
 pub enum ReportKind {
     /// Outside loops: at most once per world.
     Once,
-    /// In a loop, keyed by the innermost `for` loop's variable: at most once
-    /// per world and key.
+    /// In a single loop with proven unique iteration keys: at most once per
+    /// world and key, using the loop binding itself.
     PerKey,
     /// In a loop with any other key: every visit counts.
     PerVisit,

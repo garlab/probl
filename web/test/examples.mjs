@@ -21,6 +21,7 @@ const cases = probl.examples().map((e) => ({ ...e, path: `examples/${e.name}.pro
 cases.push({ name: 'math', path: 'web/test/math.probl', source: await readFile(`${root}/web/test/math.probl`, 'utf8') });
 cases.push({ name: 'text', path: 'web/test/text.probl', source: await readFile(`${root}/web/test/text.probl`, 'utf8') });
 cases.push({ name: 'dates', path: 'web/test/dates.probl', source: await readFile(`${root}/web/test/dates.probl`, 'utf8') });
+cases.push({ name: 'reporting', path: 'web/test/reporting.probl', source: await readFile(`${root}/web/test/reporting.probl`, 'utf8') });
 cases.push({
   name: 'integers', path: 'web/test/integers.probl',
   source: await readFile(`${root}/web/test/integers.probl`, 'utf8'),
@@ -41,6 +42,21 @@ for (const example of cases) {
     console.log(`--- probl run\n${expected}--- WebAssembly\n${actual}`);
   }
 }
+
+// Callback effects must fail through the WASM API in either mode too.
+for (const mode of ['enumerate', 'sample']) {
+  for (const source of [
+    'report [1, 2].map(x -> { let r ~ d6; x + r })',
+    'report [1].filter(x -> { observe true; true })',
+    'report [1].count(x -> { let r ~ d1; true })',
+    'report [1].reduce(0, (a, x) -> if 50% { a } else { a })',
+  ]) {
+    const result = probl.run({ source, mode, ...(mode === 'sample' ? { runs: 10, seed: 19 } : {}) });
+    assert.equal(result.error?.kind, 'language');
+    assert.match(result.error?.message, /can't branch on chances, draw values or observe/);
+  }
+}
+console.log('same  callback effect restrictions in both modes');
 
 // Crossing UTC midnight between executions must change the default snapshot,
 // while repeated references, calls and simulations in one execution share it.

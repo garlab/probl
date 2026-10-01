@@ -354,6 +354,7 @@ fn run_here(
     // Reach describes control flow; unresolved weight is shown separately.
     let format = Format {
         fractions: options.fractions,
+        weighted: program.main().effects.observes,
         unresolved,
         program_total: finished,
         run_squares: None,
@@ -765,6 +766,7 @@ fn sampled(
         unresolved: Weight::ZERO,
         program_total: totals.weight,
         run_squares: Some(totals.squares),
+        weighted: program.main().effects.observes,
     };
     let body = report::render(program, &engine.sinks, format);
     let output = if body.is_empty() {

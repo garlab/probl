@@ -36,7 +36,7 @@ report max(quantities.map(q -> profit(q, demand))) - actual as "regret after dem
 # ── Output ─────────────────────────────────────────────
 # enumerated
 #
-# expected profit by order
+# expected profit by order (per visit)
 #   quantity      5%     25%   median     75%     95%
 #         20   80.00   80.00    80.00   80.00   80.00
 #         40     120     120      120     120     120
