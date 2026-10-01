@@ -231,6 +231,8 @@ When sampling, each run follows its own path, however deep (section 14).
 
 `observe c` multiplies each world's weight by the probability of `c` (section 3). `observe v from D` multiplies it by P(D = v), or, when sampling, by the density of a continuous `D` at `v` (section 13). Every factor is between 0 and 1, except densities.
 
+Observations condition worlds, without mutating distribution recipes or linking their independent uses (section 2). For example, `let x = 3d8; observe x > 10; report x` has evidence 392/512 and still reports the original distribution over 3–24: the same likelihood factor applies to every world. With `let x ~ 3d8`, the observation instead removes worlds where the bound total is at most 10, and the report has support 11–24 with each remaining outcome's prior probability divided by 392/512. The evidence is the same in both programs. A recipe depending on a drawn parameter can still have a different reported mixture after observation, because the weights of its parameter worlds change.
+
 The **evidence** of a program is the total final weight of its worlds: the probability of all its observations, including those made inside ordinary function calls. Observations inside `simulate` are not program evidence (section 8).
 
 If the evidence is zero and no weight is unresolved, the evidence is **impossible**: the run fails with an error pointing at an `observe`. This is different from a report that is never reached, which is ordinary control flow.

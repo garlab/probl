@@ -451,6 +451,16 @@ report sick                                   # 10.71%
 - The **evidence** is the weight that survives: the probability of all the observations. Reports are normalized over it, and the run summary shows it (8.87% above). Observations inside a function count; those inside `simulate` don't (section 7).
 - If the observations rule out every world, the evidence is impossible, and the run stops with an error rather than printing reports that mean nothing.
 
+**Use `~` to bind the outcome you want to condition.** `=` stores a distribution recipe, so `let x = 3d8; observe x > 10; report x` still reports the original 3–24 distribution. The observation multiplies every world's weight by the same probability, 76.56%; it does not change the recipe. To report the total given that it exceeded 10, write:
+
+```probl
+let x ~ 3d8
+observe x > 10
+report x             # 11–24; mean 15.11, sd 2.94; evidence 76.56%
+```
+
+Here `x` is the same total throughout each world, and `observe` removes worlds where it is 10 or less. To store the conditional distribution as a reusable recipe, write `let above_ten = simulate { let x ~ 3d8; observe x > 10; x }`.
+
 **No `observe` may follow a `report`.** The compiler rejects a program in which one could, including through a loop or a function that observes, so every report sees all the evidence. A small finite-state filter can instead carry a distribution and condition it inside a fresh `simulate` scope for each reading, as in the [sensor example](../examples/17_sensor_tracking.probl). Those observations stay local to that simulation; the outer reports do not accumulate their evidence.
 
 ## 6. Reports

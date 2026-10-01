@@ -127,6 +127,64 @@ fn evidence() {
 }
 
 #[test]
+fn observing_a_recipe_leaves_its_reported_distribution_unchanged() {
+    let prior = distribution("report 3d8");
+    for mode in [
+        probl_sema::ir::Mode::Enumerate,
+        probl_sema::ir::Mode::Sample { runs: 100, seed: 7 },
+    ] {
+        let out = exec(
+            "let x = 3d8\nobserve x > 10\nreport x",
+            &Options {
+                mode: Some(mode),
+                ..Options::default()
+            },
+        )
+        .unwrap();
+        close(out.evidence.unwrap().to_f64(), 392.0 / 512.0);
+        let actual = out.reports[0].distribution();
+        assert_eq!(actual.len(), prior.len());
+        for ((value, probability), (expected, mass)) in actual.iter().zip(&prior) {
+            assert_eq!(value, expected);
+            close(*probability, *mass);
+        }
+    }
+}
+
+#[test]
+fn observing_a_draw_conditions_its_reported_distribution() {
+    let src = "let x ~ 3d8\nobserve x > 10\nreport x\nreport x > 10";
+    let out = outcome(src);
+    // Independent reference: enumerate the 512 ordered triples of die faces.
+    let mut counts = [0_u32; 25];
+    for a in 1..=8 {
+        for b in 1..=8 {
+            for c in 1..=8 {
+                if a + b + c > 10 {
+                    counts[a + b + c] += 1;
+                }
+            }
+        }
+    }
+    let survivors: u32 = counts.iter().sum();
+    assert_eq!(survivors, 392);
+    close(out.evidence.unwrap().to_f64(), f64::from(survivors) / 512.0);
+    let actual = out.reports[0].distribution();
+    assert_eq!(actual.len(), 14);
+    for ((value, probability), n) in actual.iter().zip(11..=24) {
+        close(value.as_f64().unwrap(), n as f64);
+        close(*probability, f64::from(counts[n]) / f64::from(survivors));
+    }
+    close(out.reports[1].chance().unwrap(), 1.0);
+
+    let sampled = outcome(&format!("@mode sample(runs: 1000, seed: 7)\n{src}"));
+    for (value, _) in sampled.reports[0].distribution() {
+        assert!((11.0..=24.0).contains(&value.as_f64().unwrap()));
+    }
+    close(sampled.reports[1].chance().unwrap(), 1.0);
+}
+
+#[test]
 fn cards_without_replacement() {
     let src = "
         var deck = bag([\"a\": 2, \"b\": 1])
