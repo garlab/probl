@@ -161,7 +161,8 @@ pub fn category(b: Builtin) -> &'static str {
         | B::IsListOfLen
         | B::Settled
         | B::Last
-        | B::DropLast => "Internal",
+        | B::DropLast
+        | B::Typeof => "Internal",
     }
 }
 
@@ -654,7 +655,8 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         | B::IsListOfLen
         | B::Settled
         | B::Last
-        | B::DropLast => None,
+        | B::DropLast
+        | B::Typeof => None,
     }
 }
 
@@ -689,11 +691,15 @@ pub const READ: Doc = Doc {
 pub const KEYWORDS: &[&str] = &[
     "let", "var", "fn", "return", "if", "else", "for", "in", "while", "loop", "repeat", "break", "continue", "match",
     "chance", "observe", "from", "report", "by", "as", "simulate", "type", "enum", "with", "and", "or", "not", "div",
-    "mod", "to", "true", "false", "import",
+    "mod", "to", "true", "false", "import", "typeof",
 ];
 
 pub fn keyword(word: &str) -> Option<Doc> {
     match word {
+        "typeof" => doc(
+            "typeof expression -> str",
+            "The runtime type of a value, such as \"prob\", \"float\", \"dist[int]\" or \"list[int]\". Evaluates the operand once, without drawing from distribution values. Use parentheses around compound expressions: `typeof (d6 > 3)`. Empty containers use `unknown`; mixed element types use `any`. This describes runtime values, not inferred static types.",
+        ),
         "let" => doc(
             "let x = e or let x ~ D",
             "Declares a variable. `=` gives it a value; `~` draws it from a distribution, one world per outcome: `let roll ~ d20`.",

@@ -342,6 +342,26 @@ let tougher = hero with { hp: 20 }       # a copy with some fields changed
 
 The built-in types are `bool`, `int`, `float`, `prob`, `str`, `date`, `list[T]`, `map[K, V]`, `bag[T]` and `dist[T]`, plus records and enums. Note `dice: dist[int]`: distributions are ordinary values you can store, pass and return.
 
+Use the prefix operator `typeof` to inspect a runtime value. It returns a string and inspects a distribution without drawing from it:
+
+```probl
+report typeof 33%              # "prob"
+report typeof 0.33             # "float"
+report typeof (33% + 1%)       # "float"
+report typeof 150%             # "float"
+report typeof d6               # "dist[int]"
+report typeof (d6 > 3)         # "dist[bool]"
+report typeof normal(0, 1)     # "dist[float]", even when enumerating
+report typeof [d6, d8]         # "list[dist[int]]"
+let x ~ d6
+report typeof x                # "int"
+report typeof x == "int"       # true
+```
+
+Percentage literals currently divide by 100 and use `prob` for `0%` through `100%`; larger percentages, negation, and arithmetic produce floats. `33% == 0.33` is true, but their runtime tags differ. A `prob` annotation validates a value without changing its representation. This behavior remains in place while the probability design is reviewed.
+
+Parenthesize compound operands: `typeof (x + 1)`. `typeof` evaluates its operand once, so calls and errors still occur. It describes current contents, not an inferred static type: empty lists give `"list[unknown]"`, mixed element types give `"list[any]"`, and named records/enums give their type name. `unknown` and `any` here are descriptive markers, not annotation types. Directly inspecting a delayed sampled parameter with `typeof p` preserves exact Bayesian updates; calculating an expression involving `p` still needs its value. See [the type inspection contract](semantics.md#1-values-and-types).
+
 Probl is statically typed, with inference: every expression's type is known before the program runs, but you rarely write one. Annotations are optional, and checked when they're there: `let p: prob = "high"` is an error. Data read from a file is the exception, since nothing in the program says what the file contains, so for data the type is required. Until the type checker arrives in v0.3, annotations are checked as the program runs.
 
 ### Data
@@ -667,7 +687,8 @@ range_expr   = add_expr [ ( ".." | "..<" | "to" ) add_expr ] ;
 add_expr     = mul_expr { ( "+" | "-" ) mul_expr } ;
 mul_expr     = unary { ( "*" | "/" | "div" | "mod" ) unary } ;
 unary        = "-" unary | power ;
-power        = postfix [ "^" unary ] ;
+power        = type_query [ "^" unary ] ;
+type_query   = "typeof" type_query | postfix ;
 postfix      = primary { "." IDENT [ call_args ] | call_args | "[" expr "]" | "with" record } ;
 call_args    = "(" [ arg { "," arg } ] ")" ;
 arg          = [ IDENT ":" ] expr ;
@@ -715,13 +736,14 @@ From loosest to tightest binding:
 | 8 | `*` `/` `div` `mod` | left |
 | 9 | `-` (negation) | prefix |
 | 10 | `^` | right |
-| 11 | call `f(x)`, index `a[i]`, field and method `a.b`, `with { … }` | left |
+| 11 | `typeof` | prefix |
+| 12 | call `f(x)`, index `a[i]`, field and method `a.b`, `with { … }` | left |
 
 `/` always divides as floats and `div` is integer division, so `7 / 2` is 3.5 and `7 div 2` is 3.
 
 ## Appendix C: Keywords
 
-`and` `break` `chance` `continue` `div` `else` `enum` `false` `fn` `for` `if` `import` `in` `let` `loop` `match` `mod` `not` `observe` `or` `repeat` `report` `return` `simulate` `true` `type` `var` `while` `with`
+`and` `break` `chance` `continue` `div` `else` `enum` `false` `fn` `for` `if` `import` `in` `let` `loop` `match` `mod` `not` `observe` `or` `repeat` `report` `return` `simulate` `true` `type` `typeof` `var` `while` `with`
 
 `as`, `by`, `from` and `to` are keywords only where the grammar uses them, so they remain usable as variable names.
 

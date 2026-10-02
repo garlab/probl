@@ -204,6 +204,7 @@ impl Printer<'_> {
                 let op = match op {
                     probl_syntax::ast::UnOp::Neg => "-",
                     probl_syntax::ast::UnOp::Not => "not",
+                    probl_syntax::ast::UnOp::Typeof => "typeof",
                 };
                 format!("({op} {})", self.expr(inner))
             }

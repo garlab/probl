@@ -37,6 +37,16 @@ fn all_examples_parse() {
 }
 
 #[test]
+fn typeof_precedence_and_parentheses() {
+    assert_eq!(
+        parse_ok(
+            "typeof x == \"prob\"\ntypeof (d6 > 3)\ntypeof x.f()[0]\ntypeof\n  33%\ntypeof typeof x\ntypeof x ^ 2"
+        ),
+        "(== (typeof x) \"prob\")\n(typeof (> 1d6 3))\n(typeof (index (.f x) 0))\n(typeof 33%)\n(typeof (typeof x))\n(^ (typeof x) 2)\n"
+    );
+}
+
+#[test]
 fn precedence() {
     insta::assert_snapshot!(parse_ok(
         "a or b and not c == d\n\

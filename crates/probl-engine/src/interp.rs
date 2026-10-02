@@ -1921,6 +1921,15 @@ impl<'p> Engine<'p> {
     }
 
     fn builtin(&mut self, f: FnId, b: Builtin, args: &[Expr], w: &World, span: Span) -> Result<Value> {
+        if b == Builtin::Typeof {
+            // A direct inspection knows a delayed variable's outcome type
+            // without drawing it and losing subsequent conjugate updates.
+            let v = match args[0].kind {
+                ExprKind::Slot(s) if matches!(w.slots[s as usize], Value::Delayed(_)) => w.slots[s as usize].clone(),
+                _ => self.eval(f, &args[0], w)?,
+            };
+            return crate::type_name::of(&v, &self.prog.enums, &mut self.budget).map_err(|e| e.at(span));
+        }
         let mut values = Vec::with_capacity(args.len());
         for a in args {
             values.push(self.eval(f, a, w)?);

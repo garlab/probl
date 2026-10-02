@@ -203,6 +203,7 @@ pub fn expr(e: &Expr) -> String {
             let op = match op {
                 UnOp::Neg => "-",
                 UnOp::Not => "not",
+                UnOp::Typeof => "typeof",
             };
             format!("({op} {})", expr(inner))
         }

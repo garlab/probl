@@ -197,11 +197,11 @@ fn own_reads(s: &Stmt, f: &mut impl FnMut(SlotId)) {
     match &s.kind {
         StmtKind::Set { place, value } => {
             self::place(place, f);
-            draws::expr(value, f);
+            draws::value_reads(value, f);
         }
         StmtKind::Draw { place, dist } => {
             self::place(place, f);
-            draws::expr(dist, f);
+            draws::value_reads(dist, f);
         }
         StmtKind::Take { place, bag } => {
             self::place(place, f);
@@ -212,26 +212,26 @@ fn own_reads(s: &Stmt, f: &mut impl FnMut(SlotId)) {
             self::place(dest, f);
             match callee {
                 Callee::Fn { capture_args, .. } => capture_args.iter().for_each(|&s| f(s)),
-                Callee::Value(e) => draws::expr(e, f),
+                Callee::Value(e) => draws::value_reads(e, f),
             }
-            args.iter().for_each(|a| draws::expr(a, f));
+            args.iter().for_each(|a| draws::value_reads(a, f));
         }
-        StmtKind::If { cond, .. } => draws::expr(cond, f),
-        StmtKind::Chance { arms, .. } => arms.iter().for_each(|(weight, _)| draws::expr(weight, f)),
-        StmtKind::Return(e) => draws::expr(e, f),
+        StmtKind::If { cond, .. } => draws::value_reads(cond, f),
+        StmtKind::Chance { arms, .. } => arms.iter().for_each(|(weight, _)| draws::value_reads(weight, f)),
+        StmtKind::Return(e) => draws::value_reads(e, f),
         StmtKind::Observe { value, from } => match update(value, from.as_ref()) {
-            Some(u) => u.others().into_iter().for_each(|e| draws::expr(e, f)),
+            Some(u) => u.others().into_iter().for_each(|e| draws::value_reads(e, f)),
             None => {
-                draws::expr(value, f);
+                draws::value_reads(value, f);
                 if let Some(d) = from {
-                    draws::expr(d, f);
+                    draws::value_reads(d, f);
                 }
             }
         },
         StmtKind::Report { value, key, .. } => {
-            draws::expr(value, f);
+            draws::value_reads(value, f);
             if let Some(k) = key {
-                draws::expr(k, f);
+                draws::value_reads(k, f);
             }
         }
         StmtKind::Loop { .. } | StmtKind::Break | StmtKind::Continue | StmtKind::Fail { .. } => {}
@@ -248,7 +248,7 @@ fn place(p: &Place, f: &mut impl FnMut(SlotId)) {
     f(p.slot);
     for elem in &p.path {
         if let PathElem::Index(e) = elem {
-            draws::expr(e, f);
+            draws::value_reads(e, f);
         }
     }
 }

@@ -186,6 +186,8 @@ builtins! {
     Day = "day", 1..=1, Lift, true;
     Weekday = "weekday", 1..=1, Lift, true;
     // Internal helpers used by the lowering pass
+    /// The prefix `typeof` operator, which inspects its operand without lifting.
+    Typeof = "$typeof", 1..=1, Raw, false;
     /// Checks a `for` loop's collection and turns it into something indexable.
     IterItems = "$iter_items", 1..=1, Raw, false;
     /// Checks a `repeat` count.

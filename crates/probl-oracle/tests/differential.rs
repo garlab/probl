@@ -265,6 +265,18 @@ fn numbered(src: &str) -> String {
 /// probes it confirmed. Each runs in every configuration of the engine.
 const CORPUS: &[(&str, &str)] = &[
     (
+        "typeof scalars and recipes",
+        "let d = d6\nlet x ~ d\nreport [typeof 33%, typeof 0.33, typeof (33% + 1%), typeof d, typeof x, typeof (d > d)]",
+    ),
+    (
+        "typeof container shapes",
+        "report [typeof [], typeof [d6, d8], typeof one_of([1, \"x\"]), typeof [[1], [2]]]",
+    ),
+    (
+        "typeof evaluates its operand once",
+        "var n = 0\nlet t = typeof { n += 1; d6 }\nreport t\nreport n",
+    ),
+    (
         "operands that assign variables",
         r#"
 var x = 1

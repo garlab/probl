@@ -1,0 +1,16 @@
+# Runtime type inspection does not draw from distributions.
+enum State { On, Off }
+type Box = { value: int }
+report [typeof 33%, typeof 0.33, typeof (33% + 1%), typeof 150%, typeof (-33%)]
+report [typeof true, typeof (2^100), typeof complex(0, 1), typeof today]
+report [typeof d6, typeof (d6 > d6), typeof normal(0, 1), typeof (x -> x)]
+report [typeof [d6, d8], typeof roll(2, d6), typeof [], typeof [1, 2.0]]
+report [typeof [:], typeof ["a": 1], typeof bag([1: 2])]
+report [typeof On, typeof one_of([On, Off]), typeof Box { value: 1 }]
+report typeof { b: d6, a: 1 }
+report typeof one_of([normal(0, 1), 1.0])
+let x ~ d6
+report typeof x == "int"
+var calls = 0
+let kind = typeof { calls += 1; d6 }
+report [kind, calls]

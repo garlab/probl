@@ -46,8 +46,8 @@ pub enum Value {
     /// Days since 1970-01-01.
     Date(i32),
     /// A variable's value that isn't drawn yet, internal to the engine
-    /// (docs/semantics.md, section 14). No operation ever sees one: the
-    /// engine draws it before any statement that reads it.
+    /// (docs/semantics.md, section 14). The engine draws it before any
+    /// value read; a direct `typeof` inspection only needs its outcome type.
     Delayed(Arc<Delayed>),
 }
 

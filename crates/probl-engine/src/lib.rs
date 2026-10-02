@@ -15,6 +15,7 @@ mod math;
 pub mod ops;
 pub mod report;
 mod text;
+mod type_name;
 pub mod value;
 pub mod weight;
 pub mod world;

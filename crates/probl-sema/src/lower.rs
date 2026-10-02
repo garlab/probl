@@ -2124,6 +2124,12 @@ impl<'a> Lowerer<'a> {
                 ExprKind::Map(pairs)
             }
             ast::ExprKind::Record { name, fields } => self.record(name.as_ref(), fields, span, out),
+            ast::ExprKind::Unary {
+                op: ast::UnOp::Typeof,
+                expr,
+            } => {
+                return builtin(Builtin::Typeof, vec![self.expr(expr, out)], span);
+            }
             ast::ExprKind::Unary { op, expr } => ExprKind::Unary(*op, Box::new(self.expr(expr, out))),
             ast::ExprKind::Binary { op, lhs, rhs } => return self.binary(*op, lhs, rhs, span, out),
             ast::ExprKind::Call { callee, args } => return self.call(callee, args, span, out),

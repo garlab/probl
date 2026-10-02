@@ -493,6 +493,7 @@ fn continues_line(tok: &Tok) -> bool {
             | Tok::And
             | Tok::Or
             | Tok::Not
+            | Tok::Typeof
             | Tok::In
             | Tok::Div
             | Tok::Mod

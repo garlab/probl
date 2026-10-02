@@ -412,7 +412,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::IsListOfLen => Ok(Value::Bool(
             matches!((a(0), a(1)), (Value::List(items), Value::Int(n)) if *n == items.len() as i64),
         )),
-        B::RunDate | B::Count | B::Map | B::Filter | B::Reduce | B::Print | B::Roll | B::Take => {
+        B::Typeof | B::RunDate | B::Count | B::Map | B::Filter | B::Reduce | B::Print | B::Roll | B::Take => {
             unreachable!("`{}` is handled by the interpreter", b.name())
         }
         B::P

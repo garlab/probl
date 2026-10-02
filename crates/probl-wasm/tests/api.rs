@@ -271,5 +271,6 @@ fn the_reference_documents_every_built_in() {
     assert_eq!(pi["signature"], "pi = 3.141592653589793");
     let keywords = docs["keywords"].as_array().unwrap();
     assert!(keywords.iter().any(|k| k["name"] == "observe"));
+    assert!(keywords.iter().any(|k| k["name"] == "typeof"));
     assert!(docs["read"]["summary"].as_str().unwrap().contains("CSV"));
 }

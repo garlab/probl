@@ -59,6 +59,7 @@ const PREC_ADD: u8 = 6;
 const PREC_MUL: u8 = 7;
 const PREC_NEG: u8 = 8;
 const PREC_POW: u8 = 9;
+const PREC_TYPEOF: u8 = 10;
 
 struct Parser {
     tokens: Vec<Token>,
@@ -757,6 +758,17 @@ impl Parser {
     fn expr_bp_inner(&mut self, min: u8) -> PResult<Expr> {
         let lo = self.span();
         let mut lhs = match self.peek() {
+            Tok::Typeof => {
+                self.bump();
+                let operand = self.expr_bp(PREC_TYPEOF)?;
+                Expr {
+                    span: lo.to(operand.span),
+                    kind: ExprKind::Unary {
+                        op: UnOp::Typeof,
+                        expr: Box::new(operand),
+                    },
+                }
+            }
             Tok::Not => {
                 self.bump();
                 let operand = self.expr_bp(PREC_NOT)?;

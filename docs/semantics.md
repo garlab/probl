@@ -18,6 +18,24 @@ All values are immutable: assigning or passing a collection gives an independent
 
 Wherever a probability is expected, a `float` from 0 to 1 is accepted too. Nothing else converts implicitly: in particular, a `prob` never turns into an event, and an `int` is never a condition.
 
+**Percentage representation.** The lexer divides percentage literals by 100. A nonnegative literal from `0%` through `100%` becomes a runtime `prob`; a larger percentage becomes a `float`. Negation and ordinary arithmetic on probabilities produce floats: `typeof 33%` is `"prob"`, while `typeof 0.33`, `typeof (-33%)`, `typeof 150%` and `typeof (33% + 1%)` are `"float"`. The numeric comparison `33% == 0.33` is true. An annotation such as `let p: prob = 0.33` checks the range without changing the float's representation. This is the current behavior, not a new probability/event identity rule. A visible consequence of the tag is that `one_of` requires weights all tagged `prob` to sum to one, whereas ordinary numeric weights are relative.
+
+**Runtime type inspection.** `typeof e` evaluates `e` once and returns a `str` describing the resulting value's runtime type. It is a reserved prefix operator, not a function; `typeof(e)` works by grouping its operand. Calls, indexing and field access bind more tightly; every binary operator binds less tightly. Thus `typeof x == "int"` compares the type string, and `typeof (x + 1)` inspects the sum. An operand's errors and effects still occur: `typeof (1 / 0)` fails, and `typeof f()` calls `f`.
+
+The operator inspects distribution objects themselves, without drawing, normalizing or lifting over their outcomes. `typeof d6` is `"dist[int]"`, `typeof (d6 > 3)` is `"dist[bool]"`, and `typeof normal(0, 1)` is `"dist[float]"` even in enumeration mode. A direct inspection of a delayed conjugate variable, `typeof p`, returns `"float"` without forcing its draw or preventing later exact updates. Computing an operand such as `typeof (p + 0)` still needs `p`'s value; a function call that reads `p` has its ordinary effects too.
+
+| Value | Type description |
+|---|---|
+| Primitive values | `bool`, `int`, `float`, `prob`, `complex`, `str`, `date` |
+| An integer range, a function, the unit value | `range`, `fn`, `()` |
+| Lists, maps and bags | `list[T]`, `map[K, V]`, `bag[T]`, recursively describing their current contents |
+| Finite distributions | `dist[T]`, describing retained outcomes; unresolved mass provides no additional type information |
+| Continuous distributions | `dist[float]`; a continuous component of a finite mixture contributes `float` to the mixture's outcome type |
+| Named records and enum variants | Their declared type name, such as `Fighter` or `Market` |
+| Anonymous records | Field descriptions in name order, such as `{a: int, b: dist[int]}` |
+
+An empty collection has `unknown` in each unobserved type position: `typeof []` is `"list[unknown]"`. If observed element descriptions differ, that position becomes `any`, without numeric promotion: `typeof [1, 2.0]` is `"list[any]"`; `typeof [[], [1]]` is also `"list[any]"`. These markers are descriptive strings, not new annotation types. `list[dist[int]]` and `dist[list[int]]` remain distinct. Inspection uses runtime contents, not annotations or a static type inference pass, so type strings may differ between worlds or after a collection changes. Traversal respects work and string budgets, and is limited to 64 levels of value nesting.
+
 **Dates and the execution snapshot.** A `date` is an immutable day in the proleptic Gregorian calendar, from **0001-01-01 through 9999-12-31**, stored as an integer day offset from 1970-01-01. It contains no time, timezone or locale. `date(s)` requires exactly ten ASCII characters in `YYYY-MM-DD` form; `date(year, month, day)` requires three ints. Both reject invalid dates instead of normalizing them. File readers use the same date validation, after their usual trimming of non-string fields. Dates compare chronologically and have exact identity as map keys and distribution outcomes.
 
 `today` is a shadowable constant of type `date`, supplied by the host once per execution. All worlds, sampling batches, threads, function calls and nested `simulate` evaluations see that same value. The engine and compiler never read the clock. The CLI and JavaScript host capture the UTC date before execution; `probl run --today YYYY-MM-DD` or the JavaScript request's `today` field replaces that snapshot for replay or a scenario. The REPL retains one snapshot for its entire session, including input reloads. `Options.today` supplies the engine's integer day offset; a host that omits it gets a language error if the program evaluates `today`. The returned `Outcome.today` and WASM response's ISO `today` field record the snapshot, and CLI `--stats` prints it. Reproducibility includes this input as well as source, data, seed and engine version. `today()` and assignment to an unshadowed `today` are compile errors.

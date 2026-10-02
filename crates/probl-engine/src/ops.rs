@@ -279,6 +279,7 @@ pub fn unary(op: UnOp, v: &Value, budget: &mut Budget) -> OpResult<Value> {
             other => Err(OpError::new(format!("can't negate {}", article(&other.kind())))),
         }),
         UnOp::Not => not(v, budget),
+        UnOp::Typeof => unreachable!("typeof is lowered to an interpreter intrinsic"),
     }
 }
 

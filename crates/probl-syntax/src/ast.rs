@@ -265,6 +265,7 @@ pub struct MatchArm {
 pub enum UnOp {
     Neg,
     Not,
+    Typeof,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -216,34 +216,50 @@ fn place(p: &Place, f: &mut impl FnMut(SlotId)) {
 
 /// Call `f` with every slot `e` reads.
 pub(crate) fn expr(e: &Expr, f: &mut impl FnMut(SlotId)) {
+    expr_reads(e, f, true);
+}
+
+/// Value reads that force a delayed draw. Inspecting a slot with `typeof`
+/// uses its outcome type without needing its value; liveness still reads it.
+pub(crate) fn value_reads(e: &Expr, f: &mut impl FnMut(SlotId)) {
+    expr_reads(e, f, false);
+}
+
+fn expr_reads(e: &Expr, f: &mut impl FnMut(SlotId), include_type_reads: bool) {
+    let recurse = |e: &Expr, f: &mut _| expr_reads(e, f, include_type_reads);
     match &e.kind {
+        ExprKind::Builtin {
+            func: crate::Builtin::Typeof,
+            args,
+            ..
+        } if !include_type_reads && matches!(args[0].kind, ExprKind::Slot(_)) => {}
         ExprKind::Lit(_) | ExprKind::Input(_) => {}
         ExprKind::Slot(s) => f(*s),
-        ExprKind::Unary(_, x) | ExprKind::Field(x, _) => expr(x, f),
+        ExprKind::Unary(_, x) | ExprKind::Field(x, _) => recurse(x, f),
         ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => {
-            expr(a, f);
-            expr(b, f);
+            recurse(a, f);
+            recurse(b, f);
         }
-        ExprKind::List(items) => items.iter().for_each(|x| expr(x, f)),
+        ExprKind::List(items) => items.iter().for_each(|x| recurse(x, f)),
         ExprKind::Map(entries) => entries.iter().for_each(|(k, v)| {
-            expr(k, f);
-            expr(v, f);
+            recurse(k, f);
+            recurse(v, f);
         }),
-        ExprKind::Record { fields, .. } => fields.iter().for_each(|(_, x)| expr(x, f)),
+        ExprKind::Record { fields, .. } => fields.iter().for_each(|(_, x)| recurse(x, f)),
         ExprKind::With(base, fields) => {
-            expr(base, f);
-            fields.iter().for_each(|(_, x)| expr(x, f));
+            recurse(base, f);
+            fields.iter().for_each(|(_, x)| recurse(x, f));
         }
         ExprKind::Builtin { args, named, .. } => {
-            args.iter().for_each(|x| expr(x, f));
-            named.iter().for_each(|(_, x)| expr(x, f));
+            args.iter().for_each(|x| recurse(x, f));
+            named.iter().for_each(|(_, x)| recurse(x, f));
         }
         ExprKind::Closure { capture_args, .. } | ExprKind::Simulate { capture_args, .. } => {
             capture_args.iter().for_each(|&s| f(s))
         }
         ExprKind::Interp(parts) => parts.iter().for_each(|p| {
             if let InterpPart::Expr(x) = p {
-                expr(x, f)
+                recurse(x, f)
             }
         }),
     }

@@ -1329,6 +1329,7 @@ fn contains(coll: &Value, item: &Value) -> R<bool> {
 
 fn unary(op: UnOp, v: &Value) -> R<Value> {
     match op {
+        UnOp::Typeof => Ok(Value::Str(runtime_type(v, 0)?.into())),
         UnOp::Neg => lift1(v, |x| match x {
             Value::Int(i) => i.checked_neg().map(Value::Int).ok_or_else(overflow),
             Value::Float(f) | Value::Prob(f) => Ok(Value::Float(-f)),
@@ -1339,6 +1340,34 @@ fn unary(op: UnOp, v: &Value) -> R<Value> {
             Truth::Uncertain(d) => map_bools(&d, |b| !b),
         },
     }
+}
+
+fn runtime_type(v: &Value, depth: usize) -> R<String> {
+    if depth > 64 {
+        return too_big("typeof nesting");
+    }
+    fn common<'a>(values: impl Iterator<Item = &'a Value>, depth: usize) -> R<String> {
+        let mut name = None;
+        for value in values {
+            let ty = runtime_type(value, depth)?;
+            if name.as_ref().is_some_and(|n| n != &ty) {
+                return Ok("any".into());
+            }
+            name = Some(ty);
+        }
+        Ok(name.unwrap_or_else(|| "unknown".into()))
+    }
+    Ok(match v {
+        Value::Unit => "()".into(),
+        Value::Bool(_) => "bool".into(),
+        Value::Int(_) => "int".into(),
+        Value::Float(_) => "float".into(),
+        Value::Prob(_) => "prob".into(),
+        Value::Str(_) => "str".into(),
+        Value::Range(..) => "range".into(),
+        Value::List(xs) => format!("list[{}]", common(xs.iter(), depth + 1)?),
+        Value::Dist(d) => format!("dist[{}]", common(d.iter().map(|(v, _)| v), depth + 1)?),
+    })
 }
 
 fn overflow() -> Stop {
