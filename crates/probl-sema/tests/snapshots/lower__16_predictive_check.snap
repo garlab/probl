@@ -14,7 +14,7 @@ fn#0 the top level ()
     }
     successes_5 = $3[$4]    [live: counts_0 visitors_1 rate_2 $3 $4 successes_5]
     $4 = (+ $4 1)    [live: counts_0 visitors_1 rate_2 $3 $4 successes_5]
-    observe successes_5 from binomial(visitors_1, rate_2)    [live: counts_0 visitors_1 rate_2 $3 $4]
+    observe successes_5 from binomial(visitors_1, prob(rate_2))    [live: counts_0 visitors_1 rate_2 $3 $4]
   }
   replicated_6 = []    [live: counts_0 visitors_1 rate_2 replicated_6]
   $7 = $repeat_count(len(counts_0))    [live: counts_0 visitors_1 rate_2 replicated_6 $7]
@@ -24,7 +24,7 @@ fn#0 the top level ()
       break    [live: counts_0 visitors_1 rate_2 replicated_6 $7 $8]
     }
     $8 = (+ $8 1)    [live: counts_0 visitors_1 rate_2 replicated_6 $7 $8]
-    successes_9 ~ binomial(visitors_1, rate_2)    [live: counts_0 visitors_1 rate_2 replicated_6 $7 $8 successes_9]
+    successes_9 ~ binomial(visitors_1, prob(rate_2))    [live: counts_0 visitors_1 rate_2 replicated_6 $7 $8 successes_9]
     replicated_6 = push(replicated_6, successes_9)    [live: counts_0 visitors_1 rate_2 replicated_6 $7 $8]
   }
   report (* rate_2 100) as "common conversion rate (%)"    [live: counts_0 replicated_6]

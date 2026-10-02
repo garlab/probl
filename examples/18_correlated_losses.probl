@@ -14,7 +14,7 @@ let shared_loss = simulate {
 }
 
 # Same marginal risk per site, but incorrectly assume sites are independent.
-let site_risk = 2% + 98% * 1%
+let site_risk = prob(2% + 98% * 1%)
 let independent_loss = 100 * binomial(3, site_risk)
 report mean(shared_loss) as "mean loss with common hazard"
 report mean(independent_loss) as "mean loss assuming independence"

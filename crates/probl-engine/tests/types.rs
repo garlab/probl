@@ -23,9 +23,9 @@ fn scalar_types_expose_current_percentage_rules() {
         ("33", "int"),
         ("2^100", "int"),
         ("0.33", "float"),
-        ("33%", "prob"),
-        ("0%", "prob"),
-        ("100%", "prob"),
+        ("33%", "float"),
+        ("0%", "float"),
+        ("100%", "float"),
         ("150%", "float"),
         ("-33%", "float"),
         ("33% + 1%", "float"),
@@ -43,10 +43,10 @@ fn scalar_types_expose_current_percentage_rules() {
     ] {
         assert_eq!(type_of(expr), expected, "{expr}");
     }
-    // An annotation validates; it doesn't change the representation.
+    // A literal in an annotated probability binding is converted.
     assert_eq!(
         distribution("let p: prob = 0.33\nreport typeof p")[0].0,
-        Value::str("float")
+        Value::str("prob")
     );
     assert_eq!(type_of("typeof 33%"), "str");
 }
@@ -118,13 +118,16 @@ fn operands_evaluate_once_and_keep_errors_and_world_effects() {
     assert!(error("report typeof (1 / 0)").contains("zero"));
     assert!(compile_error("report typeof missing").contains("missing"));
     assert!(compile_error("let typeof = 1").contains("typeof"));
-    let out = outcome("let t = typeof (if 50% { 1 } else { \"x\" })\nreport t");
+    let out = outcome("let t = typeof (if (chance { 50% => true, else => false }) { 1 } else { \"x\" })\nreport t");
     let dist = out.reports[0].distribution();
     assert_eq!(dist.len(), 2);
     for name in ["int", "str"] {
         close(dist.iter().find(|(v, _)| v == &Value::str(name)).unwrap().1, 0.5);
     }
-    assert_eq!(type_of("simulate { if 50% { 1 } else { \"x\" } }"), "dist[any]");
+    assert_eq!(
+        type_of("simulate { if (chance { 50% => true, else => false }) { 1 } else { \"x\" } }"),
+        "dist[any]"
+    );
     assert_eq!(
         distribution("report [d6, d8].map(d -> typeof d)")[0].0,
         Value::list(vec![Value::str("dist[int]"), Value::str("dist[int]")])
@@ -134,7 +137,7 @@ fn operands_evaluate_once_and_keep_errors_and_world_effects() {
 #[test]
 fn inspection_preserves_sampling_and_conjugate_updates() {
     let base = "@mode sample(runs: 100, seed: 7)\nlet p ~ beta(1, 1)\n\
-        observe 0 from binomial(100, p)\nlet noise ~ normal(0, 1)\nreport p\nreport noise";
+        observe 0 from binomial(100, prob(p))\nlet noise ~ normal(0, 1)\nreport p\nreport noise";
     let inspected = base.replace(
         "observe 0",
         "let kind = typeof p\nlet recipe = typeof normal(0, 1)\nobserve 0",
@@ -156,7 +159,7 @@ fn inspection_preserves_sampling_and_conjugate_updates() {
 #[test]
 fn inspection_retains_unresolved_mass_and_respects_limits() {
     let out = outcome(
-        "@epsilon 0.1\nlet d = simulate { var n = 0; while 50% { n += 1 }; n }\nlet kind = typeof d\nreport d\nreport kind",
+        "@epsilon 0.1\nlet d = simulate { var n = 0; while (chance { 50% => true, else => false }) { n += 1 }; n }\nlet kind = typeof d\nreport d\nreport kind",
     );
     assert!(out.output.contains("unresolved"));
     assert_eq!(out.reports[1].distribution()[0].0, Value::str("dist[int]"));

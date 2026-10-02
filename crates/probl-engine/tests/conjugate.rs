@@ -56,7 +56,7 @@ let r ~ gamma(2, 1)
 let m ~ normal(0, 1)
 let q ~ beta(1, 1)
 let s ~ 3 to 7
-observe true from bernoulli(p)
+observe true from bernoulli(prob(p))
 observe 3 from poisson(r)
 observe 0.5 from normal(m, 1)
 observe 2 from poisson(s)
@@ -73,7 +73,7 @@ report q > 0.5",
     assert_eq!(
         updates(
             &exec(
-                "@mode sample(runs: 100, seed: 1)\nlet p ~ beta(2, 3)\nobserve true from bernoulli(p)",
+                "@mode sample(runs: 100, seed: 1)\nlet p ~ beta(2, 3)\nobserve true from bernoulli(prob(p))",
                 &without()
             )
             .unwrap(),
@@ -101,10 +101,10 @@ fn every_other_use_draws_the_variable_first() {
         "let f = x -> x * p",
         "fn g() -> float { return p }\nlet y = g()",
         "let d = simulate { p * 2 }",
-        "observe 2 from binomial(10, p * 1)",
+        "observe 2 from binomial(10, prob(p * 1))",
         "observe p > 0.2",
-        "observe p",
-        "let c = chance { p => 1, else => 2 }",
+        "observe true from bernoulli(prob(p * 1))",
+        "let c = chance { prob(p) => 1, else => 2 }",
     ];
     for u in uses {
         // Drawn once, and not updated after: it stays drawn. (No
@@ -112,12 +112,12 @@ fn every_other_use_draws_the_variable_first() {
         let after = if u.starts_with("report") {
             ""
         } else {
-            "observe false from bernoulli(p)"
+            "observe false from bernoulli(prob(p))"
         };
         let src = format!(
             "@mode sample(runs: 50, seed: 1)
 let p ~ beta(2, 3)
-observe true from bernoulli(p)
+observe true from bernoulli(prob(p))
 {u}
 {after}"
         );
@@ -132,7 +132,7 @@ fn an_observation_that_isnt_conjugate_draws_the_variable() {
         "@mode sample(runs: 50, seed: 1)
 let m ~ normal(0.5, 0.1)
 observe 1.0 from normal(m, 1)
-observe 3 from binomial(10, m)
+observe 3 from binomial(10, prob(m))
 observe 1.0 from normal(m, 1)",
     );
     assert_eq!(updates(&out, "m"), counts(50, 50, 50));
@@ -140,8 +140,8 @@ observe 1.0 from normal(m, 1)",
     let out = outcome(
         "@mode sample(runs: 50, seed: 1)
 let p ~ beta(2, 3)
-observe true from bernoulli(p)
-observe round(p * 10) from binomial(10, p)",
+observe true from bernoulli(prob(p))
+observe round(p * 10) from binomial(10, prob(p))",
     );
     assert_eq!(updates(&out, "p"), counts(50, 50, 50));
 }
@@ -152,10 +152,10 @@ fn observations_in_a_loop_update_until_the_variable_is_used() {
         "@mode sample(runs: 50, seed: 1)
 let p ~ beta(2, 3)
 for k in [3, 4, 5, 6] {
-  observe k from binomial(10, p)
+  observe k from binomial(10, prob(p))
 }
 for k in [3, 4, 5] {
-  observe k from binomial(10, p)
+  observe k from binomial(10, prob(p))
   let c = p
 }",
     );
@@ -165,7 +165,7 @@ for k in [3, 4, 5] {
         "@mode sample(runs: 50, seed: 1)
 repeat 3 {
   let p ~ beta(2, 3)
-  observe true from bernoulli(p)
+  observe true from bernoulli(prob(p))
 }",
     );
     assert_eq!(updates(&out, "p"), counts(150, 150, 0));
@@ -173,17 +173,18 @@ repeat 3 {
 
 #[test]
 fn a_type_annotation_draws_the_variable_only_if_it_could_fail() {
-    for annotation in ["prob", "float"] {
-        let out = outcome(&format!(
-            "@mode sample(runs: 50, seed: 1)\nlet p: {annotation} ~ beta(2, 3)\nobserve true from bernoulli(p)"
-        ));
-        assert_eq!(updates(&out, "p"), counts(50, 50, 0), "{annotation}");
-    }
+    let out =
+        outcome("@mode sample(runs: 50, seed: 1)\nlet p: float ~ beta(2, 3)\nobserve true from bernoulli(prob(p))");
+    assert_eq!(updates(&out, "p"), counts(50, 50, 0));
     let out = outcome("@mode sample(runs: 50, seed: 1)\nlet r: float ~ gamma(2, 1)\nobserve 3 from poisson(r)");
     assert_eq!(updates(&out, "r"), counts(50, 50, 0));
-    // A gamma might not be a probability: drawn, and checked.
-    let out = outcome("@mode sample(runs: 50, seed: 1)\nlet r: prob ~ gamma(2, 0.001)\nobserve 3 from poisson(r)");
-    assert_eq!(updates(&out, "r"), counts(50, 0, 50));
+    // A draw's float representation is never implicitly narrowed, even
+    // for a beta family or a small gamma value inside [0, 1].
+    for family in ["beta(2, 3)", "gamma(2, 0.001)"] {
+        error(&format!(
+            "@mode sample(runs: 50, seed: 1)\nlet p: prob ~ {family}\nreport p"
+        ));
+    }
     let src = "@mode sample(runs: 50, seed: 1)\nlet r: prob ~ gamma(2, 1)\nobserve 3 from poisson(r)";
     let error = exec(src, &Options::default()).unwrap_err();
     assert!(error.contains("`r` should be a prob, but it's a float"), "{error}");
@@ -197,7 +198,7 @@ fn parameters_are_fixed_at_the_draw() {
 var alpha = 2.0
 let p ~ beta(alpha, 3)
 alpha = 100.0
-observe true from bernoulli(p)
+observe true from bernoulli(prob(p))
 report p",
     );
     // The posterior is beta(3, 3), whatever `alpha` became.
@@ -208,17 +209,17 @@ report p",
 #[test]
 fn invalid_parameters_and_observations_give_the_same_errors() {
     let cases = [
-        "let p ~ beta(0, 1)\nobserve true from bernoulli(p)",
-        "let p ~ beta(1, 1)\nobserve 3 from binomial(-1, p)",
-        "let p ~ beta(1, 1)\nobserve 3 from binomial(2.5, p)",
-        "let p ~ beta(1, 1)\nobserve 3 from binomial(\"ten\", p)",
+        "let p ~ beta(0, 1)\nobserve true from bernoulli(prob(p))",
+        "let p ~ beta(1, 1)\nobserve 3 from binomial(-1, prob(p))",
+        "let p ~ beta(1, 1)\nobserve 3 from binomial(2.5, prob(p))",
+        "let p ~ beta(1, 1)\nobserve 3 from binomial(\"ten\", prob(p))",
         "let m ~ normal(0, 1)\nobserve 1.0 from normal(m, 0)",
         "let m ~ normal(0, 1)\nobserve 1.0 from normal(m, -2)",
         "let m ~ normal(0, 1)\nobserve true from normal(m, 1)",
         "let m ~ normal(0, 1)\nobserve \"x\" from normal(m, 1)",
-        "let p: int ~ beta(1, 1)\nobserve true from bernoulli(p)",
-        "let p ~ beta(1, 1)\nobserve 11 from binomial(10, p)",
-        "let p ~ beta(1, 1)\nobserve 2.5 from binomial(10, p)",
+        "let p: int ~ beta(1, 1)\nobserve true from bernoulli(prob(p))",
+        "let p ~ beta(1, 1)\nobserve 11 from binomial(10, prob(p))",
+        "let p ~ beta(1, 1)\nobserve 2.5 from binomial(10, prob(p))",
         "let r ~ gamma(2, 1)\nobserve -1 from poisson(r)",
         "let r ~ gamma(2, 1)\nobserve true from poisson(r)",
     ];
@@ -237,11 +238,11 @@ let b ~ beta(2, 50)
 let visitors = 400
 for k in [12, 9, 15, 11, 10, 13, 8, 12, 14, 10, 11, 9, 13, 12, 10,
           11, 14, 9, 10, 12, 13, 11, 10, 12, 9, 11, 13, 10, 12, 11] {
-  observe k from binomial(visitors, a)
+  observe k from binomial(visitors, prob(a))
 }
 for k in [14, 12, 16, 13, 11, 15, 12, 14, 13, 16, 12, 11, 15, 14, 13,
           12, 15, 13, 14, 12, 16, 13, 12, 14, 15, 13, 12, 14, 13, 15] {
-  observe k from binomial(visitors, b)
+  observe k from binomial(visitors, prob(b))
 }
 report b > a";
     let out = outcome(src);
@@ -266,7 +267,7 @@ fn long_sequences_and_densities_keep_their_evidence() {
         "@mode sample(runs: 20, seed: 1)
 let p ~ beta(1, 1)
 for i in 1..20000 {
-  observe i mod 3 == 0 from bernoulli(p)
+  observe i mod 3 == 0 from bernoulli(prob(p))
 }",
     );
     let ln = out.evidence.unwrap().log10() * std::f64::consts::LN_10;
@@ -300,7 +301,7 @@ fn rare_but_possible_data_keeps_its_runs() {
     let out = outcome(
         "@mode sample(runs: 100, seed: 1)
 let p ~ beta(1000, 1000)
-observe 0 from binomial(100_000, p)
+observe 0 from binomial(100_000, prob(p))
 report p",
     );
     let ln = out.evidence.unwrap().log10() * std::f64::consts::LN_10;
@@ -310,7 +311,7 @@ report p",
     assert!((mean - 1000.0 / 102_000.0).abs() < 5.0 * se, "{mean} ± {se}");
     // Drawing `p` from its prior, no run explains the data.
     let error = exec(
-        "@mode sample(runs: 100, seed: 1)\nlet p ~ beta(1000, 1000)\nobserve 0 from binomial(100_000, p)",
+        "@mode sample(runs: 100, seed: 1)\nlet p ~ beta(1000, 1000)\nobserve 0 from binomial(100_000, prob(p))",
         &without(),
     )
     .unwrap_err();
@@ -322,8 +323,8 @@ report p",
 const MODEL: &str = "let p ~ beta(2, 3)
 let r ~ gamma(2, 1.5)
 let m ~ normal(0, 2)
-observe 4 from binomial(10, p)
-observe true from bernoulli(p)
+observe 4 from binomial(10, prob(p))
+observe true from bernoulli(prob(p))
 observe 3 from poisson(r)
 observe 5 from poisson(r)
 observe 1.3 from normal(m, 1)
@@ -398,7 +399,7 @@ fn simulation_based_calibration() {
                     .map(|_| Counts::Binomial { n: 10, p }.sample(rng).to_string())
                     .collect();
                 let body = format!(
-                    "let x ~ beta(2, 3)\nfor k in [{}] {{\n  observe k from binomial(10, x)\n}}",
+                    "let x ~ beta(2, 3)\nfor k in [{}] {{\n  observe k from binomial(10, prob(x))\n}}",
                     ks.join(", ")
                 );
                 (p, body)
@@ -409,7 +410,7 @@ fn simulation_based_calibration() {
                     .map(|_| if rng.uniform() < p { "true" } else { "false" })
                     .collect();
                 let body = format!(
-                    "let x ~ beta(1, 1)\nfor v in [{}] {{\n  observe v from bernoulli(x)\n}}",
+                    "let x ~ beta(1, 1)\nfor v in [{}] {{\n  observe v from bernoulli(prob(x))\n}}",
                     facts.join(", ")
                 );
                 (p, body)
@@ -484,7 +485,7 @@ fn programs_without_conjugate_observations_are_unchanged() {
     for src in [
         "@mode sample(runs: 2000, seed: 4)\nlet x ~ normal(0, 1)\nobserve x > 0\nreport x",
         "@mode sample(runs: 2000, seed: 4)\nlet s ~ 3 to 7\nobserve 2 from poisson(s)\nreport s",
-        "@mode sample(runs: 2000, seed: 4)\nlet p ~ beta(2, 3)\nlet q = p\nobserve true from bernoulli(q)\nreport p",
+        "@mode sample(runs: 2000, seed: 4)\nlet p ~ beta(2, 3)\nlet q = p\nobserve true from bernoulli(prob(q))\nreport p",
     ] {
         assert_eq!(output(src), exec(src, &without()).unwrap().output, "{src}");
     }
@@ -496,27 +497,27 @@ fn programs_without_conjugate_observations_are_unchanged() {
 fn random_program(rng: &mut Rng, seed: u64) -> String {
     let mut pick = |n: usize| (rng.uniform() * n as f64) as usize;
     let mut lines = vec![format!("@mode sample(runs: 2000, seed: {seed})")];
-    lines.push(["var p ~ beta(2, 3)", "var p: prob ~ beta(2, 3)"][pick(2)].to_string());
+    lines.push(["var p ~ beta(2, 3)", "var p: float ~ beta(2, 3)"][pick(2)].to_string());
     lines.push(["var r ~ gamma(2, 1.5)", "var r: float ~ gamma(2, 1.5)"][pick(2)].to_string());
     lines.push("var m ~ normal(0, 2)".to_string());
-    lines.push("fn seen(k: int) {\n  observe k from binomial(10, p)\n}".to_string());
+    lines.push("fn seen(k: int) {\n  observe k from binomial(10, prob(p))\n}".to_string());
     for i in 0..4 + pick(10) {
         let fact = ["true", "false"][pick(2)];
         let (k10, k6, k5) = (pick(11), pick(7), pick(6));
         let y = pick(41) as f64 / 10.0 - 2.0;
         lines.push(match pick(22) {
-            0 => format!("observe {k10} from binomial(10, p)"),
-            1 => format!("observe {fact} from bernoulli(p)"),
-            2 => "observe bernoulli(p)".to_string(),
+            0 => format!("observe {k10} from binomial(10, prob(p))"),
+            1 => format!("observe {fact} from bernoulli(prob(p))"),
+            2 => "observe true from bernoulli(prob(p))".to_string(),
             3 => format!("observe {k6} from poisson(r)"),
             4 => format!("observe {y} from normal(m, {})", ["0.5", "1", "2"][pick(3)]),
-            5 => format!("observe {k10} from binomial(10, p * 0.9)"),
+            5 => format!("observe {k10} from binomial(10, prob(p * 0.9))"),
             6 => "observe p > 0.2".to_string(),
             7 => format!("let c{i} = p + r + m"),
             8 => format!(
-                "if m > 0 {{\n  observe {k6} from poisson(r)\n}} else {{\n  observe {fact} from bernoulli(p)\n}}"
+                "if m > 0 {{\n  observe {k6} from poisson(r)\n}} else {{\n  observe {fact} from bernoulli(prob(p))\n}}"
             ),
-            9 => format!("repeat 2 {{\n  observe {k5} from binomial(5, p)\n}}"),
+            9 => format!("repeat 2 {{\n  observe {k5} from binomial(5, prob(p))\n}}"),
             10 => format!("for k in [{k6}, {}] {{\n  observe k from poisson(r)\n}}", pick(7)),
             11 => format!("seen({k10})"),
             12 => format!("let f{i} = x -> x * m"),

@@ -545,8 +545,7 @@ impl<'p> Engine<'p> {
                     _ => None,
                 }
             }
-            Likelihood::Bernoulli { value: None } => Some(Seen::Bernoulli(true)),
-            Likelihood::Bernoulli { value: Some(value) } => match self.eval(f, value, w)? {
+            Likelihood::Bernoulli { value } => match self.eval(f, value, w)? {
                 Value::Bool(b) => Some(Seen::Bernoulli(b)),
                 _ => None,
             },
@@ -661,7 +660,10 @@ impl<'p> Engine<'p> {
             StmtKind::Set { place, value } => {
                 let mut worlds = worlds;
                 for w in &mut worlds {
-                    let v = self.eval(f, value, w)?;
+                    let v = match self.record_place_type(place, w) {
+                        Some(ty) => self.eval_expected(f, value, w, &ty)?,
+                        None => self.eval(f, value, w)?,
+                    };
                     self.assign(f, place, v, w, span)?;
                 }
                 Ok(Flow::next(worlds))
@@ -833,19 +835,13 @@ impl<'p> Engine<'p> {
                 let mut buckets: Vec<Vec<World>> = vec![Vec::new(); arms.len()];
                 let mut rest = Vec::new();
                 for w in worlds {
-                    // A weight is a condition: its missing mass could go to
-                    // any arm, so it's unresolved (docs/semantics.md, section 3).
+                    // Chance weights are explicit probabilities.
                     let mut chances = Vec::with_capacity(arms.len());
-                    let mut missing = 0.0;
                     for (weight, _) in arms {
-                        let c = self.eval_condition(f, weight, &w)?;
-                        chances.push(c.yes);
-                        missing += c.missing;
+                        let value = self.eval(f, weight, &w)?;
+                        chances.push(ops::to_prob(&value).map_err(|e| e.at(weight.span))?);
                     }
-                    if missing > 0.0 && self.sampler.is_none() {
-                        self.unresolved += w.weight.scale(missing.min(1.0));
-                    }
-                    let sum: f64 = chances.iter().sum::<f64>() + missing;
+                    let sum: f64 = chances.iter().sum();
                     if sum > 1.0 + 1e-9 {
                         return Err(RuntimeError::new(
                             span,
@@ -939,8 +935,9 @@ impl<'p> Engine<'p> {
                     }
                     let (factor, missing, ruled_out) = match from {
                         None => {
-                            let c = self.eval_condition(f, value, &w)?;
-                            (c.yes, c.missing, c.no)
+                            let v = self.eval(f, value, &w)?;
+                            let b = ops::fact(&v, "observe").map_err(|e| e.at(value.span))?;
+                            if b { (1.0, 0.0, 0.0) } else { (0.0, 0.0, 1.0) }
                         }
                         Some(d) => {
                             let v = self.eval(f, value, &w)?;
@@ -1015,17 +1012,14 @@ impl<'p> Engine<'p> {
                 for w in &mut worlds {
                     // A delayed variable is drawn only if some of its values
                     // could fail the check.
-                    if let Value::Delayed(d) = &w.slots[*slot as usize] {
-                        let always = match ty {
-                            TypeSpec::Float => true,
-                            TypeSpec::Prob => matches!(d.family, Family::Beta { .. }),
-                            _ => false,
-                        };
+                    if let Value::Delayed(_) = &w.slots[*slot as usize] {
+                        let always = *ty == TypeSpec::Float;
                         if always {
                             continue;
                         }
                         self.draw_delayed(w, *slot);
                     }
+                    w.slots[*slot as usize] = self.widen(w.slots[*slot as usize].clone(), ty, span)?;
                     let v = &w.slots[*slot as usize];
                     if !self.conforms(v, ty) {
                         let name = &self.prog.functions[f as usize].slots[*slot as usize].name;
@@ -1337,6 +1331,89 @@ impl<'p> Engine<'p> {
         Ok(())
     }
 
+    /// Widen probabilities in a declared numeric context. This never narrows
+    /// floats to probabilities; literal narrowing happens during lowering.
+    fn widen(&mut self, v: Value, ty: &TypeSpec, span: Span) -> Result<Value> {
+        self.widen_at(v, ty, span, 0)
+    }
+
+    fn widen_at(&mut self, v: Value, ty: &TypeSpec, span: Span, depth: usize) -> Result<Value> {
+        self.budget.work(1).map_err(|e| e.at(span))?;
+        if depth > 64 {
+            return Err(RuntimeError::new(
+                span,
+                "type conversion nesting exceeds the limit of 64",
+            ));
+        }
+        Ok(match (v, ty) {
+            (Value::Prob(p), TypeSpec::Float) => Value::Float(p),
+            (Value::List(xs), TypeSpec::List(t)) => {
+                self.budget.collection(xs.len() as u128).map_err(|e| e.at(span))?;
+                let mut out = Vec::with_capacity(xs.len());
+                for x in xs.iter() {
+                    out.push(self.widen_at(x.clone(), t, span, depth + 1)?);
+                }
+                Value::list(out)
+            }
+            (Value::Map(xs), TypeSpec::Map(kt, vt)) => {
+                let mut out = BTreeMap::new();
+                for (k, v) in xs.iter() {
+                    out.insert(
+                        self.widen_at(k.clone(), kt, span, depth + 1)?,
+                        self.widen_at(v.clone(), vt, span, depth + 1)?,
+                    );
+                }
+                Value::map(out)
+            }
+            (Value::Bag(xs), TypeSpec::Bag(t)) => {
+                let mut out = BTreeMap::<Value, u64>::new();
+                for (x, n) in xs.iter() {
+                    let key = self.widen_at(x.clone(), t, span, depth + 1)?;
+                    let count = out.entry(key).or_default();
+                    *count = count
+                        .checked_add(*n)
+                        .ok_or_else(|| RuntimeError::new(span, "bag count overflow during type conversion"))?;
+                }
+                Value::multiset(crate::value::Multiset::new(out))
+            }
+            (Value::Dist(d), TypeSpec::Dist(t)) => {
+                let mut out = Vec::with_capacity(d.outcomes.len());
+                for (x, p) in &d.outcomes {
+                    out.push((self.widen_at(x.clone(), t, span, depth + 1)?, *p));
+                }
+                ops::combine(out, d.missing, &mut self.budget).map_err(|e| e.at(span))?
+            }
+            (Value::Record(r), TypeSpec::Record(t)) => {
+                let types: Vec<_> = self.prog.records[*t as usize]
+                    .fields
+                    .iter()
+                    .map(|f| (f.name.clone(), f.ty.clone()))
+                    .collect();
+                let mut fields = Vec::with_capacity(r.fields.len());
+                for (name, value) in &r.fields {
+                    let value = match types.iter().find(|(n, _)| n == &**name) {
+                        Some((_, t)) => self.widen_at(value.clone(), t, span, depth + 1)?,
+                        None => value.clone(),
+                    };
+                    fields.push((name.clone(), value));
+                }
+                ops::make_record(r.ty.clone(), fields)
+            }
+            (Value::Record(r), TypeSpec::AnonRecord(types)) => {
+                let mut fields = Vec::with_capacity(r.fields.len());
+                for (name, value) in &r.fields {
+                    let value = match types.iter().find(|(n, _)| n == &**name) {
+                        Some((_, t)) => self.widen_at(value.clone(), t, span, depth + 1)?,
+                        None => value.clone(),
+                    };
+                    fields.push((name.clone(), value));
+                }
+                ops::make_record(r.ty.clone(), fields)
+            }
+            (v, _) => v,
+        })
+    }
+
     /// Does `v` have the declared type?
     fn conforms(&self, v: &Value, ty: &TypeSpec) -> bool {
         match (ty, v) {
@@ -1344,7 +1421,6 @@ impl<'p> Engine<'p> {
             (TypeSpec::Float, Value::Float(_) | Value::Int(_)) => true,
             (TypeSpec::Complex, Value::Complex(_)) => true,
             (TypeSpec::Prob, Value::Prob(_)) => true,
-            (TypeSpec::Prob, Value::Float(x)) => (0.0..=1.0).contains(x),
             (TypeSpec::Bool, Value::Bool(_)) => true,
             (TypeSpec::Str, Value::Str(_)) => true,
             (TypeSpec::Date, Value::Date(_)) => true,
@@ -1355,10 +1431,10 @@ impl<'p> Engine<'p> {
             (TypeSpec::Map(k, t), Value::Map(m)) => m.iter().all(|(a, b)| self.conforms(a, k) && self.conforms(b, t)),
             (TypeSpec::Bag(t), Value::Bag(b)) => b.keys().all(|x| self.conforms(x, t)),
             (TypeSpec::Dist(t), Value::Dist(d)) => d.outcomes.iter().all(|(x, _)| match x {
-                Value::Continuous(_) => matches!(**t, TypeSpec::Float | TypeSpec::Prob),
+                Value::Continuous(_) => **t == TypeSpec::Float,
                 _ => self.conforms(x, t),
             }),
-            (TypeSpec::Dist(t), Value::Continuous(_)) => matches!(**t, TypeSpec::Float | TypeSpec::Prob),
+            (TypeSpec::Dist(t), Value::Continuous(_)) => **t == TypeSpec::Float,
             (TypeSpec::Record(r), Value::Record(rec)) => {
                 let declared = &self.prog.records[*r as usize];
                 rec.ty.as_deref() == Some(declared.name.as_str())
@@ -1726,11 +1802,57 @@ impl<'p> Engine<'p> {
         }
     }
 
+    fn record_place_type(&self, place: &Place, w: &World) -> Option<TypeSpec> {
+        if place.path.is_empty() {
+            return None;
+        }
+        let Value::Record(r) = &w.slots[place.slot as usize] else {
+            return None;
+        };
+        let id = self
+            .prog
+            .records
+            .iter()
+            .position(|t| Some(t.name.as_str()) == r.ty.as_deref())?;
+        let mut ty = TypeSpec::Record(id as u32);
+        for element in &place.path {
+            ty = match (element, ty) {
+                (PathElem::Field(name), TypeSpec::Record(id)) => self.prog.records[id as usize]
+                    .fields
+                    .iter()
+                    .find(|f| f.name == *name)?
+                    .ty
+                    .clone(),
+                (PathElem::Field(name), TypeSpec::AnonRecord(fields)) => fields.into_iter().find(|(n, _)| n == name)?.1,
+                (PathElem::Index(_), TypeSpec::List(t) | TypeSpec::Map(_, t)) => *t,
+                _ => return None,
+            };
+        }
+        Some(ty)
+    }
+
     fn assign(&mut self, f: FnId, place: &Place, v: Value, w: &mut World, span: Span) -> Result<()> {
         if place.path.is_empty() {
             w.slots[place.slot as usize] = v;
             return Ok(());
         }
+        let v = match self.record_place_type(place, w) {
+            Some(ty) => {
+                let v = self.widen(v, &ty, span)?;
+                if !self.conforms(&v, &ty) {
+                    return Err(RuntimeError::new(
+                        span,
+                        format!(
+                            "assigned field should be {}, found {}",
+                            ty.describe(self.prog),
+                            v.kind()
+                        ),
+                    ));
+                }
+                v
+            }
+            None => v,
+        };
         let mut keys = Vec::with_capacity(place.path.len());
         for elem in &place.path {
             keys.push(match elem {
@@ -1790,7 +1912,112 @@ impl<'p> Engine<'p> {
 
     fn eval_condition(&mut self, f: FnId, e: &Expr, w: &World) -> Result<ops::Condition> {
         let v = self.eval(f, e, w)?;
-        ops::condition(&v).map_err(|err| err.at(e.span))
+        let b = ops::fact(&v, "condition").map_err(|err| err.at(e.span))?;
+        Ok(ops::Condition {
+            yes: if b { 1.0 } else { 0.0 },
+            no: if b { 0.0 } else { 1.0 },
+            missing: 0.0,
+        })
+    }
+
+    fn eval_expected(&mut self, f: FnId, e: &Expr, w: &World, ty: &TypeSpec) -> Result<Value> {
+        if *ty == TypeSpec::Prob && probl_sema::coercions::numeric_literal(e).is_some() {
+            let v = self.eval(f, e, w)?;
+            return ops::make_prob(&v).map_err(|err| err.at(e.span));
+        }
+        match (&e.kind, ty) {
+            (ExprKind::List(xs), TypeSpec::List(t)) => {
+                self.budget.collection(xs.len() as u128).map_err(|err| err.at(e.span))?;
+                let mut out = Vec::with_capacity(xs.len());
+                for x in xs {
+                    out.push(self.eval_expected(f, x, w, t)?);
+                }
+                Ok(Value::list(out))
+            }
+            (ExprKind::Map(xs), TypeSpec::Map(kt, vt)) => {
+                let mut out = BTreeMap::new();
+                for (k, v) in xs {
+                    let key = self.eval_expected(f, k, w, kt)?;
+                    if key.is_uncertain() {
+                        return Err(RuntimeError::new(k.span, "map keys can't be distributions"));
+                    }
+                    out.insert(key, self.eval_expected(f, v, w, vt)?);
+                }
+                Ok(Value::map(out))
+            }
+            (ExprKind::Record { ty: None, fields }, TypeSpec::AnonRecord(types)) => {
+                let mut out = Vec::with_capacity(fields.len());
+                for (n, e) in fields {
+                    let v = match types.iter().find(|(name, _)| name == n) {
+                        Some((_, ty)) => self.eval_expected(f, e, w, ty)?,
+                        None => self.eval(f, e, w)?,
+                    };
+                    out.push((Arc::from(n.as_str()), v));
+                }
+                Ok(ops::make_record(None, out))
+            }
+            _ => {
+                let v = self.eval(f, e, w)?;
+                self.widen(v, ty, e.span)
+            }
+        }
+    }
+
+    /// A shared field type supplies literal context even when the record is
+    /// represented by a finite distribution. Heterogeneous records have no
+    /// shared context, and their individual declarations are checked below.
+    fn record_field_type(&self, value: &Value, name: &str) -> Option<TypeSpec> {
+        match value {
+            Value::Record(r) => self
+                .prog
+                .records
+                .iter()
+                .find(|t| Some(t.name.as_str()) == r.ty.as_deref())?
+                .fields
+                .iter()
+                .find(|f| f.name == name)
+                .map(|f| f.ty.clone()),
+            Value::Dist(d) => {
+                let first = self.record_field_type(&d.outcomes.first()?.0, name)?;
+                d.outcomes
+                    .iter()
+                    .all(|(v, _)| self.record_field_type(v, name).as_ref() == Some(&first))
+                    .then_some(first)
+            }
+            _ => None,
+        }
+    }
+
+    fn check_updated_records(&mut self, value: Value, span: Span) -> Result<Value> {
+        match value {
+            Value::Record(ref r) => {
+                let Some(id) = self
+                    .prog
+                    .records
+                    .iter()
+                    .position(|t| Some(t.name.as_str()) == r.ty.as_deref())
+                else {
+                    return Ok(value);
+                };
+                let ty = TypeSpec::Record(id as u32);
+                let value = self.widen(value, &ty, span)?;
+                if !self.conforms(&value, &ty) {
+                    return Err(RuntimeError::new(
+                        span,
+                        format!("updated record doesn't conform to {}", ty.describe(self.prog)),
+                    ));
+                }
+                Ok(value)
+            }
+            Value::Dist(d) => {
+                let mut outcomes = Vec::with_capacity(d.outcomes.len());
+                for (v, p) in &d.outcomes {
+                    outcomes.push((self.check_updated_records(v.clone(), span)?, *p));
+                }
+                ops::combine(outcomes, d.missing, &mut self.budget).map_err(|e| e.at(span))
+            }
+            v => Ok(v),
+        }
     }
 
     fn eval(&mut self, f: FnId, e: &Expr, w: &World) -> Result<Value> {
@@ -1846,7 +2073,28 @@ impl<'p> Engine<'p> {
             ExprKind::Record { ty, fields } => {
                 let mut values = Vec::with_capacity(fields.len());
                 for (name, v) in fields {
-                    values.push((Arc::from(name.as_str()), self.eval(f, v, w)?));
+                    let field_ty = ty
+                        .and_then(|t| self.prog.records[t as usize].fields.iter().find(|d| d.name == *name))
+                        .map(|d| d.ty.clone());
+                    let value = match field_ty {
+                        Some(t) => {
+                            let value = self.eval(f, v, w)?;
+                            let value = self.widen(value, &t, v.span)?;
+                            if !self.conforms(&value, &t) {
+                                return Err(RuntimeError::new(
+                                    v.span,
+                                    format!(
+                                        "field `{name}` should be {}, found {}",
+                                        t.describe(self.prog),
+                                        value.kind()
+                                    ),
+                                ));
+                            }
+                            value
+                        }
+                        None => self.eval(f, v, w)?,
+                    };
+                    values.push((Arc::from(name.as_str()), value));
                 }
                 Ok(ops::make_record(
                     ty.map(|t| self.record_names[t as usize].clone()),
@@ -1866,9 +2114,28 @@ impl<'p> Engine<'p> {
                 let base = self.eval(f, x, w)?;
                 let mut updates = Vec::with_capacity(fields.len());
                 for (name, v) in fields {
-                    updates.push((Arc::from(name.as_str()), self.eval(f, v, w)?));
+                    let field_ty = self.record_field_type(&base, name);
+                    let value = match field_ty {
+                        Some(ty) => {
+                            let value = self.eval_expected(f, v, w, &ty)?;
+                            if !self.conforms(&value, &ty) {
+                                return Err(RuntimeError::new(
+                                    v.span,
+                                    format!(
+                                        "field `{name}` should be {}, found {}",
+                                        ty.describe(self.prog),
+                                        value.kind()
+                                    ),
+                                ));
+                            }
+                            value
+                        }
+                        None => self.eval(f, v, w)?,
+                    };
+                    updates.push((Arc::from(name.as_str()), value));
                 }
-                ops::lift1(&base, &mut self.budget, |b, _| ops::with_fields(b, &updates)).map_err(at)
+                let value = ops::lift1(&base, &mut self.budget, |b, _| ops::with_fields(b, &updates)).map_err(at)?;
+                self.check_updated_records(value, span)
             }
             ExprKind::Builtin { func, args, .. } => self.builtin(f, *func, args, w, span),
             ExprKind::Closure { func, capture_args } => Ok(Value::Closure(Arc::new(Closure {
@@ -1905,7 +2172,7 @@ impl<'p> Engine<'p> {
                 self.budget.work(i.bits().div_ceil(64).max(1))?;
                 Value::Int(i.clone())
             }
-            Lit::Float(x) => Value::Float(*x),
+            Lit::Float(x) | Lit::FloatConstant(x) => Value::Float(*x),
             Lit::Prob(p) => Value::Prob(*p),
             Lit::Str(s) => crate::text::value(s, &mut self.budget)?,
             Lit::Dice { count, sides } => {

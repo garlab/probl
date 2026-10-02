@@ -73,7 +73,10 @@ fn continuous_draws_need_sampling() {
     assert!(e.contains("@mode sample"), "{e}");
     assert!(error("report normal(0, 1)").contains("can't report a continuous distribution"));
     assert!(error("observe 1 from normal(0, 1)\nreport true").contains("needs sample mode"));
-    assert!(error("let x = if 50% { normal(0, 1) } else { 1 }\nlet y ~ x\nreport y").contains("continuous"));
+    assert!(
+        error("let x = if (chance { 50% => true, else => false }) { normal(0, 1) } else { 1 }\nlet y ~ x\nreport y")
+            .contains("continuous")
+    );
     // Anything but comparing with a number needs a value.
     let e = error("report normal(0, 1) * 2 > 1");
     assert!(e.contains("needs a value, not a normal distribution"), "{e}");
@@ -137,7 +140,7 @@ fn a_seed_repeats_its_run() {
 fn runs_are_counted_separately() {
     // Runs that end in the same state must not merge: weights 0.9 or 0.1,
     // equally likely, give an effective sample size of n · 0.25 / 0.41.
-    let src = "@mode sample(runs: 100_000, seed: 2)\nlet x ~ d6\nobserve if x > 3 { 90% } else { 10% }\nreport x > 3";
+    let src = "@mode sample(runs: 100_000, seed: 2)\nlet x ~ d6\nobserve true from bernoulli(prob(if x > 3 { 90% } else { 10% }))\nreport x > 3";
     let out = outcome(src);
     let ess = out.sample.as_ref().unwrap().effective;
     assert!(
@@ -161,7 +164,7 @@ fn simulate_is_enumerated_when_sampling() {
 #[test]
 fn a_sampled_call_may_return_to_itself() {
     // Enumerating solves it by iteration, and sampling follows each run.
-    let f = "fn tries() { if 50% { 1 } else { 1 + tries() } }\nreport tries()";
+    let f = "fn tries() { if (chance { 50% => true, else => false }) { 1 } else { 1 + tries() } }\nreport tries()";
     assert!((mean(f) - 2.0).abs() < 1e-9);
     within(
         sampled_mean(&format!("@mode sample(runs: 20_000, seed: 4)\n{f}")),
@@ -179,7 +182,7 @@ fn densities_are_evidence_when_sampling() {
 
 #[test]
 fn a_choice_with_a_continuous_option_is_a_mixture() {
-    let src = "@mode sample(runs: 20_000, seed: 6)\nlet x ~ if 50% { uniform(0, 1) } else { 5 }\nreport x == 5";
+    let src = "@mode sample(runs: 20_000, seed: 6)\nlet x ~ if (chance { 50% => true, else => false }) { uniform(0, 1) } else { 5 }\nreport x == 5";
     within(estimate(src), 0.5, 5.0);
     let src = "@mode sample(runs: 20_000, seed: 6)\nlet x ~ one_of([uniform(0, 1), 5])\nreport x";
     within(sampled_mean(src), 2.75, 5.0);
@@ -191,14 +194,16 @@ fn counts_are_drawn_directly() {
     // and weighs evidence with their formulas.
     let src = "@mode sample(runs: 20_000, seed: 7)\nlet k ~ poisson(100.5)\nreport k";
     within(sampled_mean(src), 100.5, 5.0);
-    let src = "@mode sample(runs: 20_000, seed: 7)\nlet p ~ one_of([10%, 50%])\nobserve 3 from binomial(10, p)\nreport p == 10%";
+    let src = "@mode sample(runs: 20_000, seed: 7)\nlet p ~ one_of([10%, 50%])\nobserve 3 from binomial(10, prob(p))\nreport p == 10%";
     // P(3 | 10%) = 0.0574, P(3 | 50%) = 0.1172.
     within(estimate(src), 0.057395628 / (0.057395628 + 0.1171875), 5.0);
 }
 
 #[test]
 fn a_report_that_is_rarely_reached_says_so() {
-    let text = output("@mode sample(runs: 10_000, seed: 8)\nif 10% { report true as \"rare\" }");
+    let text = output(
+        "@mode sample(runs: 10_000, seed: 8)\nif (chance { 10% => true, else => false }) { report true as \"rare\" }",
+    );
     assert!(text.contains("(reached in ") && text.contains("% of runs)"), "{text}");
 }
 
@@ -319,7 +324,8 @@ fn the_evidence_is_estimated() {
     );
     assert!(out.output.contains("· log evidence -1.8"), "{}", out.output);
     // Tiny evidence is written in scientific notation, with a relative error.
-    let src = "@mode sample(runs: 20_000, seed: 5)\nlet x ~ d6\nrepeat 20 { observe 10% }\nreport x";
+    let src =
+        "@mode sample(runs: 20_000, seed: 5)\nlet x ~ d6\nrepeat 20 { observe true from bernoulli(10%) }\nreport x";
     let out = output(src);
     assert!(out.contains("evidence 1.00e-20 (± 0.00%)"), "{out}");
     // No evidence without observations.

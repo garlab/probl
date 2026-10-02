@@ -14,7 +14,7 @@ fn callbacks_reject_effects_in_both_modes_before_results_can_hide_them() {
         "report [1].reduce(0, (a, x) -> { let r ~ d6; a + r })",
         "report [1].map(x -> { let r ~ d1; x })",
         "report [1].map(x -> { observe true; x })",
-        "report [1].map(x -> if 50% { x } else { x })",
+        "report [1].map(x -> if (chance { 50% => true, else => false }) { x } else { x })",
         "report [1].map(x -> chance { 50% => x, else => x })",
         "report [1].map(x -> { var deck = bag([1: 1]); let r ~ deck.take(); r })",
         "fn draw() { let r ~ d6; r }\nreport [1].map(x -> draw())",
@@ -119,7 +119,7 @@ fn sparse_numeric_and_categorical_tables_show_per_key_support() {
 #[test]
 fn unequal_weights_warn_even_when_many_runs_contributed() {
     let src = "@mode sample(runs: 1000, seed: 1)\nlet rare ~ bernoulli(0.1%)\n\
-               observe if rare { 100% } else { 1e-10 }\nreport rare\nreport rare by 0";
+               observe true from bernoulli(prob(if rare { 100% } else { 1e-10 }))\nreport rare\nreport rare by 0";
     let out = outcome(src);
     assert!(
         out.output
@@ -143,11 +143,11 @@ fn per_visit_reports_do_not_claim_binomial_intervals() {
 fn weighted_boundary_and_integrated_estimates_are_distinguished() {
     let weighted = output(
         "@mode sample(runs: 1000, seed: 7)\nlet x ~ d6\n\
-                           observe if x == 6 { 90% } else { 10% }\nreport true",
+                           observe true from bernoulli(prob(if x == 6 { 90% } else { 10% }))\nreport true",
     );
     assert!(!weighted.contains("Wilson"), "{weighted}");
     assert!(weighted.contains("MC error not estimable"), "{weighted}");
-    let same_weights = output("@mode sample(runs: 1000, seed: 7)\nobserve 10%\nreport true");
+    let same_weights = output("@mode sample(runs: 1000, seed: 7)\nobserve true from bernoulli(10%)\nreport true");
     assert!(!same_weights.contains("Wilson"), "{same_weights}");
     let integrated = output("@mode sample(runs: 1000, seed: 7)\nreport d6 > 3");
     assert!(!integrated.contains("Wilson"), "{integrated}");
@@ -172,7 +172,7 @@ fn tiny_nonzero_summaries_and_table_cells_preserve_their_scale() {
     assert!(!text.contains("0.00"), "{text}");
     let posterior = output(
         "@mode sample(runs: 2000, seed: 17)\n\
-                            let p ~ beta(1,1)\nobserve 0 from binomial(100000,p)\nreport p",
+                            let p ~ beta(1,1)\nobserve 0 from binomial(100000, prob(p))\nreport p",
     );
     assert!(!posterior.contains("mean 0.00"), "{posterior}");
     assert!(posterior.contains("e-5"), "{posterior}");
@@ -191,7 +191,7 @@ fn cancellation_noise_is_distinguished_from_small_signals() {
 #[test]
 fn reliability_metadata_survives_batches_and_threads() {
     let src = "@mode sample(runs: 2500, seed: 7)\nlet x ~ d6\n\
-               observe if x == 6 { 100% } else { 0.00001% }\n\
+               observe true from bernoulli(prob(if x == 6 { 100% } else { 0.00001% }))\n\
                report x == 6 by x\nreport x";
     let run = |threads| {
         exec(

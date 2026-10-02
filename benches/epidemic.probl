@@ -15,8 +15,8 @@ var peak = 10
 var peak_day = 0
 for day in 1..200 {
   let p = 1 - exp(-r0 / days_sick * i / population)
-  let infected ~ binomial(s, p)
-  let recovered ~ binomial(i, 1 / days_sick)
+  let infected ~ binomial(s, prob(p))
+  let recovered ~ binomial(i, prob(1 / days_sick))
   s -= infected
   i += infected - recovered
   if i > peak {

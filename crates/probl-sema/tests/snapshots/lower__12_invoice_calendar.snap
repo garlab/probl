@@ -4,7 +4,7 @@ expression: ir(&src)
 ---
 fn#0 the top level ()
   first_invoice_0 = date(2027, 1, 31)    [live: first_invoice_0]
-  collection_delay_1 ~ one_of([0: 60%, 10: 30%, 35: 10%])    [live: first_invoice_0 collection_delay_1]
+  collection_delay_1 ~ one_of([0: 0.6, 10: 0.3, 35: 0.1])    [live: first_invoice_0 collection_delay_1]
   receipts_2 = []    [live: first_invoice_0 collection_delay_1 receipts_2]
   $3 = $iter_items((..< 0 3))    [live: first_invoice_0 collection_delay_1 receipts_2 $3]
   $4 = 0    [live: first_invoice_0 collection_delay_1 receipts_2 $3 $4]

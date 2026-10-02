@@ -236,7 +236,7 @@ impl Gen {
     }
 
     fn prob(&mut self) -> String {
-        self.rng.pick(PROBS).to_string()
+        format!("prob({})", self.rng.pick(PROBS))
     }
 
     // ── Functions ────────────────────────────────────────────────────────
@@ -617,24 +617,22 @@ impl Gen {
             }
             // Evidence that rules the worlds that get here out.
             1 if self.rng.chance(30) => "observe false".into(),
-            2 if self.rng.chance(30) => "observe 0%".into(),
+            2 if self.rng.chance(30) => "observe true from bernoulli(0%)".into(),
             _ => format!("observe {}", self.evidence(2)),
         })
     }
 
-    /// A condition for `observe`, usually one that can hold.
+    /// A fact for observation, usually one that can hold.
     fn evidence(&mut self, depth: u32) -> String {
         let d = depth.saturating_sub(1);
-        match self.rng.below(20) {
-            0..=7 => self.rng.pick(&["1%", "10%", "25%", "50%", "90%"]).to_string(),
-            8..=13 => {
-                let op = *self.rng.pick(&["<=", ">=", "!="]);
-                format!("({} {op} {})", self.expr(Kind::DInt, d), self.rng.below(4))
-            }
-            14..=16 => format!("bernoulli({})", self.rng.pick(&["10%", "50%", "90%"])),
-            17 => format!("(if {} {{ 90% }} else {{ 30% }})", self.cond(d)),
-            _ => self.cond(depth),
-        }
+        let source = match self.rng.below(4) {
+            0 => format!("bernoulli({})", self.prob()),
+            1 => format!("({} >= {})", self.expr(Kind::DInt, d), self.rng.below(4)),
+            2 => format!("bernoulli(prob(if {} {{ 90% }} else {{ 30% }}))", self.cond(d)),
+            _ => return self.cond(depth),
+        };
+        let name = self.fresh("event");
+        format!("({{ let {name} ~ {source}; {name} }})")
     }
 
     /// `break`, `continue` or `return`, under a condition.
@@ -734,13 +732,15 @@ impl Gen {
 
     // ── Expressions ──────────────────────────────────────────────────────
 
-    /// A condition: a fact, a probability or a distribution of facts.
+    /// Boolean control flow; probabilistic effects are explicit draws.
     fn cond(&mut self, depth: u32) -> String {
-        match self.rng.below(3) {
-            0 => self.expr(Kind::Bool, depth),
-            1 => self.expr(Kind::Prob, depth),
+        let source = match self.rng.below(3) {
+            0 => return self.expr(Kind::Bool, depth),
+            1 => format!("bernoulli({})", self.expr(Kind::Prob, depth)),
             _ => self.expr(Kind::DBool, depth),
-        }
+        };
+        let name = self.fresh("event");
+        format!("({{ let {name} ~ {source}; {name} }})")
     }
 
     fn leaf(&mut self, kind: Kind) -> String {

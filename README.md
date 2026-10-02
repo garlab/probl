@@ -1,8 +1,8 @@
 # Probl
 
-**A programming language where conditions are probabilities.**
+**A programming language for explicit choices, weighted worlds and inference.**
 
-In Probl, `if 30% { … } else { … }` runs *both* branches: one in a world with weight 0.3, the other in a world with weight 0.7. A program doesn't produce one answer; it produces the distribution over every world it can end up in. Worlds that reach the same state merge, which keeps many game simulations small enough to follow every possibility. For models too big for that, or with continuous quantities, the same program runs by sampling instead.
+In Probl, `chance { 30% => …, else => … }` runs *both* branches: one in a world with weight 0.3, the other in a world with weight 0.7. A program doesn't produce one answer; it produces the distribution over every world it can end up in. Worlds that reach the same state merge, which keeps many game simulations small enough to follow every possibility. For models too big for that, or with continuous quantities, the same program runs by sampling instead.
 
 ```probl
 # Craps, pass line bet: what's the chance of winning?

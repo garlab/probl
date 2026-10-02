@@ -428,8 +428,17 @@ pub enum Lit {
     Bool(bool),
     Int(probl_number::Integer),
     Float(f64),
+    /// A named mathematical constant: numeric, but not a source literal
+    /// eligible for contextual conversion to `prob`.
+    FloatConstant(f64),
     Prob(f64),
     Str(String),
-    Dice { count: u32, sides: u32 },
-    Enum { ty: u32, variant: u32 },
+    Dice {
+        count: u32,
+        sides: u32,
+    },
+    Enum {
+        ty: u32,
+        variant: u32,
+    },
 }

@@ -72,7 +72,7 @@ fn data_is_the_same_in_every_batch() {
     let src = format!(
         "@mode sample(runs: 20_000, seed: 3){PILOT}\
          let rate ~ beta(2, 40)\n\
-         for row in pilot {{\n  observe row.signups from binomial(row.visitors, rate)\n}}\n\
+         for row in pilot {{\n  observe row.signups from binomial(row.visitors, prob(rate))\n}}\n\
          report rate * 100 as \"conversion rate (%)\""
     );
     let one = run(&src, pilot(), 1);

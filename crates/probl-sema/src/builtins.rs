@@ -167,6 +167,7 @@ builtins! {
     Pmf = "pmf", 2..=2, Raw, true;
     Pdf = "pdf", 2..=2, Raw, true;
     // Probability helpers
+    Prob = "prob", 1..=1, Raw, true;
     Odds = "odds", 1..=1, Lift, true;
     Logit = "logit", 1..=1, Lift, true;
     InvLogit = "inv_logit", 1..=1, Lift, true;
@@ -207,6 +208,13 @@ builtins! {
 }
 
 impl Builtin {
+    /// Arguments whose declared domain is `prob`, including method receivers.
+    pub fn probability_parameter(self, index: usize) -> bool {
+        matches!(
+            (self, index),
+            (Self::Bernoulli | Self::Geometric | Self::Odds | Self::Logit, 0) | (Self::Binomial | Self::Quantile, 1)
+        )
+    }
     pub fn from_name(name: &str) -> Option<Builtin> {
         Builtin::ALL.iter().copied().find(|b| b.is_public() && b.name() == name)
     }

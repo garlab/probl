@@ -139,7 +139,8 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Pdf
         | B::Odds
         | B::Logit
-        | B::InvLogit => "Questions about distributions",
+        | B::InvLogit
+        | B::Prob => "Questions about distributions",
         B::Date
         | B::Days
         | B::Weeks
@@ -538,8 +539,8 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "Every value from `lo` to `hi` equally likely.",
         ),
         B::Beta => doc(
-            "beta(a: float, b: float) -> dist[prob]",
-            "A distribution of probabilities, such as an unknown rate. Observing counts of it updates it exactly when sampling.",
+            "beta(a: float, b: float) -> dist[float]",
+            "A continuous distribution on [0, 1], such as an unknown rate. Convert a drawn rate explicitly with `prob(rate)`. Observing counts with `observe k from binomial(n, prob(rate))` updates it exactly when sampling.",
         ),
         B::Gamma => doc(
             "gamma(shape: float, scale: float) -> dist[float]",
@@ -594,6 +595,10 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "The probability that the distribution is exactly `x`.",
         ),
         B::Pdf => doc("pdf(d, x) -> float", "The density of a continuous distribution at `x`."),
+        B::Prob => doc(
+            "prob(x) -> prob",
+            "Explicitly converts a finite number in [0, 1], or a bool (false = 0, true = 1), to a probability. Out-of-range values are errors. Does not clamp, draw or lift over distributions. Numeric literals also become probabilities when a declared type or parameter expects prob; numeric variables and expressions need this conversion.",
+        ),
         B::Odds => doc("odds(p: prob) -> float", "`p / (1 − p)`: 75% is 3 to 1."),
         B::Logit => doc(
             "logit(p: prob) -> float",
@@ -715,7 +720,7 @@ pub fn keyword(word: &str) -> Option<Doc> {
         "return" => doc("return e", "Leaves the function with this result."),
         "if" | "else" => doc(
             "if c { … } else { … }",
-            "Runs a branch. When `c` is a probability or an uncertain fact, like `30%` or `d20 >= 15`, both branches run, in worlds weighted by its chance.",
+            "Runs the selected branch in each world. The condition must be bool. Draw an event with `~` first, or use `chance` for explicit weighted branching.",
         ),
         "for" | "in" => doc(
             "for x in xs { … }",
@@ -723,7 +728,7 @@ pub fn keyword(word: &str) -> Option<Doc> {
         ),
         "while" => doc(
             "while c { … }",
-            "Repeats while `c` holds, in each world, until every world has left. If the worlds come back to states they were in, it's solved exactly; otherwise it stops once what's left weighs less than ε.",
+            "Repeats while the boolean `c` holds, in each world, until every world has left. If the worlds come back to states they were in, it's solved exactly; otherwise it stops once what's left weighs less than ε.",
         ),
         "loop" => doc(
             "loop { … }",
@@ -738,11 +743,11 @@ pub fn keyword(word: &str) -> Option<Doc> {
         ),
         "chance" => doc(
             "chance { 60% => …, 30% => …, else => … }",
-            "Weighted branches: each runs in a world weighted by its chance, and `else` gets the rest.",
+            "Weighted branches: each weight must be prob; numeric literals convert contextually. Use prob(x) for a numeric expression. Each branch runs with its weight, and `else` gets the rest.",
         ),
         "observe" | "from" => doc(
             "observe c or observe v from D",
-            "Evidence: weighs each world by how likely it makes what was seen, the chance of `c`, or of `D` giving `v`. Reports then describe the worlds that fit it.",
+            "Evidence: `observe c` requires bool and discards worlds where it is false. `observe v from D` weighs worlds by the likelihood of D giving v. Use `observe true from bernoulli(p)` for a probability likelihood. Reports describe the worlds that fit the evidence.",
         ),
         "report" | "by" | "as" => doc(
             "report e by key as \"label\"",

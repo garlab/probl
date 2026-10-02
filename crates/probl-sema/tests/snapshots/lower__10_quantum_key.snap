@@ -8,37 +8,39 @@ fn#0 the top level ()
   report simulate fn#5 [bases_0] as "errors in the key, no one listening"    [live: bases_0]
   report simulate fn#6 [bases_0] as "errors in the key, Eve measuring every photon"    [live: bases_0]
   report simulate fn#7 [bases_0] as "bits of the key Eve has right"    [live: bases_0]
-  $1 = $iter_items([0%, 10%, 50%, 100%])    [live: bases_0 $1]
-  $2 = 0    [live: bases_0 $1 $2]
-  loop (bounded) {    [live at head: bases_0 $1 $2]
-    if (>= $2 len($1)) {
-      break    [live: bases_0 $1 $2]
+  shares_1 = [0%, 10%, 50%, 100%]    [live: bases_0 shares_1]
+  check shares_1: list[prob]    [live: bases_0 shares_1]
+  $2 = $iter_items(shares_1)    [live: bases_0 $2]
+  $3 = 0    [live: bases_0 $2 $3]
+  loop (bounded) {    [live at head: bases_0 $2 $3]
+    if (>= $3 len($2)) {
+      break    [live: bases_0 $2 $3]
     }
-    share_3 = $1[$2]    [live: bases_0 $1 $2 share_3]
-    $2 = (+ $2 1)    [live: bases_0 $1 $2 share_3]
-    report simulate fn#8 [share_3, bases_0] by share_3 as "errors in the key, by the share of photons Eve measures"    [live: bases_0 $1 $2]
+    share_4 = $2[$3]    [live: bases_0 $2 $3 share_4]
+    $3 = (+ $3 1)    [live: bases_0 $2 $3 share_4]
+    report simulate fn#8 [share_4, bases_0] by share_4 as "errors in the key, by the share of photons Eve measures"    [live: bases_0 $2 $3]
   }
-  error_4 = P(simulate fn#9 [bases_0])    [live: error_4]
-  $5 = $iter_items([1, 5, 10, 20, 30])    [live: error_4 $5]
-  $6 = 0    [live: error_4 $5 $6]
-  loop (bounded) {    [live at head: error_4 $5 $6]
-    if (>= $6 len($5)) {
-      break    [live: error_4 $5 $6]
+  error_5 = P(simulate fn#9 [bases_0])    [live: error_5]
+  $6 = $iter_items([1, 5, 10, 20, 30])    [live: error_5 $6]
+  $7 = 0    [live: error_5 $6 $7]
+  loop (bounded) {    [live at head: error_5 $6 $7]
+    if (>= $7 len($6)) {
+      break    [live: error_5 $6 $7]
     }
-    compared_7 = $5[$6]    [live: error_4 $5 $6 compared_7]
-    $6 = (+ $6 1)    [live: error_4 $5 $6 compared_7]
-    report (> binomial(compared_7, error_4) 0) by compared_7 as "Eve is caught, by the bits compared"    [live: error_4 $5 $6]
+    compared_8 = $6[$7]    [live: error_5 $6 $7 compared_8]
+    $7 = (+ $7 1)    [live: error_5 $6 $7 compared_8]
+    report (> binomial(compared_8, error_5) 0) by compared_8 as "Eve is caught, by the bits compared"    [live: error_5 $6 $7]
   }
-  $8 = $iter_items([0, 5, 10, 20])    [live: error_4 $8]
-  $9 = 0    [live: error_4 $8 $9]
-  loop (bounded) {    [live at head: error_4 $8 $9]
-    if (>= $9 len($8)) {
-      break    [live: error_4 $8 $9]
+  $9 = $iter_items([0, 5, 10, 20])    [live: error_5 $9]
+  $10 = 0    [live: error_5 $9 $10]
+  loop (bounded) {    [live at head: error_5 $9 $10]
+    if (>= $10 len($9)) {
+      break    [live: error_5 $9 $10]
     }
-    compared_10 = $8[$9]    [live: error_4 $8 $9 compared_10]
-    $9 = (+ $9 1)    [live: error_4 $8 $9 compared_10]
-    listened_11 = simulate fn#10 [compared_10, error_4]    [live: error_4 $8 $9 compared_10 listened_11]
-    report listened_11 by compared_10 as "Eve was listening, by the bits that agreed"    [live: error_4 $8 $9]
+    compared_11 = $9[$10]    [live: error_5 $9 $10 compared_11]
+    $10 = (+ $10 1)    [live: error_5 $9 $10 compared_11]
+    listened_12 = simulate fn#10 [compared_11, error_5]    [live: error_5 $9 $10 compared_11 listened_12]
+    report listened_12 by compared_11 as "Eve was listening, by the bits that agreed"    [live: error_5 $9 $10]
   }
 fn#1 measure (bit_0, written_1, measured_2)
   check bit_0: int    [live: bit_0 written_1 measured_2]
@@ -49,10 +51,13 @@ fn#1 measure (bit_0, written_1, measured_2)
     check $3: int    [live: $3]
     return $3    [live: ]
   }
-  if 50% {
-    $4 = 0    [live: $4]
-  } else {
-    $4 = 1    [live: $4]
+  chance (value) {
+    50% => {
+      $4 = 0    [live: $4]
+    }
+    else => {
+      $4 = 1    [live: $4]
+    }
   }
   $5 = $4    [live: $5]
   check $5: int    [live: $5]
@@ -68,21 +73,22 @@ fn#2 photon (listening_0) captures [bases_2 <- global bases]
   sent_5 = bit_1    [live: listening_0 bit_1 bases_2 alice_3 bob_4 sent_5]
   basis_6 = alice_3    [live: listening_0 bit_1 bases_2 alice_3 bob_4 sent_5 basis_6]
   eve_right_7 = false    [live: listening_0 bit_1 bases_2 alice_3 bob_4 sent_5 basis_6 eve_right_7]
-  if listening_0 {
-    eve_8 ~ one_of(bases_2)    [live: bit_1 alice_3 bob_4 eve_8]
-    $9 = call fn#1 measure(bit_1, alice_3, eve_8)    [live: bit_1 alice_3 bob_4 eve_8 $9]
-    sent_5 = $9    [live: bit_1 alice_3 bob_4 sent_5 eve_8]
-    basis_6 = eve_8    [live: bit_1 alice_3 bob_4 sent_5 basis_6]
+  intercepted_8 ~ bernoulli(listening_0)    [live: bit_1 bases_2 alice_3 bob_4 sent_5 basis_6 eve_right_7 intercepted_8]
+  if intercepted_8 {
+    eve_9 ~ one_of(bases_2)    [live: bit_1 alice_3 bob_4 eve_9]
+    $10 = call fn#1 measure(bit_1, alice_3, eve_9)    [live: bit_1 alice_3 bob_4 eve_9 $10]
+    sent_5 = $10    [live: bit_1 alice_3 bob_4 sent_5 eve_9]
+    basis_6 = eve_9    [live: bit_1 alice_3 bob_4 sent_5 basis_6]
     eve_right_7 = (== sent_5 bit_1)    [live: bit_1 alice_3 bob_4 sent_5 basis_6 eve_right_7]
   }
-  $10 = call fn#1 measure(sent_5, basis_6, bob_4)    [live: bit_1 alice_3 bob_4 eve_right_7 $10]
-  seen_11 = $10    [live: bit_1 alice_3 bob_4 eve_right_7 seen_11]
-  $12 = Photon { kept: (== alice_3 bob_4), bob_wrong: (!= seen_11 bit_1), eve_right: eve_right_7 }    [live: $12]
-  check $12: Photon    [live: $12]
-  return $12    [live: ]
-  $13 = ()    [live: $13]
+  $11 = call fn#1 measure(sent_5, basis_6, bob_4)    [live: bit_1 alice_3 bob_4 eve_right_7 $11]
+  seen_12 = $11    [live: bit_1 alice_3 bob_4 eve_right_7 seen_12]
+  $13 = Photon { kept: (== alice_3 bob_4), bob_wrong: (!= seen_12 bit_1), eve_right: eve_right_7 }    [live: $13]
   check $13: Photon    [live: $13]
   return $13    [live: ]
+  $14 = ()    [live: $14]
+  check $14: Photon    [live: $14]
+  return $14    [live: ]
 fn#3 kept (listening_0) captures [bases_5 <- global bases]
   check listening_0: prob    [live: listening_0 bases_5]
   $1 = call fn#2 photon with [bases_5](listening_0)    [live: $1]
@@ -106,18 +112,18 @@ fn#6 a simulate block () captures [bases_1 <- parent slot 0]
 fn#7 a simulate block () captures [bases_1 <- parent slot 0]
   $0 = call fn#3 kept with [bases_1](100%)    [live: $0]
   return $0.eve_right    [live: ]
-fn#8 a simulate block () captures [share_0 <- parent slot 3, bases_2 <- parent slot 0]
+fn#8 a simulate block () captures [share_0 <- parent slot 4, bases_2 <- parent slot 0]
   $1 = call fn#3 kept with [bases_2](share_0)    [live: $1]
   return $1.bob_wrong    [live: ]
 fn#9 a simulate block () captures [bases_1 <- parent slot 0]
   $0 = call fn#3 kept with [bases_1](100%)    [live: $0]
   return $0.bob_wrong    [live: ]
-fn#10 a simulate block () captures [compared_1 <- parent slot 10, error_3 <- parent slot 4]
+fn#10 a simulate block () captures [compared_1 <- parent slot 11, error_3 <- parent slot 5]
   eve_0 ~ bernoulli(10%)    [live: eve_0 compared_1 error_3]
   if eve_0 {
     $2 = error_3    [live: eve_0 compared_1 $2]
   } else {
-    $2 = 0%    [live: eve_0 compared_1 $2]
+    $2 = 0.0    [live: eve_0 compared_1 $2]
   }
-  observe 0 from binomial(compared_1, $2)    [live: eve_0]
+  observe 0 from binomial(compared_1, prob($2))    [live: eve_0]
   return eve_0    [live: ]

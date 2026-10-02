@@ -3,10 +3,10 @@
 > Draft 0.2, September 2026. Enumeration and sampling are implemented; particles, beam search and a few functions marked below are designed but not built yet. The precise rules are in the [reference semantics](semantics.md), which wins where the two disagree.
 > See also: [implementation plan](implementation-plan.md) · [examples](../examples/)
 
-Probl is a small programming language where **conditions are probabilities instead of booleans**. An `if` doesn't choose a branch. It runs both, each in its own *world*, weighted by how likely that branch is. A program doesn't produce one answer: it produces the distribution over every world it could end up in.
+Probl is a small programming language for **explicit random choices and weighted worlds**. A draw or a `chance` block explores alternatives, each in its own *world*, weighted by how likely it is. An `if` tests a boolean fact within each world. A program doesn't produce one answer: it produces the distribution over every world it could end up in.
 
 ```probl
-let weather = if 30% { "rain" } else { "sun" }
+let weather = chance { 30% => "rain", else => "sun" }
 report weather
 ```
 ```
@@ -26,13 +26,13 @@ It is built for two kinds of work:
 
 A running Probl program is a set of **worlds**. Each world is an ordinary program state, in which every variable has one plain value, plus a **weight**: the probability of being in that world. A program starts as a single world with weight 1.
 
-- **Branching splits worlds.** `if p` sends a copy of each world into the `then` branch with its weight multiplied by p, and another copy into `else` with its weight multiplied by 1 − p. When p is 0% or 100% nothing splits, so deterministic code runs exactly as it would in any other language.
+- **Explicit choices split worlds.** `chance { p => A, else => B }` sends a copy of each world into `A` with its weight multiplied by p, and another into `B` with its weight multiplied by 1 − p. Ordinary `if` and `while` require a boolean and follow its value in each world.
 - **Drawing splits worlds too.** `let r ~ 2d6` turns each world into eleven, one per total, each weighted by the chance of that total.
 - **Identical worlds merge.** Where branches rejoin, worlds that have reached the same state become one, and their weights add up. This is what makes the approach practical:
 
   ```
   var pos = 0
-  repeat 3 { pos += if 50% { 1 } else { -1 } }
+  repeat 3 { pos += chance { 50% => 1, else => -1 } }
 
   after step 1:          -1 (½)                +1 (½)
   after step 2:    -2 (¼)         0 (¼ + ¼)          +2 (¼)      ← two paths reach 0: one world
@@ -47,7 +47,7 @@ A running Probl program is a set of **worlds**. Each world is an ordinary progra
 
 Everything else follows from these five rules.
 
-1. **Branching follows every possibility.** `if c { A } else { B }` runs A in worlds weighted by the probability p that `c` holds, and B weighted by 1 − p. A condition can be a fact (`hp > 0`), a probability (`30%`) or an uncertain fact (`d20 + 5 >= 15`).
+1. **Choices follow every possibility.** Draw with `~` or use `chance { 30% => A, else => B }` for explicit weighted branching. `if`, `while`, and `observe` require a boolean fact in each world.
 2. **A program is a set of weighted worlds.** Inside one world, every variable holds a single ordinary value. The uncertainty is in how many worlds there are and how much each one weighs.
 3. **`~` settles a value; `=` keeps a distribution.** `let r ~ 2d6` gives `r` one number per world: a fact. `let d = 2d6` names the distribution itself, and every use of `d` is a fresh, independent roll.
 4. **Identical worlds merge.** When branches rejoin, worlds with the same state combine, ignoring variables that will never be read again. Merging changes nothing but rounding. Draws of distributions written out, like `let pump ~ bernoulli(95%)`, are taken just before their first use, so drawing everything at the top of a model costs nothing.
@@ -241,11 +241,13 @@ All values have **value semantics**, including lists, maps and records: assignin
 ### Branching
 
 ```probl
-if 30% {                               # splits 30% / 70%
+let rainy ~ bernoulli(30%)
+if rainy {                             # true in 30% of worlds
   umbrella = true
 }
 
-let damage = if d20 + 5 >= 15 { 8 } else { 0 }    # `if` is also an expression
+let hit ~ d20 + 5 >= 15
+let damage = if hit { 8 } else { 0 }    # `if` is also an expression
 
 chance {                               # several weighted branches
   50% => pos += 1
@@ -261,17 +263,9 @@ match weather {
 }
 ```
 
-A condition can be any of these:
+Conditions and match guards require `bool`, such as `hp > 0` or a drawn event. A number, probability, or distribution is an error, even when it represents certainty. `let hit ~ d20 + 5 >= 15` draws the boolean distribution into two outcomes, without keeping the die's twenty individual faces.
 
-| Condition | Example | Effect on worlds |
-|---|---|---|
-| a fact | `hp > 0`, `true` | no split: it's true or false in each world |
-| a probability | `30%`, `hit_chance` | splits in two: a fresh trial |
-| an uncertain fact | `d20 + 5 >= 15` | splits in two, with p = 55% |
-
-The last row matters. `if d20 + 5 >= 15` never draws the die, so it creates 2 worlds instead of 20. Use `let r ~ d20` only when you need the number itself afterwards.
-
-The weights in a `chance` block can be any conditions, such as `P(2d6 == point)` or `hit - 5%`, and `else` takes whatever is left. Weights that add up to more than 100% are an error, and so is a `chance` used as a value whose weights leave something over with no `else` to take it.
+The weights in `chance` are `prob` values, such as `P(2d6 == point)` or `prob(hit_chance - 5%)`. Numeric literals convert contextually, so `30% => ...` remains concise. `else` takes the remainder. Weights above a total of 100% are an error, as is a value-producing `chance` with a positive remainder and no `else`.
 
 ### Loops
 
@@ -282,7 +276,7 @@ while hp > 0 and foe_hp > 0 { … }
 loop { …; if done { break } }
 ```
 
-A loop with an uncertain condition runs until every world has left it. Some loops never end with certainty: `while d6 != 6` could in principle roll forever.
+A loop with an uncertain condition runs until every world has left it. Some loops never end with certainty: `while ({ let r ~ d6; r != 6 })` could in principle roll forever.
 
 - **Loops that come back are solved.** If the worlds come back to states they were in before, as a tennis game returns to deuce, Probl solves the loop exactly, as a Markov chain.
 - **Other loops stop at ε.** A loop that counts its rounds never comes back to a state. Probl stops such a `while` or `loop` once the worlds still inside weigh less than ε times the weight that entered it (ε is 10⁻¹² by default; change it with `@epsilon 1e-9`). That remainder is reported as *unresolved* weight rather than silently dropped.
@@ -304,7 +298,7 @@ Probl works out such a call by rounds, each using the previous round's result, u
 
 ```probl
 var rolls = 1
-while d6 != 6 {        # a fresh roll each time: 5/6 chance of going round again
+while ({ let r ~ d6; r != 6 }) {        # a fresh roll each time: 5/6 chance of going round again
   rolls += 1
 }
 report rolls           # mean 6.00 · sd 5.48 · 5% 1 · median 4 · 95% 17
@@ -345,7 +339,8 @@ The built-in types are `bool`, `int`, `float`, `prob`, `str`, `date`, `list[T]`,
 Use the prefix operator `typeof` to inspect a runtime value. It returns a string and inspects a distribution without drawing from it:
 
 ```probl
-report typeof 33%              # "prob"
+report typeof 33%              # "float"
+report typeof prob(33%)        # "prob"
 report typeof 0.33             # "float"
 report typeof (33% + 1%)       # "float"
 report typeof 150%             # "float"
@@ -358,11 +353,11 @@ report typeof x                # "int"
 report typeof x == "int"       # true
 ```
 
-Percentage literals currently divide by 100 and use `prob` for `0%` through `100%`; larger percentages, negation, and arithmetic produce floats. `33% == 0.33` is true, but their runtime tags differ. A `prob` annotation validates a value without changing its representation. This behavior remains in place while the probability design is reviewed.
+`33%` is shorthand for `0.33`, a float. `prob(x)` checks that a number is finite and within `[0, 1]` and returns a probability; it also explicitly converts booleans to 0 or 1. It never clamps or draws. Numeric literals convert implicitly when a declared type or parameter expects `prob`: `let p: prob = 33%` creates an actual probability, as does the argument in `bernoulli(33%)`. Variables and arithmetic need an explicit conversion: `let rate = 33%; bernoulli(prob(rate))`. Ordinary probability arithmetic returns numbers, and probabilities widen to floats in numeric contexts. Boolean, numeric, probability and distribution values remain distinct.
 
 Parenthesize compound operands: `typeof (x + 1)`. `typeof` evaluates its operand once, so calls and errors still occur. It describes current contents, not an inferred static type: empty lists give `"list[unknown]"`, mixed element types give `"list[any]"`, and named records/enums give their type name. `unknown` and `any` here are descriptive markers, not annotation types. Directly inspecting a delayed sampled parameter with `typeof p` preserves exact Bayesian updates; calculating an expression involving `p` still needs its value. See [the type inspection contract](semantics.md#1-values-and-types).
 
-Probl is statically typed, with inference: every expression's type is known before the program runs, but you rarely write one. Annotations are optional, and checked when they're there: `let p: prob = "high"` is an error. Data read from a file is the exception, since nothing in the program says what the file contains, so for data the type is required. Until the type checker arrives in v0.3, annotations are checked as the program runs.
+Type annotations are optional for program values and required for file input. Impossible literal annotations are rejected during compilation; general type checks currently happen at runtime when the expression is reached. Full static type inference is still planned. Annotations also supply context for literal conversions, so `typeof` reflects the converted value.
 
 ### Data
 
@@ -377,7 +372,7 @@ let counts: list[int] = read("-")                  # standard input, one value p
 Three of these types describe uncertainty, and keeping them apart is what lets `and` and `or` mean what they say:
 
 - `bool` is a **fact**: `true` or `false` in each world. Comparisons of settled values give facts, and so do `and`, `or`, `not` and `in` on facts.
-- `prob` is a **probability**: a number from 0% to 100%, such as a success rate. It's a parameter, not an event, so branching on it is a fresh trial every time. Arithmetic on it (`p * 2`, `1 - p`) gives a `float`, and a float from 0 to 1 is accepted wherever a probability is expected.
+- `prob` is a **probability**: a checked finite value from 0 to 1, such as a success rate. Use it in `bernoulli(p)` or a `chance` weight. Arithmetic (`p * 2`, `1 - p`) gives a `float`; use `prob(x)` to convert a calculated probability back explicitly.
 - `dist[T]` is a **distribution**: `d6`, `bernoulli(30%)`, or `d6 > 4`, a `dist[bool]` that is an uncertain fact.
 
 ## 4. Distributions
@@ -397,7 +392,7 @@ Three of these types describe uncertainty, and keeping them apart is what lets `
 
 `deck.take()` is shorthand for `one_of(deck)` followed by removing the drawn card from `deck` in that world.
 
-Continuous distributions can't list their outcomes, so what you can do with them depends on the mode. Drawing one (`let x ~ normal(0, 1)`) needs sampling (section 8). Comparing one with a number works in both modes, from its CDF: `normal(0, 1) > 1.96` is 2.50%. `mean`, `sd`, `median`, `quantile`, `cdf` and `pdf` use the formulas. A choice among options that include one, such as `if 35% { 1 to 3 } else { 0 }`, is a mixture, and drawing from it picks an option first. Arithmetic on a continuous distribution (`normal(0, 1) * 2`) isn't supported yet: draw a value, then compute with it.
+Continuous distributions can't list their outcomes, so what you can do with them depends on the mode. Drawing one (`let x ~ normal(0, 1)`) needs sampling (section 8). Comparing one with a number works in both modes, from its CDF: `normal(0, 1) > 1.96` is 2.50%. `mean`, `sd`, `median`, `quantile`, `cdf` and `pdf` use the formulas. A choice among options that include one, such as `chance { 35% => 1 to 3, else => 0 }`, is a mixture, and drawing from it picks an option first. Arithmetic on a continuous distribution (`normal(0, 1) * 2`) isn't supported yet: draw a value, then compute with it.
 
 ### Computing with them
 
@@ -429,7 +424,7 @@ normal(0, 1) > 1.96   # 2.50%
 2d6 > 2d6             # 44.37%: two independent rolls
 ```
 
-Each of these is a `dist[bool]`: a fact that is true with some probability. `if` branches on it with that probability, and `report` prints it.
+Each of these is a `dist[bool]`. `report` prints its probability of true; draw an event from it before using `if` or `observe`.
 
 ### Events need identities
 
@@ -442,12 +437,12 @@ report rain and late          # 6%: two independent events
 report rain and rain          # 30%: one event, checked twice
 ```
 
-A probability has no identity, so `30% and 30%` is an error: nothing says whether that's one event checked twice (30%) or two independent ones (9%). For the same reason, `and` and `or` accept at most one uncertain fact: `(d6 > 3) and (d6 > 3)` is an error. Draw the events first (`let high ~ d6 > 3`), then combine the facts.
+A probability has no event identity, so `prob(30%) and prob(30%)` is an error: nothing says whether that's one event checked twice (30%) or two independent ones (9%). For the same reason, `and` and `or` accept at most one uncertain fact: `(d6 > 3) and (d6 > 3)` is an error. Draw the events first (`let high ~ d6 > 3`), then combine the facts.
 
 A probability that is itself uncertain stays a distribution. Here a success rate is 10% or 90%, equally likely, and two trials share it:
 
 ```probl
-let rate ~ simulate { if 50% { 10% } else { 90% } }   # one rate per world
+let rate ~ simulate { chance { 50% => prob(10%), else => prob(90%) } }   # one rate per world
 let a ~ bernoulli(rate)
 let b ~ bernoulli(rate)
 report a and b                                        # 41%: ½ × 0.1² + ½ × 0.9²
@@ -461,17 +456,17 @@ report a and b                                        # 41%: ½ × 0.1² + ½ ×
 
 ```probl
 let sick ~ bernoulli(1%)                      # 1 in 100 people has the disease
-let positive = if sick { 95% } else { 8% }    # chance that their test comes back positive
-observe positive                              # …and it did
+let positive = prob(if sick { 95% } else { 8% })    # chance that their test comes back positive
+observe true from bernoulli(positive)          # …and it did
 report sick                                   # 10.71%
 ```
 
-- `observe c` multiplies each world's weight by the probability that `c` holds. A fact such as `observe total == 7` deletes the worlds where it's false; a probability or an uncertain fact re-weights them. This is Bayes' rule, applied one world at a time.
-- `observe v from D` multiplies by the probability of seeing the value `v` under `D`. For example: `observe 11 from binomial(250, rate)`. When sampling, a continuous `D` contributes its density at `v`.
+- `observe c` requires a boolean and removes worlds where it is false. An observed event then reports true with probability 100%.
+- `observe v from D` multiplies by the probability of seeing the value `v` under `D`. For example: `observe 11 from binomial(250, prob(rate))`. When sampling, a continuous `D` contributes its density at `v`.
 - The **evidence** is the weight that survives: the probability of all the observations. Reports are normalized over it, and the run summary shows it (8.87% above). Observations inside a function count; those inside `simulate` don't (section 7).
 - If the observations rule out every world, the evidence is impossible, and the run stops with an error rather than printing reports that mean nothing.
 
-**Use `~` to bind the outcome you want to condition.** `=` stores a distribution recipe, so `let x = 3d8; observe x > 10; report x` still reports the original 3–24 distribution. The observation multiplies every world's weight by the same probability, 76.56%; it does not change the recipe. To report the total given that it exceeded 10, write:
+**Use `~` to bind the outcome you want to condition.** `=` stores a recipe. `let x = 3d8; observe x > 10; report x` now fails because its comparison is a distribution. To condition the total, write:
 
 ```probl
 let x ~ 3d8
@@ -586,22 +581,22 @@ For a single world with state σ and weight w (the full rules, including evaluat
 |---|---|
 | `x = e` | (σ[x ↦ e], w) |
 | `x ~ D` | one world per outcome v of D: (σ[x ↦ v], w · P(D = v)) |
-| `if c { A } else { B }` | A run on (σ, w · p) and B run on (σ, w · (1 − p)) |
+| `if c { A } else { B }` | A run on (σ, w) if c is true, otherwise B run on (σ, w) |
 | `chance { p₁ => A₁ … else => B }` | each Aᵢ run on (σ, w · pᵢ), and B on (σ, w · (1 − Σpᵢ)) |
-| `while c { A }` | exits with (σ, w · (1 − p)); A runs on (σ, w · p), then the loop repeats |
-| `observe c` | (σ, w · p) |
+| `while c { A }` | exits with (σ, w) if c is false; otherwise A runs on (σ, w), then the loop repeats |
+| `observe c` | (σ, w) if c is true; no world if c is false |
 | `observe v from D` | (σ, w · P(D = v)) |
 | `A` followed by `B` | B runs on every world A produced |
 | join point | (σ, w₁) and (σ, w₂) become (σ, w₁ + w₂) |
 
-Here p is the probability that the condition holds in that world: 0% or 100% for a fact, anything in between for a probability or an uncertain fact.
+Here c must be a boolean fact in that world, and each pᵢ must be a probability.
 
-This is the standard semantics of probabilistic programs as functions from a state to a distribution over states (Kozen, 1981). Merging changes nothing but rounding, because a set of worlds is a weighted sum of states, and equal states simply add. Liveness analysis only lets the engine forget variables that can no longer affect anything. Sample mode will estimate the same distribution: instead of splitting a weight, `if c` sends each run one way with probability p.
+This is the standard semantics of probabilistic programs as functions from a state to a distribution over states (Kozen, 1981). Merging changes nothing but rounding, because a set of worlds is a weighted sum of states, and equal states simply add. Liveness analysis only lets the engine forget variables that can no longer affect anything. Sample mode estimates the same distribution: instead of splitting a world, `chance` and `~` choose one outcome for each run.
 
 ## 10. What the language protects you from
 
 - **A distribution where a value is needed.** `for i in 1..d6` is an error: *"`d6` is a distribution, but a range needs a number. To use one roll, write `let n ~ d6` first."*
-- **Drawing when a probability would do.** `let r ~ d20` followed only by `if r + 5 >= 15` creates 20 worlds where `if d20 + 5 >= 15` creates 2. A planned lint will suggest the shorter form when `r` isn't used again.
+- **Drawing when a probability would do.** `let r ~ d20` followed only by `if r + 5 >= 15` creates 20 worlds. Drawing just the event, `let hit ~ d20 + 5 >= 15; if hit { ... }`, creates 2. A planned lint will suggest this form when `r` isn't used again.
 - **An event without an identity.** `storm and storm` is an error when `storm` is a probability, and so is `(d6 > 3) and (d6 > 3)`: is that one event or two? Draw it first with `let stormy ~ bernoulli(storm)`.
 - **Matching a distribution.** `match d6 { … }` is an error: each arm would test a fresh roll. Draw the value first.
 - **Evidence after a report**, or evidence that rules out every world: both are errors.

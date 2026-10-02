@@ -3,7 +3,7 @@ source: crates/probl-syntax/tests/parser.rs
 expression: tree
 ---
 (let shared_loss = (simulate (block (let common ~ (call bernoulli 2%)) (var total = 0) (repeat 3 (block (let local ~ (call bernoulli 1%)) (if (or common local) (block (+= total 100))))) total)))
-(let site_risk = (+ 2% (* 98% 1%)))
+(let site_risk = (call prob (+ 2% (* 98% 1%))))
 (let independent_loss = (* 100 (call binomial 3 site_risk)))
 (report (call mean shared_loss) as "mean loss with common hazard")
 (report (call mean independent_loss) as "mean loss assuming independence")

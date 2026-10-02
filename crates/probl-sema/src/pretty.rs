@@ -190,7 +190,7 @@ impl Printer<'_> {
                 Lit::Unit => "()".into(),
                 Lit::Bool(b) => b.to_string(),
                 Lit::Int(v) => v.to_string(),
-                Lit::Float(v) => format!("{v:?}"),
+                Lit::Float(v) | Lit::FloatConstant(v) => format!("{v:?}"),
                 Lit::Prob(v) => percent(*v),
                 Lit::Str(s) => format!("{s:?}"),
                 Lit::Dice { count, sides } => format!("{count}d{sides}"),

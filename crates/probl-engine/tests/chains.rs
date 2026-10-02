@@ -33,7 +33,7 @@ fn exactly(actual: f64, expected: f64) {
 fn a_fair_gamblers_ruin_is_exact() {
     let src = "var money = 3
 while money > 0 and money < 10 {
-  money += if 50% { 1 } else { -1 }
+  money += if (chance { 50% => true, else => false }) { 1 } else { -1 }
 }
 report money == 10";
     let out = outcome(src);
@@ -58,7 +58,7 @@ fn a_biased_gamblers_ruin_is_exact() {
     let out = outcome(
         "var money = 3
 while money > 0 and money < 10 {
-  money += if 60% { 1 } else { -1 }
+  money += if (chance { 60% => true, else => false }) { 1 } else { -1 }
 }
 report money == 10",
     );
@@ -73,7 +73,7 @@ fn a_tennis_game_with_deuce_is_exact() {
   var s = 0
   var r = 0
   while max(s, r) < 4 or abs(s - r) < 2 {
-    if p { s += 1 } else { r += 1 }
+    chance { prob(p) => { s += 1 }, else => { r += 1 } }
     if s == r and s > 3 { s = 3; r = 3 }
   }
   s > r
@@ -90,7 +90,7 @@ fn loops_that_some_worlds_never_leave_are_errors() {
     let error = error(
         "var x = 0
 while x < 5 {
-  if x == 2 { x = 2 } else { x += if 50% { 1 } else { 2 } }
+  if x == 2 { x = 2 } else { x += if (chance { 50% => true, else => false }) { 1 } else { 2 } }
 }
 report x",
     );
@@ -142,8 +142,8 @@ fn observations_inside_a_solved_loop_weigh_its_worlds() {
     let out = outcome(
         "var s = 0
 while s < 2 {
-  observe 50%
-  s = if 50% { s + 1 } else { s }
+  observe true from bernoulli(50%)
+  s = if (chance { 50% => true, else => false }) { s + 1 } else { s }
 }
 report s",
     );
@@ -153,7 +153,7 @@ report s",
 
 #[test]
 fn a_loop_that_rules_out_all_its_worlds_is_impossible_evidence() {
-    let error = error("var x = 0\nwhile x == 0 {\n  observe 50%\n}\nreport x");
+    let error = error("var x = 0\nwhile x == 0 {\n  observe true from bernoulli(50%)\n}\nreport x");
     assert!(error.contains("the evidence is impossible"), "{error}");
 }
 
@@ -163,8 +163,8 @@ fn returns_breaks_and_continues_leave_or_go_round() {
     let out = outcome(
         "fn race() -> int {
   while true {
-    if d6 == 6 { return 1 }
-    if d6 == 1 { return 2 }
+    if ({ let rolled ~ d6; rolled == 6 }) { return 1 }
+    if ({ let rolled ~ d6; rolled == 1 }) { return 2 }
   }
   return 0
 }
@@ -174,7 +174,7 @@ report race() == 1",
     let out = outcome(
         "var x = 0
 loop {
-  x = if 50% { 0 } else { x + 1 }
+  x = if (chance { 50% => true, else => false }) { 0 } else { x + 1 }
   if x == 0 { continue }
   if x == 3 { break }
 }
@@ -189,9 +189,9 @@ fn loops_that_report_print_or_count_are_unrolled() {
     // A report or print happens on every visit, so those loops aren't
     // solved; a loop that counts its rounds never comes back to a state.
     for src in [
-        "var x = 0\nwhile x < 3 {\n  x = if 50% { 0 } else { x + 1 }\n  report x by x\n}",
-        "var x = 0\nwhile x < 3 {\n  x = if 50% { 0 } else { x + 1 }\n  print(x)\n}",
-        "var x = 0\nvar n = 0\nwhile x < 3 {\n  x = if 50% { 0 } else { x + 1 }\n  n += 1\n}\nreport n",
+        "var x = 0\nwhile x < 3 {\n  x = if (chance { 50% => true, else => false }) { 0 } else { x + 1 }\n  report x by x\n}",
+        "var x = 0\nwhile x < 3 {\n  x = if (chance { 50% => true, else => false }) { 0 } else { x + 1 }\n  print(x)\n}",
+        "var x = 0\nvar n = 0\nwhile x < 3 {\n  x = if (chance { 50% => true, else => false }) { 0 } else { x + 1 }\n  n += 1\n}\nreport n",
     ] {
         assert_eq!(outcome(src).stats.solved_loops, 0, "{src}");
     }
@@ -202,7 +202,7 @@ fn chains_too_large_are_unrolled() {
     // Twelve in a row: 13 states, and about 8,000 rounds on average.
     let src = "var x = 0
 while x < 12 {
-  x = if 50% { 0 } else { x + 1 }
+  x = if (chance { 50% => true, else => false }) { 0 } else { x + 1 }
 }
 report x == 12";
     let options = Options {
@@ -239,21 +239,24 @@ fn memoized_functions_with_solved_loops_agree_with_unrolling() {
 /// break first, so no world is stuck in it.
 fn random_loop(rng: &mut Rng) -> String {
     let mut pick = |n: usize| (rng.uniform() * n as f64) as usize;
-    let mut body = vec![format!("  if {}% {{ break }}", 1 + pick(30))];
+    let mut body = vec![format!(
+        "  if (chance {{ {}% => true, else => false }}) {{ break }}",
+        1 + pick(30)
+    )];
     for _ in 0..2 + pick(5) {
         let (v, k, m) = (["a", "b"][pick(2)], 1 + pick(3), 2 + pick(3));
         let p = 10 + pick(80);
         body.push(match pick(8) {
             0 => format!("  {v} = ({v} + {k}) mod {m}"),
-            1 => format!("  {v} = if {p}% {{ ({v} + {k}) mod {m} }} else {{ {v} }}"),
-            2 => format!("  if a == b {{ observe {p}% }}"),
-            3 => format!("  if bernoulli({p}%) and {v} == {} {{ break }}", pick(m)),
+            1 => format!("  {v} = if (chance {{ {p}% => true, else => false }}) {{ ({v} + {k}) mod {m} }} else {{ {v} }}"),
+            2 => format!("  if a == b {{ observe true from bernoulli({p}%) }}"),
+            3 => format!("  if ({{ let event ~ bernoulli({p}%); event }}) and {v} == {} {{ break }}", pick(m)),
             4 => format!("  if {v} == {} {{ continue }}", pick(m)),
             5 => format!("  {v} = chance {{ {p}% => 0, else => {} }}", pick(3)),
             6 => format!(
-                "  var t = 0\n  while t < 2 {{\n    t = if {p}% {{ t + 1 }} else {{ t }}\n    {v} = ({v} + t) mod 3\n  }}"
+                "  var t = 0\n  while t < 2 {{\n    t = if (chance {{ {p}% => true, else => false }}) {{ t + 1 }} else {{ t }}\n    {v} = ({v} + t) mod 3\n  }}"
             ),
-            _ => format!("  {v} = ({v} + if {p}% {{ 1 }} else {{ 0 }}) mod {m}"),
+            _ => format!("  {v} = ({v} + if (chance {{ {p}% => true, else => false }}) {{ 1 }} else {{ 0 }}) mod {m}"),
         });
     }
     format!(

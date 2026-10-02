@@ -2,7 +2,7 @@
 //! section 14).
 //!
 //! A draw like `let a ~ beta(2, 50)` can be *delayed*: the variable keeps
-//! its distribution, and an observation like `observe k from binomial(n, a)`
+//! its distribution, and an observation like `observe k from binomial(n, prob(a))`
 //! updates that distribution exactly instead of weighting a drawn value.
 //! Any other statement that reads the variable needs its value, so the
 //! engine draws it first. This analysis finds, in each function, the
@@ -30,11 +30,10 @@ pub struct Update<'a> {
 /// other than the variable.
 #[derive(Clone, Copy, Debug)]
 pub enum Likelihood<'a> {
-    /// `observe value from binomial(trials, x)`, for a beta prior.
+    /// `observe value from binomial(trials, prob(x))`, for a beta prior.
     Binomial { value: &'a Expr, trials: &'a Expr },
-    /// `observe value from bernoulli(x)`, for a beta prior; `None` for
-    /// `observe bernoulli(x)`, which observes `true`.
-    Bernoulli { value: Option<&'a Expr> },
+    /// `observe value from bernoulli(prob(x))`, for a beta prior.
+    Bernoulli { value: &'a Expr },
     /// `observe value from poisson(x)`, for a gamma prior.
     Poisson { value: &'a Expr },
     /// `observe value from normal(x, sd)`, for a normal prior.
@@ -47,7 +46,7 @@ impl<'a> Update<'a> {
     pub fn others(&self) -> Vec<&'a Expr> {
         match self.likelihood {
             Likelihood::Binomial { value, trials } => vec![value, trials],
-            Likelihood::Bernoulli { value } => value.into_iter().collect(),
+            Likelihood::Bernoulli { value } => vec![value],
             Likelihood::Poisson { value } => vec![value],
             Likelihood::Normal { value, sd } => vec![value, sd],
         }
@@ -55,7 +54,7 @@ impl<'a> Update<'a> {
 }
 
 /// The exact update that `observe value from …` can make, if it has one of
-/// the conjugate forms: the variable is the parameter, written as itself,
+/// the conjugate forms: the variable is the parameter, with `prob` for beta,
 /// and appears nowhere else in the observation.
 pub fn update<'a>(value: &'a Expr, from: Option<&'a Expr>) -> Option<Update<'a>> {
     let builtin = |e: &'a Expr| match &e.kind {
@@ -66,18 +65,18 @@ pub fn update<'a>(value: &'a Expr, from: Option<&'a Expr>) -> Option<Update<'a>>
         ExprKind::Slot(s) => Some(s),
         _ => None,
     };
-    let (slot, likelihood) = match from {
-        None => match builtin(value)? {
-            (Builtin::Bernoulli, [x]) => (slot(x)?, Likelihood::Bernoulli { value: None }),
-            _ => return None,
-        },
-        Some(d) => match builtin(d)? {
-            (Builtin::Binomial, [trials, x]) => (slot(x)?, Likelihood::Binomial { value, trials }),
-            (Builtin::Bernoulli, [x]) => (slot(x)?, Likelihood::Bernoulli { value: Some(value) }),
-            (Builtin::Poisson, [x]) => (slot(x)?, Likelihood::Poisson { value }),
-            (Builtin::Normal, [x, sd]) => (slot(x)?, Likelihood::Normal { value, sd }),
-            _ => return None,
-        },
+    // A beta draw is a float. The checked conversion makes its use as a
+    // probability explicit, while the family guarantees the conversion.
+    let probability_slot = |e: &'a Expr| match builtin(e)? {
+        (Builtin::Prob, [x]) => slot(x),
+        _ => None,
+    };
+    let (slot, likelihood) = match builtin(from?)? {
+        (Builtin::Binomial, [trials, x]) => (probability_slot(x)?, Likelihood::Binomial { value, trials }),
+        (Builtin::Bernoulli, [x]) => (probability_slot(x)?, Likelihood::Bernoulli { value }),
+        (Builtin::Poisson, [x]) => (slot(x)?, Likelihood::Poisson { value }),
+        (Builtin::Normal, [x, sd]) => (slot(x)?, Likelihood::Normal { value, sd }),
+        _ => return None,
     };
     let update = Update { slot, likelihood };
     let mut elsewhere = false;

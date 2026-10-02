@@ -131,23 +131,60 @@ pub fn article(kind: &str) -> String {
 }
 
 /// A value used as a probability (chance weights, `bernoulli`, `binomial`…):
-/// a `prob`, or a float from 0 to 1.
+/// a `prob`. Numeric literals are converted by their expected context.
 pub fn to_prob(v: &Value) -> OpResult<f64> {
     match v {
         Value::Prob(p) => Ok(*p),
-        Value::Float(f) if (0.0..=1.0).contains(f) => Ok(*f),
-        Value::Float(f) => Err(OpError::new(format!(
-            "a probability must be between 0% and 100%, not {}",
-            crate::value::fmt_float(*f)
-        ))),
+        Value::Float(_) | Value::Int(_) => {
+            Err(OpError::new("expected a prob, found a number")
+                .help("convert a numeric value explicitly with `prob(x)`"))
+        }
         Value::Bool(_) => Err(OpError::new("expected a probability, found a fact (true or false)")
-            .help("`P(fact)` gives the probability that a fact is true")),
+            .help("convert a boolean explicitly with `prob(fact)`")),
         Value::Dist(_) => Err(OpError::new(format!("expected a probability, found a {}", v.kind()))
             .help("`P(…)` gives the probability that a distribution of facts is true")),
         other => Err(OpError::new(format!(
             "expected a probability, found {}",
             article(&other.kind())
         ))),
+    }
+}
+
+/// Explicit, checked construction. This never draws, lifts or clamps.
+pub fn make_prob(v: &Value) -> OpResult<Value> {
+    let p = match v {
+        Value::Bool(b) => {
+            if *b {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        Value::Prob(p) => return Ok(Value::Prob(*p)),
+        Value::Float(p) => *p,
+        Value::Int(n) if *n == 0 => 0.0,
+        Value::Int(n) if *n == 1 => 1.0,
+        Value::Int(_) => return Err(OpError::new("prob needs a finite number between 0 and 1")),
+        _ => {
+            return Err(
+                OpError::new(format!("prob needs a number or bool, found {}", article(&v.kind())))
+                    .help("draw distribution outcomes explicitly; use `P(d)` to query a boolean distribution"),
+            );
+        }
+    };
+    if !p.is_finite() || !(0.0..=1.0).contains(&p) {
+        return Err(OpError::new("prob needs a finite number between 0 and 1"));
+    }
+    Ok(Value::Prob(p))
+}
+
+pub fn fact(v: &Value, context: &str) -> OpResult<bool> {
+    match v {
+        Value::Bool(b) => Ok(*b),
+        _ => Err(
+            OpError::new(format!("`{context}` needs a bool, found {}", article(&v.kind())))
+                .help("draw an outcome first with `~`; for a probability, draw from `bernoulli(p)`"),
+        ),
     }
 }
 
@@ -161,48 +198,6 @@ pub struct Condition {
     /// The probability missing from a distribution of facts: it could be
     /// either. The three add up to one, up to rounding.
     pub missing: f64,
-}
-
-/// A condition of `if`, `while` or `observe`, or a weight of `chance`: a
-/// fact, a probability, or a distribution of facts.
-pub fn condition(v: &Value) -> OpResult<Condition> {
-    let known = |yes: f64, no: f64| Condition { yes, no, missing: 0.0 };
-    match v {
-        Value::Bool(b) => Ok(if *b { known(1.0, 0.0) } else { known(0.0, 1.0) }),
-        Value::Prob(_) | Value::Float(_) => {
-            let p = to_prob(v)?;
-            Ok(known(p, 1.0 - p))
-        }
-        Value::Dist(d) => match d.truth() {
-            Some((yes, no)) => Ok(Condition {
-                yes,
-                no,
-                missing: d.missing,
-            }),
-            None => Err(OpError::new(format!(
-                "a condition needs a probability or a fact, found a {}",
-                v.kind()
-            ))
-            .help("compare it to get a fact, like `d6 > 4`, or draw a value first with `~`")),
-        },
-        Value::Continuous(f) => Err(OpError::new(format!(
-            "a condition needs a probability or a fact, found a {} distribution",
-            f.name()
-        ))
-        .help("compare it with a number to get a fact, like `x > 5`")),
-        Value::Int(i) if *i == 0 || *i == 1 => Err(OpError::new(format!(
-            "a condition needs a probability or a fact, found the int {i}"
-        ))
-        .help(if *i == 1 {
-            "write `true` or `100%`"
-        } else {
-            "write `false` or `0%`"
-        })),
-        other => Err(OpError::new(format!(
-            "a condition needs a probability or a fact, found {}",
-            article(&other.kind())
-        ))),
-    }
 }
 
 /// A fact, or a distribution of facts.

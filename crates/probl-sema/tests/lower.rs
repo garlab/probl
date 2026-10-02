@@ -36,11 +36,13 @@ fn all_examples_lower() {
 
 #[test]
 fn if_expressions_and_calls_are_hoisted() {
-    insta::assert_snapshot!(ir("fn f(x) { if 50% { x } else { x + 1 } }\n\
+    insta::assert_snapshot!(ir(
+        "fn f(x) { if (chance { 50% => true, else => false }) { x } else { x + 1 } }\n\
          var pos = 0\n\
-         pos += if 30% { 1 } else { -1 }\n\
+         pos += if (chance { 30% => true, else => false }) { 1 } else { -1 }\n\
          let y = f(pos) * 2\n\
-         report y"));
+         report y"
+    ));
 }
 
 #[test]

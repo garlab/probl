@@ -8,14 +8,14 @@ let counts = [0, 1, 0, 1, 5, 6, 5, 6]
 let visitors = 10
 let rate ~ beta(1, 1)
 for successes in counts {
-  observe successes from binomial(visitors, rate)
+  observe successes from binomial(visitors, prob(rate))
 }
 
 # Replicate a whole eight-day dataset at a shared posterior rate; do not draw
 # a new rate for each day. A plain loop makes the random effects explicit.
 var replicated = []
 repeat len(counts) {
-  let successes ~ binomial(visitors, rate)
+  let successes ~ binomial(visitors, prob(rate))
   replicated.push(successes)
 }
 fn spread(xs) { max(xs) - min(xs) }

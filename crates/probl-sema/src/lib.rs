@@ -2,6 +2,7 @@
 //! liveness analysis.
 
 pub mod builtins;
+pub mod coercions;
 pub mod conjugate;
 pub mod data;
 pub mod docs;

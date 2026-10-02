@@ -24,7 +24,7 @@ fn pumping() {
   (pump1 and valve1) or (pump2 and valve2) or (pump3 and valve3 and valve4)
 }
 
-fn either(p, q) {
+fn either(p: prob, q: prob) {
   let a ~ bernoulli(p)
   let b ~ bernoulli(q)
   a or b

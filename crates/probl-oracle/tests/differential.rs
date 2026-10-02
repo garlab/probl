@@ -374,7 +374,7 @@ report [xs[1], zs[1]] as "passed by value"
         r#"
 let coin ~ one_of([1, 2])
 repeat 5 {
-  observe if coin == 1 { 50% } else { 90% }
+  observe true from bernoulli(prob(if coin == 1 { 50% } else { 90% }))
 }
 let flip ~ d2
 observe flip from d2
@@ -386,9 +386,9 @@ report flip as "flip"
     (
         "many observations",
         r#"
-repeat 400 { observe 10% }
+repeat 400 { observe true from bernoulli(10%) }
 var n = 0
-repeat 8 { n += if 50% { 1 } else { 0 } }
+repeat 8 { n += if (chance { 50% => true, else => false }) { 1 } else { 0 } }
 observe n > 2
 report n as "n"
 "#,
@@ -408,10 +408,10 @@ report n as "n"
 var steps = 0
 var pos = 0
 for i in 1..4 {
-  if 30% { break }
+  if (chance { 30% => true, else => false }) { break }
   steps += 1
   if i == 2 { continue }
-  pos += if 50% { i } else { 0 }
+  pos += if (chance { 50% => true, else => false }) { i } else { 0 }
 }
 var c = 0
 while c < 3 {
@@ -439,7 +439,7 @@ for month in 1..3 {
 repeat 2 {
   report sum by 0 as "per visit"
 }
-if 25% {
+if (chance { 25% => true, else => false }) {
   report sum as "sometimes"
 }
 "#,
@@ -467,7 +467,7 @@ let d = simulate {
   s
 }
 let x ~ d
-observe if x == 6 { true } else { 50% }
+observe true from bernoulli(prob(if x == 6 { true } else { 50% }))
 report x as "x"
 report simulate { let t ~ d2; observe t == 2; t } as "after reports"
 "#,
@@ -475,9 +475,9 @@ report simulate { let t ~ d2; observe t == 2; t } as "after reports"
     (
         "a shared rate is not averaged away",
         r#"
-let p ~ simulate { if 50% { 10% } else { 90% } }
-let a ~ bernoulli(p)
-let b ~ bernoulli(p)
+let p ~ simulate { if (chance { 50% => true, else => false }) { 10% } else { 90% } }
+let a ~ bernoulli(prob(p))
+let b ~ bernoulli(prob(p))
 report a and b as "both"
 "#,
     ),
@@ -485,8 +485,8 @@ report a and b as "both"
         "the audit's posterior",
         r#"
 var win = false
-if 0.5% { repeat 1 { win = true } }
-observe if win { true } else { 0.00001 }
+if (chance { 0.5% => true, else => false }) { repeat 1 { win = true } }
+observe true from bernoulli(prob(if win { true } else { 0.00001 }))
 report win as "win"
 "#,
     ),

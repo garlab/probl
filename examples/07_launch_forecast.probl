@@ -22,7 +22,7 @@ var customers = 0
 
 for month in 1..18 {
   let new ~ poisson(signups)
-  let lost ~ binomial(customers, churn)
+  let lost ~ binomial(customers, prob(churn))
   customers += new - lost
   report customers * price by month as "MRR ($)"
 

@@ -1,20 +1,36 @@
 ---
 source: crates/probl-sema/tests/lower.rs
-expression: "ir(\"fn f(x) { if 50% { x } else { x + 1 } }\\n\\\n         var pos = 0\\n\\\n         pos += if 30% { 1 } else { -1 }\\n\\\n         let y = f(pos) * 2\\n\\\n         report y\")"
+expression: "ir(\"fn f(x) { if (chance { 50% => true, else => false }) { x } else { x + 1 } }\\n\\\n         var pos = 0\\n\\\n         pos += if (chance { 30% => true, else => false }) { 1 } else { -1 }\\n\\\n         let y = f(pos) * 2\\n\\\n         report y\")"
 ---
 fn#0 the top level ()
   pos_0 = 0    [live: pos_0]
-  if 30% {
+  chance (value) {
+    30% => {
+      $2 = true    [live: pos_0 $2]
+    }
+    else => {
+      $2 = false    [live: pos_0 $2]
+    }
+  }
+  if $2 {
     $1 = 1    [live: pos_0 $1]
   } else {
     $1 = (- 1)    [live: pos_0 $1]
   }
   pos_0 = (+ pos_0 $1)    [live: pos_0]
-  $2 = call fn#1 f(pos_0)    [live: $2]
-  y_3 = (* $2 2)    [live: y_3]
-  report y_3 as "y"    [live: ]
+  $3 = call fn#1 f(pos_0)    [live: $3]
+  y_4 = (* $3 2)    [live: y_4]
+  report y_4 as "y"    [live: ]
 fn#1 f (x_0)
-  if 50% {
+  chance (value) {
+    50% => {
+      $2 = true    [live: x_0 $2]
+    }
+    else => {
+      $2 = false    [live: x_0 $2]
+    }
+  }
+  if $2 {
     $1 = x_0    [live: $1]
   } else {
     $1 = (+ x_0 1)    [live: $1]

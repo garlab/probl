@@ -291,6 +291,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             let n = items.len().saturating_sub(1);
             Ok(Value::list(items[..n].to_vec()))
         }
+        B::Prob => ops::make_prob(a(0)),
         B::Bernoulli => Ok(Dist::bernoulli(to_prob(a(0))?).into_value()),
         B::OneOf => one_of(a(0), budget),
         B::Binomial | B::Poisson | B::Geometric => {
@@ -522,7 +523,7 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
 fn probability_of(v: &Value) -> OpResult<Value> {
     match v {
         Value::Bool(b) => Ok(Value::Prob(if *b { 1.0 } else { 0.0 })),
-        Value::Prob(_) | Value::Float(_) => to_prob(v).map(Value::Prob),
+        Value::Prob(_) => Ok(v.clone()),
         Value::Dist(d) => match d.truth() {
             Some((yes, _)) => Ok(Value::Prob(yes)),
             None => Err(OpError::new(format!("P needs a condition, found a {}", v.kind()))
@@ -1287,6 +1288,12 @@ fn one_of(v: &Value, budget: &mut Budget) -> OpResult<Value> {
         }
         Value::Map(m) if !m.is_empty() => {
             let all_probs = m.values().all(|w| matches!(w, Value::Prob(_)));
+            if !all_probs && m.values().any(|w| matches!(w, Value::Prob(_))) {
+                return Err(
+                    OpError::new("one_of can't mix probabilities and relative numeric weights")
+                        .help("use prob(...) for every absolute probability, or numbers for every relative weight"),
+                );
+            }
             let mut pairs = Vec::new();
             for (k, w) in m.iter() {
                 let w = match w {

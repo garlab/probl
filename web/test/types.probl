@@ -14,3 +14,13 @@ report typeof x == "int"
 var calls = 0
 let kind = typeof { calls += 1; d6 }
 report [kind, calls]
+
+# Checked probabilities, contextual literals, arithmetic and observations.
+let p: prob = 33%
+report [typeof p, typeof prob(33%), typeof prob(true), typeof (p * p)]
+fn probability_kind(p: prob) { typeof p }
+report probability_kind(33%)
+let probabilities: list[prob] = [0, 33%, 1]
+report typeof probabilities
+report simulate { let event ~ bernoulli(5%); observe event; event }
+report chance { p => true, else => false }

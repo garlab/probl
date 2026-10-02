@@ -3,10 +3,13 @@ source: crates/probl-sema/tests/lower.rs
 expression: ir(&src)
 ---
 fn#0 the top level ()
-  if 30% {
-    $0 = "rain"    [live: $0]
-  } else {
-    $0 = "sun"    [live: $0]
+  chance (value) {
+    30% => {
+      $0 = "rain"    [live: $0]
+    }
+    else => {
+      $0 = "sun"    [live: $0]
+    }
   }
   weather_1 = $0    [live: weather_1]
   report weather_1 as "weather"    [live: ]
@@ -23,37 +26,41 @@ fn#0 the top level ()
   report (and rain_4 rain_4) as "rain and rain"    [live: ]
   rolls_6 = 1    [live: rolls_6]
   loop {    [live at head: rolls_6]
-    if (!= 1d6 6) {
+    face_7 ~ 1d6    [live: rolls_6 face_7]
+    if (!= face_7 6) {
       rolls_6 = (+ rolls_6 1)    [live: rolls_6]
     } else {
       break    [live: rolls_6]
     }
   }
   report rolls_6 as "rolls until a six"    [live: ]
-  pos_7 = 0    [live: pos_7]
-  $8 = $repeat_count(1000)    [live: pos_7 $8]
-  $9 = 0    [live: pos_7 $8 $9]
-  loop (bounded) {    [live at head: pos_7 $8 $9]
-    if (>= $9 $8) {
-      break    [live: pos_7 $8 $9]
+  pos_8 = 0    [live: pos_8]
+  $9 = $repeat_count(1000)    [live: pos_8 $9]
+  $10 = 0    [live: pos_8 $9 $10]
+  loop (bounded) {    [live at head: pos_8 $9 $10]
+    if (>= $10 $9) {
+      break    [live: pos_8 $9 $10]
     }
-    $9 = (+ $9 1)    [live: pos_7 $8 $9]
-    if 50% {
-      $10 = 1    [live: pos_7 $8 $9 $10]
-    } else {
-      $10 = (- 1)    [live: pos_7 $8 $9 $10]
+    $10 = (+ $10 1)    [live: pos_8 $9 $10]
+    chance (value) {
+      50% => {
+        $11 = 1    [live: pos_8 $9 $10 $11]
+      }
+      else => {
+        $11 = (- 1)    [live: pos_8 $9 $10 $11]
+      }
     }
-    pos_7 = (+ pos_7 $10)    [live: pos_7 $8 $9]
+    pos_8 = (+ pos_8 $11)    [live: pos_8 $9 $10]
   }
-  report pos_7 as "random walk after 1,000 steps"    [live: ]
-  diagnosis_11 = simulate fn#1 []    [live: diagnosis_11]
-  report diagnosis_11 as "sick, given a positive test"    [live: ]
+  report pos_8 as "random walk after 1,000 steps"    [live: ]
+  diagnosis_12 = simulate fn#1 []    [live: diagnosis_12]
+  report diagnosis_12 as "sick, given a positive test"    [live: ]
 fn#1 a simulate block ()
   sick_0 ~ bernoulli(1%)    [live: sick_0]
   if sick_0 {
-    $1 = 95%    [live: sick_0 $1]
+    $1 = 0.95    [live: sick_0 $1]
   } else {
-    $1 = 8%    [live: sick_0 $1]
+    $1 = 0.08    [live: sick_0 $1]
   }
-  observe $1    [live: sick_0]
+  observe true from bernoulli(prob($1))    [live: sick_0]
   return sick_0    [live: ]

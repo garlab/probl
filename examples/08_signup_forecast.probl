@@ -9,13 +9,13 @@ let pilot: list[Day] = read("data/pilot.csv")
 
 let rate ~ beta(2, 40)                  # belief before the pilot: "a few percent, probably"
 for day in pilot {
-  observe day.signups from binomial(day.visitors, rate)
+  observe day.signups from binomial(day.visitors, prob(rate))
 }
 report rate * 100 as "conversion rate (%)"
 
 # Next month, marketing expects 300 to 500 visitors a day.
 let daily_visitors ~ 300 to 500
-let next_month ~ binomial(round(30 * daily_visitors), rate)
+let next_month ~ binomial(round(30 * daily_visitors), prob(rate))
 report next_month as "sign-ups next month"
 report next_month >= 400 as "at least 400 sign-ups"
 

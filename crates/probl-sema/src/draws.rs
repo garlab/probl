@@ -95,12 +95,19 @@ fn movable(s: &Stmt) -> Option<SlotId> {
 
 /// A distribution written out, which can't fail and adds up to 1.
 fn written_out(e: &Expr) -> bool {
-    let probability =
-        |e: &Expr| matches!(e.kind, ExprKind::Lit(Lit::Prob(p) | Lit::Float(p)) if (0.0..=1.0).contains(&p));
+    let probability = |e: &Expr| matches!(e.kind, ExprKind::Lit(Lit::Prob(p)) if (0.0..=1.0).contains(&p));
     let value = |e: &Expr| {
         matches!(
             e.kind,
-            ExprKind::Lit(Lit::Int(_) | Lit::Float(_) | Lit::Prob(_) | Lit::Str(_) | Lit::Bool(_) | Lit::Enum { .. })
+            ExprKind::Lit(
+                Lit::Int(_)
+                    | Lit::Float(_)
+                    | Lit::FloatConstant(_)
+                    | Lit::Prob(_)
+                    | Lit::Str(_)
+                    | Lit::Bool(_)
+                    | Lit::Enum { .. }
+            )
         )
     };
     match &e.kind {

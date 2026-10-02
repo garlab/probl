@@ -6,15 +6,15 @@
 
 @mode enumerate
 
-let a_serve = 64%    # chance that A wins a point on A's serve
-let b_serve = 62%    # chance that B wins a point on B's serve
+let a_serve: prob = 64%    # chance that A wins a point on A's serve
+let b_serve: prob = 62%    # chance that B wins a point on B's serve
 
 # A game: whether the server wins it.
-fn game(p) {
+fn game(p: prob) {
   var s = 0
   var r = 0
   while max(s, r) < 4 or abs(s - r) < 2 {
-    if p { s += 1 } else { r += 1 }
+    chance { p => { s += 1 }, else => { r += 1 } }
     if s == r and s > 3 { s = 3; r = 3 }       # deuce, again
   }
   s > r
@@ -29,9 +29,9 @@ fn tiebreak() {
   while max(a, b) < 7 or abs(a - b) < 2 {
     let a_serving = ((point + 1) div 2) mod 2 == 0
     if a_serving {
-      if a_serve { a += 1 } else { b += 1 }
+      chance { a_serve => { a += 1 }, else => { b += 1 } }
     } else {
-      if b_serve { b += 1 } else { a += 1 }
+      chance { b_serve => { b += 1 }, else => { a += 1 } }
     }
     point += 1
     if a == b and a > 6 { a = 6; b = 6; point = 12 + point mod 4 }

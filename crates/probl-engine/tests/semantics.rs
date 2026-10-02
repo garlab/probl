@@ -17,13 +17,21 @@ fn two_dice() {
 }
 
 #[test]
-fn conditions_split_worlds() {
-    close(chance("let x = if 30% { 1 } else { 2 }\nreport x == 1"), 0.3);
+fn drawn_events_control_branches() {
     close(
-        chance("var x = 0\nif 30% { x = 1 }\nif 50% { x += 1 }\nreport x == 2"),
+        chance("let x = if (chance { 30% => true, else => false }) { 1 } else { 2 }\nreport x == 1"),
+        0.3,
+    );
+    close(
+        chance(
+            "var x = 0\nif (chance { 30% => true, else => false }) { x = 1 }\nif (chance { 50% => true, else => false }) { x += 1 }\nreport x == 2",
+        ),
         0.15,
     );
-    close(chance("let x = if d6 > 4 { 1 } else { 0 }\nreport x == 1"), 1.0 / 3.0);
+    close(
+        chance("let big ~ d6 > 4\nlet x = if big { 1 } else { 0 }\nreport x == 1"),
+        1.0 / 3.0,
+    );
 }
 
 #[test]
@@ -39,10 +47,10 @@ fn events_need_identities() {
     close(chance("let r ~ d6\nreport r > 4 and d6 > 4"), 1.0 / 9.0);
     // A drawn distribution of facts gives an event with an identity.
     close(chance("let big ~ d6 > 4\nreport big and big"), 1.0 / 3.0);
-    assert!(error("report 30% and 30%").contains("30% is a probability"));
+    assert!(error("report prob(30%) and prob(30%)").contains("30% is a probability"));
     assert!(error("report (d6 > 4) and (d6 > 4)").contains("two uncertain facts"));
     assert!(error("let e = d6 > 4\nreport e or e").contains("two uncertain facts"));
-    assert!(error("let p ~ 30%").contains("bernoulli"));
+    assert!(error("let p ~ prob(30%)").contains("bernoulli"));
 }
 
 #[test]
@@ -63,7 +71,7 @@ fn birthday_problem() {
         var shared = false
         repeat 23 {
             if not shared {
-                if distinct / 365 { shared = true } else { distinct += 1 }
+                chance { prob(distinct / 365) => { shared = true }, else => { distinct += 1 } }
             }
         }
         report shared";
@@ -79,7 +87,7 @@ fn gamblers_ruin() {
     let src = "
         var money = 3
         while money > 0 and money < 10 {
-            money += if 40% { 1 } else { -1 }
+            money += if (chance { 40% => true, else => false }) { 1 } else { -1 }
         }
         report money == 10";
     let r: f64 = 0.6 / 0.4;
@@ -88,7 +96,7 @@ fn gamblers_ruin() {
 
 #[test]
 fn loops_that_may_never_end_stop_at_epsilon() {
-    let o = outcome("var n = 1\nwhile d6 != 6 { n += 1 }\nreport n");
+    let o = outcome("var n = 1\nwhile ({ let face ~ d6; face != 6 }) { n += 1 }\nreport n");
     let dist = o.reports[0].distribution();
     let mean: f64 = dist.iter().map(|(v, p)| v.as_f64().unwrap() * p).sum();
     assert!((mean - 6.0).abs() < 1e-8);
@@ -105,11 +113,14 @@ fn evidence() {
     let medical = "
         let sick ~ bernoulli(1%)
         let positive = if sick { 95% } else { 8% }
-        observe positive
+        observe true from bernoulli(prob(positive))
         report sick";
     close(chance(medical), 0.0095 / (0.0095 + 0.99 * 0.08));
     close(outcome(medical).evidence.unwrap().to_f64(), 0.0887);
-    for observation in ["observe heads", "observe true from bernoulli(heads)"] {
+    for observation in [
+        "let seen ~ bernoulli(prob(heads)); observe seen",
+        "observe true from bernoulli(prob(heads))",
+    ] {
         let coin = format!(
             "let coin ~ one_of([\"fair\", \"biased\"])
              let heads = if coin == \"fair\" {{ 50% }} else {{ 90% }}
@@ -119,22 +130,25 @@ fn evidence() {
         let (b, f) = (0.9f64.powi(5), 0.5f64.powi(5));
         close(chance(&coin), b / (b + f));
     }
-    close(chance("let k ~ d6\nobserve 3 from binomial(5, k / 6)\nreport k > 3"), {
-        let pmf = |p: f64| 10.0 * p.powi(3) * (1.0 - p).powi(2);
-        let ks: Vec<f64> = (1..=6).map(|k| pmf(k as f64 / 6.0)).collect();
-        ks[3..].iter().sum::<f64>() / ks.iter().sum::<f64>()
-    });
+    close(
+        chance("let k ~ d6\nobserve 3 from binomial(5, prob(k / 6))\nreport k > 3"),
+        {
+            let pmf = |p: f64| 10.0 * p.powi(3) * (1.0 - p).powi(2);
+            let ks: Vec<f64> = (1..=6).map(|k| pmf(k as f64 / 6.0)).collect();
+            ks[3..].iter().sum::<f64>() / ks.iter().sum::<f64>()
+        },
+    );
 }
 
 #[test]
-fn observing_a_recipe_leaves_its_reported_distribution_unchanged() {
+fn observing_a_recipe_requires_an_explicit_likelihood() {
     let prior = distribution("report 3d8");
     for mode in [
         probl_sema::ir::Mode::Enumerate,
         probl_sema::ir::Mode::Sample { runs: 100, seed: 7 },
     ] {
         let out = exec(
-            "let x = 3d8\nobserve x > 10\nreport x",
+            "let x = 3d8\nobserve true from (x > 10)\nreport x",
             &Options {
                 mode: Some(mode),
                 ..Options::default()
@@ -236,7 +250,7 @@ fn simulate_returns_distributions() {
         7.0 / 12.0,
     );
     // A distribution over probabilities stays one.
-    let rates = distribution("report simulate { if 50% { 10% } else { 90% } }");
+    let rates = distribution("report simulate { chance { 50% => prob(10%), else => prob(90%) } }");
     assert_eq!(rates, vec![(Value::Prob(0.1), 0.5), (Value::Prob(0.9), 0.5)]);
 }
 
@@ -247,7 +261,7 @@ fn functions_and_recursion() {
         1.0,
     );
     let src = "
-        fn heads(n) { if n == 0 { 0 } else { (if 50% { 1 } else { 0 }) + heads(n - 1) } }
+        fn heads(n) { if n == 0 { 0 } else { (if (chance { 50% => true, else => false }) { 1 } else { 0 }) + heads(n - 1) } }
         report heads(10) == 5";
     close(chance(src), 252.0 / 1024.0);
     close(
@@ -381,7 +395,7 @@ fn atan2_respects_equality_when_merging_and_memoizing() {
     let src = "
         fn angle(y) { atan2(y, -1) }
         var y = 0.0
-        if 50% { y = -0.0 }
+        if (chance { 50% => true, else => false }) { y = -0.0 }
         report angle(y) < 0
     ";
     for merge in [false, true] {
@@ -453,11 +467,11 @@ fn runtime_errors() {
     assert!(error("let x ~ d6\nreport 10 / (x - x)").contains("division by zero"));
     assert!(error("let xs = [1, 2]\nreport xs[2]").contains("out of range"));
     assert!(error("fn f(x) { f(x) }\nreport f(1)").contains("`f(1)` never returns for some of its worlds"));
-    assert!(error("report if 3 { 1 } else { 2 }").contains("a probability or a fact"));
+    assert!(error("report if 3 { 1 } else { 2 }").contains("needs a bool"));
     assert!(error("for i in 1..d6 { }").contains("range"));
     assert!(error("let w = chance { 60% => 1, 30% => 2 }\nreport w").contains("no `else`"));
     assert!(error("chance { 60% => {}, 50% => {} }").contains("more than 100%"));
-    assert!(error("report one_of([\"a\": 50%, \"b\": 40%])").contains("add up to 90%"));
+    assert!(error("report one_of([\"a\": prob(50%), \"b\": prob(40%)])").contains("add up to 90%"));
 }
 
 #[test]
@@ -476,7 +490,7 @@ fn unimplemented_features_say_so() {
 
 const DIFFERENTIAL: &[&str] = &[
     "let a ~ d6\nlet b ~ d6\nvar s = a + b\nif s > 7 { s -= 7 }\nreport s",
-    "var pos = 0\nrepeat 8 { pos += if 50% { 1 } else { -1 } }\nreport pos",
+    "var pos = 0\nrepeat 8 { pos += if (chance { 50% => true, else => false }) { 1 } else { -1 } }\nreport pos",
     "var x = 0\nvar y = 0\nrepeat 5 { chance { 30% => x += 1, 20% => y += 1, else => {} } }\nreport x - y",
     "fn hit(n) { if n > 3 { d6 } else { 0 } }\nvar total = 0\nrepeat 3 { let r ~ d6\n let h ~ hit(r)\n total += h }\nreport total",
     "var hp = 10\nvar rounds = 0\nwhile hp > 0 and rounds < 6 { rounds += 1\n let d ~ d4\n hp -= d }\nreport rounds",

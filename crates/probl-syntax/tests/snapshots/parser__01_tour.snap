@@ -3,7 +3,7 @@ source: crates/probl-syntax/tests/parser.rs
 expression: tree
 ---
 (@mode enumerate)
-(let weather = (if 30% (block "rain") (block "sun")))
+(let weather = (chance (30% => "rain") (else => "sun")))
 (report weather)
 (report (>= 2d6 10) as "2d6 rolls 10+")
 (report (>= (+ 1d20 5) 15) as "a +5 attack hits armour class 15")
@@ -17,10 +17,10 @@ expression: tree
 (report (or rain late))
 (report (and rain rain))
 (var rolls = 1)
-(while (!= 1d6 6) (block (+= rolls 1)))
+(while (block (let face ~ 1d6) (!= face 6)) (block (+= rolls 1)))
 (report rolls as "rolls until a six")
 (var pos = 0)
-(repeat 1000 (block (+= pos (if 50% (block 1) (block (- 1))))))
+(repeat 1000 (block (+= pos (chance (50% => 1) (else => (- 1))))))
 (report pos as "random walk after 1,000 steps")
-(let diagnosis = (simulate (block (let sick ~ (call bernoulli 1%)) (observe (if sick (block 95%) (block 8%))) sick)))
+(let diagnosis = (simulate (block (let sick ~ (call bernoulli 1%)) (observe true from (call bernoulli (call prob (if sick (block 95%) (block 8%))))) sick)))
 (report diagnosis as "sick, given a positive test")

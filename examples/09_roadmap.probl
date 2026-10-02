@@ -16,9 +16,9 @@ let inspection ~ 2 to 4    # P5  traces, explain, JSON and HTML output
 let tooling    ~ 5 to 8    # P6  static types, formatter, language server
 
 # Risks: each one either happens or it doesn't
-let merge_redesign ~ if 35% { 1 to 3 } else { 0 }   # merging and liveness need a second design
-let slow_engine    ~ if 25% { 1 to 4 } else { 0 }   # the game examples are too slow at first
-let weak_sampler   ~ if 30% { 1 to 3 } else { 0 }   # likelihood weighting struggles on real models
+let merge_redesign ~ chance { 35% => 1 to 3, else => 0 }   # merging and liveness need a second design
+let slow_engine    ~ chance { 25% => 1 to 4, else => 0 }   # the game examples are too slow at first
+let weak_sampler   ~ chance { 30% => 1 to 3, else => 0 }   # likelihood weighting struggles on real models
 let overhead       ~ 10% to 30%                     # reviews, bugs, everything else
 let holidays = 2                                    # weeks off around the new year
 

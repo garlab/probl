@@ -3,7 +3,7 @@ source: crates/probl-sema/tests/lower.rs
 expression: ir(&src)
 ---
 fn#0 the top level ()
-  demand_model_0 = one_of([20: 25%, 40: 50%, 60: 25%])    [live: demand_model_0]
+  demand_model_0 = one_of([20: 0.25, 40: 0.5, 60: 0.25])    [live: demand_model_0]
   quantities_1 = [20, 40, 60]    [live: demand_model_0 quantities_1]
   chosen_2 = quantities_1[0]    [live: demand_model_0 quantities_1 chosen_2]
   best_expected_3 = mean(simulate fn#2 [demand_model_0, chosen_2])    [live: demand_model_0 quantities_1 chosen_2 best_expected_3]

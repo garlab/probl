@@ -31,9 +31,9 @@ fn d1_logic_on_probabilities_is_rejected() {
 fn d1_a_shared_rate_is_not_averaged_away() {
     // Choose a 10% or 90% rate, then run two independent trials with it.
     let src = "
-        let p ~ simulate { if 50% { 10% } else { 90% } }
-        let a ~ bernoulli(p)
-        let b ~ bernoulli(p)
+        let p ~ simulate { if (chance { 50% => true, else => false }) { 10% } else { 90% } }
+        let a ~ bernoulli(prob(p))
+        let b ~ bernoulli(prob(p))
         report a and b";
     close(chance(src), 0.5 * 0.01 + 0.5 * 0.81);
     // Floats and percentages mean the same thing.
@@ -62,12 +62,15 @@ fn d2_bounded_loops_are_never_cut_short() {
     let src = "
         @epsilon 0.01
         var win = false
-        if 0.5% { repeat 1 { win = true } }
-        observe if win { true } else { 0.00001 }
+        if (chance { 0.5% => true, else => false }) { repeat 1 { win = true } }
+        observe true from bernoulli(prob(if win { true } else { 0.00001 }))
         report win";
     let expected = 0.005 / (0.005 + 0.995 * 0.00001);
     close(chance(src), expected);
-    close(chance("observe 1e-13\nrepeat 0 { }\nreport true"), 1.0);
+    close(
+        chance("observe true from bernoulli(1e-13)\nrepeat 0 { }\nreport true"),
+        1.0,
+    );
 }
 
 #[test]
@@ -76,12 +79,12 @@ fn d2_unbounded_loops_are_cut_relative_to_what_entered() {
     let src = "
         @epsilon 0.01
         var win = false
-        if 0.5% {
+        if (chance { 0.5% => true, else => false }) {
             var n = 0
             while n < 1 { n += 1 }
             win = true
         }
-        observe if win { true } else { 0.00001 }
+        observe true from bernoulli(prob(if win { true } else { 0.00001 }))
         report win";
     close(chance(src), 0.005 / (0.005 + 0.995 * 0.00001));
 }
@@ -96,13 +99,13 @@ fn d2_truncation_before_evidence_is_shown_as_a_range() {
     let src = "
         @epsilon 0.01
         var steps = 0
-        while 99% { steps += 1 }
+        while (chance { 99% => true, else => false }) { steps += 1 }
         observe steps > 400
         report steps > 450";
     let out = output(src);
     assert!(out.contains('–'), "expected a range in:\n{out}");
     // When nothing resolved fits the evidence, there's no answer at all.
-    let hopeless = "@epsilon 0.01\nvar steps = 0\nwhile 99.9% { steps += 1 }\nobserve steps > 10000\nreport true";
+    let hopeless = "@epsilon 0.01\nvar steps = 0\nwhile (chance { 99.9% => true, else => false }) { steps += 1 }\nobserve steps > 10000\nreport true";
     assert!(error(hopeless).contains("left unresolved"));
 }
 
@@ -110,7 +113,7 @@ fn d2_truncation_before_evidence_is_shown_as_a_range() {
 
 #[test]
 fn d3_reports_say_how_much_weight_reached_them() {
-    let out = output("if 1% { report true as \"win\" }");
+    let out = output("if (chance { 1% => true, else => false }) { report true as \"win\" }");
     assert!(out.contains("win    100.00% (reached in 1.00% of worlds)"), "{out}");
 }
 
@@ -125,7 +128,7 @@ fn d3_repeated_reports_are_labelled_per_visit() {
 
 #[test]
 fn d3_observations_inside_simulate_are_local() {
-    let o = outcome("let d = simulate { observe 10%\n 1 }\nreport d");
+    let o = outcome("let d = simulate { observe true from bernoulli(10%)\n 1 }\nreport d");
     assert!(o.evidence.is_none());
     assert!(!o.output.contains("evidence"));
 }
@@ -171,7 +174,9 @@ fn i1_missing_mass_composes() {
     close(o.reports[0].chance().unwrap(), 1.0);
     // A simulated distribution keeps its truncation as missing mass instead
     // of adding it to the program's unresolved weight.
-    let o = outcome("let t = simulate { var n = 1\n while 50% { n += 1 }\n n }\nreport t > 3");
+    let o = outcome(
+        "let t = simulate { var n = 1\n while (chance { 50% => true, else => false }) { n += 1 }\n n }\nreport t > 3",
+    );
     assert!(o.unresolved.is_zero());
     let (lo, hi) = o.reports[0].groups.values().next().unwrap().chance_bounds(o.unresolved);
     assert!(lo < hi && hi - lo < 1e-11);
@@ -181,7 +186,7 @@ fn i1_missing_mass_composes() {
 fn i1_many_observations_do_not_underflow() {
     let src = "
         let biased ~ bernoulli(50%)
-        repeat 400 { observe if biased { 1e-5 } else { 2e-5 } }
+        repeat 400 { observe true from bernoulli(prob(if biased { 1e-5 } else { 2e-5 })) }
         report biased";
     let o = outcome(src);
     assert!(!o.evidence.unwrap().is_zero());
@@ -326,28 +331,33 @@ fn i4_a_value_drawn_from_one_of_is_settled() {
 }
 
 #[test]
-fn i4_chance_weights_are_conditions() {
+fn i4_chance_weights_require_explicit_probabilities() {
     // A fact counts with 100% or 0%, an uncertain fact with its probability.
     close(
-        chance("let x ~ d6\nlet y = chance { x > 4 => 1, else => 2 }\nreport y == 1"),
+        chance("let x ~ d6\nlet y = chance { prob(x > 4) => 1, else => 2 }\nreport y == 1"),
         1.0 / 3.0,
     );
     close(
-        chance("let y = chance { d6 > 4 => 1, else => 2 }\nreport y == 1"),
+        chance("let y = chance { P(d6 > 4) => 1, else => 2 }\nreport y == 1"),
         1.0 / 3.0,
     );
     // The weights still can't add up to more than 100%.
-    assert!(error("let x = chance { true => 1, 50% => 2 }\nreport x").contains("more than 100%"));
+    assert!(error("let x = chance { prob(true) => 1, 50% => 2 }\nreport x").contains("more than 100%"));
 }
 
 #[test]
 fn i4_certain_conditions_leave_no_rounding_behind() {
     // Six sixths add up to 0.9999999999999999 in floating point; a certain
     // condition must still send every world one way.
-    let out = outcome("let a = P(d6 != 0)\nif d6 + d6 > 1 { observe 50% }\nreport a");
+    let out = outcome(
+        "let a = P(d6 != 0)\nif ({ let rolled ~ d6 + d6; rolled > 1 }) { observe true from bernoulli(50%) }\nreport a",
+    );
     assert!(out.unresolved.is_zero(), "unresolved {:e}", out.unresolved.to_f64());
     assert_eq!(out.reports[0].distribution().len(), 1);
-    assert!(error("if P(d6 != 0) { observe 0% }\nreport true").contains("evidence is impossible"));
+    assert!(
+        error("if ({ let event ~ d6 != 0; event }) { observe true from bernoulli(0%) }\nreport true")
+            .contains("evidence is impossible")
+    );
 }
 
 #[test]

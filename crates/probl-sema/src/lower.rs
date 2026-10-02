@@ -54,6 +54,7 @@ struct FnBuild {
     kind: FnKind,
     span: Span,
     n_params: u32,
+    param_types: Vec<Option<TypeSpec>>,
     slots: Vec<SlotInfo>,
     parent: Option<FnId>,
     /// For lambdas and `simulate`: (slot here, slot in the parent).
@@ -217,6 +218,7 @@ impl<'a> Lowerer<'a> {
             kind,
             span,
             n_params: 0,
+            param_types: Vec::new(),
             slots: Vec::new(),
             parent,
             parent_captures: Vec::new(),
@@ -407,6 +409,7 @@ impl<'a> Lowerer<'a> {
     /// Reject a literal that can never have the declared type.
     fn check_literal(&mut self, value: &ast::Expr, ty: &TypeSpec) {
         let found = match (&value.kind, ty) {
+            (ast::ExprKind::Int(v), TypeSpec::Prob) if *v == 0 || *v == 1 => return,
             (ast::ExprKind::Int(_), TypeSpec::Int | TypeSpec::Float) => return,
             (ast::ExprKind::Float(v), TypeSpec::Prob) if (0.0..=1.0).contains(v) => return,
             (ast::ExprKind::Float(_), TypeSpec::Float) => return,
@@ -432,6 +435,42 @@ impl<'a> Lowerer<'a> {
             _ => "a value of the declared type",
         };
         self.error(value.span, format!("expected {expected}, found {found}"));
+    }
+
+    /// Only source literals acquire a probability type from context. Slots
+    /// and arithmetic keep their type and need an explicit `prob(...)`.
+    fn contextualize(&mut self, e: &mut Expr, ty: &TypeSpec) {
+        if *ty == TypeSpec::Prob {
+            if let Some(p) = crate::coercions::numeric_literal(e) {
+                if p.is_finite() && (0.0..=1.0).contains(&p) {
+                    e.kind = ExprKind::Lit(Lit::Prob(p));
+                } else {
+                    self.error(e.span, "a probability literal must be between 0 and 1");
+                }
+            }
+            return;
+        }
+        match (&mut e.kind, ty) {
+            (ExprKind::List(xs), TypeSpec::List(t)) => {
+                for x in xs {
+                    self.contextualize(x, t);
+                }
+            }
+            (ExprKind::Map(xs), TypeSpec::Map(k, v)) => {
+                for (a, b) in xs {
+                    self.contextualize(a, k);
+                    self.contextualize(b, v);
+                }
+            }
+            (ExprKind::Record { fields, .. }, TypeSpec::AnonRecord(ts)) => {
+                for (n, x) in fields {
+                    if let Some((_, t)) = ts.iter().find(|(m, _)| m == n) {
+                        self.contextualize(x, t);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Resolve a variable name from the context at `depth`, capturing it into
@@ -585,6 +624,13 @@ impl<'a> Lowerer<'a> {
             self.record_fields(id, decl);
         }
         self.check_record_cycles();
+        for (id, decl) in &fn_decls {
+            self.funcs[*id as usize].param_types = decl
+                .params
+                .iter()
+                .map(|p| p.ty.as_ref().and_then(|t| self.type_spec(t)))
+                .collect();
+        }
 
         // The top level.
         self.ctx.push(Ctx {
@@ -846,7 +892,8 @@ impl<'a> Lowerer<'a> {
         self.funcs[id as usize].n_params = decl.params.len() as u32;
         self.cur().ret = decl.ret.as_ref().and_then(|t| self.type_spec(t));
         self.push_scope();
-        let value = self.block_value(&decl.body, &mut stmts);
+        let ret_type = self.cur().ret.clone();
+        let value = self.block_value_expected(&decl.body, ret_type.as_ref(), &mut stmts);
         self.pop_scope(decl.body.span.hi);
         let value = self.checked_return_value(value, decl.body.span, &mut stmts);
         let ret = self.stmt(decl.body.span, StmtKind::Return(value));
@@ -876,7 +923,7 @@ impl<'a> Lowerer<'a> {
                         self.check_literal(value, spec);
                     }
                 }
-                self.let_stmt(*mutable, pattern, *op, value, s.span, out);
+                self.let_stmt(*mutable, pattern, *op, value, spec.as_ref(), s.span, out);
                 if let (Some(spec), Some(_)) = (spec, ty) {
                     match &pattern.kind {
                         ast::PatternKind::Name(name) => {
@@ -996,8 +1043,9 @@ impl<'a> Lowerer<'a> {
                     self.error(s.span, "`return` outside of a function");
                     return;
                 }
+                let ret_type = self.cur().ret.clone();
                 let v = match value {
-                    Some(v) => self.expr(v, out),
+                    Some(v) => self.expr_expected(v, ret_type.as_ref(), out),
                     None => lit(Lit::Unit, s.span),
                 };
                 let v = self.checked_return_value(v, s.span, out);
@@ -1019,10 +1067,11 @@ impl<'a> Lowerer<'a> {
     }
 
     /// With a declared return type, store the value and check it first.
-    fn checked_return_value(&mut self, value: Expr, span: Span, out: &mut Vec<Stmt>) -> Expr {
+    fn checked_return_value(&mut self, mut value: Expr, span: Span, out: &mut Vec<Stmt>) -> Expr {
         let Some(ty) = self.ctx.last().unwrap().ret.clone() else {
             return value;
         };
+        self.contextualize(&mut value, &ty);
         let t = self.temp(span);
         let set = self.stmt(
             span,
@@ -1050,6 +1099,10 @@ impl<'a> Lowerer<'a> {
     /// Lower the statements of a block and return the value of its last
     /// expression (or `()`). The caller manages the scope.
     fn block_value(&mut self, block: &ast::Block, out: &mut Vec<Stmt>) -> Expr {
+        self.block_value_expected(block, None, out)
+    }
+
+    fn block_value_expected(&mut self, block: &ast::Block, ty: Option<&TypeSpec>, out: &mut Vec<Stmt>) -> Expr {
         let Some((last, init)) = block.stmts.split_last() else {
             return lit(Lit::Unit, block.span);
         };
@@ -1057,7 +1110,7 @@ impl<'a> Lowerer<'a> {
             self.lower_stmt(s, out);
         }
         match &last.kind {
-            ast::StmtKind::Expr(e) => self.expr(e, out),
+            ast::StmtKind::Expr(e) => self.expr_expected(e, ty, out),
             _ => {
                 self.lower_stmt(last, out);
                 lit(Lit::Unit, last.span)
@@ -1065,12 +1118,14 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn let_stmt(
         &mut self,
         mutable: bool,
         pattern: &ast::Pattern,
         op: ast::BindOp,
         value: &ast::Expr,
+        ty: Option<&TypeSpec>,
         span: Span,
         out: &mut Vec<Stmt>,
     ) {
@@ -1103,7 +1158,7 @@ impl<'a> Lowerer<'a> {
                 return;
             }
         }
-        let v = self.expr(value, out);
+        let v = self.expr_expected(value, if op == ast::BindOp::Assign { ty } else { None }, out);
         let kind = |place| match op {
             ast::BindOp::Assign => StmtKind::Set {
                 place,
@@ -1377,7 +1432,12 @@ impl<'a> Lowerer<'a> {
         }
         let kind = match op {
             ast::AssignOp::Set | ast::AssignOp::Draw => {
-                let mut v = self.expr(value, out);
+                let ty = if op == ast::AssignOp::Set {
+                    self.declared_type(target)
+                } else {
+                    None
+                };
+                let mut v = self.expr_expected(value, ty.as_ref(), out);
                 let mut hoisted = Vec::new();
                 let Some(place) = self.place(target, &mut hoisted, "assign to") else {
                     return;
@@ -1421,16 +1481,44 @@ impl<'a> Lowerer<'a> {
             }
         };
         let assigned = match &kind {
-            StmtKind::Set { place, .. } | StmtKind::Draw { place, .. } if place.path.is_empty() => Some(place.slot),
+            StmtKind::Set { place, .. } | StmtKind::Draw { place, .. } => Some(place.slot),
             _ => None,
         };
         let st = self.stmt(span, kind);
         out.push(st);
-        if let (Some(slot_id), ast::ExprKind::Name(name)) = (assigned, &target.kind) {
-            if let Some(ty) = self.lookup(name).and_then(|b| b.ty) {
+        if let Some(slot_id) = assigned {
+            let name = self.funcs[self.cur_func() as usize].slots[slot_id as usize]
+                .name
+                .clone();
+            if let Some(ty) = self.lookup(&name).filter(|b| b.slot == slot_id).and_then(|b| b.ty) {
                 let st = self.check(slot_id, &ty, span);
                 out.push(st);
             }
+        }
+    }
+
+    /// The type supplied by an annotation or a named record constructor.
+    fn declared_type(&mut self, e: &ast::Expr) -> Option<TypeSpec> {
+        match &e.kind {
+            ast::ExprKind::Name(n) => self.lookup(n)?.ty,
+            ast::ExprKind::Record { name: Some(n), .. } => {
+                self.record_by_name.get(&n.name).copied().map(TypeSpec::Record)
+            }
+            ast::ExprKind::With { expr, .. } => self.declared_type(expr),
+            ast::ExprKind::Field { expr, name } => match self.declared_type(expr)? {
+                TypeSpec::Record(r) => self.records[r as usize]
+                    .fields
+                    .iter()
+                    .find(|f| f.name == name.name)
+                    .map(|f| f.ty.clone()),
+                TypeSpec::AnonRecord(fields) => fields.into_iter().find(|(n, _)| n == &name.name).map(|(_, t)| t),
+                _ => None,
+            },
+            ast::ExprKind::Index { expr, .. } => match self.declared_type(expr)? {
+                TypeSpec::List(t) | TypeSpec::Map(_, t) => Some(*t),
+                _ => None,
+            },
+            _ => None,
         }
     }
 
@@ -1756,7 +1844,8 @@ impl<'a> Lowerer<'a> {
         let mut ir_arms = Vec::new();
         let mut otherwise = None;
         let weights: Vec<&ast::Expr> = arms.iter().filter_map(|a| a.weight.as_ref()).collect();
-        let mut weights = self.operands(&weights, out).into_iter();
+        let types = vec![Some(TypeSpec::Prob); weights.len()];
+        let mut weights = self.operands_expected(Vec::new(), &weights, &types, out).into_iter();
         for (i, arm) in arms.iter().enumerate() {
             match &arm.weight {
                 Some(_) => {
@@ -1979,10 +2068,25 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Like `operands`, after some operands that are already lowered.
-    fn operands_after(&mut self, mut values: Vec<Expr>, exprs: &[&ast::Expr], out: &mut Vec<Stmt>) -> Vec<Expr> {
+    fn operands_after(&mut self, values: Vec<Expr>, exprs: &[&ast::Expr], out: &mut Vec<Stmt>) -> Vec<Expr> {
+        self.operands_expected(values, exprs, &[], out)
+    }
+
+    fn operands_expected(
+        &mut self,
+        mut values: Vec<Expr>,
+        exprs: &[&ast::Expr],
+        types: &[Option<TypeSpec>],
+        out: &mut Vec<Stmt>,
+    ) -> Vec<Expr> {
+        for (v, ty) in values.iter_mut().zip(types) {
+            if let Some(ty) = ty {
+                self.contextualize(v, ty);
+            }
+        }
         for e in exprs {
             let mut hoisted = Vec::new();
-            let v = self.expr(e, &mut hoisted);
+            let v = self.expr_expected(e, types.get(values.len()).and_then(Option::as_ref), &mut hoisted);
             let later = self.later(&hoisted);
             for prev in values.iter_mut() {
                 self.stabilize(prev, later, out);
@@ -1991,6 +2095,49 @@ impl<'a> Lowerer<'a> {
             values.push(v);
         }
         values
+    }
+
+    fn expr_expected(&mut self, e: &ast::Expr, ty: Option<&TypeSpec>, out: &mut Vec<Stmt>) -> Expr {
+        let Some(ty) = ty else { return self.expr(e, out) };
+        let kind = match (&e.kind, ty) {
+            (ast::ExprKind::List(xs), TypeSpec::List(t)) => {
+                let refs: Vec<_> = xs.iter().collect();
+                let types = vec![Some((**t).clone()); xs.len()];
+                ExprKind::List(self.operands_expected(Vec::new(), &refs, &types, out))
+            }
+            (ast::ExprKind::Map(xs), TypeSpec::Map(k, v)) => {
+                let refs: Vec<_> = xs.iter().flat_map(|(k, v)| [k, v]).collect();
+                let types: Vec<_> = xs
+                    .iter()
+                    .flat_map(|_| [Some((**k).clone()), Some((**v).clone())])
+                    .collect();
+                let mut values = self.operands_expected(Vec::new(), &refs, &types, out).into_iter();
+                let mut pairs = Vec::with_capacity(xs.len());
+                while let (Some(k), Some(v)) = (values.next(), values.next()) {
+                    pairs.push((k, v));
+                }
+                ExprKind::Map(pairs)
+            }
+            (ast::ExprKind::Record { name: None, fields }, TypeSpec::AnonRecord(types)) => {
+                for field in fields {
+                    self.anonymous_fields.insert(field.name.name.clone());
+                }
+                let types: Vec<_> = fields
+                    .iter()
+                    .map(|f| types.iter().find(|(n, _)| n == &f.name.name).map(|(_, t)| t.clone()))
+                    .collect();
+                ExprKind::Record {
+                    ty: None,
+                    fields: self.fields_expected(Vec::new(), fields, &types, out),
+                }
+            }
+            _ => {
+                let mut value = self.expr(e, out);
+                self.contextualize(&mut value, ty);
+                return value;
+            }
+        };
+        Expr { kind, span: e.span }
     }
 
     fn later(&self, stmts: &[Stmt]) -> Later {
@@ -2075,13 +2222,7 @@ impl<'a> Lowerer<'a> {
         let kind = match &e.kind {
             ast::ExprKind::Int(v) => ExprKind::Lit(Lit::Int(v.clone())),
             ast::ExprKind::Float(v) => ExprKind::Lit(Lit::Float(*v)),
-            ast::ExprKind::Percent(v) => {
-                if (0.0..=1.0).contains(v) {
-                    ExprKind::Lit(Lit::Prob(*v))
-                } else {
-                    ExprKind::Lit(Lit::Float(*v))
-                }
-            }
+            ast::ExprKind::Percent(v) => ExprKind::Lit(Lit::Float(*v)),
             ast::ExprKind::Dice { count, sides } => ExprKind::Lit(Lit::Dice {
                 count: *count,
                 sides: *sides,
@@ -2169,8 +2310,27 @@ impl<'a> Lowerer<'a> {
                 for field in fields {
                     self.field_uses.push((field.name.span, field.name.name.clone()));
                 }
+                let record = match self.declared_type(expr) {
+                    Some(TypeSpec::Record(r)) => Some(r),
+                    Some(TypeSpec::Dist(t)) => match *t {
+                        TypeSpec::Record(r) => Some(r),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let types: Vec<_> = std::iter::once(None)
+                    .chain(fields.iter().map(|f| {
+                        record.and_then(|r| {
+                            self.records[r as usize]
+                                .fields
+                                .iter()
+                                .find(|d| d.name == f.name.name)
+                                .map(|d| d.ty.clone())
+                        })
+                    }))
+                    .collect();
                 let base = self.expr(expr, out);
-                let mut values = self.fields_after(vec![base], fields, out);
+                let mut values = self.fields_expected(vec![base], fields, &types, out);
                 let base = values.remove(0).1;
                 ExprKind::With(Box::new(base), values)
             }
@@ -2202,7 +2362,7 @@ impl<'a> Lowerer<'a> {
         }
         if let Some(c) = Constant::from_name(name).filter(|_| !self.fn_by_name.contains_key(name)) {
             return match c.value() {
-                Some(value) => lit(Lit::Float(value), span),
+                Some(value) => lit(Lit::FloatConstant(value), span),
                 None => builtin(Builtin::RunDate, vec![], span),
             };
         }
@@ -2217,13 +2377,15 @@ impl<'a> Lowerer<'a> {
         lit(Lit::Unit, span)
     }
 
-    fn fields(&mut self, fields: &[ast::Field], out: &mut Vec<Stmt>) -> Vec<(String, Expr)> {
-        self.fields_after(Vec::new(), fields, out)
-    }
-
     /// Lower record fields in order, after already-lowered operands (which
     /// come back first in the result, with empty names).
-    fn fields_after(&mut self, before: Vec<Expr>, fields: &[ast::Field], out: &mut Vec<Stmt>) -> Vec<(String, Expr)> {
+    fn fields_expected(
+        &mut self,
+        before: Vec<Expr>,
+        fields: &[ast::Field],
+        types: &[Option<TypeSpec>],
+        out: &mut Vec<Stmt>,
+    ) -> Vec<(String, Expr)> {
         let mut names: Vec<String> = Vec::new();
         let mut exprs: Vec<&ast::Expr> = Vec::new();
         for field in fields {
@@ -2238,7 +2400,7 @@ impl<'a> Lowerer<'a> {
             exprs.push(&field.value);
         }
         let n_before = before.len();
-        let values = self.operands_after(before, &exprs, out);
+        let values = self.operands_expected(before, &exprs, types, out);
         let mut result: Vec<(String, Expr)> = Vec::with_capacity(values.len());
         for (i, v) in values.into_iter().enumerate() {
             let name = if i < n_before {
@@ -2258,7 +2420,22 @@ impl<'a> Lowerer<'a> {
         span: Span,
         out: &mut Vec<Stmt>,
     ) -> ExprKind {
-        let lowered = self.fields(fields, out);
+        let types = name
+            .and_then(|n| self.record_by_name.get(&n.name))
+            .map(|id| {
+                fields
+                    .iter()
+                    .map(|f| {
+                        self.records[*id as usize]
+                            .fields
+                            .iter()
+                            .find(|d| d.name == f.name.name)
+                            .map(|d| d.ty.clone())
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let lowered = self.fields_expected(Vec::new(), fields, &types, out);
         let Some(name) = name else {
             for field in fields {
                 self.anonymous_fields.insert(field.name.name.clone());
@@ -2412,7 +2589,14 @@ impl<'a> Lowerer<'a> {
         let Some(place) = self.place(receiver, out, &format!("`{}` to", name.name)) else {
             return lit(Lit::Unit, span);
         };
-        let all = self.positional_args(vec![place_read(&place, receiver.span)], args, out);
+        let receiver_type = self.declared_type(receiver);
+        let types = match (&receiver_type, b) {
+            (Some(TypeSpec::List(t)), Builtin::Push) => vec![None, Some((**t).clone())],
+            (Some(TypeSpec::List(t)), Builtin::Insert) => vec![None, None, Some((**t).clone())],
+            (Some(TypeSpec::Map(k, v)), Builtin::Insert) => vec![None, Some((**k).clone()), Some((**v).clone())],
+            _ => Vec::new(),
+        };
+        let all = self.positional_expected(vec![place_read(&place, receiver.span)], args, &types, out);
         self.check_arity(b, all.len(), span);
         let current = place_read(&place, receiver.span);
         if b == Builtin::Pop {
@@ -2438,11 +2622,22 @@ impl<'a> Lowerer<'a> {
         let st = self.stmt(
             span,
             StmtKind::Set {
-                place,
+                place: place.clone(),
                 value: builtin(b, all, span),
             },
         );
         out.push(st);
+        let root_name = self.funcs[self.cur_func() as usize].slots[place.slot as usize]
+            .name
+            .clone();
+        if let Some(ty) = self
+            .lookup(&root_name)
+            .filter(|b| b.slot == place.slot)
+            .and_then(|b| b.ty)
+        {
+            let check = self.check(place.slot, &ty, span);
+            out.push(check);
+        }
         lit(Lit::Unit, span)
     }
 
@@ -2456,13 +2651,21 @@ impl<'a> Lowerer<'a> {
     ) -> Expr {
         let mut values = Vec::new();
         if let Some(r) = receiver {
-            values.push(self.expr(r, out));
+            let ty = if let Some(&func) = self.fn_by_name.get(&name.name) {
+                self.funcs[func as usize].param_types.first().cloned().flatten()
+            } else {
+                Builtin::from_name(&name.name)
+                    .filter(|b| b.probability_parameter(0))
+                    .map(|_| TypeSpec::Prob)
+            };
+            values.push(self.expr_expected(r, ty.as_ref(), out));
         }
         if let Some(&func) = self.fn_by_name.get(&name.name) {
             if let Some(&def) = self.fn_defs.get(&name.name) {
                 self.refer(name.span, def);
             }
-            let values = self.positional_args(values, args, out);
+            let types = self.funcs[func as usize].param_types.clone();
+            let values = self.positional_expected(values, args, &types, out);
             let caller = self.cur_func();
             self.funcs[caller as usize].calls.insert(func);
             let n_params = self.fn_param_count(func);
@@ -2502,7 +2705,10 @@ impl<'a> Lowerer<'a> {
                 self.error(span, format!("`{}` doesn't take named arguments", name.name));
             }
             let exprs: Vec<&ast::Expr> = args.iter().map(|a| &a.value).collect();
-            let values = self.operands_after(values, &exprs, out);
+            let types: Vec<_> = (0..values.len() + exprs.len())
+                .map(|i| b.probability_parameter(i).then_some(TypeSpec::Prob))
+                .collect();
+            let values = self.operands_expected(values, &exprs, &types, out);
             let named = Vec::new();
             self.check_arity(b, values.len(), span);
             return Expr {
@@ -2559,13 +2765,23 @@ impl<'a> Lowerer<'a> {
 
     /// Lower positional arguments in order, after already-lowered operands.
     fn positional_args(&mut self, before: Vec<Expr>, args: &[ast::Arg], out: &mut Vec<Stmt>) -> Vec<Expr> {
+        self.positional_expected(before, args, &[], out)
+    }
+
+    fn positional_expected(
+        &mut self,
+        before: Vec<Expr>,
+        args: &[ast::Arg],
+        types: &[Option<TypeSpec>],
+        out: &mut Vec<Stmt>,
+    ) -> Vec<Expr> {
         for arg in args {
             if let Some(n) = &arg.name {
                 self.error(n.span, "only built-in functions take named arguments");
             }
         }
         let exprs: Vec<&ast::Expr> = args.iter().map(|a| &a.value).collect();
-        self.operands_after(before, &exprs, out)
+        self.operands_expected(before, &exprs, types, out)
     }
 
     fn hoist_call(&mut self, callee: Callee, args: Vec<Expr>, span: Span, out: &mut Vec<Stmt>) -> Expr {

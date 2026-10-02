@@ -23,7 +23,7 @@ let bases = [Rectilinear, Diagonal]
 # a coin toss in the other one. Either way, that's what the photon holds now.
 fn measure(bit: int, written: Basis, measured: Basis) -> int {
   if measured == written { return bit }
-  return if 50% { 0 } else { 1 }
+  return chance { 50% => 0, else => 1 }
 }
 
 # One photon from Alice to Bob, which Eve measures with probability `listening`.
@@ -36,7 +36,8 @@ fn photon(listening: prob) -> Photon {
   var sent = bit                 # what the photon on the line holds,
   var basis = alice              # and in which basis
   var eve_right = false
-  if listening {
+  let intercepted ~ bernoulli(listening)
+  if intercepted {
     let eve ~ one_of(bases)
     sent = measure(bit, alice, eve)
     basis = eve
@@ -61,7 +62,8 @@ report simulate { kept(100%).eve_right } as "bits of the key Eve has right"
 # Eve can't learn the key without changing it: every photon she measures in
 # the wrong basis, half of them, reaches Bob as a coin toss. Measuring fewer
 # photons leaves fewer errors, and teaches her less.
-for share in [0%, 10%, 50%, 100%] {
+let shares: list[prob] = [0%, 10%, 50%, 100%]
+for share in shares {
   report simulate { kept(share).bob_wrong } by share as "errors in the key, by the share of photons Eve measures"
 }
 
@@ -79,7 +81,7 @@ for compared in [1, 5, 10, 20, 30] {
 for compared in [0, 5, 10, 20] {
   let listened = simulate {
     let eve ~ bernoulli(10%)
-    observe 0 from binomial(compared, if eve { error } else { 0% })
+    observe 0 from binomial(compared, prob(if eve { error } else { 0% }))
     eve
   }
   report listened by compared as "Eve was listening, by the bits that agreed"

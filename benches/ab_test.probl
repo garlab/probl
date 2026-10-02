@@ -15,10 +15,10 @@ let a_signups = [12, 9, 15, 11, 10, 13, 8, 12, 14, 10, 11, 9, 13, 12, 10,
 let b_signups = [14, 12, 16, 13, 11, 15, 12, 14, 13, 16, 12, 11, 15, 14, 13,
                  12, 15, 13, 14, 12, 16, 13, 12, 14, 15, 13, 12, 14, 13, 15]
 for k in a_signups {
-  observe k from binomial(visitors, a)
+  observe k from binomial(visitors, prob(a))
 }
 for k in b_signups {
-  observe k from binomial(visitors, b)
+  observe k from binomial(visitors, prob(b))
 }
 report b > a as "B converts better"
 report (b - a) / a * 100 as "B's lift over A (%)"

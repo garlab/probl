@@ -4,7 +4,7 @@ expression: ir(&src)
 ---
 fn#0 the top level ()
   shared_loss_0 = simulate fn#1 []    [live: shared_loss_0]
-  site_risk_1 = (+ 2% (* 98% 1%))    [live: shared_loss_0 site_risk_1]
+  site_risk_1 = prob((+ 0.02 (* 0.98 0.01)))    [live: shared_loss_0 site_risk_1]
   independent_loss_2 = (* 100 binomial(3, site_risk_1))    [live: shared_loss_0 independent_loss_2]
   report mean(shared_loss_0) as "mean loss with common hazard"    [live: shared_loss_0 independent_loss_2]
   report mean(independent_loss_2) as "mean loss assuming independence"    [live: shared_loss_0 independent_loss_2]

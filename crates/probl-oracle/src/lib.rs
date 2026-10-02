@@ -765,12 +765,7 @@ impl<'a> Interp<'a> {
             ExprKind::Float(f) => one(w, Value::Float(self.number(e, *f))),
             ExprKind::Percent(f) => {
                 let x = self.number(e, *f * 100.0) / int(100);
-                let v = if !x.is_negative() && x <= Q::one() {
-                    Value::Prob(x)
-                } else {
-                    Value::Float(x)
-                };
-                one(w, v)
+                one(w, Value::Float(x))
             }
             ExprKind::Bool(b) => one(w, Value::Bool(*b)),
             ExprKind::Dice { count, sides } => one(w, dice(*count, *sides)?),
@@ -896,7 +891,11 @@ impl<'a> Interp<'a> {
         let has_else = arms.iter().any(|a| a.weight.is_none());
         let outs = self.list(&weights, w)?;
         self.each_list(outs, |me, w, vs| {
-            let ps = vs.iter().map(|v| condition(v).map(|c| c.0)).collect::<R<Vec<Q>>>()?;
+            let ps = vs
+                .iter()
+                .zip(&weights)
+                .map(|(v, e)| to_prob(&contextual_prob(e, v)?))
+                .collect::<R<Vec<Q>>>()?;
             let sum = ps.iter().fold(Q::zero(), |acc, p| acc + p);
             if sum > Q::one() {
                 return err("the chances add up to more than 100%");
@@ -1054,7 +1053,12 @@ impl<'a> Interp<'a> {
         let outs = self.list(&exprs, w)?;
         match self.fns.get(name.as_str()).copied() {
             Some(decl) => self.each_list(outs, |me, w, vs| me.call_fn(decl, vs, w)),
-            None => self.each_list(outs, |_, w, vs| Ok(vec![(w, Ok(builtin(name, &vs)?))])),
+            None => self.each_list(outs, |_, w, mut vs| {
+                if name == "bernoulli" && vs.len() == 1 {
+                    vs[0] = contextual_prob(&args[0].value, &vs[0])?;
+                }
+                Ok(vec![(w, Ok(builtin(name, &vs)?))])
+            }),
         }
     }
 
@@ -1243,7 +1247,7 @@ fn map_bools(d: &Rc<Vec<(Value, Q)>>, f: impl Fn(bool) -> bool) -> R<Value> {
 }
 
 /// The probabilities that a condition holds and that it doesn't (section 3).
-fn condition(v: &Value) -> R<(Q, Q)> {
+fn probability(v: &Value) -> R<(Q, Q)> {
     match v {
         Value::Bool(true) => Ok((Q::one(), Q::zero())),
         Value::Bool(false) => Ok((Q::zero(), Q::one())),
@@ -1261,12 +1265,49 @@ fn condition(v: &Value) -> R<(Q, Q)> {
     }
 }
 
+fn condition(v: &Value) -> R<(Q, Q)> {
+    match v {
+        Value::Bool(true) => Ok((Q::one(), Q::zero())),
+        Value::Bool(false) => Ok((Q::zero(), Q::one())),
+        _ => err("a condition needs a bool"),
+    }
+}
+
 fn to_prob(v: &Value) -> R<Q> {
     match v {
         Value::Prob(p) => Ok(p.clone()),
-        Value::Float(p) if !p.is_negative() && *p <= Q::one() => Ok(p.clone()),
-        _ => err("expected a probability"),
+        _ => err("expected a prob; use prob(x)"),
     }
+}
+
+fn make_prob(v: &Value) -> R<Value> {
+    let p = match v {
+        Value::Bool(b) => {
+            if *b {
+                Q::one()
+            } else {
+                Q::zero()
+            }
+        }
+        Value::Int(i) => int(*i),
+        Value::Float(p) | Value::Prob(p) => p.clone(),
+        _ => return err("prob needs a number or bool"),
+    };
+    if p.is_negative() || p > Q::one() {
+        return err("prob must be between 0 and 1");
+    }
+    Ok(Value::Prob(p))
+}
+
+fn contextual_prob(e: &Expr, v: &Value) -> R<Value> {
+    let literal = match &e.kind {
+        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Percent(_) => true,
+        ExprKind::Unary { op: UnOp::Neg, expr } => {
+            matches!(expr.kind, ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Percent(_))
+        }
+        _ => false,
+    };
+    if literal { make_prob(v) } else { Ok(v.clone()) }
 }
 
 /// P(D = v), for `observe v from D`.
@@ -1477,6 +1518,7 @@ fn index_plain(coll: &Value, i: &Value) -> R<Value> {
 
 fn builtin(name: &str, args: &[Value]) -> R<Value> {
     match (name, args) {
+        ("prob", [x]) => make_prob(x),
         ("bernoulli", [p]) => lift1(p, |x| {
             let p = to_prob(x)?;
             dist(vec![(Value::Bool(true), p.clone()), (Value::Bool(false), Q::one() - p)])
@@ -1488,8 +1530,8 @@ fn builtin(name: &str, args: &[Value]) -> R<Value> {
         }),
         ("P", [x]) => match x {
             Value::Bool(b) => Ok(Value::Prob(if *b { Q::one() } else { Q::zero() })),
-            Value::Prob(_) | Value::Float(_) => to_prob(x).map(Value::Prob),
-            Value::Dist(_) => condition(x).map(|(yes, _)| Value::Prob(yes)),
+            Value::Prob(_) => Ok(x.clone()),
+            Value::Dist(_) => probability(x).map(|(yes, _)| Value::Prob(yes)),
             _ => err("P needs a condition"),
         },
         ("min" | "max", args) if args.len() >= 2 => lift_n(args, |vs| {
@@ -1591,7 +1633,7 @@ mod tests {
     #[test]
     fn the_audit_posterior() {
         let p = only(
-            "var win = false\nif 0.5% { repeat 1 { win = true } }\nobserve if win { true } else { 0.00001 }\nreport win",
+            "var win = false\nif (chance { 0.5% => true, else => false }) { repeat 1 { win = true } }\nobserve true from bernoulli(prob(if win { true } else { 0.00001 }))\nreport win",
         );
         assert_eq!(
             p["true"],
@@ -1602,7 +1644,7 @@ mod tests {
     #[test]
     fn shared_rates_are_kept() {
         let p = only(
-            "let p ~ simulate { if 50% { 10% } else { 90% } }\nlet a ~ bernoulli(p)\nlet b ~ bernoulli(p)\nreport a and b",
+            "let p ~ simulate { if (chance { 50% => true, else => false }) { 10% } else { 90% } }\nlet a ~ bernoulli(prob(p))\nlet b ~ bernoulli(prob(p))\nreport a and b",
         );
         assert_eq!(p["true"], frac(41, 100));
     }
@@ -1619,7 +1661,7 @@ mod tests {
 
     #[test]
     fn evidence_and_simulate() {
-        let m = measure("let s ~ bernoulli(1%)\nobserve if s { 95% } else { 8% }\nreport s");
+        let m = measure("let s ~ bernoulli(1%)\nobserve true from bernoulli(prob(if s { 95% } else { 8% }))\nreport s");
         assert!(m.observed);
         assert_eq!(m.total, frac(1, 100) * frac(95, 100) + frac(99, 100) * frac(8, 100));
         let m = measure("let d = simulate { let s ~ d6\nobserve s > 4\ns }\nreport d");
@@ -1633,7 +1675,8 @@ mod tests {
 
     #[test]
     fn loops_breaks_and_calls() {
-        let p = only("var n = 0\nwhile n < 3 { n += 1\nif 50% { break } }\nreport n");
+        let p =
+            only("var n = 0\nwhile n < 3 { n += 1\nif (chance { 50% => true, else => false }) { break } }\nreport n");
         assert_eq!(p["1"], frac(1, 2));
         assert_eq!(p["3"], frac(1, 4));
         let p = only("fn f(a) { if a > 2 { return a }\n0 }\nlet x ~ d4\nreport f(x)");
@@ -1644,7 +1687,9 @@ mod tests {
 
     #[test]
     fn match_guards_are_conditions() {
-        let p = only("let x ~ d2\nreport match x { 1 if 50% => \"a\", 1 => \"b\", _ => \"c\" }");
+        let p = only(
+            "let x ~ d2\nreport match x { 1 if (chance { 50% => true, else => false }) => \"a\", 1 => \"b\", _ => \"c\" }",
+        );
         assert_eq!(p["\"a\""], frac(1, 4));
         assert_eq!(p["\"b\""], frac(1, 4));
         assert_eq!(p["\"c\""], frac(1, 2));

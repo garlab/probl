@@ -25,7 +25,9 @@ fn chance_of(src: &str, value: Value) -> f64 {
 #[test]
 fn a_call_that_may_call_itself_again_returns() {
     // The audit's example: it returns 1, with certainty.
-    let out = outcome("fn f() -> int {\n  if 50% { return 1 }\n  return f()\n}\nreport f()");
+    let out = outcome(
+        "fn f() -> int {\n  if (chance { 50% => true, else => false }) { return 1 }\n  return f()\n}\nreport f()",
+    );
     assert_eq!(out.reports[0].distribution(), [(Value::Int(1.into()), 1.0)]);
     assert!(out.unresolved.to_f64() <= 1e-12);
     assert_eq!(out.stats.solved_calls, 1);
@@ -58,11 +60,11 @@ fn calls_that_come_back_through_others() {
     // with 50%, or else what even() says: E = 1/2 + E/4, so 2/3.
     let out = outcome(
         "fn even() -> bool {
-  if 50% { return true }
+  if (chance { 50% => true, else => false }) { return true }
   return odd()
 }
 fn odd() -> bool {
-  if 50% { return false }
+  if (chance { 50% => true, else => false }) { return false }
   return even()
 }
 report even()",
@@ -76,7 +78,7 @@ fn a_recursive_tennis_game_matches_the_loop() {
   if s >= 4 and s - r >= 2 { return true }
   if r >= 4 and r - s >= 2 { return false }
   if s == r and s > 3 { return game(3, 3) }
-  if 64% { return game(s + 1, r) }
+  if (chance { 64% => true, else => false }) { return game(s + 1, r) }
   return game(s, r + 1)
 }
 report game(0, 0)";
@@ -96,8 +98,8 @@ fn observations_inside_count_in_every_round() {
     // Each round halves the weight, and returns with 50%: Σ (1/4)ⁿ = 1/3.
     let out = outcome(
         "fn f() -> int {
-  observe 50%
-  if 50% { return 1 }
+  observe true from bernoulli(50%)
+  if (chance { 50% => true, else => false }) { return 1 }
   return f()
 }
 report f()",
@@ -111,9 +113,9 @@ fn loops_inside_and_around_recursion() {
         "fn f(n: int) -> int {
   var x = 0
   while x < 3 {
-    x = if 50% { 0 } else { x + 1 }
+    x = if (chance { 50% => true, else => false }) { 0 } else { x + 1 }
   }
-  if 50% { return n }
+  if (chance { 50% => true, else => false }) { return n }
   return f(n)
 }
 var total = 0
@@ -137,7 +139,7 @@ fn a_call_that_never_returns_is_an_error() {
     // Only part of the weight: `h()` never returns.
     let e = error(
         "fn g() -> int {
-  if 50% { return 1 }
+  if (chance { 50% => true, else => false }) { return 1 }
   return h()
 }
 fn h() -> int { return h() }
@@ -148,7 +150,9 @@ report g()",
 
 #[test]
 fn a_call_that_comes_back_and_prints_is_an_error() {
-    let e = error("fn f() -> int {\n  print(1)\n  if 50% { return 1 }\n  return f()\n}\nreport f()");
+    let e = error(
+        "fn f() -> int {\n  print(1)\n  if (chance { 50% => true, else => false }) { return 1 }\n  return f()\n}\nreport f()",
+    );
     assert!(e.contains("`f()` comes back to itself, and prints"), "{e}");
 }
 
@@ -156,7 +160,7 @@ fn a_call_that_comes_back_and_prints_is_an_error() {
 fn simulate_coming_back_to_a_running_call_is_not_supported() {
     let e = error(
         "fn f() -> int {
-  if 50% { return 1 }
+  if (chance { 50% => true, else => false }) { return 1 }
   let d = simulate { f() }
   return 2
 }
@@ -191,16 +195,22 @@ report explode()";
 /// counter in the loop, so there are infinitely many possible results.
 fn recursion_and_loop(rng: &mut probl_engine::continuous::Rng) -> (String, String) {
     let mut pick = |n: usize| (rng.uniform() * n as f64) as usize;
-    let stop = format!("{}%", 5 + pick(40));
+    let stop = format!("(chance {{ {}% => true, else => false }})", 5 + pick(40));
     let mut steps = Vec::new();
     for _ in 0..1 + pick(5) {
         let (v, k, m, p) = (["x", "y"][pick(2)], 1 + pick(3), 2 + pick(3), 10 + pick(80));
         steps.push(match pick(5) {
             0 => format!("{v} = ({v} + {k}) mod {m}"),
-            1 => format!("{v} = if {p}% {{ ({v} + {k}) mod {m} }} else {{ {v} }}"),
-            2 => format!("if x == y {{ observe {p}% }}"),
+            1 => {
+                format!("{v} = if (chance {{ {p}% => true, else => false }}) {{ ({v} + {k}) mod {m} }} else {{ {v} }}")
+            }
+            2 => format!("if x == y {{ observe true from bernoulli({p}%) }}"),
             3 => format!("{v} = chance {{ {p}% => 0, else => {} }}", pick(3)),
-            _ => format!("if {v} == {} and bernoulli({p}%) {{ {v} = {} }}", pick(3), pick(3)),
+            _ => format!(
+                "if {v} == {} and ({{ let event ~ bernoulli({p}%); event }}) {{ {v} = {} }}",
+                pick(3),
+                pick(3)
+            ),
         });
     }
     let (x0, y0) = (pick(3), pick(3));
