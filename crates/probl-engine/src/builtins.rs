@@ -423,6 +423,8 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         | B::Sd
         | B::Variance
         | B::Median
+        | B::MedianLow
+        | B::MedianHigh
         | B::Quantile
         | B::Support
         | B::Cdf
@@ -442,9 +444,16 @@ pub fn check_query_input(b: Builtin, args: &[Value]) -> OpResult<()> {
     let expected = match b {
         B::P => "a boolean distribution (dist[bool])",
         B::Pdf => "a continuous distribution",
-        B::Mean | B::Variance | B::Sd | B::Median | B::Quantile | B::Cdf | B::Pmf | B::Support => {
-            "a distribution or a nonempty list"
-        }
+        B::Mean
+        | B::Variance
+        | B::Sd
+        | B::Median
+        | B::MedianLow
+        | B::MedianHigh
+        | B::Quantile
+        | B::Cdf
+        | B::Pmf
+        | B::Support => "a distribution or a nonempty list",
         _ => return Ok(()),
     };
     let v = &args[0];
@@ -479,9 +488,27 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
     let v = &args[0];
     if matches!(
         b,
-        B::Mean | B::Variance | B::Sd | B::Median | B::Quantile | B::Cdf | B::Pdf | B::Pmf | B::Support
+        B::Mean
+            | B::Variance
+            | B::Sd
+            | B::Median
+            | B::MedianLow
+            | B::MedianHigh
+            | B::Quantile
+            | B::Cdf
+            | B::Pdf
+            | B::Pmf
+            | B::Support
     ) && continuous_parts(v)
     {
+        if matches!(b, B::Median | B::MedianLow | B::MedianHigh) {
+            let n = match v {
+                Value::Dist(d) => d.outcomes.len(),
+                _ => 1,
+            };
+            // Median bounds sort component supports before any CDF inversion.
+            budget.work((n as u64).saturating_mul(n.max(1).ilog2() as u64 + 1))?;
+        }
         return continuous_query(b, args);
     }
     match b {
@@ -490,6 +517,9 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
             .help("for a distribution whose outcomes can be listed, use `pmf`")),
         B::Mean => {
             let d = stat_dist(v, b.name(), budget)?;
+            if d.outcomes.iter().any(|(x, _)| matches!(x, Value::Date(_))) {
+                return date_mean(v, &d);
+            }
             if d.outcomes.iter().any(|(x, _)| matches!(x, Value::Complex(_))) {
                 budget.work(d.outcomes.len() as u64)?;
                 let mut sum = Complex::new(0.0, 0.0)?;
@@ -508,7 +538,7 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
             numeric_dist(v, "variance", budget).and_then(|d| finite_float(d.variance().unwrap(), "variance"))
         }
         B::Sd => numeric_dist(v, "sd", budget).and_then(|d| finite_float(d.variance().unwrap().sqrt(), "sd")),
-        B::Median => quantile(v, 0.5, "median", budget),
+        B::Median | B::MedianLow | B::MedianHigh => median(v, b, budget),
         B::Quantile => {
             let q = to_prob(&args[1])?;
             quantile(v, q, "quantile", budget)
@@ -651,7 +681,17 @@ fn continuous_query(b: Builtin, args: &[Value]) -> OpResult<Value> {
         B::Mean => Ok(Value::Float(m.mean())),
         B::Variance => Ok(Value::Float(m.variance())),
         B::Sd => Ok(Value::Float(m.variance().sqrt())),
-        B::Median => Ok(Value::Float(m.quantile(0.5))),
+        B::Median | B::MedianLow | B::MedianHigh => {
+            let (lo, hi) = m.median_bounds();
+            finite_float(
+                match b {
+                    B::MedianLow => lo,
+                    B::MedianHigh => hi,
+                    _ => crate::stats::midpoint(lo, hi),
+                },
+                b.name(),
+            )
+        }
         B::Quantile => Ok(Value::Float(m.quantile(to_prob(&args[1])?))),
         B::Cdf => Ok(Value::Prob(m.cdf(number(&args[1], "cdf")?))),
         B::Pmf => {
@@ -811,22 +851,70 @@ fn quantile(v: &Value, q: f64, what: &str, budget: &mut Budget) -> OpResult<Valu
         // rejecting complex data, including inside collections.
         check(value, budget)?;
     }
-    let lower = d
-        .quantile(q)
-        .ok_or_else(|| OpError::new(format!("`{what}` needs at least one resolved outcome")))?;
-    // Lists use the conventional numeric sample median. Distribution medians
-    // and explicit quantiles retain the lower-quantile convention.
-    if let Value::List(xs) = v {
-        if what == "median" && xs.len() % 2 == 0 && matches!(lower, Value::Int(_) | Value::Float(_) | Value::Prob(_)) {
-            let upper = d.quantile(0.5 + 1.0 / xs.len() as f64).unwrap();
-            return midpoint(&lower, &upper, budget);
+    d.quantile(q)
+        .ok_or_else(|| OpError::new(format!("`{what}` needs at least one resolved outcome")))
+}
+
+fn median(v: &Value, b: Builtin, budget: &mut Budget) -> OpResult<Value> {
+    let d = stat_dist(v, b.name(), budget)?;
+    for (x, _) in &d.outcomes {
+        budget.work(1)?;
+        // Validate even singletons. Being sortable internally does not give a
+        // record, complex number or recipe a mathematical ordering.
+        statistical_compare(x, x)?;
+        if b == Builtin::Median && !matches!(x, Value::Int(_) | Value::Float(_) | Value::Prob(_) | Value::Date(_)) {
+            return Err(OpError::new(format!(
+                "`median` needs real numeric or date elements, found {}",
+                article(&x.kind())
+            ))
+            .help("use `median_low` or `median_high` for ordered values such as strings"));
         }
+        statistical_compare(&d.outcomes[0].0, x)?;
     }
-    Ok(lower)
+    let (lo, hi) = crate::stats::median_bounds(&d.outcomes)
+        .ok_or_else(|| OpError::new(format!("`{}` needs at least one resolved outcome", b.name())))?;
+    match b {
+        Builtin::MedianLow => Ok(lo.clone()),
+        Builtin::MedianHigh => Ok(hi.clone()),
+        _ if lo == hi => Ok(lo.clone()),
+        _ => midpoint(lo, hi, budget),
+    }
+}
+
+fn date_mean(v: &Value, d: &Dist) -> OpResult<Value> {
+    // Lists permit exact integer arithmetic, so rounding cannot depend on
+    // repeated values, list order, or a date's distance from the epoch.
+    if let Value::List(xs) = v {
+        let total = xs
+            .iter()
+            .try_fold(0i128, |sum, x| Ok::<_, OpError>(sum + date_value(x, "mean")? as i128))?;
+        let n = xs.len() as i128;
+        let day = total.div_euclid(n) + i128::from(2 * total.rem_euclid(n) > n);
+        return Ok(Value::Date(day as i32));
+    }
+    let origin = date_value(&d.outcomes[0].0, "mean")?;
+    let mut offsets = crate::stats::Sum::default();
+    let mut weights = crate::stats::Sum::default();
+    for (x, w) in &d.outcomes {
+        offsets.add((date_value(x, "mean")? - origin) as f64 * w);
+        weights.add(*w);
+    }
+    let days = offsets.value() / weights.value();
+    let floor = days.floor();
+    let tie_error = 4.0 * f64::EPSILON * days.abs().max(1.0);
+    let rounded = floor + f64::from(days - floor > 0.5 + tie_error);
+    date_result(
+        i32::try_from(origin as i64 + rounded as i64)
+            .ok()
+            .filter(|d| dates::valid(*d)),
+    )
 }
 
 /// Preserve exact integral midpoints, including bigints beyond float range.
-fn midpoint(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
+pub(crate) fn midpoint(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
+    if let (Value::Date(a), Value::Date(b)) = (a, b) {
+        return Ok(Value::Date(((*a as i64 + *b as i64).div_euclid(2)) as i32));
+    }
     if let (Value::Int(a), Value::Int(b)) = (a, b) {
         budget.integer_work(a, b, false)?;
         let sum = a.add(b)?;
@@ -845,14 +933,7 @@ fn midpoint(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
     let (a, b) = (number(a, "median")?, number(b, "median")?);
     // Same-sign subtraction and opposite-sign addition avoid overflow; this
     // also preserves equal subnormal values instead of halving both to zero.
-    finite_float(
-        if a.is_sign_negative() == b.is_sign_negative() {
-            a + (b - a) / 2.0
-        } else {
-            (a + b) / 2.0
-        },
-        "median",
-    )
+    finite_float(crate::stats::midpoint(a, b), "median")
 }
 
 fn iter_items(v: &Value, budget: &mut Budget) -> OpResult<Value> {

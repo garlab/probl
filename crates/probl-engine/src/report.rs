@@ -649,7 +649,8 @@ fn value_text(acc: &Acc, format: Format) -> String {
     } else if let Some(stats) = numeric_stats(&dist, mean_se) {
         stats
     } else if dist.iter().all(|(v, _)| matches!(v, Value::Date(_))) {
-        let [a, b, c] = [0.05, 0.5, 0.95].map(|q| display(&quantile(&dist, q)));
+        let [a, b, c] = [0.05, 0.5, 0.95]
+            .map(|q| summary_quantile(&dist, q).map_or_else(|| "out of range".into(), |v| display(&v)));
         format!("5% {a} · median {b} · 95% {c}")
     } else if acc.sampled() {
         categorical_sampled(acc, &dist)
@@ -832,7 +833,7 @@ fn analytic_stats(m: &crate::continuous::Mixture) -> String {
     let mean = m.mean();
     let sd = m.variance().sqrt();
     let decimals = if mean.abs().max(sd) < 100.0 { 2 } else { 0 };
-    let [a, b, c] = [0.05, 0.5, 0.95].map(|q| fixed(m.quantile(q), decimals));
+    let [a, b, c] = [0.05, 0.5, 0.95].map(|q| fixed(if q == 0.5 { m.median() } else { m.quantile(q) }, decimals));
     format!(
         "mean {} · sd {} · 5% {a} · median {b} · 95% {c}",
         fixed(mean, decimals),
@@ -877,7 +878,9 @@ fn numeric_stats(dist: &[(Value, f64)], mean_se: Option<f64>) -> Option<String> 
         show(mean, decimals)
     };
     let [a, b, c] = [0.05, 0.5, 0.95].map(|q| {
-        let v = quantile(dist, q);
+        let Some(v) = summary_quantile(dist, q) else {
+            return "out of range".to_string();
+        };
         if percent {
             show(v.as_f64().unwrap(), 2)
         } else {
@@ -930,6 +933,20 @@ fn sparkline(dist: &[(Value, f64)]) -> Option<String> {
     Some(format!("{lo} {bars} {hi}"))
 }
 
+// Rendering uses the same midpoint rule as median(). Other percentile
+// columns still select outcomes. An unrepresentable fractional bigint
+// midpoint is labelled rather than silently replaced with the lower bound.
+fn summary_quantile(dist: &[(Value, f64)], q: f64) -> Option<Value> {
+    if q != 0.5 {
+        return Some(quantile(dist, q));
+    }
+    let (lo, hi) = crate::stats::median_bounds(dist)?;
+    if lo == hi {
+        return Some(lo.clone());
+    }
+    crate::builtins::midpoint(lo, hi, &mut crate::dist::Budget::unlimited()).ok()
+}
+
 fn quantile(dist: &[(Value, f64)], q: f64) -> Value {
     let total: f64 = dist.iter().map(|(_, p)| p).sum();
     let mut acc = 0.0;
@@ -974,7 +991,10 @@ fn table(key_label: &str, sink: &Sink, format: Format, kind: ReportKind) -> Stri
                         0
                     };
                     let mut row = vec![key.clone()];
-                    row.extend([0.05, 0.25, 0.5, 0.75, 0.95].map(|q| fixed(m.quantile(q), decimals)));
+                    row.extend(
+                        [0.05, 0.25, 0.5, 0.75, 0.95]
+                            .map(|q| fixed(if q == 0.5 { m.median() } else { m.quantile(q) }, decimals)),
+                    );
                     rows.push(row);
                     continue;
                 }
@@ -984,7 +1004,11 @@ fn table(key_label: &str, sink: &Sink, format: Format, kind: ReportKind) -> Stri
                     .fold(0.0f64, |m, x| m.max(x.abs()));
                 let decimals = if scale < 100.0 { 2 } else { 0 };
                 let mut row = vec![key.clone()];
-                row.extend([0.05, 0.25, 0.5, 0.75, 0.95].map(|q| number(&quantile(d, q), decimals)));
+                row.extend(
+                    [0.05, 0.25, 0.5, 0.75, 0.95].map(|q| {
+                        summary_quantile(d, q).map_or_else(|| "out of range".into(), |v| number(&v, decimals))
+                    }),
+                );
                 rows.push(row);
             }
         } else {

@@ -46,4 +46,4 @@ report max(quantities.map(q -> profit(q, demand))) - actual as "regret after dem
 # value of perfect information    40.0
 # profit from chosen order        mean 120 · sd 69 · 5% 0 · median 160 · 95% 160
 # gain over ordering 20           mean 40.00 · sd 69.28 · 5% -80 · median 80 · 95% 80
-# regret after demand             mean 40.00 · sd 40.00 · 5% 0 · median 0 · 95% 80
+# regret after demand             mean 40.00 · sd 40.00 · 5% 0 · median 40 · 95% 80

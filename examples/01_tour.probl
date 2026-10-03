@@ -63,7 +63,7 @@ report diagnosis as "sick, given a positive test"
 # 2d6 rolls 10+                       16.67%
 # a +5 attack hits armour class 15    55.00%
 # die + die                           mean 7.00 · sd 2.42 · 5% 3 · median 7 · 95% 11 · 2 ▂▃▄▆▇█▇▆▄▃▂ 12
-# r + r                               mean 7.00 · sd 3.42 · 5% 2 · median 6 · 95% 12 · 2 █ █ █ █ █ █ 12
+# r + r                               mean 7.00 · sd 3.42 · 5% 2 · median 7 · 95% 12 · 2 █ █ █ █ █ █ 12
 # rain and late                       6.00%
 # rain or late                        44.00%
 # rain and rain                       30.00%

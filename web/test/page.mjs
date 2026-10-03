@@ -635,13 +635,15 @@ try {
   expect(found.distinct === found.all, 'the reference has each entry once', `${found.distinct} of ${found.all}`);
 
   const statisticsReference = await editor.evaluate(() => {
-    const names = ['P', 'mean', 'median', 'quantile', 'variance', 'sd', 'cdf', 'pmf', 'support'];
+    const names = ['P', 'mean', 'median', 'median_low', 'median_high', 'quantile', 'variance', 'sd', 'cdf', 'pmf', 'support'];
     return Object.fromEntries(names.map((name) => [name,
       document.querySelector(`#entries .entry[data-names="${name}"]`)?.textContent ?? '',
     ]));
   });
   expect(Object.values(statisticsReference).every(Boolean)
-    && statisticsReference.median.includes('Even numeric lists average their middle pair')
+    && statisticsReference.median.includes('midpoint of the lower and upper medians')
+    && statisticsReference.median_low.includes('lower middle element')
+    && statisticsReference.median_high.includes('upper middle element')
     && statisticsReference.P.includes('dist[bool]'),
     'the reference includes statistics and their current input rules', JSON.stringify(statisticsReference));
 

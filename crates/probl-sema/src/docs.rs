@@ -132,6 +132,8 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Sd
         | B::Variance
         | B::Median
+        | B::MedianLow
+        | B::MedianHigh
         | B::Quantile
         | B::Support
         | B::Cdf
@@ -577,8 +579,8 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "The probability of true in a boolean distribution: `P(d6 > 4)`. Rejects scalar bools, probabilities and numbers. Use `report event` to measure a fact across worlds, or `prob(event)` to convert a bool to 0 or 1.",
         ),
         B::Mean => doc(
-            "mean(d) -> float or complex",
-            "The arithmetic mean of a nonempty numeric list or the weighted mean of a distribution. Complex elements give a complex mean; strings and dates cannot be averaged. Rejects scalars and never aggregates across worlds; use `report x` or put the model inside `simulate { ... }`.",
+            "mean(d) -> float, complex or date",
+            "The arithmetic mean of a nonempty numeric list or the weighted mean of a distribution. Complex elements give a complex mean. Dates average calendar-day positions and round to the nearest day, with ties choosing the earlier day. Strings cannot be averaged. Rejects scalars and never aggregates across worlds; use `report x` or put the model inside `simulate { ... }`.",
         ),
         B::Sd => doc(
             "sd(d) -> float",
@@ -590,7 +592,15 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         B::Median => doc(
             "median(d)",
-            "The middle element of a nonempty ordered list. Even numeric lists average their middle pair; strings and dates select the lower item. Exact integral midpoints remain ints; fractional or float midpoints return floats. For distributions, this is `quantile(d, 50%)`. Complex elements and scalar inputs are errors.",
+            "The midpoint of the lower and upper medians of a nonempty numeric or date list, or a distribution. Distribution weights count: the bounds differ only when half the mass lies on each side of a gap. Integral int midpoints stay exact; fractional midpoints are floats. Dates round to the nearest day, ties earlier. Strings, bools and enums require `median_low` or `median_high`; complex elements and scalars are errors.",
+        ),
+        B::MedianLow => doc(
+            "median_low(d)",
+            "The lower median of a nonempty ordered list or distribution. Selects the lower middle element of an even list, or the lower endpoint of a distribution's median interval. Supports strings, dates, bools and enums; rejects complex elements and scalars.",
+        ),
+        B::MedianHigh => doc(
+            "median_high(d)",
+            "The upper median of a nonempty ordered list or distribution. Selects the upper middle element of an even list, or the upper endpoint of a distribution's median interval. Supports strings, dates, bools and enums; rejects complex elements and scalars.",
         ),
         B::Quantile => doc(
             "quantile(d, q: prob)",

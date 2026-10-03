@@ -889,6 +889,51 @@ impl Mixture {
         below / self.total()
     }
 
+    /// Distinguish an actual gap in the support at half the mass from a CDF
+    /// that merely rounds to 0.5. This also handles disconnected analytic
+    /// domains in report summaries without perturbing the requested quantile.
+    pub fn median_bounds(&self) -> (f64, f64) {
+        let mut intervals = Vec::new();
+        for (part, weight) in &self.parts {
+            if *weight <= 0.0 {
+                continue;
+            }
+            match part {
+                Part::Point(x) => intervals.push((*x, *x, *weight)),
+                Part::Continuous(f) => {
+                    let (lo, hi) = f.support();
+                    intervals.push((lo, hi, *weight));
+                }
+                Part::Analytic(a) => {
+                    let total = a.domain.mass();
+                    for &(lo, hi) in &a.domain.0 {
+                        let x = a.scale * a.family.quantile(lo) + a.offset;
+                        let y = a.scale * a.family.quantile(hi) + a.offset;
+                        intervals.push((x.min(y), x.max(y), weight * (hi - lo) / total));
+                    }
+                }
+            }
+        }
+        intervals.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let total = crate::stats::sum(intervals.iter().map(|x| x.2));
+        let mut acc = crate::stats::Sum::default();
+        let mut end = f64::NEG_INFINITY;
+        for (lo, hi, weight) in intervals {
+            if lo > end && acc.value() > 0.0 && crate::stats::half_split(acc.value(), total) {
+                return (end, lo);
+            }
+            end = end.max(hi);
+            acc.add(weight);
+        }
+        let x = self.quantile(0.5);
+        (x, x)
+    }
+
+    pub fn median(&self) -> f64 {
+        let (lo, hi) = self.median_bounds();
+        crate::stats::midpoint(lo, hi)
+    }
+
     pub fn quantile(&self, q: f64) -> f64 {
         let ends = |q: f64| {
             self.parts.iter().map(move |(part, _)| match part {

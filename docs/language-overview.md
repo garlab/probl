@@ -455,13 +455,22 @@ report a and b                                        # 41%: ½ × 0.1² + ½ ×
 Statistical queries take an explicit population: a distribution or a nonempty list. `mean(1d8 + 3)` is 7.5; `mean([1, 1, 4])` is 2. Lists weight every element equally, including repetitions. `variance` and `sd` use the population definition (divide by the list length, not length minus one). These queries never look across worlds.
 
 ```probl
-report median(["aa", "cc", "bb"])        # "bb"
+report median_low(["aa", "cc", "bb"])    # "bb"
 report median([1, 2, 3, 4])                # 2.5
+report median(one_of([1, 4]))              # 2.5, just like median([1, 4])
+report median_low([1, 4])                  # 1
+report median_high([1, 4])                 # 4
 report quantile([1, 2, 3, 4], 50%)         # 2
 report mean([complex(1, 2), complex(3, 4)]) # complex(2, 3)
 ```
 
-`median` and `quantile` accept ordered elements, including strings, dates and exact bigints; complex numbers have no ordering. For an even-length list, `median` averages the two middle numbers, but selects the lower middle string or date. An integral midpoint of two ints stays an exact int; fractional and floating-point midpoints return floats, and must fit the finite float range. `quantile` always selects an element without interpolation; distribution medians remain `quantile(d, 50%)`. `mean` requires numbers (real or complex); dates and strings cannot be averaged. `cdf`, `pmf` and `support` also accept lists; `pdf` requires a continuous distribution. Empty lists are errors, and list elements that are distributions must be drawn first or explicitly combined with `one_of`.
+`median` accepts real numbers or dates, and averages the lower and upper medians when they differ. Lists and distributions follow the same rule: weights count, so a distribution's bounds differ only when exactly half its resolved probability lies on either side of a gap. An integral midpoint of two ints stays an exact int; fractional and floating-point midpoints return floats and must fit the finite float range.
+
+`median_low` and `median_high` select the lower or upper middle element of an even-length list, or the endpoints of a distribution's median interval. They accept strings, dates, bools (`false` before `true`) and enums as well as numbers. `median` rejects strings, bools and enums even for singleton or odd-length populations: use the explicit low/high functions. Complex numbers have no ordering, so all three medians reject them. `quantile` keeps its existing lower-quantile rule and never interpolates finite outcomes; `quantile([1, 4], 50%)` is 1.
+
+`mean` accepts numeric lists (real or complex) and date lists, or distributions of those values. Date means average calendar-day positions; date midpoint medians average their two endpoints. Both round to the nearest calendar day, with exact half-day ties choosing the earlier day, independently of the 1970 epoch. For example, October 1 and October 9 give October 5, while October 1 and October 2 give October 1. `median_low` and `median_high` always preserve the selected date. Strings cannot be averaged.
+
+`cdf`, `pmf` and `support` also accept lists; `pdf` requires a continuous distribution. Empty lists are errors, and list elements that are distributions must be drawn first or explicitly combined with `one_of`.
 
 Scalars are errors: `mean(pi)`, `median(pi)` and `mean(x)` after a draw do not silently become singleton distributions. Use a report to summarize values across worlds, or put the model inside `simulate` to obtain a distribution:
 
@@ -776,7 +785,7 @@ From loosest to tightest binding:
 |---|---|
 | Distributions | `bernoulli` `one_of` `binomial` `poisson` `geometric` `normal` `lognormal` `normal_range` `uniform` `beta` `gamma` `exponential` `triangular` `pert` `mixture`\* `roll` `bag` |
 | Distribution helpers | `take` `truncate(d, lo, hi)`\* `bins(d, n)`\* |
-| Queries | `P` `mean` `sd` `variance` `median` `quantile` `support` `cdf` `pmf` `pdf` |
+| Queries | `P` `mean` `sd` `variance` `median` `median_low` `median_high` `quantile` `support` `cdf` `pmf` `pdf` |
 | Probability | `odds(p)` `logit(p)` `inv_logit(x)` |
 | Math | `abs` `min` `max` `clamp` `floor` `ceil` `trunc` `round(x, digits?)` `sqrt` `cbrt` `hypot(x, y)` `exp` `exp2` `expm1` `ln` `log1p` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `sinh` `cosh` `tanh` `asinh` `acosh` `atanh` |
 | Integer and special functions | `choose(n, k)` `factorial(n)` `gcd(a, b)` `lcm(a, b)` `euler_phi(n)` `ln_gamma(x)` `erf(x)` `erfc(x)` |

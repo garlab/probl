@@ -161,6 +161,8 @@ builtins! {
     Sd = "sd", 1..=1, Raw, true;
     Variance = "variance", 1..=1, Raw, true;
     Median = "median", 1..=1, Raw, true;
+    MedianLow = "median_low", 1..=1, Raw, true;
+    MedianHigh = "median_high", 1..=1, Raw, true;
     Quantile = "quantile", 2..=2, Raw, true;
     Support = "support", 1..=1, Raw, true;
     Cdf = "cdf", 2..=2, Raw, true;

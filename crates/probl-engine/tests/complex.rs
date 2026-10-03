@@ -180,7 +180,7 @@ report abs2(second[1])
 #[test]
 fn complex_values_never_become_probabilities_or_ordered_reals() {
     // Adding an unordered numeric type must not break existing categorical queries.
-    close(chance("report median(bernoulli(75%))"), 1.0);
+    close(chance("report median_low(bernoulli(75%))"), 1.0);
     for expression in [
         "complex(1) < complex(2)",
         "complex(1) >= 0",

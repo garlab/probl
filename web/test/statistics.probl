@@ -3,8 +3,12 @@ let strings = ["aa", "cc", "bb"]
 let zz = [complex(1, 2), complex(2, 3), complex(0, 1)]
 let dd = [today, today.add_months(2), today.add_workdays(3)]
 let nn = [2^2^5, 2^3^5, 3^3^5]
-report median(strings)
+report median_low(strings)
+report median_high(strings)
 report median(dd)
+report mean(dd)
+report median_low(dd)
+report median_high(dd)
 report median(nn)
 report typeof median(nn)
 report mean(zz)
@@ -16,9 +20,10 @@ report cdf(strings, "bb")
 report pmf([1, 1, 4], 1)
 report support([1, 1, 4])
 
-# Even numeric lists average the middle pair; other ordered lists select it.
+# Numeric and date medians average their endpoints; ordinal medians are explicit.
 report median([1, 2, 3, 4])
-report median(["bb", "aa"])
+report median_low(["bb", "aa"])
+report median_high(one_of(["bb", "aa"]))
 report median([date(2026, 3, 1), date(2026, 1, 1)])
 report median([9007199254740992, 9007199254740994])
 let n = 2^10000
@@ -27,10 +32,14 @@ report median([1.7e308, 1.7e308])
 report median([-1.7e308, 1.7e308])
 report median([5e-324, 5e-324]) == 5e-324
 
-# Quantiles and distribution medians keep the lower-quantile definition.
+# Distribution medians match list medians; quantiles still select outcomes.
 report quantile([1, 2, 3, 4], 50%)
 report median(one_of([1, 2, 3, 4]))
-report median([false, true])
+report median_low([false, true])
+report median_high([false, true])
+report median(one_of([1,4]))
+report median_low(one_of([1,4]))
+report median_high(one_of([1,4]))
 report cdf(bernoulli(30%), false)
 report P(d6 > 4)
 
@@ -41,3 +50,11 @@ report median(d)
 let x = if 50% { e } else { pi }
 report x
 report mean(simulate { x })
+
+report mean(one_of([date(1969,12,31), date(1970,1,1)]))
+report median(one_of([date(1969,12,31), date(1970,1,1)]))
+let split = one_of([uniform(0,1), uniform(3,4)])
+report median_low(split)
+report median(split)
+report median_high(split)
+report split

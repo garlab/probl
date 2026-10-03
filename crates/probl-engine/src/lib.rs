@@ -15,6 +15,7 @@ pub mod interp;
 mod math;
 pub mod ops;
 pub mod report;
+mod stats;
 mod text;
 mod type_name;
 pub mod value;
