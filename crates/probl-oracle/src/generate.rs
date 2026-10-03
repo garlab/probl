@@ -822,7 +822,10 @@ impl Gen {
                 _ => self.compound(kind, d),
             },
             Kind::Prob => match self.rng.below(7) {
-                0 | 1 => format!("P({})", self.expr(Kind::DBool, d)),
+                // DBool may be a scalar (including through short-circuiting).
+                // P requires an explicit distribution; one_of also preserves
+                // distribution-valued choices by mixing their outcomes.
+                0 | 1 => format!("P(one_of([{}]))", self.expr(Kind::DBool, d)),
                 2 => format!("({} and {})", self.expr(Kind::Prob, d), self.expr(Kind::Prob, d)),
                 3 => format!("({} or {})", self.expr(Kind::Prob, d), self.expr(Kind::Prob, d)),
                 4 => format!("not {}", self.expr(Kind::Prob, d)),

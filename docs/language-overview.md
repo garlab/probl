@@ -452,7 +452,29 @@ report a and b                                        # 41%: ½ × 0.1² + ½ ×
 
 ### Asking about them
 
-`P(e)`, `mean(d)`, `sd(d)`, `median(d)`, `quantile(d, 0.9)`, `support(d)` and `cdf(d, x)` work on distribution *values*: `mean(1d8 + 3)` is 7.5. They never look across worlds. That's what `report` and `simulate` are for.
+Statistical queries take an explicit population: a distribution or a nonempty list. `mean(1d8 + 3)` is 7.5; `mean([1, 1, 4])` is 2. Lists weight every element equally, including repetitions. `variance` and `sd` use the population definition (divide by the list length, not length minus one). These queries never look across worlds.
+
+```probl
+report median(["aa", "cc", "bb"])        # "bb"
+report median([1, 2, 3, 4])                # 2.5
+report quantile([1, 2, 3, 4], 50%)         # 2
+report mean([complex(1, 2), complex(3, 4)]) # complex(2, 3)
+```
+
+`median` and `quantile` accept ordered elements, including strings, dates and exact bigints; complex numbers have no ordering. For an even-length list, `median` averages the two middle numbers, but selects the lower middle string or date. An integral midpoint of two ints stays an exact int; fractional and floating-point midpoints return floats, and must fit the finite float range. `quantile` always selects an element without interpolation; distribution medians remain `quantile(d, 50%)`. `mean` requires numbers (real or complex); dates and strings cannot be averaged. `cdf`, `pmf` and `support` also accept lists; `pdf` requires a continuous distribution. Empty lists are errors, and list elements that are distributions must be drawn first or explicitly combined with `one_of`.
+
+Scalars are errors: `mean(pi)`, `median(pi)` and `mean(x)` after a draw do not silently become singleton distributions. Use a report to summarize values across worlds, or put the model inside `simulate` to obtain a distribution:
+
+```probl
+let x = if 50% { e } else { pi }
+report x                                  # summarizes the two outcomes
+let d = simulate { if 50% { e } else { pi } }
+report mean(d)                            # (e + pi) / 2
+```
+
+`simulate { x }` captures the current world's already-bound `x`; it does not rerun the choice that produced it. If a singleton population is intended, make it explicit with `[x]` or `one_of([x])`.
+
+`P(d)` specifically requires `dist[bool]`: `P(d6 > 4)` is 33.33%. For a bound boolean, use `report event` to measure its probability across worlds or `prob(event)` to convert it to 0 or 1. `P(true)` and `P(prob(30%))` are errors.
 
 ## 5. Evidence
 

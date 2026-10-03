@@ -9,6 +9,7 @@ use crate::ops::{self, article, as_index, equals, range_count, range_len, to_pro
 use crate::value::{Value, fmt_float};
 use probl_number::Integer;
 use probl_sema::Builtin;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -433,9 +434,48 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
     }
 }
 
+/// Statistical queries take an explicit population, never an implicit point
+/// distribution. Also called before the interpreter's analytic-value guard so
+/// a scalar has the same type error in enumeration and sampling.
+pub fn check_query_input(b: Builtin, args: &[Value]) -> OpResult<()> {
+    use Builtin as B;
+    let expected = match b {
+        B::P => "a boolean distribution (dist[bool])",
+        B::Pdf => "a continuous distribution",
+        B::Mean | B::Variance | B::Sd | B::Median | B::Quantile | B::Cdf | B::Pmf | B::Support => {
+            "a distribution or a nonempty list"
+        }
+        _ => return Ok(()),
+    };
+    let v = &args[0];
+    let valid = match b {
+        B::P => matches!(v, Value::Dist(_)),
+        B::Pdf => matches!(v, Value::Dist(_) | Value::Continuous(_)),
+        _ => matches!(v, Value::Dist(_) | Value::Continuous(_) | Value::List(_)),
+    };
+    if !valid {
+        let help = if b == B::P {
+            "use `report event` to measure a fact across worlds, or `prob(event)` to convert a bool to 0 or 1"
+        } else {
+            "use `report x` to summarize values across worlds, or put the model inside `simulate { ... }` to obtain a distribution"
+        };
+        return Err(OpError::new(format!(
+            "`{}` expects {expected}, found {}",
+            b.name(),
+            article(&v.kind())
+        ))
+        .help(help));
+    }
+    if matches!(v, Value::List(xs) if xs.is_empty()) {
+        return Err(OpError::new(format!("`{}` needs a nonempty list", b.name())));
+    }
+    Ok(())
+}
+
 /// Built-ins that receive distributions whole.
 pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Value> {
     use Builtin as B;
+    check_query_input(b, args)?;
     let v = &args[0];
     if matches!(
         b,
@@ -449,7 +489,7 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
         B::Pdf => Err(OpError::new("pdf needs a continuous distribution")
             .help("for a distribution whose outcomes can be listed, use `pmf`")),
         B::Mean => {
-            let d = as_dist(v);
+            let d = stat_dist(v, b.name(), budget)?;
             if d.outcomes.iter().any(|(x, _)| matches!(x, Value::Complex(_))) {
                 budget.work(d.outcomes.len() as u64)?;
                 let mut sum = Complex::new(0.0, 0.0)?;
@@ -460,33 +500,36 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
                 }
                 Ok(Value::Complex(sum))
             } else {
-                numeric_dist(v, "mean").map(|d| Value::Float(d.mean().unwrap()))
+                check_numeric(&d, "mean")?;
+                finite_float(d.mean().unwrap(), "mean")
             }
         }
-        B::Variance => numeric_dist(v, "variance").map(|d| Value::Float(d.variance().unwrap())),
-        B::Sd => numeric_dist(v, "sd").map(|d| Value::Float(d.variance().unwrap().sqrt())),
-        B::Median => quantile(v, 0.5, budget),
+        B::Variance => {
+            numeric_dist(v, "variance", budget).and_then(|d| finite_float(d.variance().unwrap(), "variance"))
+        }
+        B::Sd => numeric_dist(v, "sd", budget).and_then(|d| finite_float(d.variance().unwrap().sqrt(), "sd")),
+        B::Median => quantile(v, 0.5, "median", budget),
         B::Quantile => {
             let q = to_prob(&args[1])?;
-            quantile(v, q, budget)
+            quantile(v, q, "quantile", budget)
         }
         B::Support => {
-            let d = as_dist(v);
+            let d = stat_dist(v, b.name(), budget)?;
             budget.collection(d.outcomes.len() as u128)?;
             Ok(Value::list(d.outcomes.iter().map(|(x, _)| x.clone()).collect()))
         }
         B::Cdf => {
-            let d = as_dist(v);
+            let d = stat_dist(v, b.name(), budget)?;
             let mut p = 0.0;
             for (x, w) in &d.outcomes {
-                if ops::compare(x, &args[1])?.is_le() {
+                if statistical_compare(x, &args[1])?.is_le() {
                     p += w;
                 }
             }
             Ok(Value::Prob(p))
         }
         B::Pmf => {
-            let d = as_dist(v);
+            let d = stat_dist(v, b.name(), budget)?;
             let p: f64 = d
                 .outcomes
                 .iter()
@@ -519,23 +562,15 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
     }
 }
 
-/// `P(x)`: the probability of a fact, of a distribution of facts, or a
-/// probability itself.
+/// `P(d)`: query an explicitly constructed boolean distribution.
 fn probability_of(v: &Value) -> OpResult<Value> {
     match v {
-        Value::Bool(b) => Ok(Value::Prob(if *b { 1.0 } else { 0.0 })),
-        Value::Prob(_) => Ok(v.clone()),
-        Value::Dist(d) => match d.truth() {
-            Some((yes, _)) => Ok(Value::Prob(yes)),
-            None => Err(OpError::new(format!("P needs a condition, found a {}", v.kind()))
-                .help("compare it to get a condition, like `P(d6 > 4)`")),
-        },
-        Value::Continuous(_) => Err(OpError::new(format!("P needs a condition, found a {}", v.kind()))
-            .help("compare it with a number, like `P(x > 5)`")),
-        other => Err(
-            OpError::new(format!("P needs a condition, found {}", article(&other.kind())))
-                .help("for example `P(d6 > 4)`"),
-        ),
+        Value::Dist(d) if d.truth().is_some() => Ok(Value::Prob(d.truth().unwrap().0)),
+        _ => Err(OpError::new(format!(
+            "P needs a boolean distribution (dist[bool]), found {}",
+            article(&v.kind())
+        ))
+        .help("compare a distribution, like `P(d6 > 4)`; use `report event` for a fact across worlds")),
     }
 }
 
@@ -653,25 +688,78 @@ fn continuous_query(b: Builtin, args: &[Value]) -> OpResult<Value> {
     }
 }
 
-fn as_dist(v: &Value) -> Dist {
+/// A list is an empirical distribution: each element has equal weight,
+/// including repetitions. Its elements remain values, never implicit draws.
+fn stat_dist<'a>(v: &'a Value, what: &str, budget: &mut Budget) -> OpResult<Cow<'a, Dist>> {
     match v {
-        Value::Dist(d) => (**d).clone(),
-        other => Dist::point(other.clone()),
+        Value::Dist(d) => {
+            budget.work(d.outcomes.len() as u64)?;
+            Ok(Cow::Borrowed(d))
+        }
+        Value::List(xs) if !xs.is_empty() => {
+            budget.collection(xs.len() as u128)?;
+            let comparisons = (xs.len().ilog2() + 1) as u64;
+            budget.work((xs.len() as u64).saturating_mul(comparisons))?;
+            for x in xs.iter() {
+                match x {
+                    Value::Int(n) => {
+                        budget.integer_work(n, &Integer::ONE, false)?;
+                    }
+                    Value::Str(s) => {
+                        budget.string_work(s)?;
+                    }
+                    x if x.is_uncertain() => {
+                        return Err(OpError::new(format!(
+                            "`{what}` needs list elements that are values, found {}",
+                            article(&x.kind())
+                        ))
+                        .help("draw the elements first, or explicitly build a mixture with `one_of`"));
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Cow::Owned(Dist::uniform(xs.to_vec())))
+        }
+        _ => Err(OpError::new(format!(
+            "`{what}` needs a distribution or a nonempty list"
+        ))),
     }
 }
 
-fn numeric_dist(v: &Value, what: &str) -> OpResult<Dist> {
-    let d = as_dist(v);
-    if d.mean().is_none() {
-        return Err(OpError::new(format!(
-            "{what} needs numbers, found {}",
-            article(&v.kind())
-        )));
-    }
+fn numeric_dist<'a>(v: &'a Value, what: &str, budget: &mut Budget) -> OpResult<Cow<'a, Dist>> {
+    let d = stat_dist(v, what, budget)?;
+    check_numeric(&d, what)?;
     Ok(d)
 }
 
-fn quantile(v: &Value, q: f64, budget: &mut Budget) -> OpResult<Value> {
+fn check_numeric(d: &Dist, what: &str) -> OpResult<()> {
+    for (x, _) in &d.outcomes {
+        if !matches!(x, Value::Int(_) | Value::Float(_) | Value::Prob(_)) {
+            return Err(OpError::new(format!(
+                "`{what}` needs real numeric elements, found {}",
+                article(&x.kind())
+            )));
+        }
+        if x.as_f64().is_none_or(|x| !x.is_finite()) {
+            return Err(OpError::new(format!(
+                "`{what}` needs numbers representable as finite floats"
+            )));
+        }
+    }
+    if d.outcomes.is_empty() {
+        return Err(OpError::new(format!("`{what}` needs at least one resolved outcome")));
+    }
+    Ok(())
+}
+
+fn statistical_compare(a: &Value, b: &Value) -> OpResult<std::cmp::Ordering> {
+    match (a, b) {
+        (Value::Bool(a), Value::Bool(b)) => Ok(a.cmp(b)),
+        _ => ops::compare(a, b),
+    }
+}
+
+fn quantile(v: &Value, q: f64, what: &str, budget: &mut Budget) -> OpResult<Value> {
     fn check(v: &Value, budget: &mut Budget) -> OpResult<()> {
         budget.work(1)?;
         match v {
@@ -708,14 +796,63 @@ fn quantile(v: &Value, q: f64, budget: &mut Budget) -> OpResult<Value> {
         }
         Ok(())
     }
-    let d = as_dist(v);
+    let d = stat_dist(v, what, budget)?;
+    // An empirical order statistic requires mutually comparable elements.
+    // Boolean quantiles use false < true, as for a Bernoulli distribution.
+    if let Value::List(xs) = v {
+        for x in xs.iter() {
+            statistical_compare(x, x)?;
+            statistical_compare(&xs[0], x)?;
+        }
+    }
     for (value, _) in &d.outcomes {
         // The total order used to store outcomes is not a mathematical order
         // for complex numbers. Preserve existing categorical quantiles while
         // rejecting complex data, including inside collections.
         check(value, budget)?;
     }
-    Ok(d.quantile(q).unwrap())
+    let lower = d
+        .quantile(q)
+        .ok_or_else(|| OpError::new(format!("`{what}` needs at least one resolved outcome")))?;
+    // Lists use the conventional numeric sample median. Distribution medians
+    // and explicit quantiles retain the lower-quantile convention.
+    if let Value::List(xs) = v {
+        if what == "median" && xs.len() % 2 == 0 && matches!(lower, Value::Int(_) | Value::Float(_) | Value::Prob(_)) {
+            let upper = d.quantile(0.5 + 1.0 / xs.len() as f64).unwrap();
+            return midpoint(&lower, &upper, budget);
+        }
+    }
+    Ok(lower)
+}
+
+/// Preserve exact integral midpoints, including bigints beyond float range.
+fn midpoint(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
+    if let (Value::Int(a), Value::Int(b)) = (a, b) {
+        budget.integer_work(a, b, false)?;
+        let sum = a.add(b)?;
+        budget.integer_allocation(sum.bits(), 1)?;
+        let two = Integer::from(2);
+        budget.integer_work(&sum, &two, true)?;
+        let (whole, remainder) = sum.div_mod(&two)?;
+        if remainder.is_zero() {
+            return Ok(Value::Int(whole));
+        }
+        return sum
+            .ratio(&two)
+            .map(Value::Float)
+            .ok_or_else(|| OpError::new("median's fractional midpoint is too large for a finite float"));
+    }
+    let (a, b) = (number(a, "median")?, number(b, "median")?);
+    // Same-sign subtraction and opposite-sign addition avoid overflow; this
+    // also preserves equal subnormal values instead of halving both to zero.
+    finite_float(
+        if a.is_sign_negative() == b.is_sign_negative() {
+            a + (b - a) / 2.0
+        } else {
+            (a + b) / 2.0
+        },
+        "median",
+    )
 }
 
 fn iter_items(v: &Value, budget: &mut Budget) -> OpResult<Value> {

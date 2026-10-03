@@ -264,6 +264,9 @@ fn numbered(src: &str) -> String {
 /// Hand-written programs for each kind of case the audit lists, with the
 /// probes it confirmed. Each runs in every configuration of the engine.
 const CORPUS: &[(&str, &str)] = &[
+    ("P rejects a scalar fact", "report P(true)"),
+    ("P rejects a probability", "report P(prob(30%))"),
+    ("P rejects a bound outcome", "let x ~ d6\nreport P(x > 4)"),
     (
         "numeric parameter and source type",
         "let p = 30%; let x ~ bernoulli(p); report x; report typeof p",

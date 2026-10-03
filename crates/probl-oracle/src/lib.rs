@@ -1622,10 +1622,8 @@ fn builtin(name: &str, args: &[Value]) -> R<Value> {
             _ => err("one_of needs a list with at least one element"),
         }),
         ("P", [x]) => match x {
-            Value::Bool(b) => Ok(Value::Prob(if *b { Q::one() } else { Q::zero() })),
-            Value::Prob(_) => Ok(x.clone()),
             Value::Dist(_) => probability(x).map(|(yes, _)| Value::Prob(yes)),
-            _ => err("P needs a condition"),
+            _ => err("P needs a boolean distribution"),
         },
         ("min" | "max", args) if args.len() >= 2 => lift_n(args, |vs| {
             let mut ints = Vec::new();

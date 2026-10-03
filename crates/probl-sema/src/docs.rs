@@ -140,7 +140,7 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Odds
         | B::Logit
         | B::InvLogit
-        | B::Prob => "Questions about distributions",
+        | B::Prob => "Statistics and probabilities",
         B::Date
         | B::Days
         | B::Weeks
@@ -571,30 +571,42 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "a to b",
             "An estimate: 90% confident it's between `a` and `b`, as a lognormal, so both must be above 0.",
         ),
-        // Questions about distributions
+        // Statistics and probabilities
         B::P => doc(
-            "P(c) -> prob",
-            "The probability that a fact, or a distribution of facts, is true: `P(d6 > 4)`.",
+            "P(d: dist[bool]) -> prob",
+            "The probability of true in a boolean distribution: `P(d6 > 4)`. Rejects scalar bools, probabilities and numbers. Use `report event` to measure a fact across worlds, or `prob(event)` to convert a bool to 0 or 1.",
         ),
         B::Mean => doc(
             "mean(d) -> float or complex",
-            "The weighted arithmetic mean of a distribution. Complex outcomes give a complex mean; their probabilities stay real.",
+            "The arithmetic mean of a nonempty numeric list or the weighted mean of a distribution. Complex elements give a complex mean; strings and dates cannot be averaged. Rejects scalars and never aggregates across worlds; use `report x` or put the model inside `simulate { ... }`.",
         ),
-        B::Sd => doc("sd(d) -> float", "The standard deviation of a distribution."),
-        B::Variance => doc("variance(d) -> float", "The variance of a distribution."),
-        B::Median => doc("median(d)", "The value with half the distribution at or below it."),
+        B::Sd => doc(
+            "sd(d) -> float",
+            "The population standard deviation of a nonempty real numeric list or a distribution. Rejects scalars.",
+        ),
+        B::Variance => doc(
+            "variance(d) -> float",
+            "The population variance of a nonempty real numeric list or a distribution (divides by n, not n - 1). Rejects scalars.",
+        ),
+        B::Median => doc(
+            "median(d)",
+            "The middle element of a nonempty ordered list. Even numeric lists average their middle pair; strings and dates select the lower item. Exact integral midpoints remain ints; fractional or float midpoints return floats. For distributions, this is `quantile(d, 50%)`. Complex elements and scalar inputs are errors.",
+        ),
         B::Quantile => doc(
             "quantile(d, q: prob)",
-            "The smallest value with a share `q` of the distribution at or below it: `quantile(d, 95%)`.",
+            "The smallest value with a share `q` at or below it in a distribution or nonempty ordered list: `quantile(d, 95%)`. Lists weight repetitions equally. Always selects an element for lists and finite distributions; no interpolation. Complex elements and scalar inputs are errors.",
         ),
-        B::Support => doc("support(d) -> list", "The outcomes a distribution can have, in order."),
+        B::Support => doc(
+            "support(d) -> list",
+            "The distinct elements of a nonempty list or outcomes of a finite distribution, in storage order. Rejects scalars.",
+        ),
         B::Cdf => doc(
             "cdf(d, x) -> prob",
-            "The probability that the distribution is at most `x`.",
+            "The probability that a distribution is at most `x`, or the fraction of elements at most `x` in a nonempty ordered list. Rejects scalars and complex ordering.",
         ),
         B::Pmf => doc(
             "pmf(d, x) -> prob",
-            "The probability that the distribution is exactly `x`.",
+            "The probability that a distribution is exactly `x`, or the fraction equal to `x` in a nonempty list. Rejects scalars.",
         ),
         B::Pdf => doc("pdf(d, x) -> float", "The density of a continuous distribution at `x`."),
         B::Prob => doc(

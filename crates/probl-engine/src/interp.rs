@@ -2309,6 +2309,7 @@ impl<'p> Engine<'p> {
             values.push(self.eval(f, a, w)?);
         }
         let at = |err: OpError| err.at(span);
+        builtins::check_query_input(b, &values).map_err(at)?;
         if values.iter().any(analytic::contains)
             && !matches!(
                 b,

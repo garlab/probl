@@ -154,8 +154,6 @@ fn unsupported_uses_request_sampling_instead_of_losing_correlations() {
     for tail in [
         "report x*x",
         "report sin(x)",
-        "report mean(x)",
-        "report P(x>1)",
         "report [x]==[x+1]",
         "report x in [x]",
         "report x by x",

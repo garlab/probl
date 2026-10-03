@@ -18,6 +18,7 @@ const cli = `${root}/target/release/probl`;
 const probl = await load(wasm);
 let failed = 0;
 const cases = probl.examples().map((e) => ({ ...e, path: `examples/${e.name}.probl` }));
+cases.push({ name: 'statistics', path: 'web/test/statistics.probl', source: await readFile(`${root}/web/test/statistics.probl`, 'utf8') });
 cases.push({ name: 'analytic', path: 'web/test/analytic.probl', source: await readFile(`${root}/web/test/analytic.probl`, 'utf8') });
 cases.push({ name: 'math', path: 'web/test/math.probl', source: await readFile(`${root}/web/test/math.probl`, 'utf8') });
 cases.push({ name: 'text', path: 'web/test/text.probl', source: await readFile(`${root}/web/test/text.probl`, 'utf8') });
@@ -81,6 +82,35 @@ for (const mode of ['enumerate', 'sample']) {
   }
 }
 console.log('same  explicit conversions and observation restrictions in both modes');
+
+// Queries cannot silently turn a scalar or entire list into a point mass.
+for (const mode of ['enumerate', 'sample']) {
+  for (const source of [
+    'report mean(pi)',
+    'report median(pi)',
+    'let x = if 50% { e } else { pi }\nprint(x, mean(x), median(x))',
+    'let x ~ uniform(0, 2)\nreport mean(x)',
+    'let x ~ uniform(0, 2)\nreport P(x > 1)',
+    'report P(true)',
+    'report P(prob(30%))',
+    'report mean([today])',
+    'report median([complex(1, 2)])',
+    'report median([])',
+    'report mean([])',
+    'report mean([d6, d8])',
+  ]) {
+    const result = probl.run({ source, mode, ...(mode === 'sample' ? { runs: 10, seed: 19 } : {}) });
+    assert.equal(result.error?.kind, 'language', source);
+  }
+  const result = probl.run({
+    source: 'report median([1,2,3,4]) as "middle"\nreport mean([1,1,4]) as "average"',
+    mode, ...(mode === 'sample' ? { runs: 10, seed: 19 } : {}),
+  });
+  assert.equal(result.error, undefined);
+  assert.match(result.output, /middle\s+2\.5/);
+  assert.match(result.output, /average\s+2/);
+}
+console.log('same  statistics require populations and aggregate lists in both modes');
 
 // Crossing UTC midnight between executions must change the default snapshot,
 // while repeated references, calls and simulations in one execution share it.

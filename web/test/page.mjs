@@ -12,6 +12,7 @@
 // deployment.
 
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer-core';
 import { serveFiles } from '../serve.mjs';
@@ -85,6 +86,21 @@ try {
       encoding: 'utf8',
     });
     expect(`${result}\n` === expected, `${name} prints what \`probl run\` prints (${time} s; ${status})`, result);
+  }
+
+  // List statistics and scalar-query errors through the real editor/worker.
+  const statisticsSource = readFileSync(`${root}web/test/statistics.probl`, 'utf8');
+  await page.evaluate((source) => window.playground.setSource(source), statisticsSource);
+  const statistics = await run(page);
+  const statisticsExpected = execFileSync(`${root}target/release/probl`, ['run', 'web/test/statistics.probl'], {
+    cwd: root, encoding: 'utf8',
+  });
+  expect(`${statistics.result}\n` === statisticsExpected, 'list statistics match native results', statistics.result);
+  for (const source of ['report mean(pi)', 'report median(pi)']) {
+    await page.evaluate((source) => window.playground.setSource(source), source);
+    const scalar = await run(page);
+    expect(scalar.error && scalar.result.includes('expects a distribution or a nonempty list')
+      && scalar.result.includes('report x'), `${source} explains how to summarize worlds`, scalar.result);
   }
 
   // Stopping a long run, and running again after.
@@ -617,6 +633,17 @@ try {
     JSON.stringify(found),
   );
   expect(found.distinct === found.all, 'the reference has each entry once', `${found.distinct} of ${found.all}`);
+
+  const statisticsReference = await editor.evaluate(() => {
+    const names = ['P', 'mean', 'median', 'quantile', 'variance', 'sd', 'cdf', 'pmf', 'support'];
+    return Object.fromEntries(names.map((name) => [name,
+      document.querySelector(`#entries .entry[data-names="${name}"]`)?.textContent ?? '',
+    ]));
+  });
+  expect(Object.values(statisticsReference).every(Boolean)
+    && statisticsReference.median.includes('Even numeric lists average their middle pair')
+    && statisticsReference.P.includes('dist[bool]'),
+    'the reference includes statistics and their current input rules', JSON.stringify(statisticsReference));
 
   // The guide: its programs run in the editor, and its links open the
   // examples.
