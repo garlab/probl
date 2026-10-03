@@ -20,9 +20,9 @@ All values are immutable: assigning or passing a collection gives an independent
 
 `prob(x)` explicitly constructs a probability from a finite number in `[0, 1]`, a boolean (`false` becomes 0, `true` becomes 1), or an existing probability. Invalid ranges, nonfinite values and other types are errors. It neither clamps nor draws nor lifts over distributions. `P(d)` queries a boolean distribution; it also accepts a boolean or existing probability, but does not convert numbers.
 
-A numeric **literal** is implicitly converted when a declared type or parameter expects `prob`: `let p: prob = 33%`, `fn f(p: prob) { ... }; f(0.33)`, and `bernoulli(33%)` create actual probability values. The same context applies to typed return values, record fields, collection literals and `chance` weights. Parentheses and a literal's leading minus do not hide its literal status; invalid ranges are diagnosed. A numeric variable or calculated expression needs `prob(x)`, even if its value is known to lie in range. For example, `let rate = 33%; bernoulli(rate)` fails; use `bernoulli(prob(rate))`. An annotation does not implicitly narrow such a variable. Data schemas explicitly validate and construct their declared types when loading input.
+A numeric **literal** is implicitly converted when a declared type or parameter expects `prob`: `let p: prob = 33%`, `fn f(p: prob) { ... }; f(0.33)`, and `bernoulli(33%)` create actual probability values. The same context applies to typed return values, record fields, collection literals, branching conditions, `chance` weights and `score`. Expected types propagate through the result branches of `if`, `chance`, `match` and blocks; for example, `score if sick { 95% } else { 8% }` constructs probabilities in both branches. Parentheses and a literal's leading minus do not hide its literal status; invalid ranges are diagnosed. A numeric variable or calculated expression needs `prob(x)`, even if its value is known to lie in range. For example, `let rate = 33%; bernoulli(rate)` fails; use `bernoulli(prob(rate))`. An annotation does not implicitly narrow such a variable. Data schemas explicitly validate and construct their declared types when loading input.
 
-Probabilities widen to floats in numeric contexts. Ordinary arithmetic (`p + q`, `p * q`, `1 - p`, negation) returns numbers; it never chooses a probability type based on the result's range. Booleans never implicitly become probabilities or numbers. Neither probabilities nor numbers implicitly become booleans. Logical operators do not insert casts to make their operands valid. In particular, both `0.33 and 0.5` and `prob(0.33) and prob(0.5)` are errors: marginal probabilities alone do not determine a joint probability.
+Probabilities widen to floats in numeric contexts. Ordinary arithmetic (`p + q`, `p * q`, `1 - p`, negation) returns numbers; it never chooses a probability type based on the result's range. Booleans never implicitly become probabilities or numbers. Neither probabilities nor numbers implicitly become booleans. Logical operators do not convert raw numbers: `0.33 and 0.5` is an error. Actual probabilities compose as independent Bernoulli recipes: `prob(0.33) and prob(0.5)` is `prob(0.165)`. This specifies independent trials, rather than inferring a joint probability for previously bound events.
 
 `one_of` maps have two explicit modes: all-numeric weights are relative (including percentage notation), while all-`prob` weights are absolute and must sum to one. Mixing the modes is an error. Thus `one_of([true: 33%, false: 33%])` is a fair choice; `one_of([true: prob(33%), false: prob(33%)])` fails.
 
@@ -171,26 +171,32 @@ Operators and built-in functions applied to distributions act on every outcome a
 
 A distribution never has distributions as outcomes: where one would, they are mixed in. `one_of([d2, 10])` is 1 or 2 a quarter of the time each and 10 half the time, so a value drawn from it is settled. The same holds for the results of operators and of `simulate` (section 8).
 
-**Logical operators work on facts.** `and`, `or` and `not` accept `bool` operands. They also accept a `dist[bool]`, but `and` and `or` accept at most one uncertain operand: with two, Probl can't know whether they describe the same event (`e and e`) or two independent ones, so it reports an error. Numbers and probabilities are never accepted: `prob(30%) and prob(30%)` is an error, because a probability has no event identity.
+**Logical operators compose facts and independent recipes.** `and`, `or` and `not` accept `bool`, `prob` and `dist[bool]`. Each use of a recipe means an independent trial, conditional on the current world, consistently with numeric distribution arithmetic. Thus `let d = d6 > 4; report d and d` gives 1/9. Drawing `let a = ~d` and reporting `a and a` gives 1/3: both uses name the same bound outcome.
 
-To combine uncertain events, give them identities by drawing them:
+For booleans, the result is boolean. When both operands are evaluated, combinations of probabilities and booleans with at least one probability return `prob`: conjunction multiplies rates, disjunction is `p + (1-p)*q`, and negation is `1-p`. When a distribution is involved, the result is `dist[bool]`, retaining unresolved mass. Only an actual left-hand boolean short-circuits (`false and ...`, `true or ...`), returning that boolean; probability endpoints and singleton distributions remain recipes and do not suppress evaluation of the right operand.
 
 ```probl
-let rain ~ bernoulli(30%)     # a fact: true in 30% of worlds
-let late ~ bernoulli(20%)
+let p: prob = 30%
+let rain = ~p
+let late = ~prob(20%)
 report rain and late          # 6%
 report rain and rain          # 30%: the same event
+report p and p                # 9%: independent trials
 ```
 
-**Drawing needs a distribution.** `x ~ D` splits each world by the outcomes of `D`. Drawing from a probability is an error (write `bernoulli(p)`). Drawing from any other plain value leaves it unchanged, so that `x ~ if c { d6 } else { 0 }` works.
+**Prefix drawing.** `~D` draws once each time it is evaluated and returns a settled outcome in each world. It binds more tightly than every binary operator, but after calls, indexing and field access: `~d6 != 6` means `(~d6) != 6`, `~d6 ^ 2` means `(~d6) ^ 2`, and `~f()[0]` draws from the indexed result. Use `~(d6 > 3)` to draw the comparison's boolean result. Operands still run left to right, once each, and boolean short-circuiting skips a draw on an unevaluated right side.
+
+`let x ~ D` and `let x = ~D` have the same meaning; assignment has the same equivalence. A `prob` draws a Bernoulli boolean directly. A distribution over probabilities still draws a probability value, without automatically performing a second trial. Drawing any other plain value keeps the existing point-value behavior, so `x ~ if c { d6 } else { 0 }` works. In particular, `%` is still numeric notation: `~30%` produces the float 0.3; use `~prob(30%)` or a `prob` binding to request a trial. `~deck.take()` consumes a bag item, like the existing binding form.
 
 **`match` needs a settled subject.** Matching a distribution is an error; draw it first. Patterns are tests on a single value, and `|` between patterns is an ordinary `or` on facts.
 
 ## 3. Conditions and branching
 
-`if c`, `while c`, match guards and `observe c` require **bool**. Each world's condition is true or false, so ordinary branching does not create another random trial. Numeric values, probabilities (even 0 and 1), and boolean distributions are rejected. Type errors are checked when reached; general static type inference is not implemented yet.
+`if c`, `while c` and match guards accept **bool**, **prob** or **dist[bool]**. A boolean follows an existing fact. A probability or boolean distribution requests a fresh trial each time the condition is evaluated: enumeration splits world weights, and sampling chooses a branch. Unresolved distribution mass remains unresolved. This is a branching operation, not a general conversion to boolean.
 
-Draw an event explicitly: `let hit ~ d20 + 5 >= 15; if hit { ... }`. Drawing the boolean distribution creates only two outcomes, without retaining the twenty die faces. Draw from `bernoulli(p)` when the input is a probability. A loop may draw afresh in its parenthesized condition block: `while ({ let r ~ d6; r != 6 }) { ... }`.
+Numeric literals acquire probability context here, so `if 30% { "rain" } else { "sun" }` and `if 0.3 { "rain" } else { "sun" }` agree. Out-of-range literals are errors. Numeric variables, calculations and named constants still need `prob(x)`; `let p = 30%; if p { ... }` fails, while `let p: prob = 30%; if p { ... }` works. Type errors are checked when reached; general static type inference is not implemented yet.
+
+`if d6 > 5` branches on the boolean recipe directly. To give an event a reusable identity, draw it: `let hit = ~(d20 + 5 >= 15); if hit { ... }`. A loop can write `while ~d6 != 6 { ... }`, drawing a face on every test, or `while d6 != 6 { ... }`, branching directly on the boolean recipe. Neither syntax reuses a trial from an earlier iteration.
 
 `chance { p₁ => A₁ … pₙ => Aₙ else => B }` is explicit weighted branching. It evaluates every weight first; each must be `prob`, with contextual conversion of numeric literals. Use `prob(x)` for numeric expressions, `prob(fact)` for booleans, and `P(d)` for a queried probability. The weights must not add up to more than 1 (a tolerance of 10⁻⁹ allows for rounding). The remainder goes to `else`. Without `else`, the remainder continues after the statement; when `chance` is used as a value, a remainder above 10⁻⁹ is an error.
 
@@ -201,7 +207,7 @@ Evaluation is **left to right**, and every operand is evaluated exactly once:
 - operands of binary operators, arguments of calls, elements of lists, maps and records, and the parts of string interpolation are evaluated in the order they're written;
 - `place = value` evaluates `value`, then the indices in `place`, then assigns;
 - `place += value` (and `-=`, `*=`, `/=`) reads the current value of `place` first, then evaluates `value`;
-- `and` doesn't evaluate its right side when the left side is certainly false, and `or` when it's certainly true.
+- `and` doesn't evaluate its right side when the left side is the boolean `false`, and `or` when it is the boolean `true`.
 
 An assignment made while evaluating an operand (for example inside a block expression) is visible to the operands evaluated after it, and not to those evaluated before it:
 
@@ -219,8 +225,9 @@ A running program is a finite set of worlds, each a program state σ with a weig
 |---|---|
 | `x = e` | (σ[x ↦ e], w) |
 | `x ~ D` | (σ[x ↦ v], w · P(D = v)) for every outcome v of D |
-| `if c { A } else { B }` | A on (σ, w) if c is true, otherwise B |
+| `if c { A } else { B }` | A on (σ, w · t), B on (σ, w · f), where t and f are c's true and false weights; missing mass stays unresolved |
 | `observe c` | (σ, w) if c is true; discarded otherwise |
+| `score p` | (σ, w · p) |
 | `observe v from D` | (σ, w · P(D = v)) |
 
 Where branches rejoin, worlds with equal states are merged by adding their weights. Before comparing, variables that can't be read again are cleared (liveness analysis), so worlds that differ only in such variables merge. Merging changes nothing but rounding: a set of worlds denotes the sum of its weighted states, and equal states add.
@@ -233,7 +240,7 @@ A function may read any variable in scope; the values are copied in when it's ca
 
 Because a function's result depends only on its arguments and the values it reads, the engine may compute it once and reuse it (memoization) when enumerating. It does so only when the function has no debug output: a function that calls `print`, directly or through other functions, runs every time it's called. When sampling, every call runs (section 14).
 
-**Collection callbacks.** Callbacks passed to `map`, `filter`, `count` and `reduce` cannot execute draws (including bag draws), observations or `chance`. The same runtime effect boundary applies in enumeration and sampling, including through helper calls and nested callbacks. Ordinary deterministic conditions are allowed. An explicit `simulate` creates a local inference scope, so a callback may compute or return its distribution. Returning a distribution value does not draw it. A loop is the way to traverse a collection with random effects in the caller's worlds. Cached function results are not reused across this validation boundary: a single returned outcome does not prove that no effect occurred.
+**Collection callbacks.** Callbacks passed to `map`, `filter`, `count` and `reduce` cannot execute draws (including bag draws), observations, scores or `chance`. The same runtime effect boundary applies in enumeration and sampling, including through helper calls and nested callbacks. Ordinary deterministic conditions are allowed. An explicit `simulate` creates a local inference scope, so a callback may compute or return its distribution. Returning a distribution value does not draw it. A loop is the way to traverse a collection with random effects in the caller's worlds. Cached function results are not reused across this validation boundary: a single returned outcome does not prove that no effect occurred.
 
 **Recursion.** When enumerating, a call can come back to itself while it's running: the same function, with the same arguments, directly or through other calls. An example is `fn f() { chance { 50% => 1, else => f() } }`. Its result is then the least solution of what the calls say about each other, found by iteration:
 - **Rounds.** In the first round, a call that comes back gets nothing: all of its weight waits. In each later round, it gets the results of the round before.
@@ -247,7 +254,9 @@ When sampling, each run follows its own path, however deep (section 14).
 
 ## 7. Evidence
 
-`observe c` retains worlds where the boolean `c` is true and discards the others. `observe v from D` weighs each world by P(D = v), or, when sampling, by the density of a continuous `D` at `v` (section 13). To apply a likelihood `p`, use `observe true from bernoulli(p)`.
+`observe c` retains worlds where the boolean `c` is true and discards the others. `observe v from D` weighs each world by P(D = v), or, when sampling, by the density of a continuous `D` at `v` (section 13). `score p` applies a probability likelihood by multiplying each world's weight by `p`. Its operand must be `prob`; numeric literals convert contextually, including branch results (`score if sick { 95% } else { 8% }`). Other numbers require `prob(x)`. A zero score rules out the world, a unit score leaves its weight unchanged, and invalid types or ranges are errors. `score` never draws, clamps or changes the probability value. It is equivalent to `observe true from bernoulli(p)`, preserving exact conjugate updates for `score prob(rate)` after a beta draw.
+
+`observe ~p` explicitly observes an anonymous boolean draw. The engine integrates out that unnamed trial and applies its likelihood, retaining unresolved mass instead of treating it as false. This also works for boolean distribution recipes. It rejects non-boolean laws; it does not turn `observe ~normal(mu, sd)` into a continuous equality observation. A bag draw is actually consumed before the observation. To retain the event's identity, bind it first: `let event = ~p; observe event; report event` reports 100%.
 
 `let x = 3d8; observe x > 10; report x` is an error: the comparison is a distribution, not a fact. With `let x ~ 3d8`, the observation removes worlds where the bound total is at most 10, leaving support 11–24 and evidence 392/512. Similarly, `let p = prob(5%); observe p` fails. Draw `let e ~ bernoulli(p); observe e; report e` to report the observed event as 100%. An explicit likelihood observation of a recipe, `observe true from (x > 10)`, remains valid and does not mutate the recipe.
 
@@ -255,7 +264,7 @@ The **evidence** of a program is the total final weight of its worlds: the proba
 
 If the evidence is zero and no weight is unresolved, the evidence is **impossible**: the run fails with an error pointing at an `observe`. This is different from a report that is never reached, which is ordinary control flow.
 
-**No `observe` may follow a `report`.** The compiler rejects a program in which an `observe`, or a call to a function that observes, can run after a `report` on the same path, including through a loop. So every report sees all the evidence its worlds will ever get, and describes the posterior. (Reports that update as evidence arrives, as in filtering, are future work.)
+**No `observe` or `score` may follow a `report`.** The compiler rejects a program in which an `observe` or `score`, or a call to a function that applies evidence, can run after a `report` on the same path, including through a loop. So every report sees all the evidence its worlds will ever get, and describes the posterior. (Reports that update as evidence arrives, as in filtering, are future work.)
 
 ## 8. `simulate`
 
@@ -338,7 +347,7 @@ Anything else, such as arithmetic (`normal(0, 1) * 2`) or comparing two continuo
 
 `@mode sample(runs: n, seed: s)` estimates the same model as sections 1–13 by following `n` random paths through the program, called **runs**, instead of every path.
 
-- **A run is a single world.** Where enumeration would split a world (`chance`, `~`, taking a card, calling a function), a run takes one branch, chosen with that branch's probability, and its weight doesn't change. Boolean conditions follow the already-drawn outcome.
+- **A run is a single world.** Where enumeration would split a world (probabilistic conditions, `chance`, `~`, taking a card, calling a function), a run takes one branch, chosen with that branch's probability, and its weight doesn't change. Boolean conditions follow the already-drawn outcome.
 - **Weights come from evidence.** `observe` multiplies a run's weight as in section 7 (likelihood weighting). A run that is ruled out has weight zero.
 - **Runs are independent.** They don't merge, and calls aren't memoized, so every call makes its own choices. A function may call itself with the same arguments: each call chooses its own path. Unbounded loops aren't cut short; the iteration limit still applies.
 - **`simulate` is enumerated.** Inside each run, a `simulate` block is computed exactly, by enumeration, as in section 8, so its result has no sampling error. A block that enumeration can't compute (because it draws from a continuous distribution, say) is an error, even when sampling: estimates inside estimates aren't supported yet.

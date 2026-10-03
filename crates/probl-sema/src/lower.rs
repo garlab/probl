@@ -55,6 +55,8 @@ struct FnBuild {
     span: Span,
     n_params: u32,
     param_types: Vec<Option<TypeSpec>>,
+    /// Expected types for branch-result temporaries, used only while lowering.
+    result_types: FxHashMap<SlotId, TypeSpec>,
     slots: Vec<SlotInfo>,
     parent: Option<FnId>,
     /// For lambdas and `simulate`: (slot here, slot in the parent).
@@ -219,6 +221,7 @@ impl<'a> Lowerer<'a> {
             span,
             n_params: 0,
             param_types: Vec::new(),
+            result_types: FxHashMap::default(),
             slots: Vec::new(),
             parent,
             parent_captures: Vec::new(),
@@ -944,7 +947,7 @@ impl<'a> Lowerer<'a> {
                 // loop { if cond { body } else { break } }
                 self.cur().loops.push(LoopKind::Other);
                 let mut inner = Vec::new();
-                let c = self.expr(cond, &mut inner);
+                let c = self.expr_expected(cond, Some(&TypeSpec::Prob), &mut inner);
                 let then = self.scoped_block(body);
                 let brk = self.stmt(s.span, StmtKind::Break);
                 let branch = self.stmt(
@@ -1053,12 +1056,45 @@ impl<'a> Lowerer<'a> {
                 out.push(st);
             }
             ast::StmtKind::Observe { value, from } => {
+                // An immediately observed anonymous draw can be integrated
+                // out. Preserve missing mass and reject non-boolean laws.
+                if from.is_none() {
+                    if let ast::ExprKind::Draw(source) = &value.kind {
+                        let consumes_bag = matches!(&source.kind, ast::ExprKind::Method { name, .. }
+                            if name.name == "take" && !self.fn_by_name.contains_key("take"));
+                        if !consumes_bag {
+                            let d = self.expr(source, out);
+                            let d = builtin(Builtin::BooleanLaw, vec![d], source.span);
+                            let st = self.stmt(
+                                s.span,
+                                StmtKind::Observe {
+                                    value: lit(Lit::Bool(true), value.span),
+                                    from: Some(d),
+                                },
+                            );
+                            out.push(st);
+                            return;
+                        }
+                    }
+                }
                 let mut exprs = vec![value];
                 exprs.extend(from.as_ref());
                 let mut values = self.operands(&exprs, out).into_iter();
                 let v = values.next().unwrap();
                 let d = values.next();
                 let st = self.stmt(s.span, StmtKind::Observe { value: v, from: d });
+                out.push(st);
+            }
+            ast::StmtKind::Score(value) => {
+                let p = self.expr_expected(value, Some(&TypeSpec::Prob), out);
+                let d = builtin(Builtin::ScoreLaw, vec![p], value.span);
+                let st = self.stmt(
+                    s.span,
+                    StmtKind::Observe {
+                        value: lit(Lit::Bool(true), value.span),
+                        from: Some(d),
+                    },
+                );
                 out.push(st);
             }
             ast::StmtKind::Report { value, by, label } => self.report(value, by.as_ref(), label, s.span, out),
@@ -1129,6 +1165,11 @@ impl<'a> Lowerer<'a> {
         span: Span,
         out: &mut Vec<Stmt>,
     ) {
+        if op == ast::BindOp::Assign {
+            if let ast::ExprKind::Draw(source) = &value.kind {
+                return self.let_stmt(mutable, pattern, ast::BindOp::Draw, source, ty, span, out);
+            }
+        }
         // `let card ~ deck.take()`
         if op == ast::BindOp::Draw {
             if let Some(bag) = self.take_target(value, out) {
@@ -1420,6 +1461,11 @@ impl<'a> Lowerer<'a> {
     }
 
     fn assign(&mut self, target: &ast::Expr, op: ast::AssignOp, value: &ast::Expr, span: Span, out: &mut Vec<Stmt>) {
+        if op == ast::AssignOp::Set {
+            if let ast::ExprKind::Draw(source) = &value.kind {
+                return self.assign(target, ast::AssignOp::Draw, source, span, out);
+            }
+        }
         if op == ast::AssignOp::Draw {
             if let Some(bag) = self.take_target(value, out) {
                 let Some(place) = self.place(target, out, "assign to") else {
@@ -1780,7 +1826,8 @@ impl<'a> Lowerer<'a> {
         let mut stmts = Vec::new();
         match dest {
             Some(d) => {
-                let v = self.block_value(block, &mut stmts);
+                let ty = self.funcs[self.cur_func() as usize].result_types.get(&d).cloned();
+                let v = self.block_value_expected(block, ty.as_ref(), &mut stmts);
                 let st = self.stmt(
                     block.span,
                     StmtKind::Set {
@@ -1809,7 +1856,7 @@ impl<'a> Lowerer<'a> {
         span: Span,
         out: &mut Vec<Stmt>,
     ) {
-        let c = self.expr(cond, out);
+        let c = self.expr_expected(cond, Some(&TypeSpec::Prob), out);
         let then = self.block_into(then, dest);
         let end = otherwise.map_or(span.hi, |o| o.span.hi);
         let otherwise = match otherwise.map(|o| &o.kind) {
@@ -1948,7 +1995,7 @@ impl<'a> Lowerer<'a> {
             body.extend(self.branch_body(&arm.body, dest).stmts);
             match &arm.guard {
                 Some(guard) => {
-                    let g = self.expr(guard, &mut then);
+                    let g = self.expr_expected(guard, Some(&TypeSpec::Prob), &mut then);
                     let st = self.stmt(
                         arm.span,
                         StmtKind::If {
@@ -2100,6 +2147,19 @@ impl<'a> Lowerer<'a> {
     fn expr_expected(&mut self, e: &ast::Expr, ty: Option<&TypeSpec>, out: &mut Vec<Stmt>) -> Expr {
         let Some(ty) = ty else { return self.expr(e, out) };
         let kind = match (&e.kind, ty) {
+            (ast::ExprKind::If { .. } | ast::ExprKind::Chance { .. } | ast::ExprKind::Match { .. }, _) => {
+                let dest = self.temp(e.span);
+                let func = self.cur_func() as usize;
+                self.funcs[func].result_types.insert(dest, ty.clone());
+                self.expr_into(e, dest, out);
+                return slot(dest, e.span);
+            }
+            (ast::ExprKind::Block(block), _) => {
+                self.push_scope();
+                let v = self.block_value_expected(block, Some(ty), out);
+                self.pop_scope(block.span.hi);
+                return v;
+            }
             (ast::ExprKind::List(xs), TypeSpec::List(t)) => {
                 let refs: Vec<_> = xs.iter().collect();
                 let types = vec![Some((**t).clone()); xs.len()];
@@ -2204,7 +2264,8 @@ impl<'a> Lowerer<'a> {
             ast::ExprKind::Chance { arms } => self.chance_into(arms, Some(dest), e.span, out),
             ast::ExprKind::Match { scrutinee, arms } => self.match_into(scrutinee, arms, Some(dest), e.span, out),
             _ => {
-                let v = self.expr(e, out);
+                let ty = self.funcs[self.cur_func() as usize].result_types.get(&dest).cloned();
+                let v = self.expr_expected(e, ty.as_ref(), out);
                 let st = self.stmt(
                     e.span,
                     StmtKind::Set {
@@ -2251,6 +2312,23 @@ impl<'a> Lowerer<'a> {
                 }
             }
             ast::ExprKind::Name(name) => return self.name(name, span),
+            ast::ExprKind::Draw(source) => {
+                let dest = self.temp(span);
+                let kind = if let Some(bag) = self.take_target(source, out) {
+                    StmtKind::Take {
+                        place: Place::slot(dest),
+                        bag,
+                    }
+                } else {
+                    StmtKind::Draw {
+                        place: Place::slot(dest),
+                        dist: self.expr(source, out),
+                    }
+                };
+                let st = self.stmt(span, kind);
+                out.push(st);
+                return slot(dest, span);
+            }
             ast::ExprKind::List(items) => {
                 let items: Vec<&ast::Expr> = items.iter().collect();
                 ExprKind::List(self.operands(&items, out))

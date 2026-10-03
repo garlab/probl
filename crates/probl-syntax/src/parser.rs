@@ -551,6 +551,10 @@ impl Parser {
                 };
                 StmtKind::Observe { value, from }
             }
+            Tok::Score => {
+                self.bump();
+                StmtKind::Score(self.expr()?)
+            }
             Tok::Report => {
                 self.bump();
                 let value = self.expr()?;
@@ -758,36 +762,23 @@ impl Parser {
     fn expr_bp_inner(&mut self, min: u8) -> PResult<Expr> {
         let lo = self.span();
         let mut lhs = match self.peek() {
-            Tok::Typeof => {
+            Tok::Typeof | Tok::Not | Tok::Minus | Tok::Tilde => {
+                let (op, precedence) = match self.peek() {
+                    Tok::Typeof => (Some(UnOp::Typeof), PREC_TYPEOF),
+                    Tok::Not => (Some(UnOp::Not), PREC_NOT),
+                    Tok::Minus => (Some(UnOp::Neg), PREC_NEG),
+                    _ => (None, PREC_TYPEOF),
+                };
                 self.bump();
-                let operand = self.expr_bp(PREC_TYPEOF)?;
+                let operand = self.expr_bp(precedence)?;
                 Expr {
                     span: lo.to(operand.span),
-                    kind: ExprKind::Unary {
-                        op: UnOp::Typeof,
-                        expr: Box::new(operand),
-                    },
-                }
-            }
-            Tok::Not => {
-                self.bump();
-                let operand = self.expr_bp(PREC_NOT)?;
-                Expr {
-                    span: lo.to(operand.span),
-                    kind: ExprKind::Unary {
-                        op: UnOp::Not,
-                        expr: Box::new(operand),
-                    },
-                }
-            }
-            Tok::Minus => {
-                self.bump();
-                let operand = self.expr_bp(PREC_NEG)?;
-                Expr {
-                    span: lo.to(operand.span),
-                    kind: ExprKind::Unary {
-                        op: UnOp::Neg,
-                        expr: Box::new(operand),
+                    kind: match op {
+                        Some(op) => ExprKind::Unary {
+                            op,
+                            expr: Box::new(operand),
+                        },
+                        None => ExprKind::Draw(Box::new(operand)),
                     },
                 }
             }

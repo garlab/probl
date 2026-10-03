@@ -22,24 +22,24 @@ fn#0 the top level ()
 fn#1 a simulate block () captures [belief_0 <- parent slot 1, alarm_4 <- parent slot 5]
   previous_1 ~ belief_0    [live: previous_1 alarm_4]
   if previous_1 {
-    $2 = 0.8    [live: $2 alarm_4]
+    $2 = 80%    [live: $2 alarm_4]
   } else {
-    $2 = 0.05    [live: $2 alarm_4]
+    $2 = 5%    [live: $2 alarm_4]
   }
-  failed_3 ~ bernoulli(prob($2))    [live: failed_3 alarm_4]
+  failed_3 ~ bernoulli($2)    [live: failed_3 alarm_4]
   if failed_3 {
-    $5 = 0.9    [live: failed_3 alarm_4 $5]
+    $5 = 90%    [live: failed_3 alarm_4 $5]
   } else {
-    $5 = 0.1    [live: failed_3 alarm_4 $5]
+    $5 = 10%    [live: failed_3 alarm_4 $5]
   }
-  observe alarm_4 from bernoulli(prob($5))    [live: failed_3]
+  observe alarm_4 from bernoulli($5)    [live: failed_3]
   return failed_3    [live: ]
 fn#2 a simulate block () captures [belief_0 <- parent slot 1]
   failed_1 ~ belief_0    [live: failed_1]
   if failed_1 {
-    $2 = 0.8    [live: $2]
+    $2 = 80%    [live: $2]
   } else {
-    $2 = 0.05    [live: $2]
+    $2 = 5%    [live: $2]
   }
-  next_3 ~ bernoulli(prob($2))    [live: next_3]
+  next_3 ~ bernoulli($2)    [live: next_3]
   return next_3    [live: ]

@@ -37,6 +37,14 @@ fn all_examples_parse() {
 }
 
 #[test]
+fn prefix_draw_precedence_and_score() {
+    assert_eq!(
+        parse_ok("~d6 != 6\n~d6 + ~d6\n~(d6 > 3)\n~f()[0]\n~d6 ^ 2\nscore 30%"),
+        "(!= (~ 1d6) 6)\n(+ (~ 1d6) (~ 1d6))\n(~ (> 1d6 3))\n(~ (index (call f) 0))\n(^ (~ 1d6) 2)\n(score 30%)\n"
+    );
+}
+
+#[test]
 fn typeof_precedence_and_parentheses() {
     assert_eq!(
         parse_ok(

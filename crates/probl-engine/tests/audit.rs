@@ -12,10 +12,10 @@ use std::sync::atomic::AtomicBool;
 // ── D1: events, probabilities and distributions of probabilities ─────────
 
 #[test]
-fn d1_logic_on_probabilities_is_rejected() {
-    assert!(error("let p = 30%\nreport p and not p").contains("needs facts"));
-    assert!(error("let p = 30%\nreport p or not p").contains("needs facts"));
-    assert!(error("report not 30%").contains("needs facts"));
+fn d1_numbers_are_not_logical_operands() {
+    assert!(error("let p = 30%\nreport p and not p").contains("needs bool, prob or dist[bool]"));
+    assert!(error("let p = 30%\nreport p or not p").contains("needs bool, prob or dist[bool]"));
+    assert!(error("report not 30%").contains("needs bool, prob or dist[bool]"));
     // Drawn events have identities, so the usual logical laws hold.
     close(
         chance("let happened ~ bernoulli(30%)\nreport happened and not happened"),

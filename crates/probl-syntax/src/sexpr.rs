@@ -100,6 +100,7 @@ pub fn stmt(s: &Stmt) -> String {
         StmtKind::Continue => "(continue)".to_string(),
         StmtKind::Return(None) => "(return)".to_string(),
         StmtKind::Return(Some(e)) => format!("(return {})", expr(e)),
+        StmtKind::Score(value) => format!("(score {})", expr(value)),
         StmtKind::Observe { value, from } => match from {
             Some(d) => format!("(observe {} from {})", expr(value), expr(d)),
             None => format!("(observe {})", expr(value)),
@@ -199,6 +200,7 @@ pub fn expr(e: &Expr) -> String {
             Some(n) => format!("(record {}{})", n.name, fields(fs)),
             None => format!("(record{})", fields(fs)),
         },
+        ExprKind::Draw(inner) => format!("(~ {})", expr(inner)),
         ExprKind::Unary { op, expr: inner } => {
             let op = match op {
                 UnOp::Neg => "-",

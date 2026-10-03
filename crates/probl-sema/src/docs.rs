@@ -163,6 +163,8 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Settled
         | B::Last
         | B::DropLast
+        | B::BooleanLaw
+        | B::ScoreLaw
         | B::Typeof => "Internal",
     }
 }
@@ -661,6 +663,8 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         | B::Settled
         | B::Last
         | B::DropLast
+        | B::BooleanLaw
+        | B::ScoreLaw
         | B::Typeof => None,
     }
 }
@@ -695,8 +699,8 @@ pub const READ: Doc = Doc {
 /// The keywords, and the words that act as keywords in their places.
 pub const KEYWORDS: &[&str] = &[
     "let", "var", "fn", "return", "if", "else", "for", "in", "while", "loop", "repeat", "break", "continue", "match",
-    "chance", "observe", "from", "report", "by", "as", "simulate", "type", "enum", "with", "and", "or", "not", "div",
-    "mod", "to", "true", "false", "import", "typeof",
+    "chance", "observe", "score", "from", "report", "by", "as", "simulate", "type", "enum", "with", "and", "or", "not",
+    "div", "mod", "to", "true", "false", "import", "typeof",
 ];
 
 pub fn keyword(word: &str) -> Option<Doc> {
@@ -707,7 +711,7 @@ pub fn keyword(word: &str) -> Option<Doc> {
         ),
         "let" => doc(
             "let x = e or let x ~ D",
-            "Declares a variable. `=` gives it a value; `~` draws it from a distribution, one world per outcome: `let roll ~ d20`.",
+            "Declares a variable. `=` gives it a value; `~` draws from a distribution or probability: `let roll ~ d20` and `let roll = ~d20` are equivalent. A bound outcome has one identity in each world.",
         ),
         "var" => doc(
             "var x = e",
@@ -720,7 +724,7 @@ pub fn keyword(word: &str) -> Option<Doc> {
         "return" => doc("return e", "Leaves the function with this result."),
         "if" | "else" => doc(
             "if c { … } else { … }",
-            "Runs the selected branch in each world. The condition must be bool. Draw an event with `~` first, or use `chance` for explicit weighted branching.",
+            "Branches on a bool, a prob, or a dist[bool]. Probabilities and boolean recipes request a fresh trial each time. Numeric literals convert contextually: `if 30% { ... }`. Numeric variables need prob(x).",
         ),
         "for" | "in" => doc(
             "for x in xs { … }",
@@ -728,7 +732,7 @@ pub fn keyword(word: &str) -> Option<Doc> {
         ),
         "while" => doc(
             "while c { … }",
-            "Repeats while the boolean `c` holds, in each world, until every world has left. If the worlds come back to states they were in, it's solved exactly; otherwise it stops once what's left weighs less than ε.",
+            "Re-evaluates its condition each round: a bool follows its fact, and a prob or dist[bool] requests a fresh trial. `while ~d6 != 6 { ... }` explicitly draws a new face each time. If the worlds come back to states they were in, it's solved exactly; otherwise it stops once what's left weighs less than ε.",
         ),
         "loop" => doc(
             "loop { … }",
@@ -747,7 +751,11 @@ pub fn keyword(word: &str) -> Option<Doc> {
         ),
         "observe" | "from" => doc(
             "observe c or observe v from D",
-            "Evidence: `observe c` requires bool and discards worlds where it is false. `observe v from D` weighs worlds by the likelihood of D giving v. Use `observe true from bernoulli(p)` for a probability likelihood. Reports describe the worlds that fit the evidence.",
+            "Evidence: `observe c` requires bool and discards worlds where it is false. `observe v from D` weighs worlds by the likelihood of D giving v. Use `score p` to apply a probability likelihood, or `observe ~p` to observe an anonymous boolean draw. Reports describe the worlds that fit the evidence.",
+        ),
+        "score" => doc(
+            "score p",
+            "Multiplies each world's weight by a prob in [0, 1]. Numeric literals convert contextually, including branch results: `score if sick { 95% } else { 8% }`. Does not draw or mutate the probability. Like observe, it must come before reports and is local inside simulate.",
         ),
         "report" | "by" | "as" => doc(
             "report e by key as \"label\"",
@@ -768,7 +776,7 @@ pub fn keyword(word: &str) -> Option<Doc> {
         ),
         "and" | "or" | "not" => doc(
             "a and b, a or b, not a",
-            "Combine facts. At most one side may be uncertain: two uncertain facts need identities, so draw them first with `~`.",
+            "Combine boolean facts, or compose probability and boolean-distribution recipes independently. `p and p` means two trials; bind `let event = ~p` to reuse one outcome. `not p` complements a recipe. Only an actual boolean false/true short-circuits and/or.",
         ),
         "div" => doc("a div b", "Integer division, rounded down."),
         "mod" => doc("a mod b", "The remainder of `a div b`, with the sign of `b`."),

@@ -379,6 +379,10 @@ impl<'a> Interp<'a> {
     /// Evaluate expressions left to right, each in the worlds the previous
     /// one left (docs/semantics.md, section 4).
     fn list(&mut self, exprs: &[&'a Expr], w: World) -> R<ListOuts> {
+        self.list_context(exprs, w, false)
+    }
+
+    fn list_context(&mut self, exprs: &[&'a Expr], w: World, probability: bool) -> R<ListOuts> {
         let mut acc: ListOuts = vec![(w, Ok(Vec::new()))];
         for e in exprs {
             let mut next = Vec::new();
@@ -386,7 +390,7 @@ impl<'a> Interp<'a> {
                 match vals {
                     Err(flow) => next.push((w, Err(flow))),
                     Ok(vals) => {
-                        for (w, r) in self.expr(e, w, true)? {
+                        for (w, r) in self.expr_context(e, w, true, probability)? {
                             next.push((
                                 w,
                                 r.map(|v| {
@@ -539,13 +543,27 @@ impl<'a> Interp<'a> {
                 let outs = self.expr(e, w, true)?;
                 self.each(outs, |_, w, v| Ok(vec![(w, Err(Flow::Return(v)))]))
             }
+            StmtKind::Score(value) => {
+                let outs = self.expr_context(value, w, true, true)?;
+                self.each(outs, |me, w, v| {
+                    let factor = to_prob(&v)?;
+                    if me.in_simulate == 0 {
+                        me.observed = true;
+                    }
+                    if factor.is_zero() {
+                        Ok(Vec::new())
+                    } else {
+                        Ok(done(w.scaled(&factor)))
+                    }
+                })
+            }
             StmtKind::Observe { value, from } => {
                 let mut exprs = vec![value];
                 exprs.extend(from.as_ref());
                 let outs = self.list(&exprs, w)?;
                 self.each_list(outs, |me, w, vs| {
                     let factor = match vs.as_slice() {
-                        [c] => condition(c)?.0,
+                        [c] => bool_condition(c)?.0,
                         [v, d] => likelihood(d, v)?,
                         _ => unreachable!(),
                     };
@@ -646,7 +664,7 @@ impl<'a> Interp<'a> {
                     go.push(w);
                     continue;
                 };
-                for (w, c) in self.expr(cond, w, true)? {
+                for (w, c) in self.expr_context(cond, w, true, true)? {
                     let c = match c {
                         Ok(c) => c,
                         Err(flow) => {
@@ -683,6 +701,10 @@ impl<'a> Interp<'a> {
     /// Run a block in a scope of its own; its value is that of its last
     /// statement, if that's an expression.
     fn block(&mut self, b: &'a Block, w: World, want: bool) -> R<Outs> {
+        self.block_context(b, w, want, false)
+    }
+
+    fn block_context(&mut self, b: &'a Block, w: World, want: bool, probability: bool) -> R<Outs> {
         let depth = w.scopes.len();
         let mut w = w;
         w.scopes.push(Vec::new());
@@ -692,7 +714,7 @@ impl<'a> Interp<'a> {
             let mut next = Vec::new();
             for (w, r) in acc {
                 match r {
-                    Ok(_) => next.extend(self.stmt(s, w, want && last)?),
+                    Ok(_) => next.extend(self.stmt_context(s, w, want && last, probability && want && last)?),
                     Err(flow) => next.push((w, Err(flow))),
                 }
             }
@@ -702,10 +724,17 @@ impl<'a> Interp<'a> {
     }
 
     /// An arm of `chance` or `match`: a statement in a scope of its own.
-    fn arm(&mut self, body: &'a Stmt, mut w: World, want: bool) -> R<Outs> {
+    fn stmt_context(&mut self, s: &'a Stmt, w: World, want: bool, probability: bool) -> R<Outs> {
+        match &s.kind {
+            StmtKind::Expr(e) => self.expr_context(e, w, want, probability),
+            _ => self.stmt(s, w, want),
+        }
+    }
+
+    fn arm(&mut self, body: &'a Stmt, mut w: World, want: bool, probability: bool) -> R<Outs> {
         let depth = w.scopes.len();
         w.scopes.push(Vec::new());
-        let outs = self.stmt(body, w, want)?;
+        let outs = self.stmt_context(body, w, want, probability)?;
         Ok(leave(outs, depth))
     }
 
@@ -752,9 +781,13 @@ impl<'a> Interp<'a> {
     /// Evaluate an expression. With `want`, its value is used; otherwise
     /// it's an expression statement.
     fn expr(&mut self, e: &'a Expr, w: World, want: bool) -> R<Outs> {
+        self.expr_context(e, w, want, false)
+    }
+
+    fn expr_context(&mut self, e: &'a Expr, w: World, want: bool, probability: bool) -> R<Outs> {
         self.tick()?;
         let one = |w: World, v: Value| -> R<Outs> { Ok(vec![(w, Ok(v))]) };
-        match &e.kind {
+        let outs = match &e.kind {
             ExprKind::Int(i) => one(
                 w,
                 Value::Int(
@@ -785,6 +818,12 @@ impl<'a> Interp<'a> {
                 let items: Vec<&Expr> = items.iter().collect();
                 self.map_list(&items, w, |vs| Ok(Value::List(Rc::new(vs))))
             }
+            ExprKind::Draw(source) => {
+                let outs = self.expr(source, w, true)?;
+                self.each(outs, |_, w, v| {
+                    Ok(bind(w, v, true)?.into_iter().map(|(w, v)| (w, Ok(v))).collect())
+                })
+            }
             ExprKind::Unary { op, expr } => {
                 let op = *op;
                 self.map_list(&[expr], w, move |vs| unary(op, &vs[0]))
@@ -802,17 +841,24 @@ impl<'a> Interp<'a> {
             ExprKind::Index { expr, index } => {
                 self.map_list(&[expr, index], w, |vs| lift2(&vs[0], &vs[1], index_plain))
             }
-            ExprKind::If { cond, then, otherwise } => self.if_expr(cond, then, otherwise.as_deref(), w, want),
-            ExprKind::Chance { arms } => self.chance(arms, w, want),
-            ExprKind::Match { scrutinee, arms } => self.match_expr(scrutinee, arms, w, want),
+            ExprKind::If { cond, then, otherwise } => {
+                self.if_expr(cond, then, otherwise.as_deref(), w, want, probability)
+            }
+            ExprKind::Chance { arms } => self.chance(arms, w, want, probability),
+            ExprKind::Match { scrutinee, arms } => self.match_expr(scrutinee, arms, w, want, probability),
             ExprKind::Simulate(block) => self.simulate(block, w),
-            ExprKind::Block(block) => self.block(block, w, want),
+            ExprKind::Block(block) => self.block_context(block, w, want, probability),
             ExprKind::Map(_)
             | ExprKind::Record { .. }
             | ExprKind::Method { .. }
             | ExprKind::Field { .. }
             | ExprKind::With { .. }
             | ExprKind::Lambda { .. } => unsupported("maps, records, methods and lambdas"),
+        }?;
+        if probability {
+            self.each(outs, |_, w, v| Ok(vec![(w, Ok(contextual_prob(e, &v)?))]))
+        } else {
+            Ok(outs)
         }
     }
 
@@ -844,10 +890,36 @@ impl<'a> Interp<'a> {
                 let op = |x: bool, y: bool| if and { x && y } else { x || y };
                 let v = match (&left, truth(&b, word)?) {
                     (Truth::Fact(x), Truth::Fact(y)) => Value::Bool(op(*x, y)),
+                    (Truth::Probability(p), Truth::Probability(q)) => {
+                        Value::Prob(if and { p * q } else { p + (Q::one() - p) * q })
+                    }
+                    (Truth::Probability(p), Truth::Fact(b)) => Value::Prob(if b == and {
+                        p.clone()
+                    } else if b {
+                        Q::one()
+                    } else {
+                        Q::zero()
+                    }),
+                    (Truth::Fact(b), Truth::Probability(p)) => Value::Prob(if *b == and {
+                        p
+                    } else if *b {
+                        Q::one()
+                    } else {
+                        Q::zero()
+                    }),
                     (Truth::Fact(x), Truth::Uncertain(d)) => map_bools(&d, |y| op(*x, y))?,
                     (Truth::Uncertain(d), Truth::Fact(y)) => map_bools(d, |x| op(x, y))?,
-                    (Truth::Uncertain(_), Truth::Uncertain(_)) => {
-                        return err(format!("`{word}` can't combine two uncertain facts"));
+                    _ => {
+                        let law = |v: &Value| match v {
+                            Value::Prob(p) => {
+                                dist(vec![(Value::Bool(true), p.clone()), (Value::Bool(false), Q::one() - p)])
+                            }
+                            v => Ok(v.clone()),
+                        };
+                        lift2(&law(&a)?, &law(&b)?, |x, y| match (x, y) {
+                            (Value::Bool(x), Value::Bool(y)) => Ok(Value::Bool(op(*x, *y))),
+                            _ => unreachable!("checked by truth"),
+                        })?
                     }
                 };
                 Ok(vec![(w, Ok(v))])
@@ -862,21 +934,22 @@ impl<'a> Interp<'a> {
         otherwise: Option<&'a Expr>,
         w: World,
         want: bool,
+        probability: bool,
     ) -> R<Outs> {
         if want && otherwise.is_none() {
             return unsupported("an `if` without `else` used as a value");
         }
-        let outs = self.expr(cond, w, true)?;
+        let outs = self.expr_context(cond, w, true, true)?;
         self.each(outs, |me, w, c| {
             let (yes, no) = condition(&c)?;
             let mut out = Vec::new();
             if !yes.is_zero() {
-                out.extend(me.block(then, w.scaled(&yes), want)?);
+                out.extend(me.block_context(then, w.scaled(&yes), want, probability)?);
             }
             if !no.is_zero() {
                 let w = w.scaled(&no);
                 match otherwise {
-                    Some(e) => out.extend(me.expr(e, w, want)?),
+                    Some(e) => out.extend(me.expr_context(e, w, want, probability)?),
                     None => out.push((w, Ok(Value::Unit))),
                 }
             }
@@ -886,10 +959,10 @@ impl<'a> Interp<'a> {
 
     /// `chance`: every weight is evaluated first, then the world splits
     /// (docs/semantics.md, section 3).
-    fn chance(&mut self, arms: &'a [ChanceArm], w: World, want: bool) -> R<Outs> {
+    fn chance(&mut self, arms: &'a [ChanceArm], w: World, want: bool, probability: bool) -> R<Outs> {
         let weights: Vec<&Expr> = arms.iter().filter_map(|a| a.weight.as_ref()).collect();
         let has_else = arms.iter().any(|a| a.weight.is_none());
-        let outs = self.list(&weights, w)?;
+        let outs = self.list_context(&weights, w, true)?;
         self.each_list(outs, |me, w, vs| {
             let ps = vs
                 .iter()
@@ -909,7 +982,7 @@ impl<'a> Interp<'a> {
                     None => rest.clone(),
                 };
                 if !p.is_zero() {
-                    out.extend(me.arm(&arm.body, w.scaled(&p), want)?);
+                    out.extend(me.arm(&arm.body, w.scaled(&p), want, probability)?);
                 }
             }
             if !has_else && !rest.is_zero() {
@@ -922,35 +995,49 @@ impl<'a> Interp<'a> {
         })
     }
 
-    fn match_expr(&mut self, scrutinee: &'a Expr, arms: &'a [MatchArm], w: World, want: bool) -> R<Outs> {
+    fn match_expr(
+        &mut self,
+        scrutinee: &'a Expr,
+        arms: &'a [MatchArm],
+        w: World,
+        want: bool,
+        probability: bool,
+    ) -> R<Outs> {
         let outs = self.expr(scrutinee, w, true)?;
         self.each(outs, |me, w, subject| {
             if matches!(subject, Value::Dist(_)) {
                 return err("`match` needs a settled value, not a distribution");
             }
-            me.match_arms(arms, &subject, w, want)
+            me.match_arms(arms, &subject, w, want, probability)
         })
     }
 
     /// Try the arms in order. A guard is a condition: where it doesn't hold,
     /// the next arms are tried.
-    fn match_arms(&mut self, arms: &'a [MatchArm], subject: &Value, w: World, want: bool) -> R<Outs> {
+    fn match_arms(
+        &mut self,
+        arms: &'a [MatchArm],
+        subject: &Value,
+        w: World,
+        want: bool,
+        probability: bool,
+    ) -> R<Outs> {
         let Some((arm, rest)) = arms.split_first() else {
             return err("no arm of the `match` matches");
         };
         let mut binds = Vec::new();
         if !self.pattern(&arm.pattern, subject, &mut binds)? {
-            return self.match_arms(rest, subject, w, want);
+            return self.match_arms(rest, subject, w, want, probability);
         }
         let depth = w.scopes.len();
         let mut w = w;
         w.scopes.push(binds);
         let Some(guard) = &arm.guard else {
-            let outs = self.arm(&arm.body, w, want)?;
+            let outs = self.arm(&arm.body, w, want, probability)?;
             return Ok(leave(outs, depth));
         };
         let mut out = Vec::new();
-        for (w, g) in self.expr(guard, w, true)? {
+        for (w, g) in self.expr_context(guard, w, true, true)? {
             let g = match g {
                 Ok(g) => g,
                 Err(flow) => {
@@ -960,13 +1047,13 @@ impl<'a> Interp<'a> {
             };
             let (yes, no) = condition(&g)?;
             if !yes.is_zero() {
-                let outs = self.arm(&arm.body, w.scaled(&yes), want)?;
+                let outs = self.arm(&arm.body, w.scaled(&yes), want, probability)?;
                 out.extend(leave(outs, depth));
             }
             if !no.is_zero() {
                 let mut w = w.scaled(&no);
                 w.scopes.truncate(depth);
-                out.extend(self.match_arms(rest, subject, w, want)?);
+                out.extend(self.match_arms(rest, subject, w, want, probability)?);
             }
         }
         Ok(out)
@@ -1050,7 +1137,7 @@ impl<'a> Interp<'a> {
             return unsupported("calling a variable");
         }
         let exprs: Vec<&Expr> = args.iter().map(|a| &a.value).collect();
-        let outs = self.list(&exprs, w)?;
+        let outs = self.list_context(&exprs, w, name == "bernoulli" && !self.fns.contains_key(name.as_str()))?;
         match self.fns.get(name.as_str()).copied() {
             Some(decl) => self.each_list(outs, |me, w, vs| me.call_fn(decl, vs, w)),
             None => self.each_list(outs, |_, w, mut vs| {
@@ -1123,7 +1210,11 @@ fn bind(w: World, v: Value, draw: bool) -> R<Vec<(World, Value)>> {
     }
     match v {
         Value::Dist(d) => Ok(d.iter().map(|(x, p)| (w.scaled(p), x.clone())).collect()),
-        Value::Prob(_) => err("can't draw from a probability; use `bernoulli`"),
+        Value::Prob(p) => bind(
+            w,
+            dist(vec![(Value::Bool(true), p.clone()), (Value::Bool(false), Q::one() - p)])?,
+            true,
+        ),
         other => Ok(vec![(w, other)]),
     }
 }
@@ -1227,6 +1318,7 @@ fn outcomes(v: &Value) -> Vec<(Value, Q)> {
 
 enum Truth {
     Fact(bool),
+    Probability(Q),
     Uncertain(Rc<Vec<(Value, Q)>>),
 }
 
@@ -1234,6 +1326,7 @@ enum Truth {
 fn truth(v: &Value, op: &str) -> R<Truth> {
     match v {
         Value::Bool(b) => Ok(Truth::Fact(*b)),
+        Value::Prob(p) => Ok(Truth::Probability(p.clone())),
         Value::Dist(d) if d.iter().all(|(x, _)| matches!(x, Value::Bool(_))) => Ok(Truth::Uncertain(d.clone())),
         _ => err(format!("`{op}` needs facts")),
     }
@@ -1252,7 +1345,6 @@ fn probability(v: &Value) -> R<(Q, Q)> {
         Value::Bool(true) => Ok((Q::one(), Q::zero())),
         Value::Bool(false) => Ok((Q::zero(), Q::one())),
         Value::Prob(p) => Ok((p.clone(), Q::one() - p)),
-        Value::Float(p) if !p.is_negative() && *p <= Q::one() => Ok((p.clone(), Q::one() - p)),
         Value::Dist(d) if d.iter().all(|(x, _)| matches!(x, Value::Bool(_))) => {
             let yes = d
                 .iter()
@@ -1266,6 +1358,10 @@ fn probability(v: &Value) -> R<(Q, Q)> {
 }
 
 fn condition(v: &Value) -> R<(Q, Q)> {
+    probability(v)
+}
+
+fn bool_condition(v: &Value) -> R<(Q, Q)> {
     match v {
         Value::Bool(true) => Ok((Q::one(), Q::zero())),
         Value::Bool(false) => Ok((Q::zero(), Q::one())),
@@ -1378,6 +1474,7 @@ fn unary(op: UnOp, v: &Value) -> R<Value> {
         }),
         UnOp::Not => match truth(v, "not")? {
             Truth::Fact(b) => Ok(Value::Bool(!b)),
+            Truth::Probability(p) => Ok(Value::Prob(Q::one() - p)),
             Truth::Uncertain(d) => map_bools(&d, |b| !b),
         },
     }

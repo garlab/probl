@@ -24,3 +24,12 @@ let probabilities: list[prob] = [0, 33%, 1]
 report typeof probabilities
 report simulate { let event ~ bernoulli(5%); observe event; event }
 report chance { p => true, else => false }
+
+# Probabilistic branching, prefix draws and likelihood weights.
+report if 30% { "rain" } else { "sun" }
+report simulate { var rolls = 0; while ~d6 != 6 { rolls += 1 }; rolls }
+report simulate { let sick = ~bernoulli(1%); score if sick { 95% } else { 8% }; sick }
+report simulate { let event = ~p; observe event; event }
+report simulate { observe ~p; true }
+report [typeof (p and p), typeof (not p), typeof ((d6 > 3) and (d6 > 3))]
+report (d6 > 3) and (d6 > 3)

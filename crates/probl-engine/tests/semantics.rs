@@ -47,10 +47,10 @@ fn events_need_identities() {
     close(chance("let r ~ d6\nreport r > 4 and d6 > 4"), 1.0 / 9.0);
     // A drawn distribution of facts gives an event with an identity.
     close(chance("let big ~ d6 > 4\nreport big and big"), 1.0 / 3.0);
-    assert!(error("report prob(30%) and prob(30%)").contains("30% is a probability"));
-    assert!(error("report (d6 > 4) and (d6 > 4)").contains("two uncertain facts"));
-    assert!(error("let e = d6 > 4\nreport e or e").contains("two uncertain facts"));
-    assert!(error("let p ~ prob(30%)").contains("bernoulli"));
+    close(mean("report prob(30%) and prob(30%)"), 0.09);
+    close(chance("report (d6 > 4) and (d6 > 4)"), 1.0 / 9.0);
+    close(chance("let e = d6 > 4\nreport e or e"), 5.0 / 9.0);
+    close(chance("let p ~ prob(30%)\nreport p"), 0.3);
 }
 
 #[test]
@@ -467,7 +467,7 @@ fn runtime_errors() {
     assert!(error("let x ~ d6\nreport 10 / (x - x)").contains("division by zero"));
     assert!(error("let xs = [1, 2]\nreport xs[2]").contains("out of range"));
     assert!(error("fn f(x) { f(x) }\nreport f(1)").contains("`f(1)` never returns for some of its worlds"));
-    assert!(error("report if 3 { 1 } else { 2 }").contains("needs a bool"));
+    assert!(compile_error("report if 3 { 1 } else { 2 }").contains("between 0 and 1"));
     assert!(error("for i in 1..d6 { }").contains("range"));
     assert!(error("let w = chance { 60% => 1, 30% => 2 }\nreport w").contains("no `else`"));
     assert!(error("chance { 60% => {}, 50% => {} }").contains("more than 100%"));

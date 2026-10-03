@@ -14,8 +14,8 @@ for step in 1..len(readings) {
   let alarm = readings[step - 1]
   belief = simulate {
     let previous ~ belief
-    let failed ~ bernoulli(prob(if previous { 80% } else { 5% }))
-    observe alarm from bernoulli(prob(if failed { 90% } else { 10% }))
+    let failed ~ bernoulli(if previous { 80% } else { 5% })
+    observe alarm from bernoulli(if failed { 90% } else { 10% })
     failed
   }
   report P(belief) * 100 by step as "failure probability after reading (%)"
@@ -25,7 +25,7 @@ for step in 1..len(readings) {
 # Estimating an earlier state using later readings would instead be smoothing.
 let tomorrow = simulate {
   let failed ~ belief
-  let next ~ bernoulli(prob(if failed { 80% } else { 5% }))
+  let next ~ bernoulli(if failed { 80% } else { 5% })
   next
 }
 report tomorrow as "failure probability at next step"

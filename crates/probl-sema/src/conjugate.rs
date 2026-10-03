@@ -71,9 +71,17 @@ pub fn update<'a>(value: &'a Expr, from: Option<&'a Expr>) -> Option<Update<'a>>
         (Builtin::Prob, [x]) => slot(x),
         _ => None,
     };
-    let (slot, likelihood) = match builtin(from?)? {
+    let mut distribution = builtin(from?)?;
+    if let (Builtin::BooleanLaw, [inner]) = distribution {
+        if let Some((Builtin::Bernoulli, args)) = builtin(inner) {
+            distribution = (Builtin::Bernoulli, args);
+        }
+    }
+    let (slot, likelihood) = match distribution {
         (Builtin::Binomial, [trials, x]) => (probability_slot(x)?, Likelihood::Binomial { value, trials }),
-        (Builtin::Bernoulli, [x]) => (probability_slot(x)?, Likelihood::Bernoulli { value }),
+        (Builtin::Bernoulli | Builtin::BooleanLaw | Builtin::ScoreLaw, [x]) => {
+            (probability_slot(x)?, Likelihood::Bernoulli { value })
+        }
         (Builtin::Poisson, [x]) => (slot(x)?, Likelihood::Poisson { value }),
         (Builtin::Normal, [x, sd]) => (slot(x)?, Likelihood::Normal { value, sd }),
         _ => return None,

@@ -141,6 +141,8 @@ pub enum StmtKind {
         value: Expr,
         from: Option<Expr>,
     },
+    /// Multiply the current world's weight by a probability.
+    Score(Expr),
     Report {
         value: Expr,
         by: Option<Expr>,
@@ -179,6 +181,8 @@ pub enum ExprKind {
         op: UnOp,
         expr: Box<Expr>,
     },
+    /// Prefix `~`: draw one value each time this expression is evaluated.
+    Draw(Box<Expr>),
     Binary {
         op: BinOp,
         lhs: Box<Expr>,

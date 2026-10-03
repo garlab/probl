@@ -1302,14 +1302,7 @@ impl<'p> Engine<'p> {
                 }
             }
             Value::Prob(p) => {
-                return Err(RuntimeError::new(
-                    span,
-                    format!(
-                        "can't draw from {}: it's a probability, not a distribution",
-                        fmt_prob(p)
-                    ),
-                )
-                .with_help("to draw a fact that's true with this probability, write `bernoulli(p)`"));
+                return self.split_by(f, place, Dist::bernoulli(p).into_value(), w, span, out);
             }
             other => {
                 let mut w = w;
@@ -1912,12 +1905,7 @@ impl<'p> Engine<'p> {
 
     fn eval_condition(&mut self, f: FnId, e: &Expr, w: &World) -> Result<ops::Condition> {
         let v = self.eval(f, e, w)?;
-        let b = ops::fact(&v, "condition").map_err(|err| err.at(e.span))?;
-        Ok(ops::Condition {
-            yes: if b { 1.0 } else { 0.0 },
-            no: if b { 0.0 } else { 1.0 },
-            missing: 0.0,
-        })
+        ops::condition(&v).map_err(|err| err.at(e.span))
     }
 
     fn eval_expected(&mut self, f: FnId, e: &Expr, w: &World, ty: &TypeSpec) -> Result<Value> {

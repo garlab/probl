@@ -189,6 +189,11 @@ builtins! {
     // Internal helpers used by the lowering pass
     /// The prefix `typeof` operator, which inspects its operand without lifting.
     Typeof = "$typeof", 1..=1, Raw, false;
+    /// A boolean recipe for an immediately observed draw. Unlike `P`, this
+    /// keeps the unresolved mass of a distribution.
+    BooleanLaw = "$boolean_law", 1..=1, Raw, false;
+    /// Strict scalar likelihood for `score`; unlike `bernoulli`, never lifts.
+    ScoreLaw = "$score_law", 1..=1, Raw, false;
     /// Checks a `for` loop's collection and turns it into something indexable.
     IterItems = "$iter_items", 1..=1, Raw, false;
     /// Checks a `repeat` count.

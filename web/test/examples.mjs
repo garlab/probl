@@ -50,6 +50,9 @@ for (const mode of ['enumerate', 'sample']) {
     'report [1, 2].map(x -> { let r ~ d6; x + r })',
     'report [1].filter(x -> { observe true; true })',
     'report [1].count(x -> { let r ~ d1; true })',
+    'report [1].map(x -> ~d6)',
+    'report [1].map(x -> { score 50%; x })',
+    'report [1].map(x -> if 30% { x } else { x })',
     'report [1].reduce(0, (a, x) -> chance { 50% => a, else => a })',
   ]) {
     const result = probl.run({ source, mode, ...(mode === 'sample' ? { runs: 10, seed: 19 } : {}) });
@@ -62,8 +65,8 @@ console.log('same  callback effect restrictions in both modes');
 // Numbers, probabilities and distribution recipes are not boolean events.
 for (const mode of ['enumerate', 'sample']) {
   for (const source of [
-    'if 33% { report true }',
-    'while prob(0) { break }\nreport true',
+    'let p = 33%\nif p { report true }',
+    'score true\nreport true',
     'let e = 5%\nobserve e\nreport e',
     'let x = 3d8\nobserve x > 10\nreport x',
     'let rate = 33%\nreport bernoulli(rate)',
@@ -75,7 +78,7 @@ for (const mode of ['enumerate', 'sample']) {
     assert.equal(result.error?.kind, 'language', source);
   }
 }
-console.log('same  explicit probability conversions and boolean conditions in both modes');
+console.log('same  explicit conversions and observation restrictions in both modes');
 
 // Crossing UTC midnight between executions must change the default snapshot,
 // while repeated references, calls and simulations in one execution share it.

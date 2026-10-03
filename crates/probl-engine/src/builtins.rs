@@ -292,7 +292,8 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             Ok(Value::list(items[..n].to_vec()))
         }
         B::Prob => ops::make_prob(a(0)),
-        B::Bernoulli => Ok(Dist::bernoulli(to_prob(a(0))?).into_value()),
+        B::BooleanLaw => ops::boolean_law(a(0)),
+        B::Bernoulli | B::ScoreLaw => Ok(Dist::bernoulli(to_prob(a(0))?).into_value()),
         B::OneOf => one_of(a(0), budget),
         B::Binomial | B::Poisson | B::Geometric => {
             let counts = counts(b, args)?.expect("called with plain arguments");

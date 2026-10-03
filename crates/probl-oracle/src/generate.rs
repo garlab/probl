@@ -346,14 +346,17 @@ impl Gen {
             } else {
                 (Kind::DBool, Kind::Bool)
             };
-            // Drawing from a probability is an error, rarely on purpose.
-            let e = if self.rng.chance(1) {
-                self.prob()
+            let (e, kind) = if self.rng.chance(20) {
+                (self.prob(), Kind::Bool)
             } else {
-                self.expr(from, 2)
+                (self.expr(from, 2), kind)
             };
             self.declare(&name, kind, assignable);
-            return format!("{word} {name} ~ {e}");
+            return if self.rng.chance(50) {
+                format!("{word} {name} = ~({e})")
+            } else {
+                format!("{word} {name} ~ {e}")
+            };
         }
         let kind = self.some_kind();
         let e = self.expr(kind, 2);
@@ -618,6 +621,9 @@ impl Gen {
             // Evidence that rules the worlds that get here out.
             1 if self.rng.chance(30) => "observe false".into(),
             2 if self.rng.chance(30) => "observe true from bernoulli(0%)".into(),
+            3 => format!("score {}", self.expr(Kind::Prob, 2)),
+            4 => format!("score if {} {{ 90% }} else {{ 30% }}", self.cond(1)),
+            5 => format!("observe ~({})", self.expr(Kind::Prob, 2)),
             _ => format!("observe {}", self.evidence(2)),
         })
     }
@@ -628,11 +634,10 @@ impl Gen {
         let source = match self.rng.below(4) {
             0 => format!("bernoulli({})", self.prob()),
             1 => format!("({} >= {})", self.expr(Kind::DInt, d), self.rng.below(4)),
-            2 => format!("bernoulli(prob(if {} {{ 90% }} else {{ 30% }}))", self.cond(d)),
-            _ => return self.cond(depth),
+            2 => format!("bernoulli(if {} {{ 90% }} else {{ 30% }})", self.cond(d)),
+            _ => return self.expr(Kind::Bool, depth),
         };
-        let name = self.fresh("event");
-        format!("({{ let {name} ~ {source}; {name} }})")
+        format!("~({source})")
     }
 
     /// `break`, `continue` or `return`, under a condition.
@@ -732,15 +737,14 @@ impl Gen {
 
     // ── Expressions ──────────────────────────────────────────────────────
 
-    /// Boolean control flow; probabilistic effects are explicit draws.
+    /// Facts, probability parameters and boolean recipes in control flow.
     fn cond(&mut self, depth: u32) -> String {
-        let source = match self.rng.below(3) {
-            0 => return self.expr(Kind::Bool, depth),
-            1 => format!("bernoulli({})", self.expr(Kind::Prob, depth)),
-            _ => self.expr(Kind::DBool, depth),
-        };
-        let name = self.fresh("event");
-        format!("({{ let {name} ~ {source}; {name} }})")
+        match self.rng.below(4) {
+            0 => self.expr(Kind::Bool, depth),
+            1 => self.expr(Kind::Prob, depth),
+            2 => self.expr(Kind::DBool, depth),
+            _ => format!("~({})", self.expr(Kind::DBool, depth)),
+        }
     }
 
     fn leaf(&mut self, kind: Kind) -> String {
@@ -816,8 +820,11 @@ impl Gen {
                 }
                 _ => self.compound(kind, d),
             },
-            Kind::Prob => match self.rng.below(4) {
+            Kind::Prob => match self.rng.below(7) {
                 0 | 1 => format!("P({})", self.expr(Kind::DBool, d)),
+                2 => format!("({} and {})", self.expr(Kind::Prob, d), self.expr(Kind::Prob, d)),
+                3 => format!("({} or {})", self.expr(Kind::Prob, d), self.expr(Kind::Prob, d)),
+                4 => format!("not {}", self.expr(Kind::Prob, d)),
                 _ => self.compound(kind, d),
             },
             Kind::DInt => match self.rng.below(12) {
@@ -850,8 +857,8 @@ impl Gen {
                 3 => format!("not {}", self.expr(Kind::DBool, d)),
                 4 => format!("({} and {})", self.expr(Kind::Bool, d), self.expr(Kind::DBool, d)),
                 5 => format!("({} or {})", self.expr(Kind::DBool, d), self.expr(Kind::Bool, d)),
-                // Two uncertain operands: an error, rarely on purpose.
-                6 if self.rng.chance(10) => {
+                // Two recipes compose independently.
+                6 => {
                     format!("({} and {})", self.expr(Kind::DBool, d), self.expr(Kind::DBool, d))
                 }
                 7 | 8 => self.simulate(Kind::DBool, d),

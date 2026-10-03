@@ -3,13 +3,10 @@ source: crates/probl-sema/tests/lower.rs
 expression: ir(&src)
 ---
 fn#0 the top level ()
-  chance (value) {
-    30% => {
-      $0 = "rain"    [live: $0]
-    }
-    else => {
-      $0 = "sun"    [live: $0]
-    }
+  if 30% {
+    $0 = "rain"    [live: $0]
+  } else {
+    $0 = "sun"    [live: $0]
   }
   weather_1 = $0    [live: weather_1]
   report weather_1 as "weather"    [live: ]
@@ -19,15 +16,15 @@ fn#0 the top level ()
   report (+ die_2 die_2) as "die + die"    [live: ]
   r_3 ~ 1d6    [live: r_3]
   report (+ r_3 r_3) as "r + r"    [live: ]
-  rain_4 ~ bernoulli(30%)    [live: rain_4]
-  late_5 ~ bernoulli(20%)    [live: rain_4 late_5]
+  rain_4 ~ prob(0.3)    [live: rain_4]
+  late_5 ~ prob(0.2)    [live: rain_4 late_5]
   report (and rain_4 late_5) as "rain and late"    [live: rain_4 late_5]
   report (or rain_4 late_5) as "rain or late"    [live: rain_4]
   report (and rain_4 rain_4) as "rain and rain"    [live: ]
   rolls_6 = 1    [live: rolls_6]
   loop {    [live at head: rolls_6]
-    face_7 ~ 1d6    [live: rolls_6 face_7]
-    if (!= face_7 6) {
+    $7 ~ 1d6    [live: rolls_6 $7]
+    if (!= $7 6) {
       rolls_6 = (+ rolls_6 1)    [live: rolls_6]
     } else {
       break    [live: rolls_6]
@@ -42,13 +39,10 @@ fn#0 the top level ()
       break    [live: pos_8 $9 $10]
     }
     $10 = (+ $10 1)    [live: pos_8 $9 $10]
-    chance (value) {
-      50% => {
-        $11 = 1    [live: pos_8 $9 $10 $11]
-      }
-      else => {
-        $11 = (- 1)    [live: pos_8 $9 $10 $11]
-      }
+    if 50% {
+      $11 = 1    [live: pos_8 $9 $10 $11]
+    } else {
+      $11 = (- 1)    [live: pos_8 $9 $10 $11]
     }
     pos_8 = (+ pos_8 $11)    [live: pos_8 $9 $10]
   }
@@ -58,9 +52,9 @@ fn#0 the top level ()
 fn#1 a simulate block ()
   sick_0 ~ bernoulli(1%)    [live: sick_0]
   if sick_0 {
-    $1 = 0.95    [live: sick_0 $1]
+    $1 = 95%    [live: sick_0 $1]
   } else {
-    $1 = 0.08    [live: sick_0 $1]
+    $1 = 8%    [live: sick_0 $1]
   }
-  observe true from bernoulli(prob($1))    [live: sick_0]
+  observe true from $score_law($1)    [live: sick_0]
   return sick_0    [live: ]

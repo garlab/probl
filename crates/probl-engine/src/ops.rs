@@ -2,7 +2,7 @@
 
 use crate::dist::{Budget, Dist};
 use crate::error::{OpError, OpResult};
-use crate::value::{EnumValue, Record, Value, fmt_prob};
+use crate::value::{EnumValue, Record, Value};
 use probl_number::Integer;
 use probl_syntax::ast::{BinOp, UnOp};
 use std::sync::Arc;
@@ -203,6 +203,7 @@ pub struct Condition {
 /// A fact, or a distribution of facts.
 pub enum Truth {
     Fact(bool),
+    Probability(f64),
     Uncertain(Arc<Dist>),
 }
 
@@ -211,13 +212,9 @@ pub fn truth(v: &Value, op: &str) -> OpResult<Truth> {
     match v {
         Value::Bool(b) => Ok(Truth::Fact(*b)),
         Value::Dist(d) if d.truth().is_some() => Ok(Truth::Uncertain(d.clone())),
-        Value::Prob(p) => Err(OpError::new(format!(
-            "`{op}` needs facts (true or false), but {} is a probability",
-            fmt_prob(*p)
-        ))
-        .help("a probability isn't an event: draw one with `let e ~ bernoulli(p)`, then combine the facts")),
+        Value::Prob(p) => Ok(Truth::Probability(*p)),
         other => Err(OpError::new(format!(
-            "`{op}` needs facts (true or false), found {}",
+            "`{op}` needs bool, prob or dist[bool], found {}",
             article(&other.kind())
         ))),
     }
@@ -226,6 +223,7 @@ pub fn truth(v: &Value, op: &str) -> OpResult<Truth> {
 pub fn not(v: &Value, budget: &mut Budget) -> OpResult<Value> {
     match truth(v, "not")? {
         Truth::Fact(b) => Ok(Value::Bool(!b)),
+        Truth::Probability(p) => Ok(Value::Prob(1.0 - p)),
         Truth::Uncertain(d) => lift1(&Value::Dist(d), budget, |x, _| match x {
             Value::Bool(b) => Ok(Value::Bool(!b)),
             _ => unreachable!("checked by `truth`"),
@@ -233,25 +231,69 @@ pub fn not(v: &Value, budget: &mut Budget) -> OpResult<Value> {
     }
 }
 
-/// `and` or `or` of two operands, at most one of them uncertain.
+/// Compose independent boolean recipes. Bound facts retain their identity.
 pub fn logic(and: bool, a: Truth, b: Truth, budget: &mut Budget) -> OpResult<Value> {
     let op = |x: bool, y: bool| if and { x && y } else { x || y };
     match (a, b) {
         (Truth::Fact(x), Truth::Fact(y)) => Ok(Value::Bool(op(x, y))),
+        (Truth::Probability(p), Truth::Probability(q)) => Ok(Value::Prob(if and { p * q } else { p + (1.0 - p) * q })),
+        (Truth::Probability(p), Truth::Fact(b)) | (Truth::Fact(b), Truth::Probability(p)) => {
+            Ok(Value::Prob(if b == and {
+                p
+            } else if b {
+                1.0
+            } else {
+                0.0
+            }))
+        }
         (Truth::Fact(x), Truth::Uncertain(d)) | (Truth::Uncertain(d), Truth::Fact(x)) => {
             lift1(&Value::Dist(d), budget, |v, _| match v {
                 Value::Bool(y) => Ok(Value::Bool(op(x, *y))),
                 _ => unreachable!("checked by `truth`"),
             })
         }
-        (Truth::Uncertain(_), Truth::Uncertain(_)) => {
-            let word = if and { "and" } else { "or" };
-            Err(OpError::new(format!(
-                "`{word}` can't combine two uncertain facts: they might be the same event"
-            ))
-            .help(
-                "give each event an identity by drawing it first, like `let a ~ d6 > 4`, then combine the drawn facts",
-            ))
+        (a, b) => {
+            let law = |v| match v {
+                Truth::Uncertain(d) => Value::Dist(d),
+                Truth::Probability(p) => Dist::bernoulli(p).into_value(),
+                Truth::Fact(b) => Value::Bool(b),
+            };
+            lift2(&law(a), &law(b), budget, |x, y, _| match (x, y) {
+                (Value::Bool(x), Value::Bool(y)) => Ok(Value::Bool(op(*x, *y))),
+                _ => unreachable!("checked by `truth`"),
+            })
+        }
+    }
+}
+
+/// The boolean law requested by an observed anonymous draw.
+pub fn boolean_law(v: &Value) -> OpResult<Value> {
+    match truth(v, "observe ~")? {
+        Truth::Fact(b) => Ok(Dist::bernoulli(if b { 1.0 } else { 0.0 }).into_value()),
+        Truth::Probability(p) => Ok(Dist::bernoulli(p).into_value()),
+        Truth::Uncertain(d) => Ok(Value::Dist(d)),
+    }
+}
+
+pub fn condition(v: &Value) -> OpResult<Condition> {
+    match truth(v, "condition")? {
+        Truth::Fact(b) => Ok(Condition {
+            yes: if b { 1.0 } else { 0.0 },
+            no: if b { 0.0 } else { 1.0 },
+            missing: 0.0,
+        }),
+        Truth::Probability(p) => Ok(Condition {
+            yes: p,
+            no: 1.0 - p,
+            missing: 0.0,
+        }),
+        Truth::Uncertain(d) => {
+            let (yes, no) = d.truth().expect("checked by truth");
+            Ok(Condition {
+                yes,
+                no,
+                missing: d.missing,
+            })
         }
     }
 }

@@ -2,7 +2,7 @@
 
 **A programming language for explicit choices, weighted worlds and inference.**
 
-In Probl, `chance { 30% => …, else => … }` runs *both* branches: one in a world with weight 0.3, the other in a world with weight 0.7. A program doesn't produce one answer; it produces the distribution over every world it can end up in. Worlds that reach the same state merge, which keeps many game simulations small enough to follow every possibility. For models too big for that, or with continuous quantities, the same program runs by sampling instead.
+In Probl, `if 30% { … } else { … }` runs *both* branches: one in a world with weight 0.3, the other in a world with weight 0.7. A program doesn't produce one answer; it produces the distribution over every world it can end up in. Worlds that reach the same state merge, which keeps many game simulations small enough to follow every possibility. For models too big for that, or with continuous quantities, the same program runs by sampling instead.
 
 ```probl
 # Craps, pass line bet: what's the chance of winning?
@@ -23,7 +23,7 @@ report win                       # 49.29%: the known answer, 244/495
 Probl is aimed at two kinds of work:
 
 - **Game simulation**: dice, cards, boards and fights. Odds, game length, balance.
-- **Forecasting**: estimates (`5 to 10`), scenarios, evidence (`observe`), fan charts and dates.
+- **Forecasting**: estimates (`5 to 10`), scenarios, evidence (`observe` and `score`), fan charts and dates.
 
 ## Status
 

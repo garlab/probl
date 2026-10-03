@@ -265,6 +265,45 @@ fn numbered(src: &str) -> String {
 /// probes it confirmed. Each runs in every configuration of the engine.
 const CORPUS: &[(&str, &str)] = &[
     (
+        "score requires a scalar probability",
+        "score simulate { prob(30%) }; report true",
+    ),
+    (
+        "probabilistic conditions",
+        "let a = if 30% { true } else { false }\nlet b = if d6 > 3 { true } else { false }\nreport a and b",
+    ),
+    (
+        "probability guards",
+        "report match 1 { _ if 30% => 1, _ if 50% => 2, _ => 3 }",
+    ),
+    (
+        "prefix draw identity",
+        "let p = prob(30%)\nlet a = ~p\nlet b = ~p\nreport a and a\nreport a and b",
+    ),
+    ("prefix draw order", "var x = 1\nlet y = x + ~{ x = 2; d2 }\nreport y"),
+    (
+        "bounded prefix draw loop",
+        "var n = 0\nwhile n < 3 and ~d2 != 2 { n += 1 }\nreport n",
+    ),
+    (
+        "independent boolean recipes",
+        "let d = d6 > 3\nreport d and d\nreport d or d\nreport prob(30%) and d\nreport not prob(30%)",
+    ),
+    (
+        "score conditional literals",
+        "let sick = ~bernoulli(1%)\nscore if sick { 95% } else { 8% }\nreport sick",
+    ),
+    (
+        "score match and chance",
+        "score match 1 { 1 => chance { 50% => 20%, else => 40% }, _ => 50% }\nreport true",
+    ),
+    (
+        "observe anonymous law",
+        "let p = if 50% { prob(10%) } else { prob(90%) }\nobserve ~p\nreport p",
+    ),
+    ("score rejects numbers", "let p = 30%\nscore p\nreport true"),
+    ("observe still needs a fact", "let p = prob(30%)\nobserve p\nreport p"),
+    (
         "typeof scalars and recipes",
         "let d = d6\nlet x ~ d\nreport [typeof 33%, typeof 0.33, typeof (33% + 1%), typeof d, typeof x, typeof (d > d)]",
     ),
