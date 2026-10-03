@@ -1060,21 +1060,19 @@ impl<'a> Lowerer<'a> {
                 // out. Preserve missing mass and reject non-boolean laws.
                 if from.is_none() {
                     if let ast::ExprKind::Draw(source) = &value.kind {
-                        let consumes_bag = matches!(&source.kind, ast::ExprKind::Method { name, .. }
-                            if name.name == "take" && !self.fn_by_name.contains_key("take"));
-                        if !consumes_bag {
-                            let d = self.expr(source, out);
-                            let d = builtin(Builtin::BooleanLaw, vec![d], source.span);
-                            let st = self.stmt(
-                                s.span,
-                                StmtKind::Observe {
-                                    value: lit(Lit::Bool(true), value.span),
-                                    from: Some(d),
-                                },
-                            );
-                            out.push(st);
-                            return;
-                        }
+                        // Operand effects, including bag extraction, still
+                        // execute before the anonymous trial is integrated.
+                        let d = self.expr(source, out);
+                        let d = builtin(Builtin::BooleanLaw, vec![d], source.span);
+                        let st = self.stmt(
+                            s.span,
+                            StmtKind::Observe {
+                                value: lit(Lit::Bool(true), value.span),
+                                from: Some(d),
+                            },
+                        );
+                        out.push(st);
+                        return;
                     }
                 }
                 let mut exprs = vec![value];
@@ -1168,35 +1166,6 @@ impl<'a> Lowerer<'a> {
         if op == ast::BindOp::Assign {
             if let ast::ExprKind::Draw(source) = &value.kind {
                 return self.let_stmt(mutable, pattern, ast::BindOp::Draw, source, ty, span, out);
-            }
-        }
-        // `let card ~ deck.take()`
-        if op == ast::BindOp::Draw {
-            if let Some(bag) = self.take_target(value, out) {
-                let dest = match &pattern.kind {
-                    ast::PatternKind::Name(name) => self.declare(name, pattern.span, mutable),
-                    _ => {
-                        let t = self.temp(span);
-                        let st = self.stmt(
-                            span,
-                            StmtKind::Take {
-                                place: Place::slot(t),
-                                bag,
-                            },
-                        );
-                        out.push(st);
-                        return self.bind_pattern(pattern, slot(t, span), mutable, out);
-                    }
-                };
-                let st = self.stmt(
-                    span,
-                    StmtKind::Take {
-                        place: Place::slot(dest),
-                        bag,
-                    },
-                );
-                out.push(st);
-                return;
             }
         }
         let v = self.expr_expected(value, if op == ast::BindOp::Assign { ty } else { None }, out);
@@ -1446,34 +1415,10 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// If `value` is `place.take()`, the bag to draw from.
-    fn take_target(&mut self, value: &ast::Expr, out: &mut Vec<Stmt>) -> Option<Place> {
-        let ast::ExprKind::Method { receiver, name, args } = &value.kind else {
-            return None;
-        };
-        if name.name != "take" || self.fn_by_name.contains_key("take") {
-            return None;
-        }
-        if !args.is_empty() {
-            self.error(value.span, "`take()` doesn't take arguments");
-        }
-        self.place(receiver, out, "take a card from")
-    }
-
     fn assign(&mut self, target: &ast::Expr, op: ast::AssignOp, value: &ast::Expr, span: Span, out: &mut Vec<Stmt>) {
         if op == ast::AssignOp::Set {
             if let ast::ExprKind::Draw(source) = &value.kind {
                 return self.assign(target, ast::AssignOp::Draw, source, span, out);
-            }
-        }
-        if op == ast::AssignOp::Draw {
-            if let Some(bag) = self.take_target(value, out) {
-                let Some(place) = self.place(target, out, "assign to") else {
-                    return;
-                };
-                let st = self.stmt(span, StmtKind::Take { place, bag });
-                out.push(st);
-                return;
             }
         }
         let kind = match op {
@@ -2314,16 +2259,9 @@ impl<'a> Lowerer<'a> {
             ast::ExprKind::Name(name) => return self.name(name, span),
             ast::ExprKind::Draw(source) => {
                 let dest = self.temp(span);
-                let kind = if let Some(bag) = self.take_target(source, out) {
-                    StmtKind::Take {
-                        place: Place::slot(dest),
-                        bag,
-                    }
-                } else {
-                    StmtKind::Draw {
-                        place: Place::slot(dest),
-                        dist: self.expr(source, out),
-                    }
+                let kind = StmtKind::Draw {
+                    place: Place::slot(dest),
+                    dist: self.expr(source, out),
                 };
                 let st = self.stmt(span, kind);
                 out.push(st);
@@ -2643,9 +2581,22 @@ impl<'a> Lowerer<'a> {
         if let Some(b) = Builtin::from_name(&name.name) {
             if !self.fn_by_name.contains_key(&name.name) {
                 if b == Builtin::Take {
-                    self.error(span, "`take()` draws a card, so it has to be used with `~`")
-                        .help("write `let card ~ deck.take()`");
-                    return lit(Lit::Unit, span);
+                    if !args.is_empty() {
+                        self.error(span, "`take()` doesn't take arguments");
+                    }
+                    let Some(bag) = self.place(receiver, out, "take an item from") else {
+                        return lit(Lit::Unit, span);
+                    };
+                    let dest = self.temp(span);
+                    let st = self.stmt(
+                        span,
+                        StmtKind::Take {
+                            place: Place::slot(dest),
+                            bag,
+                        },
+                    );
+                    out.push(st);
+                    return slot(dest, span);
                 }
                 if b.is_mutating() {
                     return self.mutating_method(b, receiver, name, args, span, out);
@@ -2779,6 +2730,11 @@ impl<'a> Lowerer<'a> {
             return lit(Lit::Unit, span);
         }
         if let Some(b) = Builtin::from_name(&name.name) {
+            if b == Builtin::Take {
+                self.error(span, "`take` needs a mutable bag receiver")
+                    .help("write `deck.take()` to draw and remove an item from `deck`");
+                return lit(Lit::Unit, span);
+            }
             if args.iter().any(|a| a.name.is_some()) {
                 self.error(span, format!("`{}` doesn't take named arguments", name.name));
             }

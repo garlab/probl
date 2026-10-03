@@ -84,7 +84,7 @@ fn static_errors() {
     insta::assert_snapshot!(errors("break\nfn g() { return }\nreturn 1"));
     insta::assert_snapshot!(errors("type P = { x: int, y: int }\nlet p = P { x: 1, z: 2 }"));
     insta::assert_snapshot!(errors("fn f(a, b) { a }\nlet v = f(1)\nlet w = max()"));
-    insta::assert_snapshot!(errors("var deck = bag([1: 2])\nlet c = deck.take()"));
+    insta::assert_snapshot!(errors("let deck = bag([1: 2])\nlet c = deck.take()"));
     insta::assert_snapshot!(errors("let d = if 30% { 1 }"));
 }
 

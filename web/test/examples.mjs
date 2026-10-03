@@ -51,6 +51,7 @@ for (const mode of ['enumerate', 'sample']) {
     'report [1].filter(x -> { observe true; true })',
     'report [1].count(x -> { let r ~ d1; true })',
     'report [1].map(x -> ~d6)',
+    'report [1].map(x -> { var deck = bag([1]); deck.take() })',
     'report [1].map(x -> { score 50%; x })',
     'report [1].map(x -> if 30% { x } else { x })',
     'report [1].reduce(0, (a, x) -> chance { 50% => a, else => a })',

@@ -387,12 +387,12 @@ Three of these types describe uncertainty, and keeping them apart is what lets `
 | Choices | `one_of(["rock", "paper", "scissors"])`, `one_of(1..10)`, `one_of([Boom: 20%, Steady: 60%, Slump: 20%])` |
 | Yes/no | `bernoulli(30%)`: `true` with probability 30%, so `let rain ~ bernoulli(30%)` is a fact |
 | Counts | `binomial(n, p)`, `poisson(rate)`, `geometric(p)` |
-| Cards | `bag([card: count, …])`, then `let c ~ deck.take()` draws without replacement |
+| Cards | `bag([card: count, …])`, then `let c = deck.take()` draws without replacement |
 | Continuous | `normal(mean, sd)`, `lognormal(mu, sigma)`, `uniform(lo, hi)`, `beta(a, b)`, `gamma(shape, scale)`, `exponential(rate)`, `triangular(lo, mode, hi)`, `pert(lo, mode, hi)` |
 | Estimates | `5 to 10`: 90% confident it's between 5 and 10, as a lognormal, so both ends must be positive (as in Squiggle). For a quantity that can be negative, say which shape you mean: `normal_range(-8%, 0%)` is a normal with that 90% interval |
 | From code | `simulate { … }`: the distribution of a block's result (section 7) |
 
-`deck.take()` is shorthand for `one_of(deck)` followed by removing the drawn card from `deck` in that world.
+`deck.take()` selects an item, removes one copy from `deck` in that world, and returns the item unchanged. The deck must be declared with `var`; taking from an empty bag is an error. Each call selects anew from the remaining items. `one_of(deck)` instead constructs a distribution without changing the bag, and `~one_of(deck)` draws without removing anything. If an item is itself a probability or distribution, `deck.take()` returns that recipe; `~deck.take()` additionally draws from the returned recipe.
 
 Continuous distributions can't list their outcomes, so what you can do with them depends on the mode. Drawing one (`let x ~ normal(0, 1)`) needs sampling (section 8). Comparing one with a number works in both modes, from its CDF: `normal(0, 1) > 1.96` is 2.50%. `mean`, `sd`, `median`, `quantile`, `cdf` and `pdf` use the formulas. A choice among options that include one, such as `chance { 35% => 1 to 3, else => 0 }`, is a mixture, and drawing from it picks an option first. Arithmetic on a continuous distribution (`normal(0, 1) * 2`) isn't supported yet: draw a value, then compute with it.
 

@@ -16,7 +16,7 @@ fn callbacks_reject_effects_in_both_modes_before_results_can_hide_them() {
         "report [1].map(x -> { observe true; x })",
         "report [1].map(x -> if (chance { 50% => true, else => false }) { x } else { x })",
         "report [1].map(x -> chance { 50% => x, else => x })",
-        "report [1].map(x -> { var deck = bag([1: 1]); let r ~ deck.take(); r })",
+        "report [1].map(x -> { var deck = bag([1: 1]); let r = deck.take(); r })",
         "fn draw() { let r ~ d6; r }\nreport [1].map(x -> draw())",
         // A cached one-outcome helper must not bypass the effect restriction.
         "fn draw() { let r ~ d1; r }\nlet cached = draw()\nreport [cached].map(x -> draw())",

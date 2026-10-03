@@ -2221,7 +2221,10 @@ impl<'p> Engine<'p> {
             Builtin::Map | Builtin::Filter | Builtin::Reduce => self.higher_order(b, &values, span),
             Builtin::Count if values.len() == 2 => self.higher_order(b, &values, span),
             Builtin::Roll => self.roll(&values).map_err(at),
-            Builtin::Take => Err(RuntimeError::new(span, "`take()` can only be used with `~`")),
+            Builtin::Take => Err(RuntimeError::new(
+                span,
+                "use `deck.take()` to draw and remove an item from a mutable bag",
+            )),
             _ if b.lifting() == Lifting::Raw => builtins::call_raw(b, &values, &mut self.budget).map_err(at),
             _ if values.iter().any(|v| matches!(v, Value::Continuous(_))) => {
                 let kind = values

@@ -6,12 +6,12 @@
 # Card values: 2 to 9, 10 for tens and face cards (16 of them), 11 for aces.
 var deck = bag([2: 4, 3: 4, 4: 4, 5: 4, 6: 4, 7: 4, 8: 4, 9: 4, 10: 16, 11: 4])
 
-let up ~ deck.take()            # the dealer's face-up card, removed from the deck
+let up = deck.take()            # the dealer's face-up card, removed from the deck
 var total = up
 var soft_aces = if up == 11 { 1 } else { 0 }    # aces currently counted as 11
 
 while total < 17 {              # to hit soft 17 as well: `or (total == 17 and soft_aces > 0)`
-  let card ~ deck.take()        # one world per distinct card left, weighted by count
+  let card = deck.take()        # one world per distinct card left, weighted by count
   total += card
   if card == 11 { soft_aces += 1 }
   if total > 21 and soft_aces > 0 {   # count an ace as 1 instead of 11

@@ -70,7 +70,7 @@ PROBES = {
     'finite_transform': 'let d = d6\nreport mean(simulate { let x ~ d; max(x - 3, 0) })',
     'continuous_transform_limit': '@mode sample(runs: 10, seed: 1)\nreport mean(simulate { let x ~ normal(0, 1); max(x, 0) })',
     'callback_draw_restriction': 'report [1, 2].map(x -> { let y ~ d6; x + y })',
-    'bag_take': 'var deck = bag([1: 1, 2: 1])\nlet a ~ deck.take()\nlet b ~ deck.take()\nreport a != b',
+    'bag_take': 'var deck = bag([1: 1, 2: 1])\nlet a = deck.take()\nlet b = deck.take()\nreport a != b',
     'annotated_invalid_binding': 'let x: int = d6\nreport x',
     'unreachable_type_error': 'if false { let x: int = d6 }\nreport true',
 }

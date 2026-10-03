@@ -80,7 +80,7 @@ impl Printer<'_> {
             StmtKind::Take { place, bag } => self.line(
                 s,
                 depth,
-                format!("{} ~ take({})", self.place(place), self.place(bag)),
+                format!("{} = {}.take()", self.place(place), self.place(bag)),
                 out,
             ),
             StmtKind::Call { dest, callee, args } => {

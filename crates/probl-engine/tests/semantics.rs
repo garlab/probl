@@ -202,8 +202,8 @@ fn observing_a_draw_conditions_its_reported_distribution() {
 fn cards_without_replacement() {
     let src = "
         var deck = bag([\"a\": 2, \"b\": 1])
-        let first ~ deck.take()
-        let second ~ deck.take()
+        let first = deck.take()
+        let second = deck.take()
         report first == \"a\" and second == \"a\"";
     close(chance(src), 1.0 / 3.0);
 }
@@ -495,7 +495,7 @@ const DIFFERENTIAL: &[&str] = &[
     "fn hit(n) { if n > 3 { d6 } else { 0 } }\nvar total = 0\nrepeat 3 { let r ~ d6\n let h ~ hit(r)\n total += h }\nreport total",
     "var hp = 10\nvar rounds = 0\nwhile hp > 0 and rounds < 6 { rounds += 1\n let d ~ d4\n hp -= d }\nreport rounds",
     "let a ~ d6\nobserve a != 3\nlet b ~ one_of([a, 7])\nreport b",
-    "var deck = bag([1: 2, 2: 2, 3: 1])\nlet x ~ deck.take()\nlet y ~ deck.take()\nreport x * 10 + y",
+    "var deck = bag([1: 2, 2: 2, 3: 1])\nlet x = deck.take()\nlet y = deck.take()\nreport x * 10 + y",
 ];
 
 fn distributions(src: &str, options: &Options) -> Vec<Vec<(Value, f64)>> {

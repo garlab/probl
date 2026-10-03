@@ -496,8 +496,8 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "Removes the last item of the list variable `xs`, and gives it.",
         ),
         B::Take => doc(
-            "let card ~ deck.take()",
-            "Draws an item from the bag variable `deck` without replacement: one world per distinct item, weighted by how many there are.",
+            "let card = deck.take()",
+            "Selects an item from a mutable bag, removes one copy, and returns the item unchanged. Enumeration creates one world per distinct item, weighted by count; sampling chooses one. Empty bags are errors. Probability and distribution items remain recipes; use `~` on the returned item to draw from it.",
         ),
         // Distributions
         B::Bernoulli => doc(

@@ -231,7 +231,7 @@ pub enum StmtKind {
         place: Place,
         dist: Expr,
     },
-    /// `place ~ bag.take()`: draw a card and remove it from the bag.
+    /// `place = bag.take()`: select an item unchanged and remove one copy.
     Take {
         place: Place,
         bag: Place,
