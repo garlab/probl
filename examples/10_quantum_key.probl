@@ -81,7 +81,7 @@ for compared in [1, 5, 10, 20, 30] {
 for compared in [0, 5, 10, 20] {
   let listened = simulate {
     let eve ~ bernoulli(10%)
-    observe 0 from binomial(compared, prob(if eve { error } else { 0% }))
+    observe 0 from binomial(compared, if eve { error } else { 0% })
     eve
   }
   report listened by compared as "Eve was listening, by the bits that agreed"

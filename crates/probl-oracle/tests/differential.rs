@@ -265,6 +265,32 @@ fn numbered(src: &str) -> String {
 /// probes it confirmed. Each runs in every configuration of the engine.
 const CORPUS: &[(&str, &str)] = &[
     (
+        "numeric parameter and source type",
+        "let p = 30%; let x ~ bernoulli(p); report x; report typeof p",
+    ),
+    (
+        "calculated probabilities",
+        "let n ~ d3; let p = n / 4; score 1 - p; report if p { n } else { 0 }",
+    ),
+    (
+        "numeric chance weights",
+        "let p = 30%; report chance { p => 1, 1 - p => 2 }",
+    ),
+    (
+        "numeric match guard",
+        "let p = 30%; report match 1 { _ if p => true, _ => false }",
+    ),
+    (
+        "numeric loop condition",
+        "var n = 0; let p = 30%; while n < 3 { if p { break }; n += 1 }; report n",
+    ),
+    ("invalid numeric parameter", "let p = 1.1; report bernoulli(p)"),
+    (
+        "invalid numeric condition",
+        "let p = -0.1; report if p { true } else { false }",
+    ),
+    ("numeric draw is not a trial", "let p = 30%; observe ~p; report true"),
+    (
         "score requires a scalar probability",
         "score simulate { prob(30%) }; report true",
     ),
@@ -301,7 +327,7 @@ const CORPUS: &[(&str, &str)] = &[
         "observe anonymous law",
         "let p = if 50% { prob(10%) } else { prob(90%) }\nobserve ~p\nreport p",
     ),
-    ("score rejects numbers", "let p = 30%\nscore p\nreport true"),
+    ("score accepts numeric variables", "let p = 30%\nscore p\nreport true"),
     ("observe still needs a fact", "let p = prob(30%)\nobserve p\nreport p"),
     (
         "typeof scalars and recipes",

@@ -542,7 +542,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         B::Beta => doc(
             "beta(a: float, b: float) -> dist[float]",
-            "A continuous distribution on [0, 1], such as an unknown rate. Convert a drawn rate explicitly with `prob(rate)`. Observing counts with `observe k from binomial(n, prob(rate))` updates it exactly when sampling.",
+            "A continuous distribution on [0, 1], such as an unknown rate. A drawn rate converts automatically at probability-consuming boundaries. Observing counts with `observe k from binomial(n, rate)` updates it exactly when sampling.",
         ),
         B::Gamma => doc(
             "gamma(shape: float, scale: float) -> dist[float]",
@@ -599,7 +599,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Pdf => doc("pdf(d, x) -> float", "The density of a continuous distribution at `x`."),
         B::Prob => doc(
             "prob(x) -> prob",
-            "Explicitly converts a finite number in [0, 1], or a bool (false = 0, true = 1), to a probability. Out-of-range values are errors. Does not clamp, draw or lift over distributions. Numeric literals also become probabilities when a declared type or parameter expects prob; numeric variables and expressions need this conversion.",
+            "Explicitly converts a finite number in [0, 1], or a bool (false = 0, true = 1), to a probability. Out-of-range values are errors. Does not clamp, draw or lift over distributions. Numbers also convert automatically when a declared type, parameter, condition, chance weight or score expects a probability; literals, variables and calculations all use the same range check.",
         ),
         B::Odds => doc("odds(p: prob) -> float", "`p / (1 − p)`: 75% is 3 to 1."),
         B::Logit => doc(
@@ -724,7 +724,7 @@ pub fn keyword(word: &str) -> Option<Doc> {
         "return" => doc("return e", "Leaves the function with this result."),
         "if" | "else" => doc(
             "if c { … } else { … }",
-            "Branches on a bool, a prob, or a dist[bool]. Probabilities and boolean recipes request a fresh trial each time. Numeric literals convert contextually: `if 30% { ... }`. Numeric variables need prob(x).",
+            "Branches on a bool, a prob, or a dist[bool]. Probabilities and boolean recipes request a fresh trial each time. Numbers convert contextually with a [0, 1] check: `if 30% { ... }` and `if rate { ... }`. Other numeric values are errors, not truthiness.",
         ),
         "for" | "in" => doc(
             "for x in xs { … }",
@@ -747,7 +747,7 @@ pub fn keyword(word: &str) -> Option<Doc> {
         ),
         "chance" => doc(
             "chance { 60% => …, 30% => …, else => … }",
-            "Weighted branches: each weight must be prob; numeric literals convert contextually. Use prob(x) for a numeric expression. Each branch runs with its weight, and `else` gets the rest.",
+            "Weighted branches: each weight must be a probability or a number checked in [0, 1]. Each branch runs with its weight, and `else` gets the rest.",
         ),
         "observe" | "from" => doc(
             "observe c or observe v from D",
@@ -755,7 +755,7 @@ pub fn keyword(word: &str) -> Option<Doc> {
         ),
         "score" => doc(
             "score p",
-            "Multiplies each world's weight by a prob in [0, 1]. Numeric literals convert contextually, including branch results: `score if sick { 95% } else { 8% }`. Does not draw or mutate the probability. Like observe, it must come before reports and is local inside simulate.",
+            "Multiplies each world's weight by a prob in [0, 1]. Numbers convert contextually after checking [0, 1], including variables, calculations and branch results: `score if sick { 95% } else { 8% }`. Does not draw or mutate the probability. Like observe, it must come before reports and is local inside simulate.",
         ),
         "report" | "by" | "as" => doc(
             "report e by key as \"label\"",

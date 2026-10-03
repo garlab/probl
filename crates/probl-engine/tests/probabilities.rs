@@ -42,7 +42,7 @@ fn percentages_are_numeric_and_probability_construction_is_explicit() {
 }
 
 #[test]
-fn literals_convert_at_typed_boundaries() {
+fn numbers_convert_at_typed_boundaries() {
     for src in [
         "let p: prob = 33%\nreport typeof p",
         "var p: prob = 0\np = 0.33\nreport typeof p",
@@ -59,18 +59,21 @@ fn literals_convert_at_typed_boundaries() {
         assert_eq!(value(src), Value::str("prob"), "{src}");
     }
     for src in [
-        "let x = 0.33\nlet p: prob = x\nreport p",
-        "let p: prob = 0.3 + 0.03\nreport p",
-        "fn f(p: prob) { p }\nlet x = 0.33\nreport f(x)",
-        "fn f() -> prob { let x = 0.33; x }\nreport f()",
-        "let x = 0.33\nreport bernoulli(x)",
-        "let xs = [0.33]\nlet ps: list[prob] = xs\nreport ps",
-        "report bernoulli(euler_gamma)",
-        "let p: prob = euler_gamma\nreport p",
-        "type R = { p: prob }\nlet r = R { p: 33% }\nreport r with { p: euler_gamma }",
+        "let x = 0.33\nlet p: prob = x\nreport typeof p",
+        "let p: prob = 0.3 + 0.03\nreport typeof p",
+        "fn f(p: prob) { typeof p }\nlet x = 0.33\nreport f(x)",
+        "fn f() -> prob { let x = 0.33; x }\nreport typeof f()",
+        "fn f() -> prob { let x = 0.33; return x }\nreport typeof f()",
+        "let xs = [0.33]\nlet ps: list[prob] = xs\nreport typeof ps[0]",
+        "let p: prob = euler_gamma\nreport typeof p",
+        "type R = { p: prob }\nlet r = R { p: 33% }\nreport typeof (r with { p: euler_gamma }).p",
+        "fn f(p: prob) { typeof p }\nlet x = 0.33\nreport x.f()",
+        "fn f(p: prob) { typeof p }\nlet g = x -> f(x)\nlet x = 0.33\nreport g(x)",
     ] {
-        error(src);
+        assert_eq!(value(src), Value::str("prob"), "{src}");
     }
+    close(chance("let x = 0.33\nreport bernoulli(x)"), 0.33);
+    close(chance("report bernoulli(euler_gamma)"), 0.5772156649015329);
     compile_error("let p: prob = 150%");
     compile_error("report bernoulli(150%)");
     close(chance("report bernoulli(33%)"), 0.33);
@@ -98,6 +101,131 @@ fn literal_context_survives_later_argument_effects() {
     })
     .unwrap();
     assert_eq!(calls, ["called"]);
+}
+
+#[test]
+fn contextual_conversion_preserves_source_values_and_evaluation_order() {
+    for mode in ["enumerate", "sample(runs: 100, seed: 7)"] {
+        let prefix = format!("@mode {mode}\n");
+        for source in [
+            "let x = 9%; let p: prob = x; report typeof x == \"float\" and typeof p == \"prob\"",
+            "let xs = [0.3]; let ps: list[prob] = xs; report typeof xs[0] == \"float\" and typeof ps[0] == \"prob\"",
+            "var x = 0.3; fn f(p: prob, q: prob) { p == 0.3 and q == 0.8 }; report f(x, { x = 0.8; x })",
+            "var calls = 0; let p: prob = { calls += 1; 0.3 }; report p == 0.3 and calls == 1",
+            "var x = 0.3; type R = { p: prob, q: prob }; let r = R { p: x, q: { x = 0.8; x } }; report r.p == 0.3 and r.q == 0.8",
+            "let n = 0; report if n { false } else { true }",
+            "let n = 1; report if n { true } else { false }",
+            "let p = 0.0; var n = 0; while p { n += 1 }; report n == 0",
+        ] {
+            close(chance(&(prefix.clone() + source)), 1.0);
+        }
+    }
+    close(
+        mean("let churn = 9%; let lost ~ binomial(100, churn); report lost"),
+        9.0,
+    );
+    close(mean("let churn = 9%; report binomial(100, 1 - churn)"), 91.0);
+    close(mean("let p = 0.3; var n = 0; while p { n += 1 }; report n"), 0.3 / 0.7);
+    close(
+        chance("let p = 0.3; report match 1 { _ if p => true, _ => false }"),
+        0.3,
+    );
+    close(
+        outcome("let p = 0.3; score p; report true").evidence.unwrap().to_f64(),
+        0.3,
+    );
+    close(mean("let p = 0.5; report quantile(d6, p)"), 3.0);
+    close(mean("let p = 0.5; report geometric(p)"), 2.0);
+    close(mean("let p = 0.5; report odds(p)"), 1.0);
+    close(mean("let p = 0.5; report logit(p)"), 0.0);
+}
+
+#[test]
+fn nested_declared_probability_types_convert_numeric_values() {
+    for source in [
+        "let xs = [[0.3]]; let ps: list[list[prob]] = xs; report typeof ps[0][0]",
+        "let xs = [0.3: 0.7]; let ps: map[prob, prob] = xs; report typeof ps[prob(0.3)]",
+        "var xs: bag[prob] = bag([0.3: 1, prob(0.3): 2]); let p = xs.take(); report typeof p",
+        "let xs: dist[prob] = one_of([0.3, 0.7]); let p = ~xs; report typeof p",
+        "let r = { p: 0.3 }; let s: { p: prob } = r; report typeof s.p",
+        "fn f() -> list[prob] { let xs = [0.3]; xs }; report typeof f()[0]",
+        "let p: prob = ~one_of([0.3, 0.7]); report typeof p",
+    ] {
+        assert_eq!(value(source), Value::str("prob"), "{source}");
+    }
+    close(
+        mean("let xs: bag[prob] = bag([0.3: 1, prob(0.3): 2]); report len(xs)"),
+        3.0,
+    );
+}
+
+#[test]
+fn contextual_conversion_rejects_invalid_numbers_and_unrelated_types() {
+    for mode in ["enumerate", "sample(runs: 10, seed: 7)"] {
+        for number in ["-0.1", "1.1", "2^100"] {
+            for body in [
+                "let p: prob = x; report p",
+                "fn f(p: prob) { p }; report f(x)",
+                "fn f() -> prob { x }; report f()",
+                "report binomial(10, x)",
+                "report bernoulli(x)",
+                "report if x { true } else { false }",
+                "report match 1 { _ if x => true, _ => false }",
+                "while x { break }; report true",
+                "report chance { x => true, else => false }",
+                "score x; report true",
+                "let ps: list[prob] = [x]; report ps",
+            ] {
+                error(&format!("@mode {mode}\nlet x = {number}; {body}"));
+            }
+        }
+        for source in [
+            "let x = true; let p: prob = x; report p",
+            "let x = true; report bernoulli(x)",
+            "let x = true; score x; report true",
+            "let x = one_of([0.3, 0.7]); let p: prob = x; report p",
+            "let x = one_of([0.3, 0.7]); score x; report true",
+            "let x = one_of([0, 1]); report if x { true } else { false }",
+            "let x = complex(0.3); report bernoulli(x)",
+            "let x = 0.3; observe x; report true",
+            "let x = 0.3; observe ~x; report true",
+            "let x = 0.3; report x and true",
+        ] {
+            error(&format!("@mode {mode}\n{source}"));
+        }
+    }
+    for p in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(probl_engine::ops::to_prob(&Value::Float(p)).is_err());
+        assert!(probl_engine::ops::condition(&Value::Float(p)).is_err());
+    }
+    assert_eq!(value("let x = 0.3; report typeof (~x)"), Value::str("float"));
+}
+
+#[test]
+fn implicit_probability_parameters_keep_exact_updates() {
+    for evidence in [
+        "observe 1 from binomial(2, p)",
+        "observe true from bernoulli(p)",
+        "observe ~bernoulli(p)",
+        "score p",
+    ] {
+        let prefix = "@mode sample(runs: 100, seed: 7)\nlet p ~ beta(1, 1)\n";
+        let implicit = outcome(&format!("{prefix}{evidence}\nreport p"));
+        let explicit = evidence
+            .replace(", p)", ", prob(p))")
+            .replace("bernoulli(p)", "bernoulli(prob(p))")
+            .replace("score p", "score prob(p)");
+        let explicit = outcome(&format!("{prefix}{explicit}\nreport p"));
+        assert_eq!(implicit.output, explicit.output, "{evidence}");
+        assert_eq!(implicit.stats.updates, explicit.stats.updates, "{evidence}");
+        assert!(implicit.stats.updates.iter().any(|u| u.exact == 100), "{evidence}");
+    }
+    error("@mode sample(runs: 10)\nlet p ~ beta(1, 1)\nobserve ~p\nreport p");
+    error("@mode sample(runs: 10)\nlet p ~ normal(2, 0.00001)\nscore p\nreport p");
+    assert_eq!(
+        value("@mode sample(runs: 10)\nlet p: prob ~ beta(1, 1)\nreport typeof p"),
+        Value::str("prob")
+    );
 }
 
 #[test]
@@ -154,7 +282,7 @@ fn observations_require_facts() {
     );
     close(chance("let e ~ bernoulli(5%)\nobserve e\nreport e"), 1.0);
     close(chance("report chance { 33% => true, else => false }"), 0.33);
-    error("let x = 0.33\nreport chance { x => true, else => false }");
+    close(chance("let x = 0.33\nreport chance { x => true, else => false }"), 0.33);
 }
 
 #[test]
@@ -179,7 +307,7 @@ fn branching_accepts_probabilities_and_boolean_recipes() {
     for condition in ["d6", "\"yes\"", "complex(0.3)"] {
         error(&format!("if {condition} {{ report true }}"));
     }
-    error("let p = 30%\nif p { report true }");
+    close(chance("let p = 30%\nreport if p { true } else { false }"), 0.3);
     compile_error("if 150% { report true }");
 }
 
@@ -285,7 +413,7 @@ fn score_and_observed_draws_apply_likelihoods() {
         "score true",
         "score d6",
         "score simulate { prob(30%) }",
-        "let p = 30%\nscore p",
+        "let p = 130%\nscore p",
         "observe ~d6",
     ] {
         error(&format!("{source}\nreport true"));
@@ -330,7 +458,9 @@ fn explicit_conversion_preserves_conjugate_inference() {
     assert_eq!(before.output, after.output);
     assert_eq!(before.stats.updates, after.stats.updates);
     assert!(before.stats.updates.iter().any(|u| u.exact > 0));
-    error(&base.replace("prob(p)", "p"));
+    let implicit = outcome(&base.replace("prob(p)", "p"));
+    assert_eq!(before.output, implicit.output);
+    assert_eq!(before.stats.updates, implicit.stats.updates);
     error("@mode sample(runs: 10)\nlet p ~ beta(1, 1)\nobserve bernoulli(prob(p))\nreport p");
 }
 
@@ -360,6 +490,11 @@ fn typed_updates_preserve_probability_values() {
         "type R = { p: prob }\ntype S = { p: float }\nlet rs = one_of([R { p: 33% }, S { p: 0.5 }])\nlet x = 0.5\nreport rs with { p: x }",
         "var p: prob = 33%\np += 0.01\nreport p",
     ] {
-        error(source);
+        outcome(source);
+        error(
+            &source
+                .replace("let x = 0.5", "let x = 1.5")
+                .replace("p += 0.01", "p += 1"),
+        );
     }
 }

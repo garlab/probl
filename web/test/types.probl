@@ -46,3 +46,22 @@ let drawn = ~recipes.take()
 report [typeof drawn, drawn, len(recipes)]
 var ordered = bag([1, 2])
 report [len(ordered), ordered.take(), len(ordered), ordered.take(), len(ordered)]
+
+# Expected probability types validate numeric variables and calculations.
+let churn = 9%
+let checked: prob = churn
+report [typeof churn, typeof checked, typeof (1 - checked)]
+report binomial(100, churn)
+report binomial(100, 1 - churn)
+report if churn { true } else { false }
+report chance { churn => true, else => false }
+report match 1 { _ if churn => true, _ => false }
+report simulate { score churn; true }
+let raw_rates = [churn, 1 - churn]
+let checked_rates: list[prob] = raw_rates
+report [typeof raw_rates, typeof checked_rates]
+fn checked_result(x: prob) -> prob { 1 - x }
+report [checked_result(churn), typeof checked_result(churn)]
+var updated: prob = churn
+updated += 1%
+report [updated, typeof updated]

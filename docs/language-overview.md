@@ -265,9 +265,9 @@ match weather {
 }
 ```
 
-Conditions and match guards accept `bool`, `prob`, or `dist[bool]`. A boolean follows its existing outcome; a probability or boolean recipe makes a fresh trial on each evaluation. Numeric literals convert contextually, so `if 30% { "rain" } else { "sun" }` works. Numeric variables and calculations require `prob(x)`; there is no numeric truthiness. `let hit ~ d20 + 5 >= 15` draws the boolean distribution into two outcomes, without keeping the die's twenty individual faces.
+Conditions and match guards accept `bool`, `prob`, or `dist[bool]`. A boolean follows its existing outcome; a probability or boolean recipe makes a fresh trial on each evaluation. Numbers convert contextually after checking `[0, 1]`, so `if 30% { "rain" } else { "sun" }` and `let p = 30%; if p { ... }` work. Variables and calculations use the same check; `if 2` is an error. `let hit ~ d20 + 5 >= 15` draws the boolean distribution into two outcomes, without keeping the die's twenty individual faces.
 
-The weights in `chance` are `prob` values, such as `P(2d6 == point)` or `prob(hit_chance - 5%)`. Numeric literals convert contextually, so `30% => ...` remains concise. `else` takes the remainder. Weights above a total of 100% are an error, as is a value-producing `chance` with a positive remainder and no `else`.
+The weights in `chance` are probabilities, such as `P(2d6 == point)`, or numbers checked in `[0, 1]`, such as `hit_chance - 5%`. Literals, variables and calculations all convert contextually. `else` takes the remainder. Weights above a total of 100% are an error, as is a value-producing `chance` with a positive remainder and no `else`.
 
 ### Loops
 
@@ -355,11 +355,11 @@ report typeof x                # "int"
 report typeof x == "int"       # true
 ```
 
-`33%` is shorthand for `0.33`, a float. `prob(x)` checks that a number is finite and within `[0, 1]` and returns a probability; it also explicitly converts booleans to 0 or 1. It never clamps or draws. Numeric literals convert implicitly when a declared type, parameter, condition or `score` expects `prob`. This expectation flows into the result branches of `if`, `chance`, `match` and blocks: `let p: prob = 33%` creates an actual probability, as does the argument in `bernoulli(33%)`. Variables and arithmetic need an explicit conversion: `let rate = 33%; bernoulli(prob(rate))`. Ordinary probability arithmetic returns numbers, and probabilities widen to floats in numeric contexts. Boolean, numeric, probability and distribution values remain distinct.
+`33%` is shorthand for `0.33`, a float. `prob(x)` checks that a number is finite and within `[0, 1]` and returns a probability; it also explicitly converts booleans to 0 or 1. It never clamps or draws. Numbers convert implicitly, with the same range check, when a declared type, parameter, condition or `score` expects `prob`. This expectation flows into the result branches of `if`, `chance`, `match` and blocks: `let p: prob = 33%` creates an actual probability, as does the argument in `bernoulli(33%)`. Variables and arithmetic also work: `let rate = 33%; binomial(100, rate)` and `binomial(100, 1 - rate)`. This leaves `rate` a float; `let p: prob = rate` creates a probability. Typed containers convert their contents recursively without changing the source collection. Ordinary probability arithmetic returns numbers, and probabilities widen to floats in numeric contexts. Boolean, numeric, probability and distribution values remain distinct.
 
 Parenthesize compound operands: `typeof (x + 1)`. `typeof` evaluates its operand once, so calls and errors still occur. It describes current contents, not an inferred static type: empty lists give `"list[unknown]"`, mixed element types give `"list[any]"`, and named records/enums give their type name. `unknown` and `any` here are descriptive markers, not annotation types. Directly inspecting a delayed sampled parameter with `typeof p` preserves exact Bayesian updates; calculating an expression involving `p` still needs its value. See [the type inspection contract](semantics.md#1-values-and-types).
 
-Type annotations are optional for program values and required for file input. Impossible literal annotations are rejected during compilation; general type checks currently happen at runtime when the expression is reached. Full static type inference is still planned. Annotations also supply context for literal conversions, so `typeof` reflects the converted value.
+Type annotations are optional for program values and required for file input. Impossible literal annotations are rejected during compilation; general type checks currently happen at runtime when the expression is reached. Full static type inference is still planned. Annotations also supply context for checked numeric conversions, so `typeof` reflects the converted value.
 
 ### Data
 
@@ -374,7 +374,7 @@ let counts: list[int] = read("-")                  # standard input, one value p
 Three of these types describe uncertainty, and keeping them apart is what lets `and` and `or` mean what they say:
 
 - `bool` is a **fact**: `true` or `false` in each world. Comparisons of settled values give facts, and so do `and`, `or`, `not` and `in` on facts.
-- `prob` is a **probability**: a checked finite value from 0 to 1, such as a success rate. Use it directly in conditions, draws (`~p`), `score p`, or a `chance` weight. `bernoulli(p)` explicitly constructs the equivalent `dist[bool]`. Arithmetic (`p * 2`, `1 - p`) gives a `float`; use `prob(x)` to convert a calculated probability back explicitly.
+- `prob` is a **probability**: a checked finite value from 0 to 1, such as a success rate. Use it directly in conditions, draws (`~p`), `score p`, or a `chance` weight. `bernoulli(p)` explicitly constructs the equivalent `dist[bool]`. Arithmetic (`p * 2`, `1 - p`) gives a `float`. A probability-consuming context checks and converts it; `prob(x)` also constructs a probability explicitly.
 - `dist[T]` is a **distribution**: `d6`, `bernoulli(30%)`, or `d6 > 4`, a `dist[bool]` that is an uncertain fact.
 
 ## 4. Distributions
@@ -463,9 +463,9 @@ report sick                                   # 10.71%
 ```
 
 - `observe c` requires a boolean and removes worlds where it is false. An observed event then reports true with probability 100%.
-- `score p` multiplies the world's weight by a probability likelihood. It accepts numeric literals contextually; calculated numeric values need `prob(x)`.
+- `score p` multiplies the world's weight by a probability likelihood. It accepts numeric literals, variables and calculations after checking `[0, 1]`.
 - `observe ~p` observes an anonymous boolean draw. It has the same likelihood as `score p` for a probability, without naming an outcome. Reporting `p` still reports the original recipe; bind `let event = ~p` if the outcome must be reused.
-- `observe v from D` multiplies by the probability of seeing the value `v` under `D`. For example: `observe 11 from binomial(250, prob(rate))`. When sampling, a continuous `D` contributes its density at `v`.
+- `observe v from D` multiplies by the probability of seeing the value `v` under `D`. For example: `observe 11 from binomial(250, rate)`. When sampling, a continuous `D` contributes its density at `v`.
 - The **evidence** is the weight that survives: the probability of all the observations. Reports are normalized over it, and the run summary shows it (8.87% above). Observations inside a function count; those inside `simulate` don't (section 7).
 - If the observations rule out every world, the evidence is impossible, and the run stops with an error rather than printing reports that mean nothing.
 
@@ -593,7 +593,7 @@ For a single world with state σ and weight w (the full rules, including evaluat
 | `A` followed by `B` | B runs on every world A produced |
 | join point | (σ, w₁) and (σ, w₂) become (σ, w₁ + w₂) |
 
-For conditions, c may be a boolean, probability or boolean distribution. For a probability p, t = p and f = 1 − p; booleans are the 0/1 cases. A distribution's unresolved mass remains unresolved. Bare `observe` accepts only booleans; each pᵢ and `score` argument must be a probability.
+For conditions, c may be a boolean, probability, number checked in `[0, 1]`, or boolean distribution. For a probability p, t = p and f = 1 − p; booleans are the 0/1 cases. A distribution's unresolved mass remains unresolved. Bare `observe` accepts only booleans; each pᵢ and `score` argument must be a probability or a number checked in `[0, 1]`.
 
 This is the standard semantics of probabilistic programs as functions from a state to a distribution over states (Kozen, 1981). Merging changes nothing but rounding, because a set of worlds is a weighted sum of states, and equal states simply add. Liveness analysis only lets the engine forget variables that can no longer affect anything. Sample mode estimates the same distribution: instead of splitting a world, probabilistic conditions, `chance` and `~` choose one outcome for each run.
 

@@ -17,4 +17,4 @@ expression: tree
 (for share shares (block (report (simulate (block (. (call kept share) bob_wrong))) by share as "errors in the key, by the share of photons Eve measures")))
 (let error = (call P (simulate (block (. (call kept 100%) bob_wrong)))))
 (for compared [1 5 10 20 30] (block (report (> (call binomial compared error) 0) by compared as "Eve is caught, by the bits compared")))
-(for compared [0 5 10 20] (block (let listened = (simulate (block (let eve ~ (call bernoulli 10%)) (observe 0 from (call binomial compared (call prob (if eve (block error) (block 0%))))) eve))) (report listened by compared as "Eve was listening, by the bits that agreed")))
+(for compared [0 5 10 20] (block (let listened = (simulate (block (let eve ~ (call bernoulli 10%)) (observe 0 from (call binomial compared (if eve (block error) (block 0%)))) eve))) (report listened by compared as "Eve was listening, by the bits that agreed")))

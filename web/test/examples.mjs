@@ -66,11 +66,11 @@ console.log('same  callback effect restrictions in both modes');
 // Numbers, probabilities and distribution recipes are not boolean events.
 for (const mode of ['enumerate', 'sample']) {
   for (const source of [
-    'let p = 33%\nif p { report true }',
+    'let p = 133%\nif p { report true }',
     'score true\nreport true',
     'let e = 5%\nobserve e\nreport e',
     'let x = 3d8\nobserve x > 10\nreport x',
-    'let rate = 33%\nreport bernoulli(rate)',
+    'let rate = -33%\nreport bernoulli(rate)',
     'report prob(d6)',
     'report prob(150%)',
     'report one_of([true: prob(33%), false: 67%])',

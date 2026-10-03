@@ -17,7 +17,7 @@ fn#0 the top level ()
     month_7 = $5[$6]    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6 month_7]
     $6 = (+ $6 1)    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6 month_7]
     new_8 ~ poisson(signups_3)    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6 month_7 new_8]
-    lost_9 ~ binomial(customers_4, prob(churn_1))    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6 month_7 new_8 lost_9]
+    lost_9 ~ binomial(customers_4, churn_1)    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6 month_7 new_8 lost_9]
     customers_4 = (+ customers_4 (- new_8 lost_9))    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6 month_7]
     report (* customers_4 price_0) by month_7 as "MRR ($)"    [live: price_0 churn_1 market_2 signups_3 customers_4 $5 $6]
     $10 = call fn#1 next_month(market_2)    [live: price_0 churn_1 signups_3 customers_4 $5 $6 $10]

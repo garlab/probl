@@ -131,14 +131,14 @@ pub fn article(kind: &str) -> String {
 }
 
 /// A value used as a probability (chance weights, `bernoulli`, `binomial`…):
-/// a `prob`. Numeric literals are converted by their expected context.
+/// a `prob` or a number checked at this boundary. Booleans need `prob(b)`.
 pub fn to_prob(v: &Value) -> OpResult<f64> {
     match v {
         Value::Prob(p) => Ok(*p),
-        Value::Float(_) | Value::Int(_) => {
-            Err(OpError::new("expected a prob, found a number")
-                .help("convert a numeric value explicitly with `prob(x)`"))
-        }
+        Value::Float(_) | Value::Int(_) => match make_prob(v)? {
+            Value::Prob(p) => Ok(p),
+            _ => unreachable!("make_prob returns a probability"),
+        },
         Value::Bool(_) => Err(OpError::new("expected a probability, found a fact (true or false)")
             .help("convert a boolean explicitly with `prob(fact)`")),
         Value::Dist(_) => Err(OpError::new(format!("expected a probability, found a {}", v.kind()))
@@ -276,6 +276,14 @@ pub fn boolean_law(v: &Value) -> OpResult<Value> {
 }
 
 pub fn condition(v: &Value) -> OpResult<Condition> {
+    if matches!(v, Value::Float(_) | Value::Int(_)) {
+        let p = to_prob(v)?;
+        return Ok(Condition {
+            yes: p,
+            no: 1.0 - p,
+            missing: 0.0,
+        });
+    }
     match truth(v, "condition")? {
         Truth::Fact(b) => Ok(Condition {
             yes: if b { 1.0 } else { 0.0 },

@@ -856,7 +856,7 @@ impl<'a> Interp<'a> {
             | ExprKind::Lambda { .. } => unsupported("maps, records, methods and lambdas"),
         }?;
         if probability {
-            self.each(outs, |_, w, v| Ok(vec![(w, Ok(contextual_prob(e, &v)?))]))
+            self.each(outs, |_, w, v| Ok(vec![(w, Ok(contextual_prob(&v)?))]))
         } else {
             Ok(outs)
         }
@@ -964,11 +964,7 @@ impl<'a> Interp<'a> {
         let has_else = arms.iter().any(|a| a.weight.is_none());
         let outs = self.list_context(&weights, w, true)?;
         self.each_list(outs, |me, w, vs| {
-            let ps = vs
-                .iter()
-                .zip(&weights)
-                .map(|(v, e)| to_prob(&contextual_prob(e, v)?))
-                .collect::<R<Vec<Q>>>()?;
+            let ps = vs.iter().map(to_prob).collect::<R<Vec<Q>>>()?;
             let sum = ps.iter().fold(Q::zero(), |acc, p| acc + p);
             if sum > Q::one() {
                 return err("the chances add up to more than 100%");
@@ -1142,7 +1138,7 @@ impl<'a> Interp<'a> {
             Some(decl) => self.each_list(outs, |me, w, vs| me.call_fn(decl, vs, w)),
             None => self.each_list(outs, |_, w, mut vs| {
                 if name == "bernoulli" && vs.len() == 1 {
-                    vs[0] = contextual_prob(&args[0].value, &vs[0])?;
+                    vs[0] = contextual_prob(&vs[0])?;
                 }
                 Ok(vec![(w, Ok(builtin(name, &vs)?))])
             }),
@@ -1372,7 +1368,11 @@ fn bool_condition(v: &Value) -> R<(Q, Q)> {
 fn to_prob(v: &Value) -> R<Q> {
     match v {
         Value::Prob(p) => Ok(p.clone()),
-        _ => err("expected a prob; use prob(x)"),
+        Value::Int(_) | Value::Float(_) => match make_prob(v)? {
+            Value::Prob(p) => Ok(p),
+            _ => unreachable!(),
+        },
+        _ => err("expected a probability or a number in [0, 1]"),
     }
 }
 
@@ -1395,15 +1395,11 @@ fn make_prob(v: &Value) -> R<Value> {
     Ok(Value::Prob(p))
 }
 
-fn contextual_prob(e: &Expr, v: &Value) -> R<Value> {
-    let literal = match &e.kind {
-        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Percent(_) => true,
-        ExprKind::Unary { op: UnOp::Neg, expr } => {
-            matches!(expr.kind, ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Percent(_))
-        }
-        _ => false,
-    };
-    if literal { make_prob(v) } else { Ok(v.clone()) }
+fn contextual_prob(v: &Value) -> R<Value> {
+    match v {
+        Value::Int(_) | Value::Float(_) => make_prob(v),
+        _ => Ok(v.clone()),
+    }
 }
 
 /// P(D = v), for `observe v from D`.

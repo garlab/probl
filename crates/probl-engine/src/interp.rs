@@ -1019,7 +1019,7 @@ impl<'p> Engine<'p> {
                         }
                         self.draw_delayed(w, *slot);
                     }
-                    w.slots[*slot as usize] = self.widen(w.slots[*slot as usize].clone(), ty, span)?;
+                    w.slots[*slot as usize] = self.coerce(w.slots[*slot as usize].clone(), ty, span)?;
                     let v = &w.slots[*slot as usize];
                     if !self.conforms(v, ty) {
                         let name = &self.prog.functions[f as usize].slots[*slot as usize].name;
@@ -1324,13 +1324,13 @@ impl<'p> Engine<'p> {
         Ok(())
     }
 
-    /// Widen probabilities in a declared numeric context. This never narrows
-    /// floats to probabilities; literal narrowing happens during lowering.
-    fn widen(&mut self, v: Value, ty: &TypeSpec, span: Span) -> Result<Value> {
-        self.widen_at(v, ty, span, 0)
+    /// Convert values at declared type boundaries, recursively through
+    /// containers. Numeric probability conversions are checked, never clamped.
+    fn coerce(&mut self, v: Value, ty: &TypeSpec, span: Span) -> Result<Value> {
+        self.coerce_at(v, ty, span, 0)
     }
 
-    fn widen_at(&mut self, v: Value, ty: &TypeSpec, span: Span, depth: usize) -> Result<Value> {
+    fn coerce_at(&mut self, v: Value, ty: &TypeSpec, span: Span, depth: usize) -> Result<Value> {
         self.budget.work(1).map_err(|e| e.at(span))?;
         if depth > 64 {
             return Err(RuntimeError::new(
@@ -1340,11 +1340,12 @@ impl<'p> Engine<'p> {
         }
         Ok(match (v, ty) {
             (Value::Prob(p), TypeSpec::Float) => Value::Float(p),
+            (v @ (Value::Int(_) | Value::Float(_)), TypeSpec::Prob) => ops::make_prob(&v).map_err(|e| e.at(span))?,
             (Value::List(xs), TypeSpec::List(t)) => {
                 self.budget.collection(xs.len() as u128).map_err(|e| e.at(span))?;
                 let mut out = Vec::with_capacity(xs.len());
                 for x in xs.iter() {
-                    out.push(self.widen_at(x.clone(), t, span, depth + 1)?);
+                    out.push(self.coerce_at(x.clone(), t, span, depth + 1)?);
                 }
                 Value::list(out)
             }
@@ -1352,8 +1353,8 @@ impl<'p> Engine<'p> {
                 let mut out = BTreeMap::new();
                 for (k, v) in xs.iter() {
                     out.insert(
-                        self.widen_at(k.clone(), kt, span, depth + 1)?,
-                        self.widen_at(v.clone(), vt, span, depth + 1)?,
+                        self.coerce_at(k.clone(), kt, span, depth + 1)?,
+                        self.coerce_at(v.clone(), vt, span, depth + 1)?,
                     );
                 }
                 Value::map(out)
@@ -1361,7 +1362,7 @@ impl<'p> Engine<'p> {
             (Value::Bag(xs), TypeSpec::Bag(t)) => {
                 let mut out = BTreeMap::<Value, u64>::new();
                 for (x, n) in xs.iter() {
-                    let key = self.widen_at(x.clone(), t, span, depth + 1)?;
+                    let key = self.coerce_at(x.clone(), t, span, depth + 1)?;
                     let count = out.entry(key).or_default();
                     *count = count
                         .checked_add(*n)
@@ -1372,7 +1373,7 @@ impl<'p> Engine<'p> {
             (Value::Dist(d), TypeSpec::Dist(t)) => {
                 let mut out = Vec::with_capacity(d.outcomes.len());
                 for (x, p) in &d.outcomes {
-                    out.push((self.widen_at(x.clone(), t, span, depth + 1)?, *p));
+                    out.push((self.coerce_at(x.clone(), t, span, depth + 1)?, *p));
                 }
                 ops::combine(out, d.missing, &mut self.budget).map_err(|e| e.at(span))?
             }
@@ -1385,7 +1386,7 @@ impl<'p> Engine<'p> {
                 let mut fields = Vec::with_capacity(r.fields.len());
                 for (name, value) in &r.fields {
                     let value = match types.iter().find(|(n, _)| n == &**name) {
-                        Some((_, t)) => self.widen_at(value.clone(), t, span, depth + 1)?,
+                        Some((_, t)) => self.coerce_at(value.clone(), t, span, depth + 1)?,
                         None => value.clone(),
                     };
                     fields.push((name.clone(), value));
@@ -1396,7 +1397,7 @@ impl<'p> Engine<'p> {
                 let mut fields = Vec::with_capacity(r.fields.len());
                 for (name, value) in &r.fields {
                     let value = match types.iter().find(|(n, _)| n == &**name) {
-                        Some((_, t)) => self.widen_at(value.clone(), t, span, depth + 1)?,
+                        Some((_, t)) => self.coerce_at(value.clone(), t, span, depth + 1)?,
                         None => value.clone(),
                     };
                     fields.push((name.clone(), value));
@@ -1831,7 +1832,7 @@ impl<'p> Engine<'p> {
         }
         let v = match self.record_place_type(place, w) {
             Some(ty) => {
-                let v = self.widen(v, &ty, span)?;
+                let v = self.coerce(v, &ty, span)?;
                 if !self.conforms(&v, &ty) {
                     return Err(RuntimeError::new(
                         span,
@@ -1909,10 +1910,6 @@ impl<'p> Engine<'p> {
     }
 
     fn eval_expected(&mut self, f: FnId, e: &Expr, w: &World, ty: &TypeSpec) -> Result<Value> {
-        if *ty == TypeSpec::Prob && probl_sema::coercions::numeric_literal(e).is_some() {
-            let v = self.eval(f, e, w)?;
-            return ops::make_prob(&v).map_err(|err| err.at(e.span));
-        }
         match (&e.kind, ty) {
             (ExprKind::List(xs), TypeSpec::List(t)) => {
                 self.budget.collection(xs.len() as u128).map_err(|err| err.at(e.span))?;
@@ -1946,12 +1943,12 @@ impl<'p> Engine<'p> {
             }
             _ => {
                 let v = self.eval(f, e, w)?;
-                self.widen(v, ty, e.span)
+                self.coerce(v, ty, e.span)
             }
         }
     }
 
-    /// A shared field type supplies literal context even when the record is
+    /// A shared field type supplies conversion context even when the record is
     /// represented by a finite distribution. Heterogeneous records have no
     /// shared context, and their individual declarations are checked below.
     fn record_field_type(&self, value: &Value, name: &str) -> Option<TypeSpec> {
@@ -1988,7 +1985,7 @@ impl<'p> Engine<'p> {
                     return Ok(value);
                 };
                 let ty = TypeSpec::Record(id as u32);
-                let value = self.widen(value, &ty, span)?;
+                let value = self.coerce(value, &ty, span)?;
                 if !self.conforms(&value, &ty) {
                     return Err(RuntimeError::new(
                         span,
@@ -2067,7 +2064,7 @@ impl<'p> Engine<'p> {
                     let value = match field_ty {
                         Some(t) => {
                             let value = self.eval(f, v, w)?;
-                            let value = self.widen(value, &t, v.span)?;
+                            let value = self.coerce(value, &t, v.span)?;
                             if !self.conforms(&value, &t) {
                                 return Err(RuntimeError::new(
                                     v.span,

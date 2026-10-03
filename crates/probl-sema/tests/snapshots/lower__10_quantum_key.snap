@@ -123,7 +123,7 @@ fn#10 a simulate block () captures [compared_1 <- parent slot 11, error_3 <- par
   if eve_0 {
     $2 = error_3    [live: eve_0 compared_1 $2]
   } else {
-    $2 = 0.0    [live: eve_0 compared_1 $2]
+    $2 = 0%    [live: eve_0 compared_1 $2]
   }
-  observe 0 from binomial(compared_1, prob($2))    [live: eve_0]
+  observe 0 from binomial(compared_1, $2)    [live: eve_0]
   return eve_0    [live: ]

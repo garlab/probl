@@ -739,10 +739,11 @@ impl Gen {
 
     /// Facts, probability parameters and boolean recipes in control flow.
     fn cond(&mut self, depth: u32) -> String {
-        match self.rng.below(4) {
+        match self.rng.below(5) {
             0 => self.expr(Kind::Bool, depth),
             1 => self.expr(Kind::Prob, depth),
             2 => self.expr(Kind::DBool, depth),
+            3 => format!("(1 * {})", self.expr(Kind::Prob, depth)),
             _ => format!("~({})", self.expr(Kind::DBool, depth)),
         }
     }

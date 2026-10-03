@@ -10,5 +10,5 @@ expression: tree
 (var market ~ (call one_of [Boom: 20%, Steady: 60%, Slump: 20%]))
 (var signups ~ (to 60 150))
 (var customers = 0)
-(for month (.. 1 18) (block (let new ~ (call poisson signups)) (let lost ~ (call binomial customers (call prob churn))) (+= customers (- new lost)) (report (* customers price) by month as "MRR ($)") (= market (call next_month market)) (let growth ~ (match market (Boom => (to 8% 20%)) (Steady => (to 1% 6%)) (Slump => (call normal_range (- 8%) 0%)))) (*= signups (+ 1 growth))))
+(for month (.. 1 18) (block (let new ~ (call poisson signups)) (let lost ~ (call binomial customers churn)) (+= customers (- new lost)) (report (* customers price) by month as "MRR ($)") (= market (call next_month market)) (let growth ~ (match market (Boom => (to 8% 20%)) (Steady => (to 1% 6%)) (Slump => (call normal_range (- 8%) 0%)))) (*= signups (+ 1 growth))))
 (report (>= (* customers price) 100000) as "MRR ≥ $100k after 18 months")

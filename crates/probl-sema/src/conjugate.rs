@@ -54,7 +54,7 @@ impl<'a> Update<'a> {
 }
 
 /// The exact update that `observe value from …` can make, if it has one of
-/// the conjugate forms: the variable is the parameter, with `prob` for beta,
+/// the conjugate forms: the variable is the parameter (optionally wrapped in `prob` for beta),
 /// and appears nowhere else in the observation.
 pub fn update<'a>(value: &'a Expr, from: Option<&'a Expr>) -> Option<Update<'a>> {
     let builtin = |e: &'a Expr| match &e.kind {
@@ -65,12 +65,13 @@ pub fn update<'a>(value: &'a Expr, from: Option<&'a Expr>) -> Option<Update<'a>>
         ExprKind::Slot(s) => Some(s),
         _ => None,
     };
-    // A beta draw is a float. The checked conversion makes its use as a
-    // probability explicit, while the family guarantees the conversion.
+    // A beta draw is a float whose family guarantees the checked conversion
+    // at a probability parameter. Explicit `prob(x)` remains equivalent.
     let probability_slot = |e: &'a Expr| match builtin(e)? {
         (Builtin::Prob, [x]) => slot(x),
         _ => None,
     };
+    let parameter_slot = |e: &'a Expr| slot(e).or_else(|| probability_slot(e));
     let mut distribution = builtin(from?)?;
     if let (Builtin::BooleanLaw, [inner]) = distribution {
         if let Some((Builtin::Bernoulli, args)) = builtin(inner) {
@@ -78,10 +79,11 @@ pub fn update<'a>(value: &'a Expr, from: Option<&'a Expr>) -> Option<Update<'a>>
         }
     }
     let (slot, likelihood) = match distribution {
-        (Builtin::Binomial, [trials, x]) => (probability_slot(x)?, Likelihood::Binomial { value, trials }),
-        (Builtin::Bernoulli | Builtin::BooleanLaw | Builtin::ScoreLaw, [x]) => {
-            (probability_slot(x)?, Likelihood::Bernoulli { value })
-        }
+        (Builtin::Binomial, [trials, x]) => (parameter_slot(x)?, Likelihood::Binomial { value, trials }),
+        (Builtin::Bernoulli | Builtin::ScoreLaw, [x]) => (parameter_slot(x)?, Likelihood::Bernoulli { value }),
+        // A draw has no expected probability type: `~x` for a float is still
+        // a float, which bare observation rejects. Do not optimize that away.
+        (Builtin::BooleanLaw, [x]) => (probability_slot(x)?, Likelihood::Bernoulli { value }),
         (Builtin::Poisson, [x]) => (slot(x)?, Likelihood::Poisson { value }),
         (Builtin::Normal, [x, sd]) => (slot(x)?, Likelihood::Normal { value, sd }),
         _ => return None,

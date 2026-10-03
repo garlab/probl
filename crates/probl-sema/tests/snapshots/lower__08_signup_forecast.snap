@@ -13,10 +13,10 @@ fn#0 the top level ()
     }
     day_4 = $2[$3]    [live: rate_1 $2 $3 day_4]
     $3 = (+ $3 1)    [live: rate_1 $2 $3 day_4]
-    observe day_4.signups from binomial(day_4.visitors, prob(rate_1))    [live: rate_1 $2 $3]
+    observe day_4.signups from binomial(day_4.visitors, rate_1)    [live: rate_1 $2 $3]
   }
   report (* rate_1 100) as "conversion rate (%)"    [live: rate_1]
   daily_visitors_5 ~ to(300, 500)    [live: rate_1 daily_visitors_5]
-  next_month_6 ~ binomial(round((* 30 daily_visitors_5)), prob(rate_1))    [live: next_month_6]
+  next_month_6 ~ binomial(round((* 30 daily_visitors_5)), rate_1)    [live: next_month_6]
   report next_month_6 as "sign-ups next month"    [live: next_month_6]
   report (>= next_month_6 400) as "at least 400 sign-ups"    [live: ]

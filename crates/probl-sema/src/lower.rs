@@ -440,8 +440,8 @@ impl<'a> Lowerer<'a> {
         self.error(value.span, format!("expected {expected}, found {found}"));
     }
 
-    /// Only source literals acquire a probability type from context. Slots
-    /// and arithmetic keep their type and need an explicit `prob(...)`.
+    /// Convert known numeric literals early, diagnosing invalid ranges.
+    /// Other numbers are checked at the receiving runtime type boundary.
     fn contextualize(&mut self, e: &mut Expr, ty: &TypeSpec) {
         if *ty == TypeSpec::Prob {
             if let Some(p) = crate::coercions::numeric_literal(e) {

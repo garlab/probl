@@ -1,4 +1,4 @@
-//! Literal conversion is determined by syntax, never by a variable's value.
+//! Recognize numeric literals for early contextual conversion and diagnostics.
 use crate::ir::{Expr, ExprKind, Lit};
 use probl_syntax::ast::UnOp;
 

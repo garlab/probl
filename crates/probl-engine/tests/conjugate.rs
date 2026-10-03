@@ -172,22 +172,31 @@ repeat 3 {
 }
 
 #[test]
-fn a_type_annotation_draws_the_variable_only_if_it_could_fail() {
+fn type_annotations_preserve_or_convert_the_draw() {
     let out =
         outcome("@mode sample(runs: 50, seed: 1)\nlet p: float ~ beta(2, 3)\nobserve true from bernoulli(prob(p))");
     assert_eq!(updates(&out, "p"), counts(50, 50, 0));
     let out = outcome("@mode sample(runs: 50, seed: 1)\nlet r: float ~ gamma(2, 1)\nobserve 3 from poisson(r)");
     assert_eq!(updates(&out, "r"), counts(50, 50, 0));
-    // A draw's float representation is never implicitly narrowed, even
-    // for a beta family or a small gamma value inside [0, 1].
+    // A probability annotation materializes the draw and checks its value.
+    // This is equivalent with exact updating enabled or disabled.
     for family in ["beta(2, 3)", "gamma(2, 0.001)"] {
-        error(&format!(
-            "@mode sample(runs: 50, seed: 1)\nlet p: prob ~ {family}\nreport p"
-        ));
+        let source = format!(
+            "@mode sample(runs: 50, seed: 1)\nlet p: prob ~ {family}\nobserve true from bernoulli(p)\nreport p"
+        );
+        let out = outcome(&source);
+        assert_eq!(out.output, exec(&source, &without()).unwrap().output);
+        assert!(
+            out.reports[0]
+                .distribution()
+                .iter()
+                .all(|(v, _)| matches!(v, probl_engine::value::Value::Prob(_)))
+        );
+        assert!(out.stats.updates.iter().all(|u| u.exact == 0));
     }
     let src = "@mode sample(runs: 50, seed: 1)\nlet r: prob ~ gamma(2, 1)\nobserve 3 from poisson(r)";
     let error = exec(src, &Options::default()).unwrap_err();
-    assert!(error.contains("`r` should be a prob, but it's a float"), "{error}");
+    assert!(error.contains("finite number between 0 and 1"), "{error}");
     assert_eq!(error, exec(src, &without()).unwrap_err());
 }
 
