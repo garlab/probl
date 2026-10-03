@@ -341,13 +341,37 @@ Sampling (section 14) is checked against enumeration on the same generated progr
 
 A continuous distribution is a `dist[float]`, and a recipe like any other distribution (section 2). What can be done with one:
 
-- **Draw from it** with `~`, when sampling (section 14). Enumeration can't list its outcomes, so a continuous draw is an error there.
+- **Draw from it** with `~`. Sampling produces a concrete float (section 14). Enumeration retains an analytic float with a unique draw identity, subject to the operations below.
 - **Compare it with a number.** `normal(0, 1) > 1.96` is a `dist[bool]`, true with probability 1 − F(1.96), where F is the distribution's CDF; this works in both modes. `==` is never true.
-- **Ask about it.** `mean`, `sd`, `variance`, `median`, `quantile`, `cdf` and `pdf` use the formulas.
+- **Ask about it.** `mean`, `sd`, `variance`, `median`, `quantile`, `cdf` and `pdf` use the formulas. Reporting the recipe directly in enumeration displays its numeric summary.
 - **Choose among them.** A choice with continuous options, such as `one_of([normal(0, 1), 5])` or `chance { 35% => 1 to 3, else => 0 }` used as a value, is a mixture: drawing from it chooses an option with its probability, then draws from that option.
 - **Use it as evidence.** When sampling, `observe v from D` with a continuous `D` multiplies the weight by D's density at `v`, which can be more than 1.
 
-Anything else, such as arithmetic (`normal(0, 1) * 2`) or comparing two continuous distributions, is an error for now: draw a value first (`let x ~ normal(0, 1)`), then compute with it.
+Arithmetic on an undrawn continuous recipe (`normal(0, 1) * 2`) and comparisons between continuous recipes remain unsupported. Bind an outcome first.
+
+### Analytic outcomes in enumeration
+
+```probl
+let x ~ uniform(0, 2)
+let y = x + 1
+observe x > 1
+report y                 # uniform(2, 3): mean 2.5, sd ≈0.289
+report x + x             # uniform(2, 4), using the same x twice
+report x - x             # 0.0
+report y > 2.5           # 50%
+```
+
+The observation has 50% evidence. `typeof x` remains `"float"`, and `typeof (x > 1)` is `"bool"`. The internal analytic representation does not turn a bound outcome back into a distribution recipe. Assigning or drawing an already bound scalar (`let alias ~ x`) retains its identity. Separate `~` operations on recipes create independent identities, including draws inside separate function calls.
+
+Supported arithmetic is affine in a single continuous draw: addition/subtraction of settled numbers, multiplication/division by settled numbers, negation, and addition/subtraction of expressions derived from the same draw. Multiplication by zero and cancellation produce ordinary floats. Division by zero is an error. Finite drawn values can supply the coefficients, so enumeration can produce mixtures of affine marginals.
+
+Comparisons against numbers, or between affine expressions of the same draw, produce boolean events. `observe` restricts the underlying draw, and `if`/`while` split and restrict it in each branch. Conditions on one draw can use `and`, `or`, `not`, and boolean equality; disjoint accepted intervals are retained. A stored event refers to that same draw, so observing it twice applies its evidence once. Equality to a single number has probability zero for a nonconstant continuous outcome; identity comparisons such as `x == x` are true. Point likelihoods using `observe v from D` still require sample mode.
+
+Restrictions follow aliases in lists, records, map values, and closures, and flow back from ordinary function calls even when the function returns a plain value. Collection callbacks can perform affine calculations but retain their existing effect restrictions. Reports combine conditional continuous marginals and numeric point masses using their weights, and display mean, standard deviation, and quantiles. Grouping by a settled discrete key works. The CDF of a bound outcome can be reported as an event: `report y <= threshold`. These results use floating-point formulas and numerical CDF inversion, with no Monte Carlo error; they are not symbolic exact real arithmetic.
+
+This first implementation deliberately rejects unsupported uses with a sampling diagnostic: nonlinear arithmetic, expressions combining independent continuous draws, continuous distribution parameters or probability conditions derived from a draw, analytic collection keys/indices, and reports of whole aggregates containing analytic values (report their fields separately). Reports cannot mix continuous marginals with nonnumeric outcomes. Built-ins that need concrete scalar outcomes, including conversions and text formatting, require sampling. In particular, `mean(x)` or `P(x > 1)` must not silently become posterior queries: `x` is a scalar and `x > 1` is a fact in each world. Use reports to summarize across worlds; distribution queries such as `mean(uniform(0, 2))` retain their existing meaning.
+
+Continuous draws inside `simulate`, and capturing analytic outcomes into it, remain unsupported. A reusable joint distribution recipe needs a separate representation so that subsequent draws receive fresh identities while correlations within each draw survive. Ordinary functions can already return analytic outcomes. Cyclic loops involving analytic state use bounded unrolling and the usual iteration/work limits rather than the finite-state Markov solver.
 
 ## 14. Sampling
 
@@ -356,7 +380,7 @@ Anything else, such as arithmetic (`normal(0, 1) * 2`) or comparing two continuo
 - **A run is a single world.** Where enumeration would split a world (probabilistic conditions, `chance`, `~`, taking a card, calling a function), a run takes one branch, chosen with that branch's probability, and its weight doesn't change. Boolean conditions follow the already-drawn outcome.
 - **Weights come from evidence.** `observe` multiplies a run's weight as in section 7 (likelihood weighting). A run that is ruled out has weight zero.
 - **Runs are independent.** They don't merge, and calls aren't memoized, so every call makes its own choices. A function may call itself with the same arguments: each call chooses its own path. Unbounded loops aren't cut short; the iteration limit still applies.
-- **`simulate` is enumerated.** Inside each run, a `simulate` block is computed exactly, by enumeration, as in section 8, so its result has no sampling error. A block that enumeration can't compute (because it draws from a continuous distribution, say) is an error, even when sampling: estimates inside estimates aren't supported yet.
+- **`simulate` is enumerated.** Inside each run, a `simulate` block is computed exactly, by enumeration, as in section 8, so its result has no sampling error. A block outside the supported local inference subset (including a continuous draw or a captured analytic outcome) is an error, even when sampling: estimates inside estimates aren't supported yet.
 - **Reproducible.** The same program, input data, execution-date snapshot, seed and version of Probl give the same output on any machine, with any number of threads. Runs go in batches of 1,000, each with a random stream of its own, derived from the seed and the batch's number. Batches may run at the same time, but they're combined in order: the estimates, what `print` shows and the first error are those of running them one after another. Only whether a run reaches a host's limit on work, which the threads share, can depend on timing.
 - The missing mass of infinite discrete distributions (below 10⁻¹⁸, section 10) is ignored.
 

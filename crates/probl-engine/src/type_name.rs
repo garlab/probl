@@ -74,9 +74,9 @@ impl Names<'_> {
         let simple = match v {
             Value::Dead => return Err(OpError::new("typeof needs an initialized value")),
             Value::Unit => "()",
-            Value::Bool(_) => "bool",
+            Value::Bool(_) | Value::Event(_) => "bool",
             Value::Int(_) => "int",
-            Value::Float(_) | Value::Delayed(_) => "float",
+            Value::Float(_) | Value::Delayed(_) | Value::Analytic(_) => "float",
             Value::Prob(_) => "prob",
             Value::Complex(_) => "complex",
             Value::Str(_) => "str",

@@ -6,6 +6,7 @@
 //! evaluated in one world at a time. See docs/semantics.md for the rules this
 //! implements.
 
+use crate::analytic::{self, Analytic};
 use crate::builtins;
 use crate::chain::{Chain, Solution};
 use crate::conjugate::{self, Seen};
@@ -16,6 +17,7 @@ use crate::ops::{self, Truth};
 use crate::report::Sink;
 use crate::value::{Closure, Delayed, Value, fmt_prob};
 use crate::weight::Weight;
+use crate::world::Returned;
 use crate::world::{Flow, World, clear, clear_dead, live_slots, merge, merge_values, state_hash, total_weight};
 use probl_sema::builtins::Lifting;
 use probl_sema::conjugate::{Conjugacy, Likelihood, Update};
@@ -144,7 +146,7 @@ pub struct SampleTotals {
 /// The distribution of a function's return value, unnormalized.
 #[derive(Clone, Debug)]
 pub struct CallResult {
-    pub outcomes: Vec<(Value, Weight)>,
+    pub outcomes: Vec<Returned>,
     /// Weight the call left unresolved.
     pub unresolved: Weight,
     /// Weight its observations ruled out, when enumerating.
@@ -259,8 +261,9 @@ pub struct Engine<'p> {
     /// When sampling: the random numbers. `None` when enumerating, including
     /// inside `simulate` while sampling.
     sampler: Option<Rng>,
-    /// How many `simulate` blocks are being enumerated inside a sampled run.
+    /// Nesting depth of local `simulate` inference (in either outer mode).
     nested: usize,
+    next_latent: u64,
     /// Dynamic effect boundary for collection callbacks. Effects inside an
     /// explicit `simulate` are local to that computation instead.
     callback: Option<&'static str>,
@@ -320,6 +323,7 @@ impl<'p> Engine<'p> {
             stats: Stats::default(),
             sampler,
             nested: 0,
+            next_latent: 0,
             callback: None,
         }
     }
@@ -330,6 +334,8 @@ impl<'p> Engine<'p> {
         let main = prog.main();
         let world = World {
             slots: vec![Value::Dead; main.n_slots()],
+            constraints: Default::default(),
+            inherited: Default::default(),
             weight: Weight::ONE,
             run: 0,
         };
@@ -363,6 +369,8 @@ impl<'p> Engine<'p> {
         let worlds = (first..first + n)
             .map(|run| World {
                 slots: vec![Value::Dead; main.n_slots()],
+                constraints: Default::default(),
+                inherited: Default::default(),
                 weight: Weight::ONE,
                 run: run as u32,
             })
@@ -446,18 +454,10 @@ impl<'p> Engine<'p> {
     }
 
     fn continuous_draw(&self, span: Span) -> RuntimeError {
-        let err = RuntimeError::new(
-            span,
-            "can't draw from a continuous distribution when enumerating: its outcomes can't be listed",
-        );
-        if self.nested > 0 {
-            err.with_note("`simulate` is computed by enumeration, even in sample mode")
-                .with_help("sampling inside `simulate` isn't supported yet; draw the value outside the block")
-        } else {
-            err.with_help(
-                "sample instead, with `@mode sample(runs: 10_000)`, or compare it with a number, like `if x > 5`, which enumeration can compute",
-            )
-        }
+        analytic::unsupported("a continuous draw inside `simulate`")
+            .at(span)
+            .with_note("`simulate` is computed by enumeration, even in sample mode")
+            .with_help("draw the value outside `simulate`; analytic joint distribution recipes aren't supported yet")
     }
 
     /// Whether draws of conjugate priors are delayed now: when sampling,
@@ -630,6 +630,16 @@ impl<'p> Engine<'p> {
         Ok(flow)
     }
 
+    fn restrict_event(&mut self, event: &analytic::Event, yes: bool, w: &mut World, span: Span) -> Result<f64> {
+        self.budget
+            .collection((w.constraints.len() + 1) as u128)
+            .map_err(|e| e.at(span))?;
+        self.budget
+            .work((w.constraints.len() + event.yes.0.len() + event.draw.domain.0.len()) as u64)
+            .map_err(|e| e.at(span))?;
+        Ok(event.restrict(yes, &mut w.constraints))
+    }
+
     fn exec_stmt(&mut self, f: FnId, stmt: &'p Stmt, worlds: Vec<World>) -> Result<Flow> {
         let span = stmt.span;
         if matches!(
@@ -750,7 +760,9 @@ impl<'p> Engine<'p> {
                     }
                     let func = match callee {
                         Callee::Fn { func, capture_args } => {
-                            key.extend(capture_args.iter().map(|&s| w.slots[s as usize].clone()));
+                            for &s in capture_args {
+                                key.push(self.slot(f, s, &w, span)?);
+                            }
                             *func
                         }
                         Callee::Value(e) => match self.eval(f, e, &w)? {
@@ -773,13 +785,14 @@ impl<'p> Engine<'p> {
                     add_pending(&mut self.pending, &result.pending, w.weight);
                     let last = result.outcomes.len().saturating_sub(1);
                     let mut w = Some(w);
-                    for (i, (v, p)) in result.outcomes.iter().enumerate() {
+                    for (i, (v, p, restrictions)) in result.outcomes.iter().enumerate() {
                         let mut nw = if i == last {
                             w.take().unwrap()
                         } else {
                             w.clone().unwrap()
                         };
                         nw.weight = nw.weight * *p;
+                        Arc::make_mut(&mut nw.constraints).extend(restrictions.iter().map(|(id, d)| (*id, d.clone())));
                         self.assign(f, dest, v.clone(), &mut nw, span)?;
                         out.push(nw);
                     }
@@ -790,7 +803,22 @@ impl<'p> Engine<'p> {
             StmtKind::If { cond, then, otherwise } => {
                 let (mut yes, mut no) = (Vec::new(), Vec::new());
                 for w in worlds {
-                    let c = self.eval_condition(f, cond, &w)?;
+                    let condition = self.eval(f, cond, &w)?;
+                    if let Value::Event(event) = condition {
+                        self.check_callback_effect(cond.span)?;
+                        let mut y = w.clone();
+                        let mut n = w;
+                        let p = self.restrict_event(&event, true, &mut y, cond.span)?;
+                        let q = self.restrict_event(&event, false, &mut n, cond.span)?;
+                        if p > 0.0 {
+                            yes.push(y.scaled(p));
+                        }
+                        if q > 0.0 {
+                            no.push(n.scaled(q));
+                        }
+                        continue;
+                    }
+                    let c = ops::condition(&condition).map_err(|e| e.at(cond.span))?;
                     if (c.yes > 0.0 && c.no > 0.0) || c.missing > 0.0 {
                         self.check_callback_effect(cond.span)?;
                     }
@@ -908,7 +936,9 @@ impl<'p> Engine<'p> {
                 let mut flow = Flow::default();
                 for w in worlds {
                     let v = self.eval(f, value, &w)?;
-                    flow.returned.push((v, w.weight));
+                    let mut constraints = w.constraints;
+                    Arc::make_mut(&mut constraints).retain(|id, _| w.inherited.contains(id));
+                    flow.returned.push((v, w.weight, constraints));
                 }
                 Ok(flow)
             }
@@ -936,8 +966,13 @@ impl<'p> Engine<'p> {
                     let (factor, missing, ruled_out) = match from {
                         None => {
                             let v = self.eval(f, value, &w)?;
-                            let b = ops::fact(&v, "observe").map_err(|e| e.at(value.span))?;
-                            if b { (1.0, 0.0, 0.0) } else { (0.0, 0.0, 1.0) }
+                            if let Value::Event(event) = v {
+                                let p = self.restrict_event(&event, true, &mut w, value.span)?;
+                                (p, 0.0, 1.0 - p)
+                            } else {
+                                let b = ops::fact(&v, "observe").map_err(|e| e.at(value.span))?;
+                                if b { (1.0, 0.0, 0.0) } else { (0.0, 0.0, 1.0) }
+                            }
                         }
                         Some(d) => {
                             let v = self.eval(f, value, &w)?;
@@ -951,8 +986,16 @@ impl<'p> Engine<'p> {
                                 }
                                 _ => {
                                     let dist = self.eval(f, d, &w)?;
-                                    self.densities |= is_density(&dist);
-                                    likelihood(&dist, &v, self.sampler.is_some()).map_err(|e| e.at(span))?
+                                    if let (Value::Bool(b), Value::Event(event)) = (&v, &dist) {
+                                        let p = self.restrict_event(event, *b, &mut w, span)?;
+                                        (p, 0.0, 1.0 - p)
+                                    } else {
+                                        if analytic::contains(&v) || analytic::contains(&dist) {
+                                            return Err(analytic::unsupported("this likelihood observation").at(span));
+                                        }
+                                        self.densities |= is_density(&dist);
+                                        likelihood(&dist, &v, self.sampler.is_some()).map_err(|e| e.at(span))?
+                                    }
                                 }
                             }
                         }
@@ -978,6 +1021,9 @@ impl<'p> Engine<'p> {
                     let k = match key {
                         Some(k) => {
                             let k_value = self.eval(f, k, w)?;
+                            if analytic::contains(&k_value) {
+                                return Err(analytic::unsupported("grouping by a continuous outcome").at(k.span));
+                            }
                             if k_value.is_uncertain() {
                                 return Err(RuntimeError::new(
                                     k.span,
@@ -992,17 +1038,17 @@ impl<'p> Engine<'p> {
                     let (v, run) = if self.sampler.is_some() {
                         (self.sample_continuous(v), Some(w.run))
                     } else {
-                        if matches!(&v, Value::Continuous(_))
-                            || matches!(&v, Value::Dist(d) if d.outcomes.iter().any(|(x, _)| matches!(x, Value::Continuous(_))))
-                        {
-                            return Err(RuntimeError::new(
-                                value.span,
-                                "can't report a continuous distribution when enumerating: its outcomes can't be listed",
+                        if analytic::contains(&v) && !matches!(v, Value::Analytic(_) | Value::Event(_)) {
+                            return Err(analytic::unsupported(
+                                "reporting an aggregate containing analytic outcomes; report its fields individually",
                             )
-                            .with_help("sample instead, with `@mode sample(runs: 10_000)`, or report a comparison, like `x > 5`"));
+                            .at(value.span));
                         }
                         (v, None)
                     };
+                    self.sinks[*site as usize]
+                        .validate_analytic(&k, &v)
+                        .map_err(|e| e.at(value.span))?;
                     self.sinks[*site as usize].add(k, &v, w.weight, run);
                 }
                 Ok(Flow::next(worlds))
@@ -1129,6 +1175,13 @@ impl<'p> Engine<'p> {
     /// to each state then says how much of each leaves. `None` if the chain
     /// is too large, and the loop should be unrolled instead.
     fn solve_loop(&mut self, f: FnId, stmt: &'p Stmt, body: &'p Block, inside: &[World]) -> Result<Option<Flow>> {
+        if inside
+            .iter()
+            .any(|w| !w.constraints.is_empty() || w.slots.iter().any(analytic::contains))
+        {
+            self.too_large.insert(stmt.id);
+            return Ok(None);
+        }
         let head_set = &self.live.loop_head[stmt.id as usize];
         let after = &self.live.after[stmt.id as usize];
         let n = inside[0].slots.len();
@@ -1159,7 +1212,7 @@ impl<'p> Engine<'p> {
         }
         let mut chain = Chain::default();
         let mut exits: Vec<Vec<World>> = Vec::new();
-        let mut returns: Vec<Vec<(Value, Weight)>> = Vec::new();
+        let mut returns: Vec<Vec<Returned>> = Vec::new();
         let mut unresolved: Vec<Weight> = Vec::new();
         // A body that uses a call's result so far can't be solved as a chain:
         // that result changes from round to round.
@@ -1177,6 +1230,8 @@ impl<'p> Engine<'p> {
             }
             let world = World {
                 slots: states[k].clone(),
+                constraints: Default::default(),
+                inherited: Default::default(),
                 weight: Weight::ONE,
                 run: 0,
             };
@@ -1186,13 +1241,28 @@ impl<'p> Engine<'p> {
             let left = std::mem::replace(&mut self.unresolved, saved_unresolved);
             let lost = std::mem::replace(&mut self.lost, saved_lost);
             let mut flow = flow?;
+            if flow
+                .next
+                .iter()
+                .chain(&flow.continued)
+                .chain(&flow.broke)
+                .any(|w| !w.constraints.is_empty() || w.slots.iter().any(analytic::contains))
+                || flow
+                    .returned
+                    .iter()
+                    .any(|(v, _, c)| !c.is_empty() || analytic::contains(v))
+            {
+                self.pending = saved_pending;
+                self.too_large.insert(stmt.id);
+                return Ok(None);
+            }
             clear_dead(&mut flow.broke, after);
             // Leaving: by `break` or `return`, unresolved, or ruled out.
             let mut leave = left + lost;
             for w in &flow.broke {
                 leave += w.weight;
             }
-            for (_, w) in &flow.returned {
+            for (_, w, _) in &flow.returned {
                 leave += *w;
             }
             let mut next: FxHashMap<usize, f64> = FxHashMap::default();
@@ -1246,8 +1316,8 @@ impl<'p> Engine<'p> {
                 w.weight = w.weight * times;
                 flow.next.push(w);
             }
-            for (value, w) in std::mem::take(&mut returns[k]) {
-                flow.returned.push((value, w * times));
+            for (value, w, c) in std::mem::take(&mut returns[k]) {
+                flow.returned.push((value, w * times, c));
             }
             left += unresolved[k] * times;
         }
@@ -1282,9 +1352,17 @@ impl<'p> Engine<'p> {
                 self.assign(f, place, v, &mut w, span)?;
                 out.push(w);
             }
-            Value::Continuous(_) => return Err(self.continuous_draw(span)),
-            Value::Dist(dist) if dist.outcomes.iter().any(|(v, _)| matches!(v, Value::Continuous(_))) => {
-                return Err(self.continuous_draw(span));
+            Value::Continuous(family) => {
+                if self.nested > 0 {
+                    return Err(self.continuous_draw(span));
+                }
+                self.next_latent += 1;
+                let v = Analytic::new(self.next_latent, *family)
+                    .value()
+                    .map_err(|e| e.at(span))?;
+                let mut w = w;
+                self.assign(f, place, v, &mut w, span)?;
+                out.push(w);
             }
             Value::Dist(dist) => {
                 self.unresolved += w.weight.scale(dist.missing);
@@ -1297,8 +1375,12 @@ impl<'p> Engine<'p> {
                         w.clone().unwrap()
                     };
                     let mut nw = base.scaled(*p);
-                    self.assign(f, place, v.clone(), &mut nw, span)?;
-                    out.push(nw);
+                    if matches!(v, Value::Continuous(_)) {
+                        self.split_by(f, place, v.clone(), nw, span, out)?;
+                    } else {
+                        self.assign(f, place, v.clone(), &mut nw, span)?;
+                        out.push(nw);
+                    }
                 }
             }
             Value::Prob(p) => {
@@ -1339,6 +1421,9 @@ impl<'p> Engine<'p> {
             ));
         }
         Ok(match (v, ty) {
+            (Value::Analytic(_) | Value::Event(_), TypeSpec::Prob) => {
+                return Err(analytic::unsupported("converting this outcome to prob").at(span));
+            }
             (Value::Prob(p), TypeSpec::Float) => Value::Float(p),
             (v @ (Value::Int(_) | Value::Float(_)), TypeSpec::Prob) => ops::make_prob(&v).map_err(|e| e.at(span))?,
             (Value::List(xs), TypeSpec::List(t)) => {
@@ -1412,10 +1497,10 @@ impl<'p> Engine<'p> {
     fn conforms(&self, v: &Value, ty: &TypeSpec) -> bool {
         match (ty, v) {
             (TypeSpec::Int, Value::Int(_)) => true,
-            (TypeSpec::Float, Value::Float(_) | Value::Int(_)) => true,
+            (TypeSpec::Float, Value::Float(_) | Value::Int(_) | Value::Analytic(_)) => true,
             (TypeSpec::Complex, Value::Complex(_)) => true,
             (TypeSpec::Prob, Value::Prob(_)) => true,
-            (TypeSpec::Bool, Value::Bool(_)) => true,
+            (TypeSpec::Bool, Value::Bool(_) | Value::Event(_)) => true,
             (TypeSpec::Str, Value::Str(_)) => true,
             (TypeSpec::Date, Value::Date(_)) => true,
             (TypeSpec::Unit, Value::Unit) => true,
@@ -1548,7 +1633,13 @@ impl<'p> Engine<'p> {
         }
         let result = result?;
         // A result still waiting on a call being solved isn't final.
-        if memoizable && result.pending.is_empty() {
+        if memoizable
+            && result.pending.is_empty()
+            && result
+                .outcomes
+                .iter()
+                .all(|(v, _, c)| c.is_empty() && !analytic::contains(v))
+        {
             if self.memo.len() >= self.config.max_cached_calls {
                 self.memo.clear();
             }
@@ -1576,6 +1667,11 @@ impl<'p> Engine<'p> {
     ) -> Result<Arc<CallResult>> {
         let fun = &self.prog.functions[func as usize];
         let sampling = self.sampler.is_some();
+        let mut inherited = std::collections::BTreeSet::new();
+        for v in &slots {
+            analytic::collect_ids(v, &mut inherited);
+        }
+        let inherited = Arc::new(inherited);
         let mut rounds: u64 = 0;
         let mut before = f64::INFINITY;
         loop {
@@ -1593,6 +1689,8 @@ impl<'p> Engine<'p> {
                 &fun.body,
                 vec![World {
                     slots: slots.clone(),
+                    constraints: Default::default(),
+                    inherited: inherited.clone(),
                     weight: Weight::ONE,
                     run: 0,
                 }],
@@ -1703,7 +1801,13 @@ impl<'p> Engine<'p> {
             return;
         }
         for (key, result) in settled {
-            if !self.active.contains_key(&key) && !self.prog.functions[key.0 as usize].effects.prints {
+            if !self.active.contains_key(&key)
+                && !self.prog.functions[key.0 as usize].effects.prints
+                && result
+                    .outcomes
+                    .iter()
+                    .all(|(v, _, c)| c.is_empty() && !analytic::contains(v))
+            {
                 self.memo.insert(key, Arc::new(result));
             }
         }
@@ -1712,14 +1816,17 @@ impl<'p> Engine<'p> {
     /// `simulate { … }`: run a block as a separate model and return its
     /// normalized distribution (docs/semantics.md, section 8).
     fn simulate(&mut self, func: FnId, key: Vec<Value>, span: Span) -> Result<Value> {
+        if key.iter().any(analytic::contains) {
+            return Err(analytic::unsupported("capturing an analytic draw inside `simulate`").at(span));
+        }
         let saved_observed = self.observed;
         let saved_densities = self.densities;
         // Enumerated, even when sampling (section 14).
         let sampler = self.sampler.take();
         let callback = self.callback.take();
-        self.nested += sampler.is_some() as usize;
+        self.nested += 1;
         let result = self.call(func, key, span);
-        self.nested -= sampler.is_some() as usize;
+        self.nested -= 1;
         self.sampler = sampler;
         self.callback = callback;
         // Observations inside `simulate` condition its result only.
@@ -1732,7 +1839,7 @@ impl<'p> Engine<'p> {
             )
             .at(span));
         }
-        let resolved = Weight::sum(result.outcomes.iter().map(|(_, w)| *w));
+        let resolved = Weight::sum(result.outcomes.iter().map(|(_, w, _)| *w));
         if resolved.is_zero() {
             let message = if result.unresolved.is_zero() {
                 "every world in this `simulate` was ruled out by `observe`"
@@ -1745,7 +1852,7 @@ impl<'p> Engine<'p> {
         let pairs = result
             .outcomes
             .iter()
-            .map(|(v, w)| (v.clone(), w.ratio(denom)))
+            .map(|(v, w, _)| (v.clone(), w.ratio(denom)))
             .collect();
         ops::combine(pairs, result.unresolved.ratio(denom), &mut self.budget).map_err(|e| e.at(span))
     }
@@ -1775,7 +1882,9 @@ impl<'p> Engine<'p> {
             .at(span));
         }
         match result.outcomes.as_slice() {
-            [(v, p)] if (p.to_f64() - 1.0).abs() < 1e-12 && result.unresolved.is_zero() => Ok(v.clone()),
+            [(v, p, c)] if c.is_empty() && (p.to_f64() - 1.0).abs() < 1e-12 && result.unresolved.is_zero() => {
+                Ok(v.clone())
+            }
             _ => Err(RuntimeError::new(
                 span,
                 format!("the function given to `{what}` can't branch on chances, draw values or observe"),
@@ -1851,7 +1960,13 @@ impl<'p> Engine<'p> {
         for elem in &place.path {
             keys.push(match elem {
                 PathElem::Field(name) => PathKey::Field(name.as_str()),
-                PathElem::Index(e) => PathKey::Index(self.eval(f, e, w)?),
+                PathElem::Index(e) => {
+                    let key = self.eval(f, e, w)?;
+                    if analytic::contains(&key) {
+                        return Err(analytic::unsupported("an analytic assignment index").at(e.span));
+                    }
+                    PathKey::Index(key)
+                }
             });
         }
         let target = &mut w.slots[place.slot as usize];
@@ -1876,7 +1991,7 @@ impl<'p> Engine<'p> {
         Ok(v)
     }
 
-    fn slot(&self, f: FnId, s: SlotId, w: &World, span: Span) -> Result<Value> {
+    fn slot(&mut self, f: FnId, s: SlotId, w: &World, span: Span) -> Result<Value> {
         match &w.slots[s as usize] {
             Value::Dead => Err(self.no_value(f, s, span)),
             Value::Delayed(_) => {
@@ -1891,7 +2006,7 @@ impl<'p> Engine<'p> {
                     "`{name}`'s draw was delayed for an exact update (docs/semantics.md, section 14)"
                 )))
             }
-            v => Ok(v.clone()),
+            v => analytic::resolve(v, &w.constraints, &mut self.budget).map_err(|e| e.at(span)),
         }
     }
 
@@ -1903,11 +2018,6 @@ impl<'p> Engine<'p> {
     }
 
     // ── Expressions ──────────────────────────────────────────────────────
-
-    fn eval_condition(&mut self, f: FnId, e: &Expr, w: &World) -> Result<ops::Condition> {
-        let v = self.eval(f, e, w)?;
-        ops::condition(&v).map_err(|err| err.at(e.span))
-    }
 
     fn eval_expected(&mut self, f: FnId, e: &Expr, w: &World, ty: &TypeSpec) -> Result<Value> {
         match (&e.kind, ty) {
@@ -1923,6 +2033,9 @@ impl<'p> Engine<'p> {
                 let mut out = BTreeMap::new();
                 for (k, v) in xs {
                     let key = self.eval_expected(f, k, w, kt)?;
+                    if analytic::contains(&key) {
+                        return Err(analytic::unsupported("analytic map keys").at(k.span));
+                    }
                     if key.is_uncertain() {
                         return Err(RuntimeError::new(k.span, "map keys can't be distributions"));
                     }
@@ -2047,6 +2160,9 @@ impl<'p> Engine<'p> {
                 let mut map = BTreeMap::new();
                 for (k, v) in entries {
                     let key = self.eval(f, k, w)?;
+                    if analytic::contains(&key) {
+                        return Err(analytic::unsupported("analytic map keys").at(k.span));
+                    }
                     if key.is_uncertain() {
                         return Err(RuntimeError::new(k.span, "map keys can't be distributions"));
                     }
@@ -2125,10 +2241,16 @@ impl<'p> Engine<'p> {
             ExprKind::Builtin { func, args, .. } => self.builtin(f, *func, args, w, span),
             ExprKind::Closure { func, capture_args } => Ok(Value::Closure(Arc::new(Closure {
                 func: *func,
-                captured: capture_args.iter().map(|&s| w.slots[s as usize].clone()).collect(),
+                captured: capture_args
+                    .iter()
+                    .map(|&s| self.slot(f, s, w, span))
+                    .collect::<Result<_>>()?,
             }))),
             ExprKind::Simulate { func, capture_args } => {
-                let key = capture_args.iter().map(|&s| w.slots[s as usize].clone()).collect();
+                let key = capture_args
+                    .iter()
+                    .map(|&s| self.slot(f, s, w, span))
+                    .collect::<Result<_>>()?;
                 self.simulate(*func, key, span)
             }
             ExprKind::Interp(parts) => {
@@ -2187,6 +2309,20 @@ impl<'p> Engine<'p> {
             values.push(self.eval(f, a, w)?);
         }
         let at = |err: OpError| err.at(span);
+        if values.iter().any(analytic::contains)
+            && !matches!(
+                b,
+                Builtin::Map
+                    | Builtin::Filter
+                    | Builtin::Reduce
+                    | Builtin::Len
+                    | Builtin::IterItems
+                    | Builtin::Settled
+                    | Builtin::BooleanLaw
+            )
+        {
+            return Err(analytic::unsupported(&format!("`{}` on this outcome", b.name())).at(span));
+        }
         match b {
             Builtin::RunDate => self.config.today.map(Value::Date).ok_or_else(|| {
                 RuntimeError::new(span, "the host did not supply an execution date for `today`")

@@ -25,6 +25,8 @@ pub struct Acc {
     runs: FxHashMap<u32, RunStat>,
     /// When sampling: sums over the finished runs, for standard errors.
     moments: Option<Moments>,
+    continuous: bool,
+    nonnumeric: bool,
 }
 
 impl Default for Acc {
@@ -37,6 +39,8 @@ impl Default for Acc {
             missing: Weight::ZERO,
             runs: FxHashMap::default(),
             moments: None,
+            continuous: false,
+            nonnumeric: false,
         }
     }
 }
@@ -206,7 +210,31 @@ impl RunStat {
 
 impl Acc {
     fn add(&mut self, value: &Value, weight: Weight) {
+        self.continuous |= matches!(value, Value::Analytic(_) | Value::Continuous(_));
+        self.nonnumeric |= !matches!(
+            value,
+            Value::Int(_)
+                | Value::Float(_)
+                | Value::Prob(_)
+                | Value::Analytic(_)
+                | Value::Continuous(_)
+                | Value::Dist(_)
+        );
         match value {
+            Value::Analytic(a) => {
+                // Reports retain marginals only; merging identical laws here
+                // avoids keeping one copy per independent draw/branch.
+                let mut marginal = (**a).clone();
+                marginal.id = 0;
+                *self
+                    .values
+                    .entry(Value::Analytic(std::sync::Arc::new(marginal)))
+                    .or_insert(Weight::ZERO) += weight;
+            }
+            Value::Event(e) => {
+                self.facts += weight;
+                self.yes += weight.scale(e.probability());
+            }
             Value::Bool(b) => {
                 self.facts += weight;
                 if *b {
@@ -276,6 +304,8 @@ impl Acc {
         self.yes += other.yes;
         self.facts += other.facts;
         self.missing += other.missing;
+        self.continuous |= other.continuous;
+        self.nonnumeric |= other.nonnumeric;
         for (v, w) in other.values {
             *self.values.entry(v).or_insert(Weight::ZERO) += w;
         }
@@ -414,6 +444,32 @@ pub struct Sink {
 }
 
 impl Sink {
+    pub(crate) fn validate_analytic(&self, key: &Value, value: &Value) -> crate::error::OpResult<()> {
+        fn kinds(v: &Value) -> (bool, bool) {
+            match v {
+                Value::Analytic(_) | Value::Continuous(_) => (true, true),
+                Value::Int(_) | Value::Float(_) | Value::Prob(_) => (false, true),
+                Value::Dist(d) => d
+                    .outcomes
+                    .iter()
+                    .map(|(v, _)| kinds(v))
+                    .fold((false, true), |(a, b), (c, d)| (a || c, b && d)),
+                _ => (false, false),
+            }
+        }
+        let (mut analytic, mut numeric) = kinds(value);
+        if let Some(acc) = self.groups.get(key) {
+            analytic |= acc.continuous;
+            numeric &= !acc.nonnumeric;
+        }
+        if analytic && !numeric {
+            return Err(crate::analytic::unsupported(
+                "mixing a continuous report with nonnumeric outcomes",
+            ));
+        }
+        Ok(())
+    }
+
     /// Record a value reported in a world, and when sampling, by which run.
     pub fn add(&mut self, key: Value, value: &Value, weight: Weight, run: Option<u32>) {
         let acc = self.groups.entry(key).or_default();
@@ -586,7 +642,9 @@ fn value_text(acc: &Acc, format: Format) -> String {
     }
     let dist = acc.distribution();
     let mean_se = acc.sampled().then(|| acc.mean_se().1);
-    let mut text = if dist.len() == 1 {
+    let mut text = if let Some(m) = analytic_mixture(&dist) {
+        analytic_stats(&m)
+    } else if dist.len() == 1 {
         display(&dist[0].0)
     } else if let Some(stats) = numeric_stats(&dist, mean_se) {
         stats
@@ -746,6 +804,42 @@ pub fn estimate(p: f64, se: f64) -> String {
 /// `mean · sd · 5% · median · 95%`, and a sparkline for small integer ranges.
 /// Probabilities (as values, not facts) are shown as percentages. A sampled
 /// mean shows its standard error when it's visible at the printed precision.
+/// Numeric components of a report containing a continuous marginal.
+/// These are report summaries, not conversions of scalar outcomes in programs.
+pub fn analytic_mixture(dist: &[(Value, f64)]) -> Option<crate::continuous::Mixture> {
+    use crate::continuous::{Mixture, Part};
+    if !dist
+        .iter()
+        .any(|(v, _)| matches!(v, Value::Analytic(_) | Value::Continuous(_)))
+    {
+        return None;
+    }
+    let parts = dist
+        .iter()
+        .map(|(v, p)| {
+            let part = match v {
+                Value::Analytic(a) => Part::Analytic((**a).clone()),
+                Value::Continuous(f) => Part::Continuous(**f),
+                v => Part::Point(v.as_f64()?),
+            };
+            Some((part, *p))
+        })
+        .collect::<Option<_>>()?;
+    Some(Mixture { parts })
+}
+
+fn analytic_stats(m: &crate::continuous::Mixture) -> String {
+    let mean = m.mean();
+    let sd = m.variance().sqrt();
+    let decimals = if mean.abs().max(sd) < 100.0 { 2 } else { 0 };
+    let [a, b, c] = [0.05, 0.5, 0.95].map(|q| fixed(m.quantile(q), decimals));
+    format!(
+        "mean {} · sd {} · 5% {a} · median {b} · 95% {c}",
+        fixed(mean, decimals),
+        fixed(sd, decimals)
+    )
+}
+
 fn numeric_stats(dist: &[(Value, f64)], mean_se: Option<f64>) -> Option<String> {
     let nums: Vec<(f64, f64)> = dist
         .iter()
@@ -862,12 +956,28 @@ fn table(key_label: &str, sink: &Sink, format: Format, kind: ReportKind) -> Stri
         }
     } else {
         let dists: Vec<Vec<(Value, f64)>> = groups.iter().map(|(_, a)| a.distribution()).collect();
-        let numeric = dists
-            .iter()
-            .all(|d| d.iter().all(|(v, _)| matches!(v, Value::Int(_) | Value::Float(_))));
+        let numeric = dists.iter().all(|d| {
+            d.iter().all(|(v, _)| {
+                matches!(
+                    v,
+                    Value::Int(_) | Value::Float(_) | Value::Analytic(_) | Value::Continuous(_)
+                )
+            })
+        });
         if numeric {
             header = ["5%", "25%", "median", "75%", "95%"].map(String::from).to_vec();
             for (key, d) in keys.iter().zip(&dists) {
+                if let Some(m) = analytic_mixture(d) {
+                    let decimals = if m.mean().abs().max(m.variance().sqrt()) < 100.0 {
+                        2
+                    } else {
+                        0
+                    };
+                    let mut row = vec![key.clone()];
+                    row.extend([0.05, 0.25, 0.5, 0.75, 0.95].map(|q| fixed(m.quantile(q), decimals)));
+                    rows.push(row);
+                    continue;
+                }
                 let scale = d
                     .iter()
                     .filter_map(|(v, _)| v.as_f64())

@@ -64,19 +64,11 @@ fn questions_use_the_formulas() {
 }
 
 #[test]
-fn continuous_draws_need_sampling() {
-    let e = error("let x ~ normal(0, 1)\nreport x");
-    assert!(
-        e.contains("can't draw from a continuous distribution when enumerating"),
-        "{e}"
-    );
+fn unsupported_continuous_operations_need_sampling() {
+    let e = error("let x ~ normal(0, 1)\nreport x*x");
+    assert!(e.contains("nonlinear arithmetic"), "{e}");
     assert!(e.contains("@mode sample"), "{e}");
-    assert!(error("report normal(0, 1)").contains("can't report a continuous distribution"));
     assert!(error("observe 1 from normal(0, 1)\nreport true").contains("needs sample mode"));
-    assert!(
-        error("let x = if (chance { 50% => true, else => false }) { normal(0, 1) } else { 1 }\nlet y ~ x\nreport y")
-            .contains("continuous")
-    );
     // Anything but comparing with a number needs a value.
     let e = error("report normal(0, 1) * 2 > 1");
     assert!(e.contains("needs a value, not a normal distribution"), "{e}");

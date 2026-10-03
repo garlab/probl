@@ -49,6 +49,10 @@ pub enum Value {
     /// (docs/semantics.md, section 14). The engine draws it before any
     /// value read; a direct `typeof` inspection only needs its outcome type.
     Delayed(Arc<Delayed>),
+    /// A scalar outcome retained analytically during enumeration.
+    Analytic(Arc<crate::analytic::Analytic>),
+    /// A boolean predicate of that same outcome, retaining its identity.
+    Event(Arc<crate::analytic::Event>),
 }
 
 /// The distribution of a variable whose draw is delayed, updated exactly by
@@ -380,6 +384,8 @@ impl Value {
             Value::Closure(_) => "function".into(),
             Value::Date(_) => "date".into(),
             Value::Delayed(_) => "value not drawn yet".into(),
+            Value::Analytic(_) => "float".into(),
+            Value::Event(_) => "bool".into(),
         }
     }
 
@@ -431,6 +437,8 @@ impl Value {
             Value::Continuous(_) => 14,
             Value::Delayed(_) => 15,
             Value::Complex(_) => 16,
+            Value::Analytic(_) => 17,
+            Value::Event(_) => 18,
         }
     }
 
@@ -453,12 +461,12 @@ fn plural_kind(kind: &str) -> String {
 }
 
 /// What identifies a continuous distribution: its family and parameters.
-fn family_key(f: &Family) -> (&'static str, Vec<u64>) {
+pub(crate) fn family_key(f: &Family) -> (&'static str, Vec<u64>) {
     (f.name(), f.params().into_iter().map(float_key).collect())
 }
 
 /// Float bits with 0.0 and -0.0 merged and a single NaN.
-fn float_key(f: f64) -> u64 {
+pub(crate) fn float_key(f: f64) -> u64 {
     if f == 0.0 {
         0
     } else if f.is_nan() {
@@ -499,6 +507,8 @@ fn eq_other(x: &Value, y: &Value) -> bool {
         (Value::Closure(a), Value::Closure(b)) => Arc::ptr_eq(a, b) || a == b,
         (Value::Date(a), Value::Date(b)) => a == b,
         (Value::Continuous(a), Value::Continuous(b)) => family_key(a) == family_key(b),
+        (Value::Analytic(a), Value::Analytic(b)) => a.key() == b.key(),
+        (Value::Event(a), Value::Event(b)) => a.key() == b.key(),
         (Value::Delayed(a), Value::Delayed(b)) => {
             a.variable == b.variable && family_key(&a.family) == family_key(&b.family)
         }
@@ -539,6 +549,8 @@ fn hash_other<H: Hasher>(value: &Value, state: &mut H) {
         Value::Closure(c) => c.hash(state),
         Value::Date(d) => d.hash(state),
         Value::Continuous(f) => family_key(f).hash(state),
+        Value::Analytic(a) => a.key().hash(state),
+        Value::Event(a) => a.key().hash(state),
         Value::Delayed(d) => (d.variable, family_key(&d.family)).hash(state),
     }
 }
@@ -583,6 +595,8 @@ impl Ord for Value {
             (Value::Dist(a), Value::Dist(b)) => a.cmp(b),
             (Value::Closure(a), Value::Closure(b)) => a.cmp(b),
             (Value::Continuous(a), Value::Continuous(b)) => family_key(a).cmp(&family_key(b)),
+            (Value::Analytic(a), Value::Analytic(b)) => a.key().cmp(&b.key()),
+            (Value::Event(a), Value::Event(b)) => a.key().cmp(&b.key()),
             (Value::Delayed(a), Value::Delayed(b)) => {
                 (a.variable, family_key(&a.family)).cmp(&(b.variable, family_key(&b.family)))
             }
@@ -722,6 +736,8 @@ fn write_value(v: &Value, f: &mut fmt::Formatter<'_>, nested: bool) -> fmt::Resu
         Value::Closure(_) => write!(f, "<function>"),
         Value::Date(d) => write!(f, "{}", crate::dates::format(*d)),
         Value::Continuous(family) => write!(f, "{family}"),
+        Value::Analytic(a) => write!(f, "<analytic float: {} * {} + {}>", a.scale, a.family, a.offset),
+        Value::Event(_) => write!(f, "<analytic bool>"),
         Value::Delayed(d) => write!(f, "<not drawn yet: {}>", d.family),
     }
 }

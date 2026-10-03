@@ -636,6 +636,7 @@ fn continuous_query(b: Builtin, args: &[Value]) -> OpResult<Value> {
             for (part, p) in &m.parts {
                 match part {
                     Part::Continuous(f) => density += p * f.pdf(x),
+                    Part::Analytic(a) => density += p * a.pdf(x),
                     Part::Point(_) => {
                         return Err(OpError::new(
                             "pdf needs a continuous distribution, without single values mixed in",

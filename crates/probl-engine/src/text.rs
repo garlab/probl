@@ -27,6 +27,9 @@ pub fn push(out: &mut String, s: &str, budget: &mut Budget) -> OpResult<()> {
 /// Format incrementally, so even a nested collection cannot allocate an
 /// unbounded temporary through `to_string()` before the limit is checked.
 pub fn push_value(out: &mut String, value: &Value, budget: &mut Budget) -> OpResult<()> {
+    if crate::analytic::contains(value) {
+        return Err(crate::analytic::unsupported("formatting an analytic outcome as text"));
+    }
     struct Writer<'a> {
         out: &'a mut String,
         budget: &'a mut Budget,

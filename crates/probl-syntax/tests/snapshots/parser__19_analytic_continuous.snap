@@ -1,0 +1,12 @@
+---
+source: crates/probl-syntax/tests/parser.rs
+expression: tree
+---
+(let wait ~ (call uniform 0 2))
+(let arrival = (+ wait 1))
+(observe (> wait 1))
+(report wait)
+(report arrival)
+(report (> arrival 2.5))
+(report (+ wait wait))
+(report (- arrival wait))

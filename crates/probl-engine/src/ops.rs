@@ -133,6 +133,11 @@ pub fn article(kind: &str) -> String {
 /// A value used as a probability (chance weights, `bernoulli`, `binomial`…):
 /// a `prob` or a number checked at this boundary. Booleans need `prob(b)`.
 pub fn to_prob(v: &Value) -> OpResult<f64> {
+    if crate::analytic::contains(v) {
+        return Err(crate::analytic::unsupported(
+            "using an analytic outcome as a probability parameter",
+        ));
+    }
     match v {
         Value::Prob(p) => Ok(*p),
         Value::Float(_) | Value::Int(_) => match make_prob(v)? {
@@ -203,6 +208,7 @@ pub struct Condition {
 /// A fact, or a distribution of facts.
 pub enum Truth {
     Fact(bool),
+    Analytic(Arc<crate::analytic::Event>),
     Probability(f64),
     Uncertain(Arc<Dist>),
 }
@@ -211,6 +217,7 @@ pub enum Truth {
 pub fn truth(v: &Value, op: &str) -> OpResult<Truth> {
     match v {
         Value::Bool(b) => Ok(Truth::Fact(*b)),
+        Value::Event(e) => Ok(Truth::Analytic(e.clone())),
         Value::Dist(d) if d.truth().is_some() => Ok(Truth::Uncertain(d.clone())),
         Value::Prob(p) => Ok(Truth::Probability(*p)),
         other => Err(OpError::new(format!(
@@ -223,6 +230,11 @@ pub fn truth(v: &Value, op: &str) -> OpResult<Truth> {
 pub fn not(v: &Value, budget: &mut Budget) -> OpResult<Value> {
     match truth(v, "not")? {
         Truth::Fact(b) => Ok(Value::Bool(!b)),
+        Truth::Analytic(e) => Ok(crate::analytic::Event {
+            draw: e.draw.clone(),
+            yes: e.yes.complement(),
+        }
+        .value()),
         Truth::Probability(p) => Ok(Value::Prob(1.0 - p)),
         Truth::Uncertain(d) => lift1(&Value::Dist(d), budget, |x, _| match x {
             Value::Bool(b) => Ok(Value::Bool(!b)),
@@ -233,6 +245,22 @@ pub fn not(v: &Value, budget: &mut Budget) -> OpResult<Value> {
 
 /// Compose independent boolean recipes. Bound facts retain their identity.
 pub fn logic(and: bool, a: Truth, b: Truth, budget: &mut Budget) -> OpResult<Value> {
+    if matches!(a, Truth::Analytic(_)) || matches!(b, Truth::Analytic(_)) {
+        let value = |t| match t {
+            Truth::Fact(b) => Value::Bool(b),
+            Truth::Probability(p) => Value::Prob(p),
+            Truth::Uncertain(d) => Value::Dist(d),
+            Truth::Analytic(e) => Value::Event(e),
+        };
+        let (a, b) = (value(a), value(b));
+        for v in [&a, &b] {
+            if let Value::Event(e) = v {
+                budget.collection(e.yes.0.len() as u128 + e.draw.domain.0.len() as u128)?;
+                budget.work((e.yes.0.len() + e.draw.domain.0.len()) as u64)?;
+            }
+        }
+        return crate::analytic::logic(and, &a, &b);
+    }
     let op = |x: bool, y: bool| if and { x && y } else { x || y };
     match (a, b) {
         (Truth::Fact(x), Truth::Fact(y)) => Ok(Value::Bool(op(x, y))),
@@ -257,6 +285,7 @@ pub fn logic(and: bool, a: Truth, b: Truth, budget: &mut Budget) -> OpResult<Val
                 Truth::Uncertain(d) => Value::Dist(d),
                 Truth::Probability(p) => Dist::bernoulli(p).into_value(),
                 Truth::Fact(b) => Value::Bool(b),
+                Truth::Analytic(_) => unreachable!("handled above"),
             };
             lift2(&law(a), &law(b), budget, |x, y, _| match (x, y) {
                 (Value::Bool(x), Value::Bool(y)) => Ok(Value::Bool(op(*x, *y))),
@@ -269,6 +298,7 @@ pub fn logic(and: bool, a: Truth, b: Truth, budget: &mut Budget) -> OpResult<Val
 /// The boolean law requested by an observed anonymous draw.
 pub fn boolean_law(v: &Value) -> OpResult<Value> {
     match truth(v, "observe ~")? {
+        Truth::Analytic(e) => Ok(Value::Event(e)),
         Truth::Fact(b) => Ok(Dist::bernoulli(if b { 1.0 } else { 0.0 }).into_value()),
         Truth::Probability(p) => Ok(Dist::bernoulli(p).into_value()),
         Truth::Uncertain(d) => Ok(Value::Dist(d)),
@@ -276,6 +306,11 @@ pub fn boolean_law(v: &Value) -> OpResult<Value> {
 }
 
 pub fn condition(v: &Value) -> OpResult<Condition> {
+    if matches!(v, Value::Analytic(_)) {
+        return Err(crate::analytic::unsupported(
+            "using a continuous outcome as a probability condition",
+        ));
+    }
     if matches!(v, Value::Float(_) | Value::Int(_)) {
         let p = to_prob(v)?;
         return Ok(Condition {
@@ -285,6 +320,11 @@ pub fn condition(v: &Value) -> OpResult<Condition> {
         });
     }
     match truth(v, "condition")? {
+        Truth::Analytic(e) => Ok(Condition {
+            yes: e.probability(),
+            no: 1.0 - e.probability(),
+            missing: 0.0,
+        }),
         Truth::Fact(b) => Ok(Condition {
             yes: if b { 1.0 } else { 0.0 },
             no: if b { 0.0 } else { 1.0 },
@@ -321,6 +361,12 @@ pub fn unary(op: UnOp, v: &Value, budget: &mut Budget) -> OpResult<Value> {
             }
             Value::Float(f) | Value::Prob(f) => Ok(Value::Float(-f)),
             Value::Complex(z) => Ok(Value::Complex(z.negated())),
+            Value::Analytic(a) => {
+                let mut a = (**a).clone();
+                a.scale = -a.scale;
+                a.offset = -a.offset;
+                a.value()
+            }
             other => Err(OpError::new(format!("can't negate {}", article(&other.kind())))),
         }),
         UnOp::Not => not(v, budget),
@@ -344,6 +390,39 @@ pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<
 }
 
 fn binary_plain(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
+    if matches!(a, Value::Analytic(_)) || matches!(b, Value::Analytic(_)) {
+        return crate::analytic::binary(op, a, b);
+    }
+    if matches!(
+        op,
+        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+    ) && (crate::analytic::contains(a) || crate::analytic::contains(b))
+    {
+        if matches!(op, BinOp::Eq | BinOp::Ne) {
+            if let (Value::Event(x), Value::Bool(b)) | (Value::Bool(b), Value::Event(x)) = (a, b) {
+                return if *b == (op == BinOp::Eq) {
+                    Ok(Value::Event(x.clone()))
+                } else {
+                    not(&Value::Event(x.clone()), budget)
+                };
+            }
+        }
+        if let (Value::Event(x), Value::Event(y)) = (a, b) {
+            if x.draw.id == y.draw.id && matches!(op, BinOp::Eq | BinOp::Ne) {
+                let both = x.yes.intersect(&y.yes);
+                let neither = x.yes.complement().intersect(&y.yes.complement());
+                let equal = both.complement().intersect(&neither.complement()).complement();
+                return Ok(crate::analytic::Event {
+                    draw: x.draw.clone(),
+                    yes: if op == BinOp::Eq { equal } else { equal.complement() },
+                }
+                .value());
+            }
+        }
+        return Err(crate::analytic::unsupported(
+            "comparing aggregate or boolean analytic outcomes",
+        ));
+    }
     if let Some(v) = continuous_binary(op, a, b)? {
         return Ok(v);
     }
@@ -703,6 +782,9 @@ pub fn compare(a: &Value, b: &Value) -> OpResult<std::cmp::Ordering> {
 
 /// Whether `item` is in `coll` (for `in`).
 pub fn contains(coll: &Value, item: &Value, budget: &mut Budget) -> OpResult<bool> {
+    if crate::analytic::contains(coll) || crate::analytic::contains(item) {
+        return Err(crate::analytic::unsupported("membership involving analytic outcomes"));
+    }
     if let Value::Str(s) = coll {
         budget.string_work(s)?;
         if let Value::Str(s) = item {

@@ -1,0 +1,23 @@
+# Analytic continuous outcomes — arrival times without sampling
+
+# A wait of 0–2 hours, followed by a fixed one-hour journey.
+let wait ~ uniform(0, 2)
+let arrival = wait + 1
+
+# Learning that the wait exceeded one hour also changes arrival.
+observe wait > 1
+
+report wait                 # uniform(1, 2): mean 1.5
+report arrival              # uniform(2, 3): mean 2.5
+report arrival > 2.5        # 50%
+report wait + wait          # The same wait twice: uniform(2, 4).
+report arrival - wait       # Always 1: the two values share a draw.
+
+# ── Output ─────────────────────────────────────────────
+# enumerated · evidence 50.00%
+#
+# wait              mean 1.50 · sd 0.29 · 5% 1.05 · median 1.50 · 95% 1.95
+# arrival           mean 2.50 · sd 0.29 · 5% 2.05 · median 2.50 · 95% 2.95
+# arrival > 2.5     50.00%
+# wait + wait       mean 3.00 · sd 0.58 · 5% 2.10 · median 3.00 · 95% 3.90
+# arrival - wait    1.0

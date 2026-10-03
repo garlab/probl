@@ -191,6 +191,82 @@ impl Family {
         }
     }
 
+    /// Conditional moments on a nonempty interval, using incomplete moments.
+    /// Uniform and normal use centered formulas to avoid subtracting large
+    /// location parameters when computing the variance.
+    pub fn interval_moments(&self, lo: f64, hi: f64) -> (f64, f64) {
+        let mass = self.cdf(hi) - self.cdf(lo);
+        let raw = |first: f64, second: f64| {
+            let mean = first / mass;
+            (mean, (second / mass - mean * mean).max(0.0))
+        };
+        match *self {
+            Family::Uniform { .. } => ((lo + hi) / 2.0, (hi - lo).powi(2) / 12.0),
+            Family::Normal { mean, sd } => {
+                let (a, b) = ((lo - mean) / sd, (hi - mean) / sd);
+                let (pa, pb) = (std_normal_pdf(a), std_normal_pdf(b));
+                let shift = (pa - pb) / mass;
+                let edge = |z: f64, p: f64| if z.is_finite() { z * p } else { 0.0 };
+                (
+                    mean + sd * shift,
+                    sd * sd * (1.0 + (edge(a, pa) - edge(b, pb)) / mass - shift * shift).max(0.0),
+                )
+            }
+            Family::Beta { a, b } => {
+                let moment = |n: f64| beta_cdf(a + n, b, hi) - beta_cdf(a + n, b, lo);
+                raw(
+                    a / (a + b) * moment(1.0),
+                    a * (a + 1.0) / ((a + b) * (a + b + 1.0)) * moment(2.0),
+                )
+            }
+            Family::Gamma { shape, scale } => {
+                let moment = |n: f64| gamma_cdf(shape + n, hi / scale) - gamma_cdf(shape + n, lo / scale);
+                raw(
+                    shape * scale * moment(1.0),
+                    shape * (shape + 1.0) * scale * scale * moment(2.0),
+                )
+            }
+            Family::Exponential { rate } => Family::Gamma {
+                shape: 1.0,
+                scale: 1.0 / rate,
+            }
+            .interval_moments(lo, hi),
+            Family::Lognormal { mu, sigma } => {
+                let moment = |n: f64| {
+                    let cdf = |x| std_normal_cdf((libm::log(x) - mu - n * sigma * sigma) / sigma);
+                    crate::math::exp(n * mu + n * n * sigma * sigma / 2.0) * (cdf(hi) - cdf(lo))
+                };
+                raw(moment(1.0), moment(2.0))
+            }
+            Family::Pert { lo: a, mode, hi: b } => {
+                let (alpha, beta) = Self::pert_shape(a, mode, b);
+                let (m, v) =
+                    Family::Beta { a: alpha, b: beta }.interval_moments((lo - a) / (b - a), (hi - a) / (b - a));
+                (a + (b - a) * m, (b - a).powi(2) * v)
+            }
+            Family::Triangular { lo: a, mode, hi: b } => {
+                let width = b - a;
+                let (l, h, m) = ((lo - a) / width, (hi - a) / width, (mode - a) / width);
+                let moment = |n: i32| {
+                    let integral = |l: f64, h: f64, k: i32| (h.powi(k + 1) - l.powi(k + 1)) / (k + 1) as f64;
+                    let left = if l < m {
+                        2.0 / m * integral(l, h.min(m), n + 1)
+                    } else {
+                        0.0
+                    };
+                    let right = if h > m {
+                        2.0 / (1.0 - m) * (integral(l.max(m), h, n) - integral(l.max(m), h, n + 1))
+                    } else {
+                        0.0
+                    };
+                    left + right
+                };
+                let (m, v) = raw(moment(1), moment(2));
+                (a + width * m, width * width * v)
+            }
+        }
+    }
+
     pub fn pdf(&self, x: f64) -> f64 {
         match *self {
             Family::Normal { mean, sd } => std_normal_pdf((x - mean) / sd) / sd,
@@ -398,6 +474,9 @@ pub fn std_normal_cdf(z: f64) -> f64 {
 /// Φ⁻¹(p): a rational approximation (Abramowitz and Stegun 26.2.23, error
 /// below 4.5e-4), polished by Newton's method on the exact CDF.
 pub fn std_normal_quantile(p: f64) -> f64 {
+    if p == 0.5 {
+        return 0.0;
+    }
     if p <= 0.0 {
         return f64::NEG_INFINITY;
     }
@@ -543,6 +622,9 @@ fn beta_fraction(a: f64, b: f64, x: f64) -> f64 {
 /// The regularized lower incomplete gamma function P(a, x): its series
 /// below a + 1, its continued fraction above (Numerical Recipes, 6.2).
 pub fn gamma_cdf(a: f64, x: f64) -> f64 {
+    if x == f64::INFINITY {
+        return 1.0;
+    }
     if x <= 0.0 {
         return 0.0;
     }
@@ -734,10 +816,11 @@ impl Rng {
 // ── Mixtures ─────────────────────────────────────────────────────────────
 
 /// A part of a mixture: a number, or a continuous distribution.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Part {
     Point(f64),
     Continuous(Family),
+    Analytic(crate::analytic::Analytic),
 }
 
 /// Moments, CDF and quantiles of a mixture of numbers and continuous
@@ -759,6 +842,7 @@ impl Mixture {
                 p * match part {
                     Part::Point(x) => *x,
                     Part::Continuous(f) => f.mean(),
+                    Part::Analytic(a) => a.moments().0,
                 }
             })
             .sum();
@@ -772,12 +856,16 @@ impl Mixture {
             .iter()
             .map(|(part, p)| {
                 p * match part {
-                    Part::Point(x) => x * x,
-                    Part::Continuous(f) => f.variance() + f.mean().powi(2),
+                    Part::Point(x) => (x - mean).powi(2),
+                    Part::Continuous(f) => f.variance() + (f.mean() - mean).powi(2),
+                    Part::Analytic(a) => {
+                        let (m, v) = a.moments();
+                        v + (m - mean).powi(2)
+                    }
                 }
             })
             .sum();
-        (second / self.total() - mean * mean).max(0.0)
+        (second / self.total()).max(0.0)
     }
 
     pub fn cdf(&self, x: f64) -> f64 {
@@ -794,6 +882,7 @@ impl Mixture {
                         }
                     }
                     Part::Continuous(f) => f.cdf(x),
+                    Part::Analytic(a) => a.cdf(x),
                 }
             })
             .sum();
@@ -801,14 +890,28 @@ impl Mixture {
     }
 
     pub fn quantile(&self, q: f64) -> f64 {
-        let ends = |pick: fn(&Family) -> f64| {
+        let ends = |q: f64| {
             self.parts.iter().map(move |(part, _)| match part {
                 Part::Point(x) => *x,
-                Part::Continuous(f) => pick(f),
+                Part::Continuous(f) => f.quantile(q),
+                Part::Analytic(a) => a.quantile(q),
             })
         };
-        let lo = ends(|f| f.quantile(1e-12)).fold(f64::INFINITY, f64::min);
-        let hi = ends(|f| f.quantile(1.0 - 1e-12)).fold(f64::NEG_INFINITY, f64::max);
+        if self.parts.len() == 1 {
+            return match &self.parts[0].0 {
+                Part::Point(x) => *x,
+                Part::Continuous(f) => f.quantile(q),
+                Part::Analytic(a) => a.quantile(q),
+            };
+        }
+        if q <= 0.0 {
+            return ends(0.0).fold(f64::INFINITY, f64::min);
+        }
+        if q >= 1.0 {
+            return ends(1.0).fold(f64::NEG_INFINITY, f64::max);
+        }
+        let lo = ends(q.min(1e-12)).fold(f64::INFINITY, f64::min);
+        let hi = ends(q.max(1.0 - 1e-12)).fold(f64::NEG_INFINITY, f64::max);
         if lo >= hi {
             return lo;
         }

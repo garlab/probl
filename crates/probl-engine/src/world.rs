@@ -1,18 +1,26 @@
 //! Worlds, and merging the ones that have become identical.
 
+use crate::analytic::Constraints;
 use crate::value::Value;
+pub type Returned = (Value, Weight, Constraints);
 use crate::weight::Weight;
 use probl_sema::SlotSet;
 use probl_sema::ir::SlotId;
 use rustc_hash::{FxHashMap, FxHasher};
+use std::collections::BTreeSet;
 use std::collections::hash_map::Entry;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 /// One possible state of the program: the variables of the current frame,
 /// and how likely it is (including every observation so far).
 #[derive(Clone, Debug)]
 pub struct World {
     pub slots: Vec<Value>,
+    pub constraints: Constraints,
+    /// Latents passed into this call: restrictions on these remain observable
+    /// by its caller even after every local alias dies. Constant per frame.
+    pub inherited: Arc<BTreeSet<u64>>,
     pub weight: Weight,
     /// When sampling, the run this world is (docs/semantics.md, section 14).
     pub run: u32,
@@ -37,7 +45,7 @@ pub struct Flow {
     pub broke: Vec<World>,
     pub continued: Vec<World>,
     /// Left the function: the returned value and the world's weight.
-    pub returned: Vec<(Value, Weight)>,
+    pub returned: Vec<Returned>,
 }
 
 impl Flow {
@@ -89,13 +97,24 @@ pub fn state_hash(w: &World, live: &[usize]) -> u64 {
     for &i in live {
         w.slots[i].hash(&mut hasher);
     }
+    w.constraints.hash(&mut hasher);
     hasher.finish()
 }
 
 /// If `enabled`, merge the worlds that agree on the live slots, adding up
 /// their weights, and keeping the order of first appearance. Dead slots
 /// don't matter, cleared or not.
-pub fn merge(worlds: Vec<World>, live: &SlotSet, enabled: bool) -> Vec<World> {
+pub fn merge(mut worlds: Vec<World>, live: &SlotSet, enabled: bool) -> Vec<World> {
+    for w in &mut worlds {
+        if w.constraints.keys().all(|id| w.inherited.contains(id)) {
+            continue;
+        }
+        let mut ids = (*w.inherited).clone();
+        for slot in live.iter() {
+            crate::analytic::collect_ids(&w.slots[slot as usize], &mut ids);
+        }
+        Arc::make_mut(&mut w.constraints).retain(|id, _| ids.contains(id));
+    }
     if !enabled || worlds.len() < 2 {
         return worlds;
     }
@@ -108,7 +127,8 @@ pub fn merge(worlds: Vec<World>, live: &SlotSet, enabled: bool) -> Vec<World> {
     let mut next: Vec<usize> = Vec::with_capacity(worlds.len());
     const NONE: usize = usize::MAX;
     for w in worlds {
-        let same = |kept: &World| live.iter().all(|&i| kept.slots[i] == w.slots[i]);
+        let same =
+            |kept: &World| kept.constraints == w.constraints && live.iter().all(|&i| kept.slots[i] == w.slots[i]);
         let found = match first.entry(state_hash(&w, &live)) {
             Entry::Vacant(entry) => {
                 entry.insert(out.len());
@@ -139,16 +159,16 @@ pub fn merge(worlds: Vec<World>, live: &SlotSet, enabled: bool) -> Vec<World> {
     out
 }
 
-/// Merge (value, weight) pairs with equal values.
-pub fn merge_values(pairs: Vec<(Value, Weight)>) -> Vec<(Value, Weight)> {
-    let mut out: Vec<(Value, Weight)> = Vec::with_capacity(pairs.len());
-    let mut index: FxHashMap<Value, usize> = FxHashMap::default();
-    for (v, w) in pairs {
-        match index.get(&v) {
+/// Merge returned values only when their caller-visible restrictions also agree.
+pub fn merge_values(pairs: Vec<Returned>) -> Vec<Returned> {
+    let mut out: Vec<Returned> = Vec::with_capacity(pairs.len());
+    let mut index: FxHashMap<(Value, Constraints), usize> = FxHashMap::default();
+    for (v, w, constraints) in pairs {
+        match index.get(&(v.clone(), constraints.clone())) {
             Some(&i) => out[i].1 += w,
             None => {
-                index.insert(v.clone(), out.len());
-                out.push((v, w));
+                index.insert((v.clone(), constraints.clone()), out.len());
+                out.push((v, w, constraints));
             }
         }
     }
@@ -162,6 +182,8 @@ mod tests {
     fn world(slots: Vec<Value>) -> World {
         World {
             slots,
+            constraints: Default::default(),
+            inherited: Default::default(),
             weight: Weight::ONE,
             run: 0,
         }

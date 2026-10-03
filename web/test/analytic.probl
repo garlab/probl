@@ -1,0 +1,42 @@
+# Native/WASM parity for analytic reports, calls, conditioning and mixtures.
+fn shifted(x: float) -> float { x + 1 }
+let x ~ uniform(0, 4)
+let event = x < 1 or x > 3
+let y = shifted(x)
+let aliases = [x, y]
+observe event
+
+let g ~ gamma(2, 1)
+observe g > 1
+let n ~ normal(0, 1)
+observe n > 0
+let b ~ beta(2, 5)
+observe b > 0.1 and b < 0.7
+let e ~ exponential(2)
+observe e > 0.5
+let p ~ pert(-2, 1, 5)
+observe p > -1 and p < 4
+let t ~ triangular(-2, 1, 5)
+observe t > -1 and t < 4
+let l ~ lognormal(0.3, 0.7)
+observe l > 0.4 and l < 3
+let mixed ~ one_of([uniform(1, 3), 4])
+let group = if x > 2 { "high" } else { "low" }
+report x
+report -x
+report y
+report aliases[1] - aliases[0]
+report event
+report x < 1
+report x by group
+report typeof x
+report typeof event
+report g
+report n
+report b
+report e
+report p
+report t
+report l
+report mixed
+report uniform(0, 2)

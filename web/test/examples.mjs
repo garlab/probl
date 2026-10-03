@@ -18,6 +18,7 @@ const cli = `${root}/target/release/probl`;
 const probl = await load(wasm);
 let failed = 0;
 const cases = probl.examples().map((e) => ({ ...e, path: `examples/${e.name}.probl` }));
+cases.push({ name: 'analytic', path: 'web/test/analytic.probl', source: await readFile(`${root}/web/test/analytic.probl`, 'utf8') });
 cases.push({ name: 'math', path: 'web/test/math.probl', source: await readFile(`${root}/web/test/math.probl`, 'utf8') });
 cases.push({ name: 'text', path: 'web/test/text.probl', source: await readFile(`${root}/web/test/text.probl`, 'utf8') });
 cases.push({ name: 'dates', path: 'web/test/dates.probl', source: await readFile(`${root}/web/test/dates.probl`, 'utf8') });

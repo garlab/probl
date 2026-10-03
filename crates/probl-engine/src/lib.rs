@@ -1,6 +1,7 @@
 //! The Probl engine: values, distributions and the world-set interpreter.
 //! The rules it implements are in docs/semantics.md.
 
+pub mod analytic;
 pub mod builtins;
 pub mod chain;
 pub mod complex;

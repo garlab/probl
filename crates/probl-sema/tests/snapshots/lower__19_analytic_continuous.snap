@@ -1,0 +1,13 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: ir(&src)
+---
+fn#0 the top level ()
+  wait_0 ~ uniform(0, 2)    [live: wait_0]
+  arrival_1 = (+ wait_0 1)    [live: wait_0 arrival_1]
+  observe (> wait_0 1)    [live: wait_0 arrival_1]
+  report wait_0 as "wait"    [live: wait_0 arrival_1]
+  report arrival_1 as "arrival"    [live: wait_0 arrival_1]
+  report (> arrival_1 2.5) as "arrival > 2.5"    [live: wait_0 arrival_1]
+  report (+ wait_0 wait_0) as "wait + wait"    [live: wait_0 arrival_1]
+  report (- arrival_1 wait_0) as "arrival - wait"    [live: ]
