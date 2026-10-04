@@ -101,7 +101,7 @@ pub fn lift2(
             results.push((f(x, y, budget)?, p * q));
         }
     }
-    let m = 1.0 - (1.0 - missing(a)) * (1.0 - missing(b));
+    let m = missing(a) + (1.0 - missing(a)) * missing(b);
     combine(results, m, budget)
 }
 
@@ -119,11 +119,11 @@ pub fn lift_n(args: &[Value], budget: &mut Budget, f: NaryFn) -> OpResult<Value>
         .fold(1u128, |acc, a| acc.saturating_mul(outcomes(a).len() as u128));
     budget.outcomes(size)?;
     budget.work(size as u64)?;
-    let kept: f64 = args.iter().map(|a| 1.0 - missing(a)).product();
+    let missing = args.iter().fold(0.0, |m, a| m + (1.0 - m) * missing(a));
     let mut results = Vec::new();
     let mut current = Vec::with_capacity(args.len());
     product(args, 0, &mut current, 1.0, f, budget, &mut results)?;
-    combine(results, 1.0 - kept, budget)
+    combine(results, missing, budget)
 }
 
 fn product(
@@ -163,8 +163,7 @@ pub fn to_prob(v: &Value) -> OpResult<f64> {
         ));
     }
     match v {
-        Value::Prob(p) => Ok(*p),
-        Value::Float(_) | Value::Int(_) => match make_prob(v)? {
+        Value::Prob(_) | Value::Float(_) | Value::Int(_) => match make_prob(v)? {
             Value::Prob(p) => Ok(p),
             _ => unreachable!("make_prob returns a probability"),
         },
@@ -189,8 +188,7 @@ pub fn make_prob(v: &Value) -> OpResult<Value> {
                 0.0
             }
         }
-        Value::Prob(p) => return Ok(Value::Prob(*p)),
-        Value::Float(p) => *p,
+        Value::Prob(p) | Value::Float(p) => *p,
         Value::Int(n) if *n == 0 => 0.0,
         Value::Int(n) if *n == 1 => 1.0,
         Value::Int(_) => return Err(OpError::new("prob needs a finite number between 0 and 1")),
@@ -205,6 +203,19 @@ pub fn make_prob(v: &Value) -> OpResult<Value> {
         return Err(OpError::new("prob needs a finite number between 0 and 1"));
     }
     Ok(Value::Prob(p))
+}
+
+/// Computed chances may stray a few ulps outside [0, 1] through rounding.
+/// This correction is only for algorithms known to produce probabilities;
+/// user inputs always go through the strict `make_prob` boundary.
+pub(crate) fn computed_prob(p: f64, what: &str) -> OpResult<Value> {
+    const ROUNDING: f64 = 8.0 * f64::EPSILON;
+    if !p.is_finite() || !(-ROUNDING..=1.0 + ROUNDING).contains(&p) {
+        return Err(OpError::new(format!(
+            "`{what}` could not compute a finite probability between 0 and 1"
+        )));
+    }
+    Ok(Value::Prob(if p <= 0.0 { 0.0 } else { p.min(1.0) }))
 }
 
 pub fn fact(v: &Value, context: &str) -> OpResult<bool> {
@@ -243,7 +254,7 @@ pub fn truth(v: &Value, op: &str) -> OpResult<Truth> {
         Value::Bool(b) => Ok(Truth::Fact(*b)),
         Value::Event(e) => Ok(Truth::Analytic(e.clone())),
         Value::Dist(d) if d.truth().is_some() => Ok(Truth::Uncertain(d.clone())),
-        Value::Prob(p) => Ok(Truth::Probability(*p)),
+        Value::Prob(_) => Ok(Truth::Probability(to_prob(v)?)),
         other => Err(OpError::new(format!(
             "`{op}` needs bool, prob or dist[bool], found {}",
             article(&other.kind())
@@ -259,7 +270,7 @@ pub fn not(v: &Value, budget: &mut Budget) -> OpResult<Value> {
             yes: e.yes.complement(),
         }
         .value()),
-        Truth::Probability(p) => Ok(Value::Prob(1.0 - p)),
+        Truth::Probability(p) => computed_prob(1.0 - p, "not"),
         Truth::Uncertain(d) => lift1(&Value::Dist(d), budget, |x, _| match x {
             Value::Bool(b) => Ok(Value::Bool(!b)),
             _ => unreachable!("checked by `truth`"),
@@ -288,7 +299,10 @@ pub fn logic(and: bool, a: Truth, b: Truth, budget: &mut Budget) -> OpResult<Val
     let op = |x: bool, y: bool| if and { x && y } else { x || y };
     match (a, b) {
         (Truth::Fact(x), Truth::Fact(y)) => Ok(Value::Bool(op(x, y))),
-        (Truth::Probability(p), Truth::Probability(q)) => Ok(Value::Prob(if and { p * q } else { p + (1.0 - p) * q })),
+        (Truth::Probability(p), Truth::Probability(q)) => computed_prob(
+            if and { p * q } else { p + (1.0 - p) * q },
+            if and { "and" } else { "or" },
+        ),
         (Truth::Probability(p), Truth::Fact(b)) | (Truth::Fact(b), Truth::Probability(p)) => {
             Ok(Value::Prob(if b == and {
                 p
@@ -821,8 +835,8 @@ pub fn contains(coll: &Value, item: &Value, budget: &mut Budget) -> OpResult<boo
     }
     Ok(match coll {
         Value::List(items) => items.iter().any(|x| equals(x, item)),
-        Value::Map(m) => m.contains_key(item) || m.keys().any(|k| equals(k, item)),
-        Value::Bag(b) => b.iter().any(|(k, n)| *n > 0 && equals(k, item)),
+        Value::Map(m) => m.contains_key(item),
+        Value::Bag(b) => b.get(item).is_some_and(|n| *n > 0),
         Value::Range(lo, hi) => match item {
             Value::Int(n) => n >= lo && n <= hi,
             Value::Float(x) | Value::Prob(x) if x.is_finite() && x.fract() == 0.0 => {
@@ -928,14 +942,10 @@ pub fn index_plain(coll: &Value, i: &Value, budget: &mut Budget) -> OpResult<Val
             let c = s.chars().nth(k as usize).expect("checked scalar index");
             crate::text::value(c.encode_utf8(&mut [0; 4]), budget)
         }
-        Value::Map(m) => m
-            .get(i)
-            .or_else(|| m.iter().find(|(k, _)| equals(k, i)).map(|(_, v)| v))
-            .cloned()
-            .ok_or_else(|| {
-                OpError::new(format!("the key {i:?} isn't in the map"))
-                    .help("use `get(key, default)` for keys that may be missing")
-            }),
+        Value::Map(m) => m.get(i).cloned().ok_or_else(|| {
+            OpError::new(format!("the key {i:?} isn't in the map"))
+                .help("use `get(key, default)` for keys that may be missing")
+        }),
         other => Err(OpError::new(format!("can't index {}", article(&other.kind())))),
     }
 }
@@ -982,4 +992,19 @@ pub fn enum_value(ty: u32, variant: u32, name: &str) -> Value {
 /// Is `v` certainly `truth`? (For `and`/`or` whose right side has statements.)
 pub fn is_certain(v: &Value, truth: bool) -> bool {
     matches!(v, Value::Bool(b) if *b == truth)
+}
+
+#[cfg(test)]
+mod probability_tests {
+    use super::*;
+
+    #[test]
+    fn computed_probabilities_only_correct_boundary_roundoff() {
+        assert_eq!(computed_prob(1.0 + f64::EPSILON, "test").unwrap(), Value::Prob(1.0));
+        assert_eq!(computed_prob(-f64::EPSILON, "test").unwrap(), Value::Prob(0.0));
+        assert_eq!(computed_prob(1e-300, "test").unwrap(), Value::Prob(1e-300));
+        for p in [1.001, -0.001, f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            assert!(computed_prob(p, "test").is_err());
+        }
+    }
 }

@@ -831,7 +831,7 @@ pub fn analytic_mixture(dist: &[(Value, f64)]) -> Option<crate::continuous::Mixt
 
 fn analytic_stats(m: &crate::continuous::Mixture) -> String {
     let mean = m.mean();
-    let sd = m.variance().sqrt();
+    let sd = m.sd();
     let decimals = if mean.abs().max(sd) < 100.0 { 2 } else { 0 };
     let [a, b, c] = [0.05, 0.5, 0.95].map(|q| fixed(if q == 0.5 { m.median() } else { m.quantile(q) }, decimals));
     format!(
@@ -979,11 +979,7 @@ fn table(key_label: &str, sink: &Sink, format: Format, kind: ReportKind) -> Stri
             header = ["5%", "25%", "median", "75%", "95%"].map(String::from).to_vec();
             for (key, d) in keys.iter().zip(&dists) {
                 if let Some(m) = analytic_mixture(d) {
-                    let decimals = if m.mean().abs().max(m.variance().sqrt()) < 100.0 {
-                        2
-                    } else {
-                        0
-                    };
+                    let decimals = if m.mean().abs().max(m.sd()) < 100.0 { 2 } else { 0 };
                     let mut row = vec![key.clone()];
                     row.extend(
                         [0.05, 0.25, 0.5, 0.75, 0.95]
@@ -1142,6 +1138,9 @@ fn number(v: &Value, decimals: usize) -> String {
 }
 
 fn fixed(x: f64, decimals: usize) -> String {
+    if !x.is_finite() {
+        return "out of range".into();
+    }
     if x != 0.0 && x.abs() < 0.5 * libm::pow(10.0, -(decimals as f64)) {
         return format!("{x:.2e}");
     }

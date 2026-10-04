@@ -282,6 +282,20 @@ impl Integer {
             .filter(|x| x.is_finite())
     }
 
+    /// ceil(n*p) for a nonnegative n and a finite probability. The float is
+    /// interpreted exactly, so rank selection works beyond float precision.
+    /// The temporary product uses at most 53 extra bits above n's size.
+    pub fn probability_rank(&self, p: f64) -> Result<Self, IntError> {
+        if self.is_negative() || !p.is_finite() || !(0.0..=1.0).contains(&p) {
+            return Err(IntError::Invalid);
+        }
+        let fraction = BigRational::from_float(p).ok_or(IntError::Invalid)?;
+        let product = self.big().as_ref() * fraction.numer();
+        let denominator = fraction.denom();
+        let q = &product / denominator;
+        Self::from_big(if (&product % denominator).is_zero() { q } else { q + 1 })
+    }
+
     /// Round an integer to a power of ten, halfway away from zero. The
     /// temporary scale is bounded to at most a few bits above the value ceiling.
     pub fn round_decimal(&self, places: u32) -> Result<Self, IntError> {

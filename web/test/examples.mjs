@@ -18,6 +18,7 @@ const cli = `${root}/target/release/probl`;
 const probl = await load(wasm);
 let failed = 0;
 const cases = probl.examples().map((e) => ({ ...e, path: `examples/${e.name}.probl` }));
+cases.push({ name: 'api-contracts', path: 'web/test/api-contracts.probl', source: await readFile(`${root}/web/test/api-contracts.probl`, 'utf8') });
 cases.push({ name: 'ordering', path: 'web/test/ordering.probl', source: await readFile(`${root}/web/test/ordering.probl`, 'utf8') });
 cases.push({ name: 'statistics', path: 'web/test/statistics.probl', source: await readFile(`${root}/web/test/statistics.probl`, 'utf8') });
 cases.push({ name: 'analytic', path: 'web/test/analytic.probl', source: await readFile(`${root}/web/test/analytic.probl`, 'utf8') });
@@ -141,6 +142,28 @@ for (const mode of ['enumerate', 'sample']) {
   assert.match(result.output, /100(?:\.0+)?%/);
 }
 console.log('same  comparator sorting and ordered quantiles in both modes');
+
+for (const mode of ['enumerate', 'sample']) {
+  for (const source of [
+    '@epsilon 0.1\nlet d=simulate {var n=0; while 50% {n+=1}; n}; report cdf(d,200)',
+    '@epsilon 0.1\nlet d=simulate {var n=0; while 50% {n+=1}; n}; report pmf(one_of([d,uniform(100,101)]),0)',
+    'report P(geometric(50%)>1)',
+    'report [1:"a"][1.0]',
+    'report min(d6)',
+    'report max([complex(1)])',
+    'report "abc".get(0.5,"?")',
+    'report mean(1..0)',
+    'report mean(lognormal(1000,1))',
+    'report variance(normal(0,1e308))',
+    'report quantile(normal(0,1),100%)',
+    'report pdf(beta(0.5,1),0)',
+    'report prob(1.0000000000000002)',
+  ]) {
+    const result = probl.run({ source, mode, ...(mode === 'sample' ? { runs: 10, seed: 19 } : {}) });
+    assert.equal(result.error?.kind, 'language', source);
+  }
+}
+console.log('same  remaining API contract validation in both modes');
 
 // Queries cannot silently turn a scalar or entire list into a point mass.
 for (const mode of ['enumerate', 'sample']) {

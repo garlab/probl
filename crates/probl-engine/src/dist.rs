@@ -234,7 +234,7 @@ impl Dist {
 
     fn normalized(mut outcomes: Vec<(Value, f64)>, missing: f64) -> Dist {
         let target = 1.0 - missing;
-        let total: f64 = outcomes.iter().map(|(_, w)| w).sum();
+        let total = crate::stats::sum(outcomes.iter().map(|(_, w)| *w));
         if let [(_, w)] = outcomes.as_mut_slice() {
             *w = target;
         } else if target > 0.0 && total > 0.0 && total != target {
@@ -361,12 +361,12 @@ impl Dist {
         }
         let pairs = pools.into_iter().map(|(pool, w)| (Value::list(pool), w)).collect();
         // Each die independently misses `die.missing` of its probability.
-        let missing = 1.0 - libm::pow(1.0 - die.missing, count as f64);
+        let missing = -libm::expm1(count as f64 * libm::log1p(-die.missing));
         Ok(Dist::from_pairs(pairs, missing))
     }
 
     pub fn total(&self) -> f64 {
-        self.outcomes.iter().map(|(_, w)| w).sum()
+        crate::stats::sum(self.outcomes.iter().map(|(_, w)| *w))
     }
 
     /// For a distribution of facts: the probabilities of `true` and `false`.
@@ -395,15 +395,17 @@ impl Dist {
     /// The mean of the resolved outcomes.
     pub fn mean(&self) -> Option<f64> {
         let nums = self.numbers()?;
-        let total: f64 = nums.iter().map(|(_, w)| w).sum();
-        Some(nums.iter().map(|(x, w)| x * w).sum::<f64>() / total)
+        Some(crate::stats::weighted_mean(nums.iter().copied()))
     }
 
     pub fn variance(&self) -> Option<f64> {
-        let mean = self.mean()?;
+        let sd = self.sd()?;
+        Some(sd * sd)
+    }
+
+    pub fn sd(&self) -> Option<f64> {
         let nums = self.numbers()?;
-        let total: f64 = nums.iter().map(|(_, w)| w).sum();
-        Some(nums.iter().map(|(x, w)| (x - mean).powi(2) * w).sum::<f64>() / total)
+        Some(crate::stats::weighted_sd(nums.iter().map(|(x, w)| (*x, 0.0, *w))))
     }
 
     /// Quantile in storage order. Language queries first build a population in

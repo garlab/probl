@@ -179,11 +179,11 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         // Math
         B::Min => doc(
             "min(a, b, …) or min(xs)",
-            "The smallest of its arguments, or of a list or range's items.",
+            "The smallest of two or more values, or the elements of one nonempty list, range or string. Validates ordering even for singleton inputs. A lone scalar or die is an error; use min(support(d)) for a finite distribution's minimum.",
         ),
         B::Max => doc(
             "max(a, b, …) or max(xs)",
-            "The largest of its arguments, or of a list or range's items.",
+            "The largest of two or more values, or the elements of one nonempty list, range or string. Validates ordering even for singleton inputs. A lone scalar or die is an error; use max(support(d)) for a finite distribution's maximum.",
         ),
         B::Abs => doc(
             "abs(x)",
@@ -462,11 +462,11 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Values => doc("values(m: map) -> list", "A map's values, in the order of their keys."),
         B::Get => doc(
             "get(m, key) or get(m, key, default)",
-            "A map's value for `key`, a list's item at index `key` (from 0), or how many times `key` is in a bag. List indices accept ints or exactly integral finite floats, without rounding. For maps/lists, default handles a missing key or out-of-range position; without it, absence is an error. An invalid list index type is always an error. Bags return zero for absent items.",
+            "A map's value for key, a list/range/string element at index key (from 0), or the count of an item in a bag. Strings use Unicode scalar positions. Sequence indices accept ints or exactly integral finite floats. Maps and bags use exact typed keys. For maps/sequences, default handles absence; without it, absence is an error. Invalid index types always fail. Bag counts are always defined: absent items return zero, even when a default is supplied.",
         ),
         B::Contains => doc(
             "contains(xs, x) -> bool",
-            "Whether a list, range or bag holds `x`, a map has the key `x`, or a string contains the text `x`. `x in xs` is the same.",
+            "Whether a list, range or bag holds `x`, a map has the key `x`, or a string contains the text `x`. `x in xs` is the same. Maps and bags use exact typed identity; list membership uses language equality.",
         ),
         B::Highest => doc(
             "highest(xs: list) or highest(xs: list, n: int) -> list",
@@ -576,49 +576,52 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         // Statistics and probabilities
         B::P => doc(
             "P(d: dist[bool]) -> prob",
-            "The probability of true in a boolean distribution: `P(d6 > 4)`. Rejects scalar bools, probabilities and numbers. Use `report event` to measure a fact across worlds, or `prob(event)` to convert a bool to 0 or 1.",
+            "The probability of true in a boolean distribution: `P(d6 > 4)`. Rejects unresolved distributions and scalar bools, probabilities and numbers. Use `report event` to measure a fact across worlds, or `prob(event)` to convert a bool to 0 or 1.",
         ),
         B::Mean => doc(
             "mean(d) -> float, complex or date",
-            "The arithmetic mean of a nonempty numeric list or the weighted mean of a distribution. Complex elements give a complex mean. Dates average calendar-day positions and round to the nearest day, with ties choosing the earlier day. Strings cannot be averaged. Rejects scalars and never aggregates across worlds; use `report x` or put the model inside `simulate { ... }`.",
+            "The arithmetic mean of a nonempty numeric list or integer range, or the weighted mean of a distribution. Complex elements give a complex mean. Dates average calendar-day positions and round to the nearest day, with ties choosing the earlier day. Strings cannot be averaged. Rejects scalars and never aggregates across worlds; use `report x` or put the model inside `simulate { ... }`.",
         ),
         B::Sd => doc(
             "sd(d) -> float",
-            "The population standard deviation of a nonempty real numeric list or a distribution. Rejects scalars.",
+            "The population standard deviation of a nonempty real numeric list, integer range or distribution. Rejects scalars.",
         ),
         B::Variance => doc(
             "variance(d) -> float",
-            "The population variance of a nonempty real numeric list or a distribution (divides by n, not n - 1). Rejects scalars.",
+            "The population variance of a nonempty real numeric list, integer range or distribution (divides by n, not n - 1). Rejects scalars.",
         ),
         B::Median => doc(
             "median(d)",
-            "The midpoint of the lower and upper medians of a nonempty numeric or date list, or a distribution. Distribution weights count: the bounds differ only when half the mass lies on each side of a gap. Integral int midpoints stay exact; fractional midpoints are floats. Dates round to the nearest day, ties earlier. Strings, bools and enums require `median_low` or `median_high`; complex elements and scalars are errors.",
+            "The midpoint of the lower and upper medians of a nonempty numeric or date list, integer range or distribution. Distribution weights count: the bounds differ only when half the mass lies on each side of a gap. Integral int midpoints stay exact; fractional midpoints are floats. Dates round to the nearest day, ties earlier. Strings, bools and enums require `median_low` or `median_high`; complex elements and scalars are errors.",
         ),
         B::MedianLow => doc(
             "median_low(d)",
-            "The lower median of a nonempty ordered list or distribution. Selects the lower middle element of an even list, or the lower endpoint of a distribution's median interval. Supports strings, dates, bools and enums; rejects complex elements and scalars.",
+            "The lower median of a nonempty ordered list, integer range or distribution. Selects the lower middle element of an even list, or the lower endpoint of a distribution's median interval. Supports strings, dates, bools and enums; rejects complex elements and scalars.",
         ),
         B::MedianHigh => doc(
             "median_high(d)",
-            "The upper median of a nonempty ordered list or distribution. Selects the upper middle element of an even list, or the upper endpoint of a distribution's median interval. Supports strings, dates, bools and enums; rejects complex elements and scalars.",
+            "The upper median of a nonempty ordered list, integer range or distribution. Selects the upper middle element of an even list, or the upper endpoint of a distribution's median interval. Supports strings, dates, bools and enums; rejects complex elements and scalars.",
         ),
         B::Quantile => doc(
             "quantile(d, q: prob)",
-            "The smallest value with a share `q` at or below it in a distribution or nonempty ordered list: `quantile(d, 95%)`. Lists weight repetitions equally. Uses language ordering and selects an element for finite populations, without interpolation. At 0%/100%, selects the retained minimum/maximum, including tiny tails. Unordered elements (even singleton records or complex values) and scalar inputs are errors.",
+            "The smallest value with a share `q` at or below it in a distribution, nonempty ordered list or integer range: `quantile(d, 95%)`. Lists weight repetitions equally. Uses language ordering and selects an element for finite populations, without interpolation. At 0%/100%, selects the retained minimum/maximum, including tiny tails. Unordered elements (even singleton records or complex values) and scalar inputs are errors.",
         ),
         B::Support => doc(
             "support(d) -> list",
-            "The distinct elements of a nonempty list or outcomes of a finite distribution, in storage order. Rejects scalars.",
+            "The distinct typed elements of a nonempty list or integer range, or retained outcomes of a finite distribution, in storage order. Ranges are materialized subject to collection limits. Rejects scalars.",
         ),
         B::Cdf => doc(
             "cdf(d, x) -> prob",
-            "The probability that a distribution is at most `x`, or the fraction of elements at most `x` in a nonempty ordered list. Rejects scalars and complex ordering.",
+            "The probability that a distribution is at most x, or the fraction at most x in a nonempty ordered list or integer range. Rejects unresolved distributions, scalars and complex ordering.",
         ),
         B::Pmf => doc(
             "pmf(d, x) -> prob",
-            "The probability that a distribution is exactly `x`, or the fraction equal to `x` in a nonempty list. Rejects scalars.",
+            "The mass of the exact typed outcome x in a distribution, nonempty list or integer range, matching support. Int 1 and float 1.0 are distinct outcomes. For a numeric-equality event, use P(d == x). Continuous components contribute zero point mass. Rejects unresolved distributions and scalar populations.",
         ),
-        B::Pdf => doc("pdf(d, x) -> float", "The density of a continuous distribution at `x`."),
+        B::Pdf => doc(
+            "pdf(d, x) -> float",
+            "The density of a fully resolved continuous distribution at x. Densities may exceed one; singular or overflowing results are errors.",
+        ),
         B::Prob => doc(
             "prob(x) -> prob",
             "Explicitly converts a finite number in [0, 1], or a bool (false = 0, true = 1), to a probability. Out-of-range values are errors. Does not clamp, draw or lift over distributions. Numbers also convert automatically when a declared type, parameter, condition, chance weight or score expects a probability; literals, variables and calculations all use the same range check.",

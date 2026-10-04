@@ -61,6 +61,52 @@ fn finite(values: &[f64], what: &str) -> OpResult<()> {
     })
 }
 
+/// a/(a+b) for positive parameters, even when their sum overflows.
+fn ratio(a: f64, b: f64) -> f64 {
+    if a >= b {
+        1.0 / (1.0 + b / a)
+    } else {
+        let r = a / b;
+        r / (1.0 + r)
+    }
+}
+
+fn interval_fraction(lo: f64, hi: f64, x: f64) -> f64 {
+    if x <= lo {
+        return 0.0;
+    }
+    if x >= hi {
+        return 1.0;
+    }
+    let width = hi - lo;
+    if width.is_finite() {
+        (x - lo) / width
+    } else {
+        (x / 2.0 - lo / 2.0) / (hi / 2.0 - lo / 2.0)
+    }
+}
+
+fn inverse_width(lo: f64, hi: f64) -> f64 {
+    let width = hi - lo;
+    if width.is_finite() {
+        1.0 / width
+    } else {
+        0.5 / (hi / 2.0 - lo / 2.0)
+    }
+}
+
+fn standardized(x: f64, mean: f64, sd: f64) -> f64 {
+    if !x.is_finite() {
+        return x;
+    }
+    let delta = x - mean;
+    if delta.is_finite() {
+        delta / sd
+    } else {
+        x / sd - mean / sd
+    }
+}
+
 impl Family {
     pub fn normal(mean: f64, sd: f64) -> OpResult<Family> {
         finite(&[mean, sd], "normal")?;
@@ -135,13 +181,16 @@ impl Family {
         check(lo < hi, || {
             "normal_range needs its lower end below its upper end".into()
         })?;
-        Family::normal((lo + hi) / 2.0, (hi - lo) / (2.0 * Z95))
+        Family::normal(
+            crate::stats::midpoint(lo, hi),
+            crate::stats::scaled_difference(hi, lo, 1.0 / (2.0 * Z95)),
+        )
     }
 
     /// The parameters of the beta distribution behind a PERT.
     fn pert_shape(lo: f64, mode: f64, hi: f64) -> (f64, f64) {
-        let width = hi - lo;
-        (1.0 + 4.0 * (mode - lo) / width, 1.0 + 4.0 * (hi - mode) / width)
+        let p = interval_fraction(lo, hi, mode);
+        (1.0 + 4.0 * p, 1.0 + 4.0 * (1.0 - p))
     }
 
     /// The smallest and largest possible values.
@@ -158,35 +207,54 @@ impl Family {
         match *self {
             Family::Normal { mean, .. } => mean,
             Family::Lognormal { mu, sigma } => crate::math::exp(mu + sigma * sigma / 2.0),
-            Family::Uniform { lo, hi } => (lo + hi) / 2.0,
-            Family::Beta { a, b } => a / (a + b),
+            Family::Uniform { lo, hi } => crate::stats::midpoint(lo, hi),
+            Family::Beta { a, b } => ratio(a, b),
             Family::Gamma { shape, scale } => shape * scale,
             Family::Exponential { rate } => 1.0 / rate,
-            Family::Triangular { lo, mode, hi } => (lo + mode + hi) / 3.0,
+            Family::Triangular { lo, mode, hi } => crate::stats::lerp(crate::stats::midpoint(lo, hi), mode, 1.0 / 3.0),
             Family::Pert { lo, mode, hi } => {
                 let (a, b) = Family::pert_shape(lo, mode, hi);
-                lo + (hi - lo) * a / (a + b)
+                crate::stats::lerp(lo, hi, ratio(a, b))
             }
         }
     }
 
     pub fn variance(&self) -> f64 {
+        let sd = self.sd();
+        sd * sd
+    }
+
+    pub fn sd(&self) -> f64 {
         match *self {
-            Family::Normal { sd, .. } => sd * sd,
+            Family::Normal { sd, .. } => sd,
             Family::Lognormal { mu, sigma } => {
                 let s2 = sigma * sigma;
-                libm::expm1(s2) * crate::math::exp(2.0 * mu + s2)
+                let log_sd = if s2 == 0.0 {
+                    mu + libm::log(sigma)
+                } else {
+                    mu + s2 + 0.5 * libm::log(-libm::expm1(-s2))
+                };
+                crate::math::exp(log_sd)
             }
-            Family::Uniform { lo, hi } => (hi - lo).powi(2) / 12.0,
-            Family::Beta { a, b } => a * b / ((a + b).powi(2) * (a + b + 1.0)),
-            Family::Gamma { shape, scale } => shape * scale * scale,
-            Family::Exponential { rate } => 1.0 / (rate * rate),
+            Family::Uniform { lo, hi } => crate::stats::scaled_difference(hi, lo, 1.0 / libm::sqrt(12.0)),
+            Family::Beta { a, b } => {
+                let max = a.max(b);
+                let inv = if max < 1.0 {
+                    1.0 / (1.0 + a + b)
+                } else {
+                    (1.0 / max) / (1.0 + a.min(b) / max + 1.0 / max)
+                };
+                libm::sqrt(ratio(a, b)) * libm::sqrt(ratio(b, a)) * libm::sqrt(inv)
+            }
+            Family::Gamma { shape, scale } => libm::sqrt(shape) * scale,
+            Family::Exponential { rate } => 1.0 / rate,
             Family::Triangular { lo, mode, hi } => {
-                (lo * lo + mode * mode + hi * hi - lo * mode - lo * hi - mode * hi) / 18.0
+                let d = |a, b| crate::stats::scaled_difference(a, b, 1.0 / 6.0);
+                libm::hypot(libm::hypot(d(mode, lo), d(hi, mode)), d(hi, lo))
             }
             Family::Pert { lo, mode, hi } => {
                 let (a, b) = Family::pert_shape(lo, mode, hi);
-                (hi - lo).powi(2) * a * b / ((a + b).powi(2) * (a + b + 1.0))
+                crate::stats::scaled_difference(hi, lo, Family::Beta { a, b }.sd())
             }
         }
     }
@@ -201,7 +269,7 @@ impl Family {
             (mean, (second / mass - mean * mean).max(0.0))
         };
         match *self {
-            Family::Uniform { .. } => ((lo + hi) / 2.0, (hi - lo).powi(2) / 12.0),
+            Family::Uniform { .. } => (crate::stats::midpoint(lo, hi), Family::Uniform { lo, hi }.variance()),
             Family::Normal { mean, sd } => {
                 let (a, b) = ((lo - mean) / sd, (hi - mean) / sd);
                 let (pa, pb) = (std_normal_pdf(a), std_normal_pdf(b));
@@ -269,7 +337,7 @@ impl Family {
 
     pub fn pdf(&self, x: f64) -> f64 {
         match *self {
-            Family::Normal { mean, sd } => std_normal_pdf((x - mean) / sd) / sd,
+            Family::Normal { mean, sd } => std_normal_pdf(standardized(x, mean, sd)) / sd,
             Family::Lognormal { mu, sigma } => {
                 if x <= 0.0 {
                     0.0
@@ -279,7 +347,7 @@ impl Family {
             }
             Family::Uniform { lo, hi } => {
                 if (lo..=hi).contains(&x) {
-                    1.0 / (hi - lo)
+                    inverse_width(lo, hi)
                 } else {
                     0.0
                 }
@@ -312,16 +380,20 @@ impl Family {
                 if x < lo || x > hi {
                     0.0
                 } else if x < mode {
-                    2.0 * (x - lo) / ((hi - lo) * (mode - lo))
+                    2.0 * interval_fraction(lo, mode, x) * inverse_width(lo, hi)
                 } else if x > mode {
-                    2.0 * (hi - x) / ((hi - lo) * (hi - mode))
+                    2.0 * (1.0 - interval_fraction(mode, hi, x)) * inverse_width(lo, hi)
                 } else {
-                    2.0 / (hi - lo)
+                    2.0 * inverse_width(lo, hi)
                 }
             }
             Family::Pert { lo, mode, hi } => {
                 let (a, b) = Family::pert_shape(lo, mode, hi);
-                beta_pdf(a, b, (x - lo) / (hi - lo)) / (hi - lo)
+                if x < lo || x > hi {
+                    0.0
+                } else {
+                    beta_pdf(a, b, interval_fraction(lo, hi, x)) * inverse_width(lo, hi)
+                }
             }
         }
     }
@@ -332,7 +404,7 @@ impl Family {
             return f64::NAN;
         }
         match *self {
-            Family::Normal { mean, sd } => std_normal_cdf((x - mean) / sd),
+            Family::Normal { mean, sd } => std_normal_cdf(standardized(x, mean, sd)),
             Family::Lognormal { mu, sigma } => {
                 if x <= 0.0 {
                     0.0
@@ -340,7 +412,7 @@ impl Family {
                     std_normal_cdf((libm::log(x) - mu) / sigma)
                 }
             }
-            Family::Uniform { lo, hi } => ((x - lo) / (hi - lo)).clamp(0.0, 1.0),
+            Family::Uniform { lo, hi } => interval_fraction(lo, hi, x).clamp(0.0, 1.0),
             Family::Beta { a, b } => beta_cdf(a, b, x),
             Family::Gamma { shape, scale } => gamma_cdf(shape, x / scale),
             Family::Exponential { rate } => {
@@ -356,14 +428,14 @@ impl Family {
                 } else if x >= hi {
                     1.0
                 } else if x <= mode {
-                    (x - lo).powi(2) / ((hi - lo) * (mode - lo))
+                    interval_fraction(lo, hi, x) * interval_fraction(lo, mode, x)
                 } else {
-                    1.0 - (hi - x).powi(2) / ((hi - lo) * (hi - mode))
+                    1.0 - (1.0 - interval_fraction(lo, hi, x)) * (1.0 - interval_fraction(mode, hi, x))
                 }
             }
             Family::Pert { lo, mode, hi } => {
                 let (a, b) = Family::pert_shape(lo, mode, hi);
-                beta_cdf(a, b, (x - lo) / (hi - lo))
+                beta_cdf(a, b, interval_fraction(lo, hi, x))
             }
         }
     }
@@ -380,14 +452,14 @@ impl Family {
         match *self {
             Family::Normal { mean, sd } => mean + sd * std_normal_quantile(p),
             Family::Lognormal { mu, sigma } => crate::math::exp(mu + sigma * std_normal_quantile(p)),
-            Family::Uniform { lo, hi } => lo + p * (hi - lo),
+            Family::Uniform { lo, hi } => crate::stats::lerp(lo, hi, p),
             Family::Exponential { rate } => -libm::log1p(-p) / rate,
             Family::Triangular { lo, mode, hi } => {
-                let split = (mode - lo) / (hi - lo);
+                let split = interval_fraction(lo, hi, mode);
                 if p <= split {
-                    lo + libm::sqrt(p * (hi - lo) * (mode - lo))
+                    crate::stats::lerp(lo, hi, libm::sqrt(p * split))
                 } else {
-                    hi - libm::sqrt((1.0 - p) * (hi - lo) * (hi - mode))
+                    crate::stats::lerp(hi, lo, libm::sqrt((1.0 - p) * (1.0 - split)))
                 }
             }
             Family::Beta { .. } | Family::Pert { .. } => invert(|x| self.cdf(x), p, lo, hi),
@@ -406,14 +478,14 @@ impl Family {
         match *self {
             Family::Normal { mean, sd } => mean + sd * rng.normal(),
             Family::Lognormal { mu, sigma } => crate::math::exp(mu + sigma * rng.normal()),
-            Family::Uniform { lo, hi } => lo + (hi - lo) * rng.uniform(),
+            Family::Uniform { lo, hi } => crate::stats::lerp(lo, hi, rng.uniform()),
             Family::Beta { a, b } => rng.beta(a, b),
             Family::Gamma { shape, scale } => scale * rng.gamma(shape),
             Family::Exponential { rate } => -libm::log(rng.open()) / rate,
             Family::Triangular { .. } => self.quantile(rng.uniform()),
             Family::Pert { lo, mode, hi } => {
                 let (a, b) = Family::pert_shape(lo, mode, hi);
-                lo + (hi - lo) * rng.beta(a, b)
+                crate::stats::lerp(lo, hi, rng.beta(a, b))
             }
         }
     }
@@ -672,12 +744,19 @@ pub fn gamma_cdf(a: f64, x: f64) -> f64 {
 /// The x in `lo..hi` where a non-decreasing `f` reaches `p` (the smallest
 /// such x), by bisection.
 pub fn invert(f: impl Fn(f64) -> f64, p: f64, mut lo: f64, mut hi: f64) -> f64 {
+    if !lo.is_finite() || !hi.is_finite() {
+        return f64::NAN;
+    }
     for _ in 0..300 {
-        let mid = lo + (hi - lo) / 2.0;
+        let mid = crate::stats::midpoint(lo, hi);
         if mid <= lo || mid >= hi {
             break;
         }
-        if f(mid) >= p {
+        let cumulative = f(mid);
+        if !cumulative.is_finite() {
+            return f64::NAN;
+        }
+        if cumulative >= p {
             hi = mid;
         } else {
             lo = mid;
@@ -781,12 +860,18 @@ impl Rng {
             let x = self.gamma(a);
             let y = self.gamma(b);
             if x + y > 0.0 {
-                return x / (x + y);
+                return if x == 0.0 {
+                    0.0
+                } else if y == 0.0 {
+                    1.0
+                } else {
+                    ratio(x, y)
+                };
             }
         }
         // Both draws round to zero only for tiny parameters, where the
         // distribution is nearly all at 0 and 1.
-        if self.uniform() < a / (a + b) { 1.0 } else { 0.0 }
+        if self.uniform() < ratio(a, b) { 1.0 } else { 0.0 }
     }
 
     /// An index chosen with probability proportional to `weights`, or `None`
@@ -831,61 +916,52 @@ pub struct Mixture {
 
 impl Mixture {
     fn total(&self) -> f64 {
-        self.parts.iter().map(|(_, p)| p).sum()
+        crate::stats::sum(self.parts.iter().map(|(_, p)| *p))
     }
 
     pub fn mean(&self) -> f64 {
-        let sum: f64 = self
-            .parts
-            .iter()
-            .map(|(part, p)| {
-                p * match part {
+        crate::stats::weighted_mean(self.parts.iter().map(|(part, p)| {
+            (
+                match part {
                     Part::Point(x) => *x,
                     Part::Continuous(f) => f.mean(),
                     Part::Analytic(a) => a.moments().0,
-                }
-            })
-            .sum();
-        sum / self.total()
+                },
+                *p,
+            )
+        }))
     }
 
     pub fn variance(&self) -> f64 {
-        let mean = self.mean();
-        let second: f64 = self
-            .parts
-            .iter()
-            .map(|(part, p)| {
-                p * match part {
-                    Part::Point(x) => (x - mean).powi(2),
-                    Part::Continuous(f) => f.variance() + (f.mean() - mean).powi(2),
-                    Part::Analytic(a) => {
-                        let (m, v) = a.moments();
-                        v + (m - mean).powi(2)
-                    }
-                }
-            })
-            .sum();
-        (second / self.total()).max(0.0)
+        let sd = self.sd();
+        sd * sd
+    }
+
+    pub fn sd(&self) -> f64 {
+        crate::stats::weighted_sd(self.parts.iter().map(|(part, p)| {
+            let (m, sd) = match part {
+                Part::Point(x) => (*x, 0.0),
+                Part::Continuous(f) => (f.mean(), f.sd()),
+                Part::Analytic(a) => (a.moments().0, a.sd()),
+            };
+            (m, sd, *p)
+        }))
     }
 
     pub fn cdf(&self, x: f64) -> f64 {
-        let below: f64 = self
-            .parts
-            .iter()
-            .map(|(part, p)| {
-                p * match part {
-                    Part::Point(v) => {
-                        if *v <= x {
-                            1.0
-                        } else {
-                            0.0
-                        }
+        let below = crate::stats::sum(self.parts.iter().map(|(part, p)| {
+            p * match part {
+                Part::Point(v) => {
+                    if *v <= x {
+                        1.0
+                    } else {
+                        0.0
                     }
-                    Part::Continuous(f) => f.cdf(x),
-                    Part::Analytic(a) => a.cdf(x),
                 }
-            })
-            .sum();
+                Part::Continuous(f) => f.cdf(x),
+                Part::Analytic(a) => a.cdf(x),
+            }
+        }));
         below / self.total()
     }
 
@@ -955,12 +1031,15 @@ impl Mixture {
         if q >= 1.0 {
             return ends(1.0).fold(f64::NEG_INFINITY, f64::max);
         }
-        let lo = ends(q.min(1e-12)).fold(f64::INFINITY, f64::min);
-        let hi = ends(q.max(1.0 - 1e-12)).fold(f64::NEG_INFINITY, f64::max);
+        let lo = ends(q.min(1e-12)).fold(f64::INFINITY, f64::min).max(-f64::MAX);
+        let hi = ends(q.max(1.0 - 1e-12)).fold(f64::NEG_INFINITY, f64::max).min(f64::MAX);
         if lo >= hi {
             return lo;
         }
-        invert(|x| self.cdf(x), q, lo - 1e-9 * lo.abs().max(1.0), hi)
+        if self.cdf(hi) < q {
+            return f64::INFINITY;
+        }
+        invert(|x| self.cdf(x), q, (lo - 1e-9 * lo.abs().max(1.0)).max(-f64::MAX), hi)
     }
 }
 

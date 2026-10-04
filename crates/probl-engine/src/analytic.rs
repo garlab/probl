@@ -165,6 +165,14 @@ impl Analytic {
         };
         (self.scale * mean + self.offset, self.scale * self.scale * variance)
     }
+
+    pub fn sd(&self) -> f64 {
+        if self.domain == Domain::full() {
+            self.scale.abs() * self.family.sd()
+        } else {
+            libm::sqrt(self.moments().1)
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

@@ -2,7 +2,7 @@
 
 Reviewed 4 October 2026, against `064595e` (`feat: median_low and median_high`).
 
-Follow-up: the manual checks are now represented in [Rust regression tests](../crates/probl-engine/tests/api_consistency.rs), with known failures compiled but marked `#[ignore = "FIXME(API-XX): …"]`. See [test coverage and quality](testing.md) for commands, the finding-to-test map, and the coverage assessment. Findings 1, 3, 8 and 9 are now fixed; the other numbered findings remain open.
+Follow-up: the manual checks are represented in [Rust regression tests](../crates/probl-engine/tests/api_consistency.rs). See [test coverage and quality](testing.md) for commands, the finding-to-test map, and the coverage assessment. All nine numbered findings are now fixed, and all 102 audit tests are active. The design choices below have also been settled. Broader regression coverage is in [api_contracts.rs](../crates/probl-engine/tests/api_contracts.rs).
 
 The recent statistics changes establish useful rules, but several neighboring APIs still disagree about ordering, identity, and probability mass. Some disagreements silently change answers or discard data. I would address these contracts before adding more built-ins.
 
@@ -32,6 +32,8 @@ Language comparisons treat `1` and `1.0` as numerically equal and continue to th
 Sources: [statistical comparison, quantile, and median](../crates/probl-engine/src/builtins.rs#L795), [storage ordering](../crates/probl-engine/src/value.rs#L559), [language ordering](../crates/probl-engine/src/ops.rs#L750).
 
 ### 2. High: adding a continuous component silently changes probability normalization
+
+**Fixed:** `P`, `cdf`, `pmf` and `pdf` now reject any positive unresolved mass in both modes, including mixtures and truncated count-distribution tails. Reports retain probability bounds; descriptive statistics still describe resolved outcomes. Lifting preserves even sub-epsilon missing mass. The reproductions below describe the earlier behavior.
 
 ```probl
 @epsilon 0.1
@@ -84,6 +86,8 @@ Source: [recursive type conversion](../crates/probl-engine/src/interp.rs#L1437).
 
 ### 4. High: membership, lookup, updates, and probability queries disagree about identity
 
+**Fixed:** Map/bag membership, lookup, indexing and updates use exact typed identity. PMF counts exact typed outcomes, including atoms in continuous mixtures, and agrees with finite support. Numeric-equality events remain explicit with `P(d == x)`; list membership and typed structural equality retain their documented semantics. The reproductions below describe the earlier behavior.
+
 ```probl
 let m = [1: "a"]
 report m.contains(1.0)        # true
@@ -119,6 +123,8 @@ Sources: [language equality and membership](../crates/probl-engine/src/ops.rs#L7
 
 ### 5. High: built-ins can manufacture an invalid `prob`
 
+**Fixed:** Computed probabilities use a shared checked constructor, compensated summation and resolved total mass. Only boundary roundoff within eight floating-point epsilons is corrected; materially invalid or nonfinite results fail. Explicit conversions, including an existing `prob`, remain strict. The reproductions below describe the earlier behavior.
+
 ```probl
 let p = cdf([1,2,3,4,5,6,7,8,9,10], 10)
 report p > 1    # true
@@ -134,6 +140,8 @@ This is ordinary floating-point accumulation error, but it escapes into a type t
 Sources: [CDF/PMF result construction](../crates/probl-engine/src/builtins.rs#L551), [probability conversion](../crates/probl-engine/src/ops.rs#L135), [distribution normalization](../crates/probl-engine/src/dist.rs#L237).
 
 ### 6. High: continuous statistics bypass finite-result checks and can return materially wrong answers
+
+**Fixed:** Continuous queries reject nonfinite results, including infinite endpoint quantiles and singular densities. Scaled/centered means and SD formulas avoid intermediate overflow and translation cancellation; finite populations and mixtures share these formulas. Report summaries label unrepresentable fields “out of range”. The reproductions below describe the earlier behavior.
 
 These all succeed:
 
@@ -160,6 +168,8 @@ There are two fixes: consistent overflow handling, and numerically stable formul
 Sources: [continuous query outputs](../crates/probl-engine/src/builtins.rs#L681), [family moments](../crates/probl-engine/src/continuous.rs#L157), [mixture variance](../crates/probl-engine/src/continuous.rs#L852).
 
 ### 7. Medium: large valid relative weights turn `one_of` into an empty distribution
+
+**Fixed:** Relative weights are scaled by their largest weight before compensated normalization. Absolute probabilities retain their separate sum-to-one validation. Positive support survives large common scaling. The reproductions below describe the earlier behavior.
 
 ```probl
 let d = one_of([1: 1e308, 2: 1e308])
@@ -224,14 +234,12 @@ Indexing accepts an integral float, while list `get` recognizes only the `int` v
 
 Sources: [list get](../crates/probl-engine/src/builtins.rs#L1414), [index validation](../crates/probl-engine/src/ops.rs#L925), [slice](../crates/probl-engine/src/builtins.rs#L1349).
 
-## Design choices worth settling
+## Settled design choices
 
-These are weaker findings than the silent wrong answers above. Some are explicitly documented today.
-
-- **One-argument min/max remain an identity trap.** `min(d6)` and `max(d6)` both return the original die distribution through lifting; only `min(support(d6))` and `max(support(d6))` give its bounds. This follows existing lifting rules, but resembles the scalar-statistics confusion we just removed. I would require at least two scalar arguments, while retaining a single collection argument. That preserves useful `min(d6, 3)` lifting and rejects misleading singleton scalar calls. Any direct distribution-bound API should be explicit.
-- **Ordering admissibility still has deliberate exceptions.** Default `sort`/`sort_desc` now validate even singleton inputs, and optional numeric comparators allow explicit ordering of complex values and records. `min([complex(1,2)])` retains its singleton identity behavior. Boolean median/CDF/quantile ordering is documented as `false < true`, while default sorting and min/max follow ordinary language comparisons, which do not order booleans. A comparator can explicitly order them.
-- **Sequence support is uneven.** `sum(1..3)` and `min(1..3)` work; `mean(1..3)` and `median(1..3)` fail. Strings support indexing, slicing, sorting, and `lowest`, but not `get`; `min("cba")` returns the whole string while `lowest("cba")` returns `"a"`. A small capability table would make deliberate exceptions visible. Numeric ranges are a useful next statistics input, preferably with direct formulas rather than forced materialization.
-- **Optional arguments sometimes select a different operation.** `round(1.5)` returns an int, while `round(1.5, 0)` returns a float. This is documented, not a new bug, but `digits=0` is not a semantically neutral default. Bag `get` also always returns zero for absence, even with a different supplied default; the generic documentation currently promises missing-key errors without a default. Clarify these contracts before users build generic wrappers around them.
+- **min/max require a population or multiple values.** A single argument must be a nonempty list, range or string; a lone scalar or `min(d6)` fails. Use `min(support(d6))` for a finite support bound. Multi-argument lifting, such as `min(d6, 3)`, is unchanged. All elements are validated, including unordered singletons.
+- **Boolean ordering stays explicit.** Statistical low/high medians, quantiles and CDFs order false before true. Ordinary comparisons, default sort and min/max do not order booleans. Custom sort comparators can order them explicitly.
+- **Sequence support is consistent.** `get` supports lists, strings and ranges with checked integer indices and defaults for absence. Strings use Unicode scalar positions. Integer ranges support all population statistics without materialization, except `support`, which creates a list under collection limits. See the [capability table](semantics.md#1-values-and-types).
+- **Existing overloads remain explicit.** `round(x)` returns an int. With `digits`, int inputs stay ints and other numeric inputs return floats, including `digits=0`. Bag counts are defined for every typed key, with zero for absence, so `get` always returns a count and does not use its fallback. Maps and sequences use the fallback only for absence; invalid index types still fail.
 
 The spot checks of Unicode scalar indexing/slicing, trim character sets, ordinary date arithmetic and date medians, exact integer functions, principal complex logarithms, and the newly agreed numeric midpoint medians behaved as documented. None of the findings calls for undoing the distinction between a distribution recipe and a drawn value.
 

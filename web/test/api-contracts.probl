@@ -1,0 +1,36 @@
+# Typed key and point-mass identity, with explicit numeric-equality events.
+let m = [1: "int", 1.0: "float", prob(1): "prob", complex(1): "complex"]
+report [m[1], m[1.0], m[prob(1)], m[complex(1)]]
+report get([1: "a"], 1.0, "absent")
+report contains(bag([1]), 1.0)
+let d = one_of([1, 1.0, prob(1), complex(1)])
+report support(d).map(x -> pmf(d, x))
+report P(d == 1)
+report pmf(one_of([1, 1.0, uniform(0, 2)]), 1)
+report pmf(one_of([1, 1.0, uniform(0, 2)]), 1.0)
+
+# Stable probability normalization and representable moments.
+let weighted = one_of([1: 5e307, 2: 1e308, 3: 5e307])
+report support(weighted)
+report pmf(weighted, 2)
+report cdf(1..10, 10)
+report not cdf(1..10, 10)
+report sd(normal(0, 1e308)) / 1e308
+report mean(uniform(1e308, 1.2e308)) / 1e308
+report mean(beta(1e308, 1e308))
+report variance(triangular(1000000000, 1000000001, 1000000002))
+report sd(one_of([-1e308, 1e308])) / 1e308
+report pdf(uniform(-1e308, 1e308), 0) * 1e308
+
+# Compact ranges, exact large ranks and Unicode scalar lookup.
+report [mean(1..4), median(1..4), median_low(1..4), median_high(1..4)]
+report variance(1..4)
+report quantile(1..10, 10%)
+report quantile(1..2^2000, 50%) == 2^1999
+report quantile(1..2^54, 0.5000000000000001) == 2^53+2
+report cdf(1..2^2000, 2^1999)
+report "é🦀a".get(1.0)
+report "é🦀a".get(3, "?")
+report (2^100..2^100+2).get(1)
+report min("cba")
+report max("cba")

@@ -5,7 +5,7 @@ use crate::continuous::{Family, Mixture, Part};
 use crate::dates;
 use crate::dist::{Budget, Counts, Dist};
 use crate::error::{OpError, OpResult};
-use crate::ops::{self, article, as_index, equals, integer, range_count, range_len, to_prob};
+use crate::ops::{self, article, as_index, integer, range_count, range_len, to_prob};
 use crate::value::{Value, fmt_float};
 use probl_number::Integer;
 use probl_sema::Builtin;
@@ -349,7 +349,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             }
             Ok(Value::Float(libm::log(p / (1.0 - p))))
         }
-        B::InvLogit => Ok(Value::Prob(1.0 / (1.0 + crate::math::exp(-number(a(0), "inv_logit")?)))),
+        B::InvLogit => ops::computed_prob(1.0 / (1.0 + crate::math::exp(-number(a(0), "inv_logit")?)), "inv_logit"),
         B::Date => {
             let date = match args.len() {
                 1 => dates::parse(&text(a(0), "date")?),
@@ -460,14 +460,17 @@ pub fn check_query_input(b: Builtin, args: &[Value]) -> OpResult<()> {
         | B::Quantile
         | B::Cdf
         | B::Pmf
-        | B::Support => "a distribution or a nonempty list",
+        | B::Support => "a distribution, nonempty list or nonempty range",
         _ => return Ok(()),
     };
     let v = &args[0];
     let valid = match b {
         B::P => matches!(v, Value::Dist(_)),
         B::Pdf => matches!(v, Value::Dist(_) | Value::Continuous(_)),
-        _ => matches!(v, Value::Dist(_) | Value::Continuous(_) | Value::List(_)),
+        _ => matches!(
+            v,
+            Value::Dist(_) | Value::Continuous(_) | Value::List(_) | Value::Range(..)
+        ),
     };
     if !valid {
         let help = if b == B::P {
@@ -493,6 +496,31 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
     use Builtin as B;
     check_query_input(b, args)?;
     let v = &args[0];
+    if let Value::Range(lo, hi) = v {
+        if matches!(
+            b,
+            B::Mean
+                | B::Variance
+                | B::Sd
+                | B::Median
+                | B::MedianLow
+                | B::MedianHigh
+                | B::Quantile
+                | B::Cdf
+                | B::Pmf
+                | B::Support
+        ) {
+            return range_query(b, lo, hi, args.get(1), budget);
+        }
+    }
+    if matches!(b, B::P | B::Cdf | B::Pmf | B::Pdf) {
+        if let Value::Dist(d) = v {
+            if d.missing > 0.0 {
+                return Err(OpError::new(format!("`{}` cannot return an exact scalar probability while the distribution has unresolved mass", b.name()))
+                    .help("report a distribution comparison to retain probability bounds; scalar queries require a fully resolved distribution"));
+            }
+        }
+    }
     if matches!(
         b,
         B::Mean
@@ -544,7 +572,7 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
         B::Variance => {
             numeric_dist(v, "variance", budget).and_then(|d| finite_float(d.variance().unwrap(), "variance"))
         }
-        B::Sd => numeric_dist(v, "sd", budget).and_then(|d| finite_float(d.variance().unwrap().sqrt(), "sd")),
+        B::Sd => numeric_dist(v, "sd", budget).and_then(|d| finite_float(d.sd().unwrap(), "sd")),
         B::Median | B::MedianLow | B::MedianHigh => median(v, b, budget),
         B::Quantile => {
             let q = to_prob(&args[1])?;
@@ -557,23 +585,18 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
         }
         B::Cdf => {
             let d = stat_dist(v, b.name(), budget)?;
-            let mut p = 0.0;
+            let mut p = crate::stats::Sum::default();
             for (x, w) in &d.outcomes {
                 if statistical_compare(x, &args[1])?.is_le() {
-                    p += w;
+                    p.add(*w);
                 }
             }
-            Ok(Value::Prob(p))
+            ops::computed_prob(p.value() / d.total(), "cdf")
         }
         B::Pmf => {
             let d = stat_dist(v, b.name(), budget)?;
-            let p: f64 = d
-                .outcomes
-                .iter()
-                .filter(|(x, _)| equals(x, &args[1]))
-                .map(|(_, w)| w)
-                .sum();
-            Ok(Value::Prob(p))
+            let p = crate::stats::sum(d.outcomes.iter().filter(|(x, _)| *x == args[1]).map(|(_, w)| *w));
+            ops::computed_prob(p / d.total(), "pmf")
         }
         B::IterItems => iter_items(v, budget),
         B::RepeatCount => {
@@ -602,7 +625,7 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
 /// `P(d)`: query an explicitly constructed boolean distribution.
 fn probability_of(v: &Value) -> OpResult<Value> {
     match v {
-        Value::Dist(d) if d.truth().is_some() => Ok(Value::Prob(d.truth().unwrap().0)),
+        Value::Dist(d) if d.truth().is_some() => ops::computed_prob(d.truth().unwrap().0 / d.total(), "P"),
         _ => Err(OpError::new(format!(
             "P needs a boolean distribution (dist[bool]), found {}",
             article(&v.kind())
@@ -668,6 +691,23 @@ fn continuous_parts(v: &Value) -> bool {
 /// one, answered from the formulas (docs/semantics.md, section 13).
 fn continuous_query(b: Builtin, args: &[Value]) -> OpResult<Value> {
     use Builtin as B;
+    // PMF is a typed-outcome query even when continuous components are mixed
+    // in. Converting atoms to f64 here would collapse distinct outcomes.
+    if b == B::Pmf {
+        return match &args[0] {
+            Value::Dist(d) => {
+                let at = crate::stats::sum(
+                    d.outcomes
+                        .iter()
+                        .filter(|(x, _)| !matches!(x, Value::Continuous(_)) && *x == args[1])
+                        .map(|(_, p)| *p),
+                );
+                ops::computed_prob(at / d.total(), "pmf")
+            }
+            Value::Continuous(_) => ops::computed_prob(0.0, "pmf"),
+            _ => unreachable!("checked continuous input"),
+        };
+    }
     let parts = match &args[0] {
         Value::Continuous(f) => vec![(Part::Continuous(**f), 1.0)],
         Value::Dist(d) => d
@@ -685,9 +725,9 @@ fn continuous_query(b: Builtin, args: &[Value]) -> OpResult<Value> {
     };
     let m = Mixture { parts };
     match b {
-        B::Mean => Ok(Value::Float(m.mean())),
-        B::Variance => Ok(Value::Float(m.variance())),
-        B::Sd => Ok(Value::Float(m.variance().sqrt())),
+        B::Mean => finite_float(m.mean(), "mean"),
+        B::Variance => finite_float(m.variance(), "variance"),
+        B::Sd => finite_float(m.sd(), "sd"),
         B::Median | B::MedianLow | B::MedianHigh => {
             let (lo, hi) = m.median_bounds();
             finite_float(
@@ -699,19 +739,8 @@ fn continuous_query(b: Builtin, args: &[Value]) -> OpResult<Value> {
                 b.name(),
             )
         }
-        B::Quantile => Ok(Value::Float(m.quantile(to_prob(&args[1])?))),
-        B::Cdf => Ok(Value::Prob(m.cdf(number(&args[1], "cdf")?))),
-        B::Pmf => {
-            let x = number(&args[1], "pmf")?;
-            let total: f64 = m.parts.iter().map(|(_, p)| p).sum();
-            let at: f64 = m
-                .parts
-                .iter()
-                .filter(|(part, _)| matches!(part, Part::Point(v) if *v == x))
-                .map(|(_, p)| p)
-                .sum();
-            Ok(Value::Prob(at / total))
-        }
+        B::Quantile => finite_float(m.quantile(to_prob(&args[1])?), "quantile"),
+        B::Cdf => ops::computed_prob(m.cdf(number(&args[1], "cdf")?), "cdf"),
         B::Pdf => {
             let x = number(&args[1], "pdf")?;
             let mut density = 0.0;
@@ -726,12 +755,115 @@ fn continuous_query(b: Builtin, args: &[Value]) -> OpResult<Value> {
                     }
                 }
             }
-            Ok(Value::Float(density))
+            finite_float(density, "pdf")
         }
         _ => Err(OpError::new(format!(
             "`{}` needs a distribution whose outcomes can be listed, not a continuous one",
             b.name()
         ))),
+    }
+}
+
+/// Unit-step integer ranges are uniform populations; scalar queries do not
+/// allocate their support. Rank arithmetic remains exact for arbitrary integers.
+fn range_query(b: Builtin, lo: &Integer, hi: &Integer, arg: Option<&Value>, budget: &mut Budget) -> OpResult<Value> {
+    use Builtin as B;
+    if hi < lo {
+        return Err(OpError::new(format!("`{}` needs a nonempty range", b.name())));
+    }
+    budget.integer_work(lo, hi, false)?;
+    let n = range_len(lo, hi)?;
+    budget.integer_allocation(n.bits(), 1)?;
+    let two = Integer::from(2);
+    match b {
+        B::Support => Ok(Value::list(range_items(lo, hi, budget)?)),
+        B::Mean => lo
+            .add(hi)?
+            .ratio(&two)
+            .map(Value::Float)
+            .ok_or_else(|| OpError::new("`mean` gave a result that isn't a finite number")),
+        B::Median | B::MedianLow | B::MedianHigh => {
+            budget.integer_work(&n, &two, true)?;
+            let (half, odd) = n.div_mod(&two)?;
+            let high = Value::Int(lo.add(&half)?);
+            let low = if odd.is_zero() {
+                Value::Int(lo.add(&half)?.sub(&Integer::ONE)?)
+            } else {
+                high.clone()
+            };
+            match b {
+                B::MedianLow => Ok(low),
+                B::MedianHigh => Ok(high),
+                _ => midpoint(&low, &high, budget),
+            }
+        }
+        B::Sd | B::Variance => {
+            let quarter = n.ratio(&Integer::from(4)).unwrap_or(f64::INFINITY);
+            let inv = Integer::ONE.ratio(&n).unwrap_or(0.0);
+            let sd = quarter * (4.0 / libm::sqrt(12.0)) * libm::sqrt((1.0 - inv) * (1.0 + inv));
+            finite_float(if b == B::Sd { sd } else { sd * sd }, b.name())
+        }
+        B::Quantile => {
+            let q = to_prob(arg.expect("quantile argument"))?;
+            if q == 0.0 {
+                return Ok(Value::Int(lo.clone()));
+            }
+            budget.work(n.bits().div_ceil(64).saturating_mul(17))?;
+            let rank = if let Some(count) = n.to_u64().filter(|n| *n <= 1 << 53) {
+                // Match the rounded cumulative weights of a finite uniform
+                // population, including decimal boundaries such as 10% of 10.
+                let mut weight = 1.0 / count as f64;
+                let total = weight * count as f64;
+                if total != 1.0 {
+                    weight *= 1.0 / total;
+                }
+                let target = q * (weight * count as f64);
+                let (mut left, mut right) = (1, count);
+                while left < right {
+                    budget.work(1)?;
+                    let mid = left + (right - left) / 2;
+                    if mid as f64 * weight >= target {
+                        right = mid;
+                    } else {
+                        left = mid + 1;
+                    }
+                }
+                Integer::from(left)
+            } else {
+                // Above exact f64 integer precision, keep the rank arithmetic
+                // exact instead of rounding the population size to a float.
+                n.probability_rank(q)?
+            };
+            Ok(Value::Int(lo.add(&rank.sub(&Integer::ONE)?)?))
+        }
+        B::Pmf => {
+            let present = matches!(arg, Some(Value::Int(k)) if lo <= k && k <= hi);
+            ops::computed_prob(
+                if present {
+                    Integer::ONE.ratio(&n).unwrap_or(0.0)
+                } else {
+                    0.0
+                },
+                "pmf",
+            )
+        }
+        B::Cdf => {
+            let x = arg.expect("cdf argument");
+            if ops::compare(x, &Value::Int(lo.clone()))?.is_lt() {
+                return ops::computed_prob(0.0, "cdf");
+            }
+            if ops::compare(x, &Value::Int(hi.clone()))?.is_ge() {
+                return ops::computed_prob(1.0, "cdf");
+            }
+            let k = match x {
+                Value::Int(k) => k.clone(),
+                _ => Integer::from_f64(number(x, "cdf")?.floor()).expect("finite numeric bound"),
+            };
+            let count = k.sub(lo)?.add(&Integer::ONE)?;
+            budget.integer_work(&count, &n, true)?;
+            ops::computed_prob(count.ratio(&n).unwrap_or(0.0), "cdf")
+        }
+        _ => unreachable!("checked range query"),
     }
 }
 
@@ -1287,14 +1419,16 @@ fn min_max(args: &[Value], want_max: bool, budget: &mut Budget) -> OpResult<Valu
                 }
                 return Ok(Value::Int(if want_max { hi.clone() } else { lo.clone() }));
             }
-            Value::List(_) => items(single, name, budget)?,
-            other => vec![other.clone()],
+            Value::List(_) | Value::Str(_) => items(single, name, budget)?,
+            other => return Err(expected("a list, range or string, or at least two values", other, name)),
         }
     } else {
         args.to_vec()
     };
     let mut best: Option<Value> = None;
     for v in values {
+        budget.work(1)?;
+        ops::compare(&v, &v)?;
         best = Some(match best {
             None => v,
             Some(b) => {
@@ -1378,17 +1512,34 @@ fn sum(v: &Value, budget: &mut Budget) -> OpResult<Value> {
 
 fn get(coll: &Value, key: &Value, default: Option<&Value>, budget: &mut Budget) -> OpResult<Value> {
     let found = match coll {
-        Value::Map(m) => m
-            .get(key)
-            .or_else(|| m.iter().find(|(k, _)| equals(k, key)).map(|(_, v)| v))
-            .cloned(),
+        Value::Map(m) => m.get(key).cloned(),
         Value::List(items) => integer(key, "index", budget)?
             .to_u64()
             .and_then(|n| usize::try_from(n).ok())
             .and_then(|n| items.get(n))
             .cloned(),
+        Value::Str(s) => {
+            let index = integer(key, "index", budget)?
+                .to_u64()
+                .and_then(|n| usize::try_from(n).ok());
+            budget.string_work(s)?;
+            index
+                .and_then(|n| s.chars().nth(n))
+                .map(|c| crate::text::value(c.encode_utf8(&mut [0; 4]), budget))
+                .transpose()?
+        }
+        Value::Range(lo, hi) => {
+            let index = integer(key, "index", budget)?;
+            budget.integer_work(lo, hi, false)?;
+            let len = range_len(lo, hi)?;
+            if index.is_negative() || *index >= len {
+                None
+            } else {
+                Some(Value::Int(lo.add(&index)?))
+            }
+        }
         Value::Bag(b) => Some(Value::Int(b.get(key).copied().unwrap_or(0).into())),
-        other => return Err(expected("a map or a list", other, "get")),
+        other => return Err(expected("a map, bag or sequence", other, "get")),
     };
     match (found, default) {
         (Some(v), _) => Ok(v),
@@ -1486,10 +1637,13 @@ fn one_of(v: &Value, budget: &mut Budget) -> OpResult<Value> {
                 })?;
                 pairs.push((k.clone(), w));
             }
-            let total: f64 = pairs.iter().map(|(_, w)| w).sum();
-            if total <= 0.0 {
+            let largest = pairs.iter().map(|(_, w)| *w).fold(0.0, f64::max);
+            if largest == 0.0 {
                 return Err(OpError::new("one_of needs at least one positive weight"));
             }
+            // Absolute probabilities are checked before normalization. Relative
+            // weights may have an unrepresentable sum even though each is valid.
+            let total = crate::stats::sum(pairs.iter().map(|(_, w)| *w));
             if all_probs && (total - 1.0).abs() > 1e-9 {
                 return Err(OpError::new(format!(
                     "the chances add up to {}, not 100%",
@@ -1497,6 +1651,10 @@ fn one_of(v: &Value, budget: &mut Budget) -> OpResult<Value> {
                 ))
                 .help("use plain numbers for relative weights, like [\"a\": 3, \"b\": 1]"));
             }
+            for (_, w) in &mut pairs {
+                *w /= largest;
+            }
+            let total = crate::stats::sum(pairs.iter().map(|(_, w)| *w));
             ops::combine(pairs.into_iter().map(|(k, w)| (k, w / total)).collect(), 0.0, budget)
         }
         Value::Bag(b) => {

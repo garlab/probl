@@ -8,23 +8,20 @@ No instrumented coverage percentage has been measured for this assessment. The r
 
 ## Executable checks from the audit
 
-[api_consistency.rs](../crates/probl-engine/tests/api_consistency.rs) contains 51 checks, each registered separately for enumeration and sampling: **102 tests**, of which **70 pass and 32 are ignored known failures**. Findings API-01, API-03, API-08 and API-09 have been fixed and their checks enabled. The 16 remaining failing checks cover the other five findings. They assert the desired invariant, not the observed incorrect answer.
+[api_consistency.rs](../crates/probl-engine/tests/api_consistency.rs) contains 51 checks, each registered separately for enumeration and sampling: **102 active tests**. All nine numbered findings are fixed; none of these regressions is ignored.
 
 ```sh
-# Normal, green suite: ignored bodies are still compiled.
+# Run every original audit regression in both modes.
 cargo test -p probl-engine --test api_consistency
 
-# Reproduce the known failures. A failing exit status is expected today.
-cargo test -p probl-engine --test api_consistency -- --ignored
+# Run the broader agreed-contract matrix.
+cargo test -p probl-engine --test api_contracts
 
-# Work on one defect, in both modes.
-cargo test -p probl-engine --test api_consistency incomplete_cdf -- --ignored
-
-# List the outstanding compiled tests (the normal run prints FIXME reasons).
-cargo test -p probl-engine --test api_consistency -- --ignored --list
+# Focus on one former defect in both modes.
+cargo test -p probl-engine --test api_consistency incomplete_cdf
 ```
 
-Each ignored test has `#[ignore = "FIXME(API-XX): reason"]`; the ID refers to the numbered audit finding. Remove the attribute when the fix makes the test pass. Do not use `#[should_panic]` for a known incorrect answer: that would make the defect a passing expectation. Rust's ignored tests remain compiled and can be selected explicitly, unlike commented-out test bodies. [Rust test harness documentation](https://doc.rust-lang.org/rustc/tests/).
+Future known defects can use `#[ignore = "FIXME(API-XX): reason"]` while awaiting a fix, retaining compilation and an assertion of the intended contract. Remove the attribute with the fix. Do not use `#[should_panic]` to turn a known incorrect answer into a passing expectation. [Rust test harness documentation](https://doc.rust-lang.org/rustc/tests/).
 
 | Audit finding / manual probes | Regression checks |
 | --- | --- |
@@ -37,9 +34,9 @@ Each ignored test has `#[ignore = "FIXME(API-XX): reason"]`; the ID refers to th
 | API-07: relative-weight overflow | Support and mass under large common scaling; active ordinary/tiny weights and all-zero rejection |
 | API-08: quantile validation and tiny tails | Separate heterogeneous and record-distribution validation checks; q=1 tail check; active positive-tail magnitude and ordinary endpoint controls |
 | API-09: inconsistent `get` indices | Index/get agreement and invalid-key rejection; active present/absent integer indices |
-| Other manual controls and design questions | Unicode text, date arithmetic/statistics, integer/complex functions, enum/bool ordering, scalar min/max lifting, sequence capabilities, typed container equality, singleton ordering passthrough, rounding types, bag defaults, and PMF argument types |
+| Other manual controls and design questions | Unicode text, date arithmetic/statistics, integer/complex functions, enum/bool ordering, multi-argument min/max lifting and scalar rejection, sequence capabilities, typed container equality, singleton ordering validation, rounding types, bag defaults, and PMF argument types |
 
-Where the final design is open, tests express agreement rather than selecting a new rule. For example, incomplete CDF/PMF paths may agree on a result or both explicitly reject unresolved input. Indexing and `get` now both admit integral floats, as required by the checked integer-conversion policy. Characterization tests for documented or undecided overloads are named/commented accordingly; revise those deliberately if the design changes.
+The agreed contracts are now explicit: incomplete scalar probability queries reject unresolved input, PMF and keys use typed identity, and indexing/get share checked integral-float conversion. The min/max, sequence and singleton tests reflect the selected design rather than characterizing the former overloads.
 
 Both modes use deterministic queries, a pinned date, and a fixed sampling seed. The sampling cases test API behavior, not statistical convergence. Assertions inspect returned values and raw bounds. Tiny-tail tests use relative error and require positive mass; probability range checks have no tolerance. Ordinary approximate arithmetic uses a scale-aware tolerance, so it does not require accidental bit-for-bit agreement after distribution normalization.
 
@@ -52,6 +49,10 @@ Validation after fixing API-03 and API-09: `cargo test --all` passed with **499 
 [ordering.rs](../crates/probl-engine/tests/ordering.rs) adds 26 tests covering custom comparators, stable ties in both directions, callback errors and effects (including print visibility to caching and draw scheduling), work limits, bounded behavior for inconsistent comparators, nested numeric order statistics, singleton validation, tiny positive tails and adjacent representable probabilities around mass boundaries. The same API has native/WASM fixtures.
 
 Validation after comparator sorting and the API-01/API-08 fixes: `cargo test --all` passed with **537 passing tests and 32 ignored known failures**. Twelve audit tests were enabled. Clippy, formatting, native/WASM builds, and the native/WASM parity suite all passed.
+
+[api_contracts.rs](../crates/probl-engine/tests/api_contracts.rs) adds 25 tests across unresolved finite/continuous mixtures, sub-epsilon tails through lifting, the typed key/outcome matrix, probability bounds, relative-weight scaling, representable large moments, overflow and singularity rejection, direct range statistics, bigint ranks, Unicode lookup and resource limits. A unit test separately distinguishes permissible computed-probability roundoff from invalid results. The native/WASM fixture exercises the same contracts.
+
+Validation after fixing the remaining findings and settling the design choices: `cargo test --all` passed with **595 passing tests and zero ignored tests**. All 32 formerly ignored audit cases were enabled; 26 new tests were added. Clippy with warnings denied, formatting, native/WASM builds and native/WASM parity all passed. No golden outputs needed updating.
 
 The existing shared `close` helper uses absolute error below `1e-9`. That is suitable for some moderate-size values, but would accept zero for a `1e-13` tail and would miss a small violation of `[0,1]`. Choose assertions according to the property rather than applying one tolerance everywhere.
 

@@ -1,11 +1,7 @@
 //! Executable checks from docs/api-consistency-review.md (API-01 through API-09).
 //!
-//! Known defects assert the intended invariant and remain compiled with an
-//! `ignore` reason. Run them with:
-//! `cargo test -p probl-engine --test api_consistency -- --ignored`
-//! Remove the corresponding ignore when fixing the defect; do not change the
-//! assertion to bless today's wrong answer. Documented design choices below
-//! are characterization tests, not decisions to redesign those APIs.
+//! All audit regressions are active. Design-choice checks reflect the agreed
+//! typed-identity, explicit population and sequence contracts.
 
 mod common;
 
@@ -84,29 +80,15 @@ let a = one_of([d, 100])
 let b = one_of([d, uniform(100, 101)])
 "#;
 
-// API-02 leaves the representation of incomplete-query answers undecided.
-// Both paths must agree, or both explicitly reject unresolved input. This
-// catches the current implicit conditioning without choosing a new result type.
+// Both representations reject unresolved scalar probabilities under API-02.
 fn incomplete_queries_agree(mode: &str, left: &str, right: &str) {
-    let a = run(mode, &format!("{INCOMPLETE}\nreport {left}"));
-    let b = run(mode, &format!("{INCOMPLETE}\nreport {right}"));
-    match (a, b) {
-        (Ok(a), Ok(b)) => assert_eq!(report_values(&a), report_values(&b)),
-        (Err(a), Err(b)) => {
-            for e in [a, b] {
-                assert_eq!(e.kind, ErrorKind::Language, "{e:?}");
-                assert!(
-                    e.message.contains("unresolved") || e.message.contains("missing"),
-                    "{e:?}"
-                );
-            }
-        }
-        (a, b) => panic!("query contracts differ: {a:?} versus {b:?}"),
+    for query in [left, right] {
+        language_error(mode, &format!("{INCOMPLETE}\nreport {query}"), "unresolved");
     }
 }
 
 // Separate libtest cases ensure a failing enumeration assertion does not stop
-// the matching sampling case from running (including explicitly ignored cases).
+// the matching sampling case from running.
 macro_rules! both_modes {
     ($($test:item)*) => {
         mod enumerate {
@@ -172,13 +154,11 @@ both_modes! {
     }
 
     #[test]
-    #[ignore = "FIXME(API-02): continuous CDF silently conditions on resolved mass"]
     fn incomplete_cdf_has_one_normalization_contract() {
         incomplete_queries_agree(MODE, "cdf(a,200)", "cdf(b,200)");
     }
 
     #[test]
-    #[ignore = "FIXME(API-02): continuous-mixture PMF silently conditions on resolved mass"]
     fn incomplete_pmf_has_one_normalization_contract() {
         incomplete_queries_agree(MODE, "pmf(a,0)", "pmf(b,0)");
     }
@@ -223,7 +203,6 @@ both_modes! {
     }
 
     #[test]
-    #[ignore = "FIXME(API-04): map membership and removal use different key identities"]
     fn map_membership_predicts_removal() {
         for key in ["1.0", "prob(1)", "complex(1)"] {
             truth(
@@ -234,7 +213,6 @@ both_modes! {
     }
 
     #[test]
-    #[ignore = "FIXME(API-04): map membership and insertion use different key identities"]
     fn map_membership_predicts_whether_insert_replaces() {
         truth(
             MODE,
@@ -246,7 +224,6 @@ both_modes! {
     }
 
     #[test]
-    #[ignore = "FIXME(API-04): bag membership and count lookup use different key identities"]
     fn bag_membership_agrees_with_count() {
         for key in ["1.0", "prob(1)", "complex(1)"] {
             truth(
@@ -257,7 +234,6 @@ both_modes! {
     }
 
     #[test]
-    #[ignore = "FIXME(API-04): a key reported present cannot be removed from a bag"]
     fn a_bag_member_can_be_removed() {
         truth(
             MODE,
@@ -266,7 +242,6 @@ both_modes! {
     }
 
     #[test]
-    #[ignore = "FIXME(API-04): typed support and numeric-equality PMF double-count outcomes"]
     fn pmfs_over_advertised_support_sum_to_one() {
         relative(
             number(MODE, "let d=one_of([1,1.0]); report sum(support(d).map(x -> pmf(d,x)))"),
@@ -289,11 +264,11 @@ both_modes! {
     }
 
     #[test]
-    fn numeric_equality_queries_agree_at_top_level() {
-        // This does not settle typed support or recursive container equality.
+    fn numeric_equality_events_are_distinct_from_typed_pmf() {
+        // Numeric equality and list membership remain explicit value searches.
         truth(
             MODE,
-            "report 1 == 1.0 and contains([1],1.0) and pmf([1,2],1.0) == 50% and P(one_of([1,1.0]) == 1) == 100%",
+            "report 1 == 1.0 and contains([1],1.0) and pmf([1,2],1.0) == 0% and P(one_of([1,1.0]) == 1) == 100%",
         );
     }
 
@@ -306,9 +281,8 @@ both_modes! {
     }
 
     #[test]
-    fn current_container_equality_preserves_typed_contents() {
-        // Characterization of the audit's nesting probe. Recursive numeric
-        // equality is a pending design choice, unlike API-04's contradictions.
+    fn container_equality_preserves_typed_contents() {
+        // Container equality deliberately preserves typed contents.
         assert_eq!(
             values(
                 MODE,
@@ -319,7 +293,6 @@ both_modes! {
     }
 
     #[test]
-    #[ignore = "FIXME(API-05): summation creates prob values greater than one"]
     fn computed_probabilities_and_complements_stay_in_range() {
         for n in 2..=32 {
             let items = (1..=n).map(|x| x.to_string()).collect::<Vec<_>>().join(",");
@@ -346,19 +319,16 @@ both_modes! {
     }
 
     #[test]
-    #[ignore = "FIXME(API-06): continuous mean returns infinity instead of an overflow error"]
     fn continuous_mean_overflow_is_an_error() {
         language_error(MODE, "report mean(lognormal(1000,1))", "finite");
     }
 
     #[test]
-    #[ignore = "FIXME(API-06): interior continuous quantile returns infinity"]
     fn interior_continuous_quantile_overflow_is_an_error() {
         language_error(MODE, "report quantile(lognormal(1000,1),50%)", "finite");
     }
 
     #[test]
-    #[ignore = "FIXME(API-06): continuous variance bypasses finite-result validation"]
     fn continuous_variance_overflow_is_an_error() {
         language_error(MODE, "report variance(normal(0,1e308))", "finite");
     }
@@ -370,25 +340,21 @@ both_modes! {
     }
 
     #[test]
-    #[ignore = "FIXME(API-06): sd unnecessarily squares a representable normal scale"]
     fn normal_sd_preserves_a_large_representable_scale() {
         relative(number(MODE, "report sd(normal(0,1e308))"), 1e308);
     }
 
     #[test]
-    #[ignore = "FIXME(API-06): uniform midpoint overflows before division"]
     fn uniform_mean_preserves_a_large_representable_midpoint() {
         relative(number(MODE, "report mean(uniform(1e308,1.2e308))"), 1.1e308);
     }
 
     #[test]
-    #[ignore = "FIXME(API-06): beta parameter sum overflows"]
     fn symmetric_beta_mean_remains_one_half_at_large_scales() {
         relative(number(MODE, "report mean(beta(1e308,1e308))"), 0.5);
     }
 
     #[test]
-    #[ignore = "FIXME(API-06): triangular variance loses spread at a large baseline"]
     fn triangular_variance_is_translation_invariant() {
         for offset in [0_i64, 1_000, 1_000_000_000] {
             relative(
@@ -415,7 +381,6 @@ both_modes! {
     }
 
     #[test]
-    #[ignore = "FIXME(API-07): overflow in relative weight total erases every outcome"]
     fn relative_weights_are_invariant_under_large_common_scaling() {
         let out = values(
             MODE,
@@ -469,8 +434,22 @@ both_modes! {
     #[test]
     fn ordinary_quantile_endpoints_and_midpoint_medians_agree_across_populations() {
         for input in ["[1,4]", "one_of([1,4])"] {
-            assert_eq!(values(MODE, &format!("report mean({input}); report median({input}); report median_low({input}); report median_high({input}); report quantile({input},0%); report quantile({input},100%)")),
-                    vec![Value::Float(2.5),Value::Float(2.5),Value::Int(1.into()),Value::Int(4.into()),Value::Int(1.into()),Value::Int(4.into())]);
+            assert_eq!(
+                values(
+                    MODE,
+                    &format!(
+                        "report mean({input}); report median({input}); report median_low({input}); report median_high({input}); report quantile({input},0%); report quantile({input},100%)"
+                    )
+                ),
+                vec![
+                    Value::Float(2.5),
+                    Value::Float(2.5),
+                    Value::Int(1.into()),
+                    Value::Int(4.into()),
+                    Value::Int(1.into()),
+                    Value::Int(4.into())
+                ]
+            );
         }
     }
 
@@ -581,21 +560,22 @@ both_modes! {
     }
 
     #[test]
-    fn current_min_max_lifting_and_string_overloads_are_explicit() {
-        // Characterization of the documented overloads, not an endorsement of
-        // the one-argument design. Update deliberately if that design changes.
-        truth(MODE, "report typeof min(d6) == \"dist[int]\" and typeof max(d6) == \"dist[int]\" and min(support(d6))==1 and max(support(d6))==6");
+    fn min_max_require_collections_or_multiple_values() {
         for operation in ["min", "max"] {
-            for face in 1..=6 {
-                relative(number(MODE, &format!("report pmf({operation}(d6),{face})")), 1.0 / 6.0);
+            for scalar in ["1", "d6", "complex(1)"] {
+                language_error(MODE, &format!("report {operation}({scalar})"), "at least two values");
             }
         }
+        truth(
+            MODE,
+            "report min(support(d6))==1 and max(support(d6))==6 and P(min(d6,3)<=3)==100%",
+        );
         assert_eq!(
             values(
                 MODE,
                 "report min(\"cba\"); report lowest(\"cba\"); report min([\"c\",\"b\",\"a\"])"
             ),
-            vec![Value::str("cba"), Value::str("a"), Value::str("a")]
+            vec![Value::str("a"); 3]
         );
         language_error(MODE, "report highest(d6)", "needs a list");
     }
@@ -603,13 +583,13 @@ both_modes! {
     #[test]
     fn sequence_capabilities_and_checked_slice_indices_are_explicit() {
         for query in ["mean(1..3)", "median(1..3)"] {
-            language_error(MODE, &format!("report {query}"), "nonempty list");
+            relative(number(MODE, &format!("report {query}")), 2.0);
         }
         assert_eq!(
             scalar(MODE, "report slice([10,20],1.0)"),
             Value::list(vec![Value::Int(20.into())])
         );
-        language_error(MODE, "report \"abc\".get(1,\"?\")", "map or a list");
+        assert_eq!(scalar(MODE, "report \"abc\".get(1,\"?\")"), Value::str("b"));
         for query in ["sort([true,false])", "min([true,false])"] {
             language_error(MODE, &format!("report {query}"), "compare");
         }
@@ -623,8 +603,8 @@ both_modes! {
     }
 
     #[test]
-    fn singleton_sort_validates_ordering_while_min_keeps_its_identity_overload() {
-        truth(MODE, "report min([complex(1,2)])==complex(1,2)");
+    fn singleton_sort_and_min_validate_ordering() {
+        language_error(MODE, "report min([complex(1,2)])", "no ordering");
         language_error(MODE, "report sort([complex(1,2)])", "no ordering");
     }
 
@@ -645,8 +625,8 @@ both_modes! {
     }
 
     #[test]
-    fn pmf_type_rules_distinguish_finite_equality_from_continuous_numbers() {
+    fn pmf_absent_typed_outcomes_have_zero_mass() {
         relative(number(MODE, "report pmf([1,2],\"1\")"), 0.0);
-        language_error(MODE, "report pmf(uniform(1,2),\"1\")", "needs a number");
+        relative(number(MODE, "report pmf(uniform(1,2),\"1\")"), 0.0);
     }
 }
