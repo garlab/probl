@@ -767,15 +767,21 @@ impl<'p> Engine<'p> {
                             }
                             *func
                         }
-                        Callee::Value(e) => match self.eval(f, e, &w)? {
+                        Callee::Value(e, named) => match self.eval(f, e, &w)? {
                             Value::Builtin(b) => {
-                                let value = self.builtin_values(b, &key, w.weight, span)?;
+                                let value = self.builtin_values(b, &key, named, w.weight, span)?;
                                 let mut nw = w;
                                 self.assign(f, dest, value, &mut nw, span)?;
                                 out.push(nw);
                                 continue;
                             }
                             Value::Closure(c) => {
+                                if !named.is_empty() {
+                                    return Err(RuntimeError::new(
+                                        span,
+                                        "only builtin minimum/maximum accept named defaults",
+                                    ));
+                                }
                                 self.check_arity(&c, args.len(), span)?;
                                 key.extend(c.captured.iter().cloned());
                                 c.func
@@ -1878,7 +1884,7 @@ impl<'p> Engine<'p> {
     /// Call a closure that must not split worlds (used by `map`, `filter`, …).
     fn call_pure(&mut self, closure: &Value, args: Vec<Value>, what: &'static str, span: Span) -> Result<Value> {
         if let Value::Builtin(b) = closure {
-            return self.builtin_values(*b, &args, Weight::ONE, span);
+            return self.builtin_values(*b, &args, &[], Weight::ONE, span);
         }
         let Value::Closure(c) = closure else {
             return Err(RuntimeError::new(
@@ -2259,7 +2265,7 @@ impl<'p> Engine<'p> {
                 let value = ops::lift1(&base, &mut self.budget, |b, _| ops::with_fields(b, &updates)).map_err(at)?;
                 self.check_updated_records(value, span)
             }
-            ExprKind::Builtin { func, args, .. } => self.builtin(f, *func, args, w, span),
+            ExprKind::Builtin { func, args, named } => self.builtin(f, *func, args, named, w, span),
             ExprKind::Closure { func, capture_args } => Ok(Value::Closure(Arc::new(Closure {
                 func: *func,
                 captured: capture_args
@@ -2316,7 +2322,15 @@ impl<'p> Engine<'p> {
         })
     }
 
-    fn builtin(&mut self, f: FnId, b: Builtin, args: &[Expr], w: &World, span: Span) -> Result<Value> {
+    fn builtin(
+        &mut self,
+        f: FnId,
+        b: Builtin,
+        args: &[Expr],
+        named: &[(String, Expr)],
+        w: &World,
+        span: Span,
+    ) -> Result<Value> {
         if b == Builtin::Typeof {
             // A direct inspection knows a delayed variable's outcome type
             // without drawing it and losing subsequent conjugate updates.
@@ -2330,7 +2344,12 @@ impl<'p> Engine<'p> {
         for a in args {
             values.push(self.eval(f, a, w)?);
         }
-        self.builtin_values(b, &values, w.weight, span)
+        let mut names = Vec::with_capacity(named.len());
+        for (name, value) in named {
+            names.push(name.clone());
+            values.push(self.eval(f, value, w)?);
+        }
+        self.builtin_values(b, &values, &names, w.weight, span)
     }
 
     fn check_function_arity(&self, value: &Value, given: usize, span: Span) -> Result<()> {
@@ -2366,8 +2385,43 @@ impl<'p> Engine<'p> {
     }
 
     /// Shared dispatch for direct calls and first-class builtin values.
-    fn builtin_values(&mut self, b: Builtin, values: &[Value], weight: Weight, span: Span) -> Result<Value> {
+    fn builtin_values(
+        &mut self,
+        b: Builtin,
+        values: &[Value],
+        named: &[String],
+        weight: Weight,
+        span: Span,
+    ) -> Result<Value> {
+        let extrema = matches!(b, Builtin::Minimum | Builtin::Maximum);
+        if !named.is_empty() && (!extrema || named != ["default"]) {
+            return Err(RuntimeError::new(
+                span,
+                format!(
+                    "`{}` does not accept these named arguments; only minimum/maximum support `default`",
+                    b.name()
+                ),
+            ));
+        }
+        let positional = values.len() - named.len();
+        if !named.is_empty() && positional == 0 {
+            return Err(RuntimeError::new(
+                span,
+                "a collection argument is required before `default`",
+            ));
+        }
+        if !named.is_empty() && positional >= 3 {
+            return Err(RuntimeError::new(
+                span,
+                "the default was supplied both positionally and by name",
+            ));
+        }
         self.check_function_arity(&Value::Builtin(b), values.len(), span)?;
+        let (values, default) = if extrema && (!named.is_empty() || values.len() == 3) {
+            (&values[..values.len() - 1], values.last())
+        } else {
+            (values, None)
+        };
         let at = |err: OpError| err.at(span);
         builtins::check_query_input(b, values).map_err(at)?;
         if values.iter().any(analytic::contains)
@@ -2415,9 +2469,15 @@ impl<'p> Engine<'p> {
             }
             Builtin::Map | Builtin::Filter | Builtin::Reduce => self.higher_order(b, values, span),
             Builtin::Count if values.len() == 2 => self.higher_order(b, values, span),
-            Builtin::Sort | Builtin::SortDesc | Builtin::Minimum | Builtin::Maximum if values.len() == 2 => {
-                self.higher_order(b, values, span)
+            Builtin::Minimum | Builtin::Maximum => {
+                if values.len() == 2 {
+                    self.collection_extreme(b, values, default, span)
+                } else {
+                    builtins::population_extreme(&values[0], b == Builtin::Maximum, default, &mut self.budget)
+                        .map_err(at)
+                }
             }
+            Builtin::Sort | Builtin::SortDesc if values.len() == 2 => self.higher_order(b, values, span),
             Builtin::Highest | Builtin::Lowest if values.len() == 3 => self.higher_order(b, values, span),
             Builtin::Min | Builtin::Max => builtins::call_plain(b, values, &mut self.budget).map_err(at),
             Builtin::Roll => self.roll(values).map_err(at),
@@ -2503,15 +2563,38 @@ impl<'p> Engine<'p> {
         }
     }
 
+    fn collection_extreme(
+        &mut self,
+        b: Builtin,
+        values: &[Value],
+        default: Option<&Value>,
+        span: Span,
+    ) -> Result<Value> {
+        if matches!(values[0], Value::Dist(_) | Value::Continuous(_)) {
+            return Err(RuntimeError::new(
+                span,
+                "a comparator is supported only for collection extrema, not distribution support bounds",
+            ));
+        }
+        let comparator = &values[1];
+        self.check_function_arity(comparator, 2, span)?;
+        let items = builtins::items(&values[0], b.name(), &mut self.budget).map_err(|e| e.at(span))?;
+        let mut iter = items.into_iter();
+        let Some(mut best) = iter.next() else {
+            return builtins::empty_extreme(b.name(), default).map_err(|e| e.at(span));
+        };
+        for x in iter {
+            let order = self.compare_callback(comparator, &x, &best, b, span)?;
+            if (b == Builtin::Maximum && order.is_gt()) || (b == Builtin::Minimum && order.is_lt()) {
+                best = x;
+            }
+        }
+        Ok(best)
+    }
+
     /// Collection operations which call a function, including custom sorting.
     fn higher_order(&mut self, b: Builtin, values: &[Value], span: Span) -> Result<Value> {
         if let Value::Dist(d) = &values[0] {
-            if matches!(b, Builtin::Minimum | Builtin::Maximum) {
-                return Err(RuntimeError::new(
-                    span,
-                    "a comparator is supported only for collection extrema, not distribution support bounds",
-                ));
-            }
             let mut results = Vec::with_capacity(d.outcomes.len());
             for (coll, p) in &d.outcomes {
                 let mut args = values.to_vec();
@@ -2533,28 +2616,10 @@ impl<'p> Engine<'p> {
         }
         let items = builtins::items(&values[0], b.name(), &mut self.budget).map_err(|e| e.at(span))?;
         match b {
-            Builtin::Sort
-            | Builtin::SortDesc
-            | Builtin::Minimum
-            | Builtin::Maximum
-            | Builtin::Highest
-            | Builtin::Lowest => {
+            Builtin::Sort | Builtin::SortDesc | Builtin::Highest | Builtin::Lowest => {
                 let comparator = values.last().unwrap();
                 // Validate even empty/singleton collections without invoking the callback.
                 self.check_function_arity(comparator, 2, span)?;
-                if matches!(b, Builtin::Minimum | Builtin::Maximum) {
-                    let mut iter = items.into_iter();
-                    let mut best = iter.next().ok_or_else(|| {
-                        RuntimeError::new(span, format!("`{}` needs a nonempty collection", b.name()))
-                    })?;
-                    for x in iter {
-                        let order = self.compare_callback(comparator, &x, &best, b, span)?;
-                        if (b == Builtin::Maximum && order.is_gt()) || (b == Builtin::Minimum && order.is_lt()) {
-                            best = x;
-                        }
-                    }
-                    return Ok(best);
-                }
                 let count = if matches!(b, Builtin::Highest | Builtin::Lowest) {
                     Some(builtins::extreme_count(&values[1], &mut self.budget).map_err(|e| e.at(span))?)
                 } else {
@@ -2605,9 +2670,24 @@ impl<'p> Engine<'p> {
                 })
             }
             Builtin::Reduce => {
-                let mut acc = values[1].clone();
+                let callback = &values[1];
+                if !matches!(callback, Value::Closure(_) | Value::Builtin(_)) {
+                    return Err(
+                        RuntimeError::new(span, "`reduce` needs a function as its second argument")
+                            .with_help("write `reduce(xs, f)` or `reduce(xs, f, initial)`"),
+                    );
+                }
+                self.check_function_arity(callback, 2, span)?;
+                let mut items = items.into_iter();
+                let mut acc = match values.get(2) {
+                    Some(initial) => initial.clone(),
+                    None => items.next().ok_or_else(|| {
+                        RuntimeError::new(span, "`reduce` of an empty collection needs an initial value")
+                            .with_help("supply an initial value: `reduce(xs, f, initial)`")
+                    })?,
+                };
                 for x in items {
-                    acc = self.call_pure(&values[2], vec![acc, x], "reduce", span)?;
+                    acc = self.call_pure(callback, vec![acc, x], "reduce", span)?;
                 }
                 Ok(acc)
             }

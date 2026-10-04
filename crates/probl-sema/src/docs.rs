@@ -188,12 +188,12 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "The largest of at least two values. Finite distribution arguments combine independently without drawing: max(d6,3) is a distribution. For a collection element or a distribution support bound, use maximum.",
         ),
         B::Minimum => doc(
-            "minimum(xs, compare?) or minimum(distribution)",
-            "The smallest element of a nonempty list, range or string, or the lower bound of a distribution's closed support. Collection comparators follow sort's finite numeric contract and return an original element; ties retain the first. Collection elements are never implicitly drawn or lifted. A comparator is not accepted for distribution bounds. Unordered singletons, scalar inputs, unresolved distributions and nonfinite bounds are errors.",
+            "minimum(xs, compare?, default?) or minimum(distribution)",
+            "The smallest element of a nonempty list, range or string, or the lower bound of a distribution's closed support. Collection comparators follow sort's finite numeric contract and return an original element; ties retain the first. Collection elements are never implicitly drawn or lifted. An optional default is returned only for empty collections: minimum(xs, default: value) or maximum(xs, compare, default: value). It never competes with elements or masks errors. Arguments, including defaults, are evaluated eagerly in source order. A comparator is not accepted for distribution bounds. Unordered singletons, scalar inputs, unresolved distributions and nonfinite bounds are errors.",
         ),
         B::Maximum => doc(
-            "maximum(xs, compare?) or maximum(distribution)",
-            "The largest element of a nonempty list, range or string, or the upper bound of a distribution's closed support: maximum(3d8) is 24. Collection comparators follow sort's finite numeric contract and return an original element; ties retain the first. Collection elements are never implicitly drawn or lifted. A comparator is not accepted for distribution bounds. Unordered singletons, scalar inputs, unresolved distributions and nonfinite bounds are errors.",
+            "maximum(xs, compare?, default?) or maximum(distribution)",
+            "The largest element of a nonempty list, range or string, or the upper bound of a distribution's closed support: maximum(3d8) is 24. Collection comparators follow sort's finite numeric contract and return an original element; ties retain the first. Collection elements are never implicitly drawn or lifted. An optional default is returned only for empty collections: minimum(xs, default: value) or maximum(xs, compare, default: value). It never competes with elements or masks errors. Arguments, including defaults, are evaluated eagerly in source order. A comparator is not accepted for distribution bounds. Unordered singletons, scalar inputs, unresolved distributions and nonfinite bounds are errors.",
         ),
         B::Abs => doc(
             "abs(x)",
@@ -453,8 +453,8 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "The elements of a list, range or string for which test is true. String elements are one-scalar strings; the result is always a list. Use join(result, \"\") to rebuild text. The test cannot draw, observe or branch on uncertainty outside a local simulate scope, in either execution mode.",
         ),
         B::Reduce => doc(
-            "reduce(xs, start, f)",
-            "The elements of a list, range or string combined one by one, starting from start. String elements are one-scalar strings. The function cannot draw, observe or branch on uncertainty outside a local simulate scope, in either execution mode.",
+            "reduce(xs, f, initial?)",
+            "Combine a list, range or string from left to right with f(accumulator, element). With an initial value, every element participates and an empty collection returns initial. Without one, start from the first element; an empty collection is an error and a singleton returns its element. The callback must accept two arguments, even for empty or singleton inputs. String elements are one-scalar strings. The function cannot draw, observe or branch on uncertainty outside a local simulate scope, in either execution mode.",
         ),
         B::Sort => doc(
             "sort(xs, compare?) -> list",

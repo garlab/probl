@@ -369,8 +369,8 @@ pub enum Callee {
     /// A named function; `capture_args[i]` is the caller's slot supplying the
     /// callee's `captures[i]`.
     Fn { func: FnId, capture_args: Vec<SlotId> },
-    /// A closure value.
-    Value(Expr),
+    /// A function value; names correspond to the final call arguments.
+    Value(Expr, Vec<String>),
 }
 
 #[derive(Clone, Debug)]

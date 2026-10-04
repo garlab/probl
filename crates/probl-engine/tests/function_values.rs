@@ -53,7 +53,7 @@ fn builtin_values_support_optional_and_variadic_arities_and_higher_order_calls()
             r#"
             let f=max
             report f(1,5,3)==5 and pmf(f(d2,1),1)==50%
-            report [1,2,3].reduce(0,max)==3
+            report [1,2,3].reduce(max,0)==3
             report [-2,3,-4].map(abs)==[2,3,4]
             let r=round
             report r(1.5)==2 and r(1.234,2)==1.23

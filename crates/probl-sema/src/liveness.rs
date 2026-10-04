@@ -181,7 +181,7 @@ impl Pass<'_> {
                 define(dest, &mut live);
                 match callee {
                     Callee::Fn { capture_args, .. } => capture_args.iter().for_each(|&s| live.insert(s)),
-                    Callee::Value(e) => uses(e, &mut live),
+                    Callee::Value(e, _) => uses(e, &mut live),
                 }
                 args.iter().for_each(|a| uses(a, &mut live));
                 live

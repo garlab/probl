@@ -221,7 +221,7 @@ fn own_reads(s: &Stmt, f: &mut impl FnMut(SlotId)) {
             self::place(dest, f);
             match callee {
                 Callee::Fn { capture_args, .. } => capture_args.iter().for_each(|&s| f(s)),
-                Callee::Value(e) => draws::value_reads(e, f),
+                Callee::Value(e, _) => draws::value_reads(e, f),
             }
             args.iter().for_each(|a| draws::value_reads(a, f));
         }

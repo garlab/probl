@@ -336,7 +336,8 @@ fn attack(a: Fighter, target: Fighter) -> int {
 
 let doubled = [3, 5, 8].map(x -> x * 2)   # lambdas; x.f(y) is the same as f(x, y)
 let magnitudes = [-2, 3].map(abs)        # named functions and builtins are values
-let largest = [1, 2, 3].reduce(0, max)   # the initial value remains required
+let largest = [-8, -3, -12].reduce(max) # starts with the first element
+let total = [].reduce((a,b)->a+b, 0)    # optional initial value handles empty lists
 ```
 
 Collection callbacks (`map`, `filter`, `count`, `reduce`, and ordering comparators) cannot execute draws, observations, scores or probabilistic branches in the caller's worlds. This restriction is the same in enumeration and sampling, including helper calls. Use a loop for random traversal. A callback can compute a local distribution with `simulate`, or transform an existing distribution without drawing it.
@@ -345,17 +346,21 @@ Functions can branch, draw and observe, so calling one can split the caller's wo
 
 Function references capture their free variables when the reference is created. Builtins retain their normal argument counts, including optional and variadic arguments. Calls through a variable retain the same runtime validation and callback effect rules.
 
-For extrema, `min(a,b,…)`/`max(a,b,…)` compare at least two candidates; distribution candidates produce a distribution. Use `minimum(xs,compare?)`/`maximum(xs,compare?)` to select a collection element, or `minimum(d)`/`maximum(d)` for distribution support bounds:
+For extrema, `min(a,b,…)`/`max(a,b,…)` compare at least two candidates; distribution candidates produce a distribution. Use `minimum(xs,compare?,default?)`/`maximum(xs,compare?,default?)` to select a collection element, or `minimum(d)`/`maximum(d)` for distribution support bounds:
 
 ```probl
 report max(d6, 3)                         # a distribution
 report maximum(3d8)                       # 24
 report maximum([-8, -3, -12])              # -3
+report [].maximum(default: 0)              # 0
+report [-8, -3].maximum(default: 0)         # -3; default is not a candidate
 report [complex(1),complex(2)].maximum((a,b)->abs(a)-abs(b))
 report [3,1,2].highest(2)                  # [3,2]; count is required
 ```
 
-Collection selectors retain the first element on ties and never combine recipes implicitly. Distribution bounds require fully resolved support and a finite endpoint; continuous bounds refer to closed support. See [extrema semantics](semantics.md) for the complete contract.
+Reduction folds left to right. Without an initial value, empty collections error and singleton collections return their element. With an initial value, every element participates; migrate the former `reduce(initial, f)` order to `reduce(f, initial)`.
+
+Collection selectors retain the first element on ties and never combine recipes implicitly. Optional extrema defaults apply only to empty collections: `xs.maximum(compare, default: value)` also works, as does a third positional default after the comparator. All argument expressions are evaluated eagerly. Distribution bounds require fully resolved support and a finite endpoint; continuous bounds refer to closed support. See [extrema semantics](semantics.md) for the complete contract.
 
 ### Types
 

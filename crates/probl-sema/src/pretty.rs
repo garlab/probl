@@ -84,7 +84,7 @@ impl Printer<'_> {
                 out,
             ),
             StmtKind::Call { dest, callee, args } => {
-                let args: Vec<String> = args.iter().map(|a| self.expr(a)).collect();
+                let mut args: Vec<String> = args.iter().map(|a| self.expr(a)).collect();
                 let callee = match callee {
                     Callee::Fn { func, capture_args } => {
                         let caps: Vec<String> = capture_args.iter().map(|&c| self.slot(c)).collect();
@@ -95,7 +95,13 @@ impl Printer<'_> {
                         };
                         format!("fn#{func} {}{caps}", self.p.functions[*func as usize].name)
                     }
-                    Callee::Value(e) => self.expr(e),
+                    Callee::Value(e, named) => {
+                        let start = args.len() - named.len();
+                        for (arg, name) in args[start..].iter_mut().zip(named) {
+                            *arg = format!("{name}: {arg}");
+                        }
+                        self.expr(e)
+                    }
                 };
                 self.line(
                     s,
@@ -243,8 +249,9 @@ impl Printer<'_> {
                 let fields: Vec<String> = fields.iter().map(|(n, v)| format!("{n}: {}", self.expr(v))).collect();
                 format!("({} with {{ {} }})", self.expr(base), fields.join(", "))
             }
-            ExprKind::Builtin { func, args, .. } => {
-                let args: Vec<String> = args.iter().map(|a| self.expr(a)).collect();
+            ExprKind::Builtin { func, args, named } => {
+                let mut args: Vec<String> = args.iter().map(|a| self.expr(a)).collect();
+                args.extend(named.iter().map(|(name, e)| format!("{name}: {}", self.expr(e))));
                 format!("{}({})", func.name(), args.join(", "))
             }
             ExprKind::Closure { func, capture_args } => {

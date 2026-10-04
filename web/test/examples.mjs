@@ -60,7 +60,7 @@ for (const mode of ['enumerate', 'sample']) {
     'report [1].map(x -> { var deck = bag([1]); deck.take() })',
     'report [1].map(x -> { score 50%; x })',
     'report [1].map(x -> if 30% { x } else { x })',
-    'report [1].reduce(0, (a, x) -> chance { 50% => a, else => a })',
+    'report [1].reduce((a, x) -> chance { 50% => a, else => a }, 0)',
   ]) {
     const result = probl.run({ source, mode, ...(mode === 'sample' ? { runs: 10, seed: 19 } : {}) });
     assert.equal(result.error?.kind, 'language');
@@ -165,7 +165,7 @@ for (const mode of ['enumerate', 'sample']) {
 console.log('same  remaining API contract validation in both modes');
 
 // The old unary comparison/top-n forms are now compile errors.
-for (const source of ['report min(d6)', 'report max([1,2])', 'report highest([1,2])', 'report [1,2].reduce(max)']) {
+for (const source of ['report min(d6)', 'report max([1,2])', 'report highest([1,2])']) {
   assert.ok(probl.run({source}).error, source);
 }
 for (const source of [
@@ -177,6 +177,33 @@ for (const source of [
 ]) {
   assert.equal(probl.run({source}).error?.kind, 'language', source);
 }
+
+// Optional seeds and named defaults preserve errors and callback restrictions.
+for (const mode of ['enumerate', 'sample']) {
+  for (const source of [
+    'report [].reduce(max)',
+    'report [1,2].filter(x->false).reduce(max)',
+    'report [].reduce(0,max)',
+    'report [].reduce(abs,0)',
+    'report [1,2].reduce((a,b)->{let r ~ d1; a+b})',
+    'report [].maximum(abs,default:0)',
+    'report maximum(normal(0,1),default:0)',
+    'report minimum(geometric(50%),default:0)',
+    'report [1].maximum(default:1/0)',
+    'let f=maximum; report f([],unknown:0)',
+  ]) {
+    assert.equal(probl.run({source, mode, ...(mode === 'sample' ? {runs:10,seed:19} : {})}).error?.kind, 'language', source);
+  }
+}
+for (const source of [
+  'report maximum([],default:0,default:1)',
+  'report maximum([],default:0,(a,b)->a-b)',
+  'report maximum(default:0)',
+  'report maximum([],fallback:0)',
+]) {
+  assert.ok(probl.run({source}).error, source);
+}
+console.log('same  optional reduction seeds and extrema defaults in both modes');
 
 // Queries cannot silently turn a scalar or entire list into a point mass.
 for (const mode of ['enumerate', 'sample']) {

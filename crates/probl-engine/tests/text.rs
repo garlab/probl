@@ -128,7 +128,7 @@ fn collection_algorithms_share_scalar_iteration_and_return_lists() {
         r#"filter("abca", c -> c != "a") == ["b", "c"]"#,
         r#""abca".filter(c -> c != "a").join("") == "bc""#,
         r#"map("", c -> c) == [] and filter("", c -> true) == []"#,
-        r#"reduce("a🙂é", "", (s, c) -> s + c) == "a🙂é""#,
+        r#"reduce("a🙂é", (s, c) -> s + c, "") == "a🙂é""#,
         r#"count("a🙂a", c -> c == "a") == 2"#,
         r#"sort("baé") == ["a", "b", "é"]"#,
         r#"sort_desc("baé") == ["é", "b", "a"]"#,

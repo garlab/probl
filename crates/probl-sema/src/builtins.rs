@@ -44,8 +44,8 @@ builtins! {
     // Math
     Min = "min", 2..=ANY, Lift, true;
     Max = "max", 2..=ANY, Lift, true;
-    Minimum = "minimum", 1..=2, Raw, true;
-    Maximum = "maximum", 1..=2, Raw, true;
+    Minimum = "minimum", 1..=3, Raw, true;
+    Maximum = "maximum", 1..=3, Raw, true;
     Abs = "abs", 1..=1, Lift, true;
     Floor = "floor", 1..=1, Lift, true;
     Ceil = "ceil", 1..=1, Lift, true;
@@ -117,7 +117,7 @@ builtins! {
     Count = "count", 1..=2, Lift, true;
     Map = "map", 2..=2, Lift, true;
     Filter = "filter", 2..=2, Lift, true;
-    Reduce = "reduce", 3..=3, Lift, true;
+    Reduce = "reduce", 2..=3, Lift, true;
     Sort = "sort", 1..=2, Lift, true;
     SortDesc = "sort_desc", 1..=2, Lift, true;
     Reverse = "reverse", 1..=1, Lift, true;

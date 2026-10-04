@@ -553,7 +553,7 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
         return continuous_query(b, args);
     }
     match b {
-        B::Minimum | B::Maximum => population_extreme(v, b == B::Maximum, budget),
+        B::Minimum | B::Maximum => population_extreme(v, b == B::Maximum, None, budget),
         B::P => probability_of(v),
         B::Pdf => Err(OpError::new("pdf needs a continuous distribution")
             .help("for a distribution whose outcomes can be listed, use `pmf`")),
@@ -1549,13 +1549,13 @@ fn get(coll: &Value, key: &Value, default: Option<&Value>, budget: &mut Budget) 
 }
 
 /// Select an existing element; recipes inside collections are never lifted.
-fn population_extreme(v: &Value, want_max: bool, budget: &mut Budget) -> OpResult<Value> {
+pub fn population_extreme(v: &Value, want_max: bool, default: Option<&Value>, budget: &mut Budget) -> OpResult<Value> {
     let name = if want_max { "maximum" } else { "minimum" };
     match v {
         Value::Range(lo, hi) => {
             budget.integer_work(lo, hi, false)?;
             if hi < lo {
-                return Err(OpError::new(format!("`{name}` needs a nonempty range")));
+                return empty_extreme(name, default);
             }
             Ok(Value::Int(if want_max { hi.clone() } else { lo.clone() }))
         }
@@ -1575,7 +1575,7 @@ fn population_extreme(v: &Value, want_max: bool, budget: &mut Budget) -> OpResul
                     continue;
                 }
                 let x = match x {
-                    Value::Continuous(_) | Value::Dist(_) => population_extreme(x, want_max, budget)?,
+                    Value::Continuous(_) | Value::Dist(_) => population_extreme(x, want_max, None, budget)?,
                     x => x.clone(),
                 };
                 select_extreme(&mut best, x, want_max, budget)?;
@@ -1587,7 +1587,7 @@ fn population_extreme(v: &Value, want_max: bool, budget: &mut Budget) -> OpResul
             for x in items(v, name, budget)? {
                 select_extreme(&mut best, x, want_max, budget)?;
             }
-            best.ok_or_else(|| OpError::new(format!("`{name}` needs a nonempty collection")))
+            best.map_or_else(|| empty_extreme(name, default), Ok)
         }
         other => Err(expected(
             "a distribution or nonempty list, range or string",
@@ -1595,6 +1595,13 @@ fn population_extreme(v: &Value, want_max: bool, budget: &mut Budget) -> OpResul
             name,
         )),
     }
+}
+
+pub fn empty_extreme(name: &str, default: Option<&Value>) -> OpResult<Value> {
+    default.cloned().ok_or_else(|| {
+        OpError::new(format!("`{name}` needs a nonempty collection or a default"))
+            .help(format!("use `{name}(xs, default: value)` to handle empty collections"))
+    })
 }
 
 fn finite_bound(x: f64, name: &str) -> OpResult<Value> {

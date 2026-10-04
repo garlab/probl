@@ -155,7 +155,7 @@ fn visit(s: &Stmt, f: &mut impl FnMut(SlotId), leaves: &mut bool) {
             self::place(dest, f);
             match callee {
                 Callee::Fn { capture_args, .. } => capture_args.iter().for_each(|&s| f(s)),
-                Callee::Value(e) => expr(e, f),
+                Callee::Value(e, _) => expr(e, f),
             }
             args.iter().for_each(|a| expr(a, f));
         }

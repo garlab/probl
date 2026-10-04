@@ -2591,9 +2591,11 @@ impl<'a> Lowerer<'a> {
         }
         // Calling a closure value.
         let f = self.expr(callee, out);
-        let mut values = self.positional_args(vec![f], args, out);
+        let named = self.argument_names(args);
+        let exprs: Vec<_> = args.iter().map(|a| &a.value).collect();
+        let mut values = self.operands_after(vec![f], &exprs, out);
         let f = values.remove(0);
-        self.hoist_call(Callee::Value(f), values, span, out)
+        self.hoist_call(Callee::Value(f, named), values, span, out)
     }
 
     fn method(
@@ -2761,16 +2763,27 @@ impl<'a> Lowerer<'a> {
                     .help("write `deck.take()` to draw and remove an item from `deck`");
                 return lit(Lit::Unit, span);
             }
-            if args.iter().any(|a| a.name.is_some()) {
-                self.error(span, format!("`{}` doesn't take named arguments", name.name));
+            let names = self.argument_names(args);
+            for key in &names {
+                if !matches!(b, Builtin::Minimum | Builtin::Maximum) || key != "default" {
+                    self.error(span, format!("`{}` doesn't take the named argument `{key}`", name.name));
+                }
+            }
+            let positional_count = values.len() + args.len() - names.len();
+            if !names.is_empty() && positional_count == 0 {
+                self.error(span, "a collection argument is required before `default`");
+            }
+            if !names.is_empty() && positional_count >= 3 {
+                self.error(span, "the default was supplied both positionally and by name");
             }
             let exprs: Vec<&ast::Expr> = args.iter().map(|a| &a.value).collect();
             let types: Vec<_> = (0..values.len() + exprs.len())
                 .map(|i| b.probability_parameter(i).then_some(TypeSpec::Prob))
                 .collect();
-            let values = self.operands_expected(values, &exprs, &types, out);
-            let named = Vec::new();
+            let mut values = self.operands_expected(values, &exprs, &types, out);
             self.check_arity(b, values.len(), span);
+            let named_values = values.split_off(positional_count);
+            let named = names.into_iter().zip(named_values).collect();
             return Expr {
                 kind: ExprKind::Builtin {
                     func: b,
@@ -2823,9 +2836,20 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Lower positional arguments in order, after already-lowered operands.
-    fn positional_args(&mut self, before: Vec<Expr>, args: &[ast::Arg], out: &mut Vec<Stmt>) -> Vec<Expr> {
-        self.positional_expected(before, args, &[], out)
+    /// Named arguments follow positional arguments, preserving evaluation order.
+    fn argument_names(&mut self, args: &[ast::Arg]) -> Vec<String> {
+        let mut names = Vec::new();
+        for arg in args {
+            if let Some(name) = &arg.name {
+                if names.contains(&name.name) {
+                    self.error(name.span, format!("the named argument `{}` appears twice", name.name));
+                }
+                names.push(name.name.clone());
+            } else if !names.is_empty() {
+                self.error(arg.value.span, "positional arguments must come before named arguments");
+            }
+        }
+        names
     }
 
     fn positional_expected(
@@ -3071,7 +3095,7 @@ fn visit_stmt(stmt: &mut Stmt, f: &mut impl FnMut(&mut CallSite)) {
             visit_place(dest, f);
             match callee {
                 Callee::Fn { func, capture_args } => f(&mut CallSite::Call(*func, capture_args)),
-                Callee::Value(e) => visit_expr(e, f),
+                Callee::Value(e, _) => visit_expr(e, f),
             }
             for a in args {
                 visit_expr(a, f);

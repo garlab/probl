@@ -180,7 +180,7 @@ impl Direct {
                 self.place(dest);
                 match callee {
                     Callee::Fn { func, .. } => self.calls.push(*func),
-                    Callee::Value(e) => {
+                    Callee::Value(e, _) => {
                         self.calls_closures = true;
                         self.expr(e);
                     }
@@ -253,9 +253,8 @@ impl Direct {
                 match func {
                     Builtin::Print => self.prints = true,
                     Builtin::Map | Builtin::Filter | Builtin::Count | Builtin::Reduce => self.calls_closures = true,
-                    Builtin::Sort | Builtin::SortDesc | Builtin::Minimum | Builtin::Maximum if args.len() == 2 => {
-                        self.calls_closures = true
-                    }
+                    Builtin::Minimum | Builtin::Maximum if args.len() >= 2 => self.calls_closures = true,
+                    Builtin::Sort | Builtin::SortDesc if args.len() == 2 => self.calls_closures = true,
                     Builtin::Highest | Builtin::Lowest if args.len() == 3 => self.calls_closures = true,
                     _ => {}
                 }
@@ -306,7 +305,7 @@ impl Checker<'_> {
                         self.effects[*func as usize].observes,
                         Some(self.functions[*func as usize].name.clone()),
                     ),
-                    Callee::Value(_) => (self.lambda_observes, None),
+                    Callee::Value(..) => (self.lambda_observes, None),
                 };
                 if observes {
                     if let Some(r) = reported {

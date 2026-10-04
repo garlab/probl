@@ -11,7 +11,7 @@ fn callbacks_reject_effects_in_both_modes_before_results_can_hide_them() {
         "report [1, 2].map(x -> { let r ~ d6; x + r })",
         "report [1].filter(x -> { let r ~ d6; r > 3 })",
         "report [1].count(x -> { let r ~ d6; r > 3 })",
-        "report [1].reduce(0, (a, x) -> { let r ~ d6; a + r })",
+        "report [1].reduce((a, x) -> { let r ~ d6; a + r }, 0)",
         "report [1].map(x -> { let r ~ d1; x })",
         "report [1].map(x -> { observe true; x })",
         "report [1].map(x -> if (chance { 50% => true, else => false }) { x } else { x })",

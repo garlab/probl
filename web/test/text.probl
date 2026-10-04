@@ -13,7 +13,7 @@ report slice([10, 20, 30], 1)
 report [slice(10..20, 2, 5), slice(10..20, 11), len(slice(0..10^100, 1))]
 report map("aß", c -> upper(c))
 report filter(s, c -> c != "a").join("")
-report reduce("a🙂", "", (text, c) -> text + c)
+report reduce("a🙂", (text, c) -> text + c, "")
 report count("a🙂a", c -> c == "a")
 report [sort("baé"), sort_desc("baé"), enumerate("a🙂"), zip("a🙂b", 10..11)]
 report trim(one_of(["_a_", "_b_"]), "_")

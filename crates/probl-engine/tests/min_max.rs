@@ -80,7 +80,7 @@ fn recipes_can_be_selected_but_are_never_implicitly_ordered_or_combined() {
             report maximum(chosen)==8 and pmf(chosen,1)==12.5%
             report typeof chosen=="dist[int]"
             report maximum(ds.minimum((a,b)->mean(a)-mean(b)))==6
-            report pmf([d2,d2].reduce(0,max),1)==25%
+            report pmf([d2,d2].reduce(max,0),1)==25%
         "#,
         );
         for xs in ["[d6,d8]", "[d6]", "[[d6]]", "[uniform(0,1),2]"] {
@@ -138,7 +138,11 @@ fn invalid_populations_and_unresolved_or_unbounded_support_are_rejected() {
                 "unresolved",
             );
             rejects(mode.clone(), &format!("report {op}(d6,(a,b)->a-b)"), "comparator");
-            rejects(mode.clone(), &format!("report {op}(uniform(0,1),(a,b)->a-b)"), "list");
+            rejects(
+                mode.clone(),
+                &format!("report {op}(uniform(0,1),(a,b)->a-b)"),
+                "comparator",
+            );
         }
         rejects(mode, "report maximum(exponential(2))", "finite support bound");
     }
@@ -204,14 +208,8 @@ fn comparator_validation_and_effect_restrictions_match_sort() {
 }
 
 #[test]
-fn obsolete_arities_fail_at_compile_time_and_reduce_still_requires_seed() {
-    for call in [
-        "min(d6)",
-        "max([1,2])",
-        "highest([1,2])",
-        "lowest([1,2])",
-        "[1,2].reduce(max)",
-    ] {
+fn obsolete_extrema_arities_fail_at_compile_time() {
+    for call in ["min(d6)", "max([1,2])", "highest([1,2])", "lowest([1,2])"] {
         assert!(compile_error(&format!("report {call}")).contains("takes"), "{call}");
     }
 }
