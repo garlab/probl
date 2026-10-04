@@ -218,7 +218,7 @@ fn inverse_hyperbolic_functions_match_values_and_invert_the_forward_functions() 
 #[test]
 fn rounding_and_inverse_hyperbolic_domains_and_arities_are_checked() {
     for expression in [
-        "round(1, 1.0)",
+        "round(1, 1.4)",
         "round(1, true)",
         "round(1, 50%)",
         "round(true, 2)",
@@ -364,13 +364,13 @@ fn domains_types_arity_and_overflow_are_checked() {
         assert!(error(&format!("report {source}")).contains("needs"), "{source}");
     }
     for source in [
-        "choose(3.0, 1)",
-        "choose(3, 1.0)",
+        "choose(3.4, 1)",
+        "choose(3, 1.4)",
         "factorial(true)",
         "factorial(3.5)",
-        "gcd(5.0, 1)",
+        "gcd(5.4, 1)",
         "lcm(1, 50%)",
-        "euler_phi(1.0)",
+        "euler_phi(1.4)",
     ] {
         assert!(error(&format!("report {source}")).contains("needs an int"), "{source}");
     }

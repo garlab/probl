@@ -4,11 +4,11 @@ Assessment: 4 October 2026, following the [API consistency review](api-consisten
 
 Probl has a substantial test suite, including an independent oracle. It does not yet provide enough assurance about how the expanding APIs compose. The recent bugs are evidence of that gap: individual functions can be exercised while their shared contracts remain untested. A larger test count or a high line-coverage percentage alone would not establish that the answers are correct.
 
-No instrumented coverage percentage has been measured for this assessment. The repository has no coverage-reporting CI job, and `cargo-llvm-cov` and LLVM coverage tools were not installed in this environment. The recommendations below are proposed additions; this change adds regression tests and documentation, without changing language behavior or installing new tooling.
+No instrumented coverage percentage has been measured for this assessment. The repository has no coverage-reporting CI job, and `cargo-llvm-cov` and LLVM coverage tools were not installed in this environment. The recommendations below are proposed tooling additions; no new testing tool has been installed.
 
 ## Executable checks from the audit
 
-[api_consistency.rs](../crates/probl-engine/tests/api_consistency.rs) contains 51 checks, each registered separately for enumeration and sampling: **102 tests**, of which **52 pass and 50 are ignored known failures**. The 25 failing checks cover all nine numbered findings. They assert the desired invariant, not the observed incorrect answer.
+[api_consistency.rs](../crates/probl-engine/tests/api_consistency.rs) contains 51 checks, each registered separately for enumeration and sampling: **102 tests**, of which **58 pass and 44 are ignored known failures**. Findings API-03 and API-09 have been fixed and their checks enabled. The 22 remaining failing checks cover the other seven findings. They assert the desired invariant, not the observed incorrect answer.
 
 ```sh
 # Normal, green suite: ignored bodies are still compiled.
@@ -39,11 +39,15 @@ Each ignored test has `#[ignore = "FIXME(API-XX): reason"]`; the ID refers to th
 | API-09: inconsistent `get` indices | Index/get agreement and invalid-key rejection; active present/absent integer indices |
 | Other manual controls and design questions | Unicode text, date arithmetic/statistics, integer/complex functions, enum/bool ordering, scalar min/max lifting, sequence capabilities, typed container equality, singleton ordering passthrough, rounding types, bag defaults, and PMF argument types |
 
-Where the final design is open, tests express agreement rather than selecting a new rule. For example, incomplete CDF/PMF paths may agree on a result or both explicitly reject unresolved input. Indexing and `get` must agree on admitting an integral float. Characterization tests for documented or undecided overloads are named/commented accordingly; revise those deliberately if the design changes.
+Where the final design is open, tests express agreement rather than selecting a new rule. For example, incomplete CDF/PMF paths may agree on a result or both explicitly reject unresolved input. Indexing and `get` now both admit integral floats, as required by the checked integer-conversion policy. Characterization tests for documented or undecided overloads are named/commented accordingly; revise those deliberately if the design changes.
 
 Both modes use deterministic queries, a pinned date, and a fixed sampling seed. The sampling cases test API behavior, not statistical convergence. Assertions inspect returned values and raw bounds. Tiny-tail tests use relative error and require positive mass; probability range checks have no tolerance. Ordinary approximate arithmetic uses a scale-aware tolerance, so it does not require accidental bit-for-bit agreement after distribution normalization.
 
-Validation of this addition: `cargo test --all` passed with 470 passing tests and 50 ignored; `cargo clippy --all-targets -- -D warnings` passed. Explicitly running the ignored audit cases produced 50 expected failures and no compile-error failures. These figures count registered test cases, including separate execution modes, not distinct bugs or generated inputs.
+Validation when the audit tests were first added: `cargo test --all` passed with 470 passing tests and 50 ignored; `cargo clippy --all-targets -- -D warnings` passed. Explicitly running the ignored audit cases produced 50 expected failures and no compile-error failures. These figures count registered test cases, including separate execution modes, not distinct bugs or generated inputs.
+
+[integer_conversion.rs](../crates/probl-engine/tests/integer_conversion.rs) adds checks in both modes for exact contextual conversion, declared boundaries, recursive containers, indexing and defaults, integer arguments, date/range/count operations, fractional rejection, probabilistic errors, large values and resource limits. Native/WASM fixtures also exercise this contract.
+
+Validation after fixing API-03 and API-09: `cargo test --all` passed with **499 passing tests and 44 ignored known failures**. The integer-conversion suite contributes 23 tests, and six audit tests were enabled. Clippy, formatting, native/WASM builds, and the native/WASM parity suite all passed.
 
 The existing shared `close` helper uses absolute error below `1e-9`. That is suitable for some moderate-size values, but would accept zero for a `1e-13` tail and would miss a small violation of `[0,1]`. Choose assertions according to the property rather than applying one tolerance everywhere.
 

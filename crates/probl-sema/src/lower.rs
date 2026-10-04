@@ -414,6 +414,8 @@ impl<'a> Lowerer<'a> {
         let found = match (&value.kind, ty) {
             (ast::ExprKind::Int(v), TypeSpec::Prob) if *v == 0 || *v == 1 => return,
             (ast::ExprKind::Int(_), TypeSpec::Int | TypeSpec::Float) => return,
+            // Contextualization below diagnoses fractional literals precisely.
+            (ast::ExprKind::Float(_) | ast::ExprKind::Percent(_), TypeSpec::Int) => return,
             (ast::ExprKind::Float(v), TypeSpec::Prob) if (0.0..=1.0).contains(v) => return,
             (ast::ExprKind::Float(_), TypeSpec::Float) => return,
             (ast::ExprKind::Percent(v), TypeSpec::Prob) if (0.0..=1.0).contains(v) => return,
@@ -443,6 +445,18 @@ impl<'a> Lowerer<'a> {
     /// Convert known numeric literals early, diagnosing invalid ranges.
     /// Other numbers are checked at the receiving runtime type boundary.
     fn contextualize(&mut self, e: &mut Expr, ty: &TypeSpec) {
+        if *ty == TypeSpec::Int {
+            if let Some(n) = crate::coercions::float_literal(e) {
+                if !n.is_finite() || n.fract() != 0.0 {
+                    self.error(
+                        e.span,
+                        "an int needs an exactly integral finite float; conversion never rounds",
+                    );
+                }
+            }
+            // Runtime conversion accounts for integer allocation and host limits.
+            return;
+        }
         if *ty == TypeSpec::Prob {
             if let Some(p) = crate::coercions::numeric_literal(e) {
                 if p.is_finite() && (0.0..=1.0).contains(&p) {
@@ -459,9 +473,10 @@ impl<'a> Lowerer<'a> {
                     self.contextualize(x, t);
                 }
             }
-            (ExprKind::Map(xs), TypeSpec::Map(k, v)) => {
-                for (a, b) in xs {
-                    self.contextualize(a, k);
+            (ExprKind::Map(xs), TypeSpec::Map(_, v)) => {
+                // Convert keys only at the map boundary, where collisions can
+                // be detected before an entry is overwritten.
+                for (_, b) in xs {
                     self.contextualize(b, v);
                 }
             }
@@ -2110,12 +2125,9 @@ impl<'a> Lowerer<'a> {
                 let types = vec![Some((**t).clone()); xs.len()];
                 ExprKind::List(self.operands_expected(Vec::new(), &refs, &types, out))
             }
-            (ast::ExprKind::Map(xs), TypeSpec::Map(k, v)) => {
+            (ast::ExprKind::Map(xs), TypeSpec::Map(_, v)) => {
                 let refs: Vec<_> = xs.iter().flat_map(|(k, v)| [k, v]).collect();
-                let types: Vec<_> = xs
-                    .iter()
-                    .flat_map(|_| [Some((**k).clone()), Some((**v).clone())])
-                    .collect();
+                let types: Vec<_> = xs.iter().flat_map(|_| [None, Some((**v).clone())]).collect();
                 let mut values = self.operands_expected(Vec::new(), &refs, &types, out).into_iter();
                 let mut pairs = Vec::with_capacity(xs.len());
                 while let (Some(k), Some(v)) = (values.next(), values.next()) {

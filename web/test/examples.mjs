@@ -83,6 +83,35 @@ for (const mode of ['enumerate', 'sample']) {
 }
 console.log('same  explicit conversions and observation restrictions in both modes');
 
+// Integer conversions reject fractions and invalid index types in both engines.
+for (const mode of ['enumerate', 'sample']) {
+  for (const source of [
+    'let x=1.4; let n:int=x; report n',
+    'let x=1.0000000000000002; let n:int=x; report n',
+    'let xs=[10,20]; report xs.get(1.4,-1)',
+    'report [].get("wrong",-1)',
+    'report slice([10,20],0,1.4)',
+    'report factorial(1.4)',
+    'report bit_length(prob(1))',
+    'report roll(1.4,d1)',
+    'report date(2026,1,1).add_months(1.4)',
+    'let n:dist[int]=one_of([1.0,1.4]); report n',
+    'let m:map[int,str]=[1:"int",1.0:"float"]; report m',
+    'let m:map[prob,str]=[1:"int",1.0:"float"]; report m',
+  ]) {
+    const result = probl.run({ source, mode, ...(mode === 'sample' ? { runs: 10, seed: 19 } : {}) });
+    assert.equal(result.error?.kind, 'language', source);
+    assert.match(result.error?.message, /int|collision/, source);
+  }
+  const result = probl.run({
+    source: 'let x=1.0; let n:int=x; report typeof n == "int" and typeof x == "float" and [10,20].get(x,-1)==20',
+    mode, ...(mode === 'sample' ? { runs: 10, seed: 19 } : {}),
+  });
+  assert.equal(result.error, undefined);
+  assert.match(result.output, /100(?:\.0+)?%/);
+}
+console.log('same  checked integer conversion in both modes');
+
 // Queries cannot silently turn a scalar or entire list into a point mass.
 for (const mode of ['enumerate', 'sample']) {
   for (const source of [

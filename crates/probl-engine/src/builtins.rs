@@ -5,7 +5,7 @@ use crate::continuous::{Family, Mixture, Part};
 use crate::dates;
 use crate::dist::{Budget, Counts, Dist};
 use crate::error::{OpError, OpResult};
-use crate::ops::{self, article, as_index, equals, range_count, range_len, to_prob};
+use crate::ops::{self, article, as_index, equals, integer, range_count, range_len, to_prob};
 use crate::value::{Value, fmt_float};
 use probl_number::Integer;
 use probl_sema::Builtin;
@@ -88,27 +88,36 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::Atanh => elementary1(a(0), "atanh", Complex::atanh, |x| {
             (x.abs() < 1.0).then(|| libm::atanh(x))
         }),
-        B::BitLength => Ok(Value::Int(integer(a(0), "bit_length")?.bits().into())),
-        B::BitAnd => Ok(Value::Int(integer(a(0), b.name())?.bit_and(integer(a(1), b.name())?)?)),
-        B::BitOr => Ok(Value::Int(integer(a(0), b.name())?.bit_or(integer(a(1), b.name())?)?)),
-        B::BitXor => Ok(Value::Int(integer(a(0), b.name())?.bit_xor(integer(a(1), b.name())?)?)),
-        B::BitNot => Ok(Value::Int(integer(a(0), b.name())?.bit_not()?)),
-        B::BitCount => Ok(Value::Int(integer(a(0), b.name())?.bit_count().into())),
+        B::BitLength => Ok(Value::Int(integer(a(0), "bit_length", budget)?.bits().into())),
+        B::BitAnd => Ok(Value::Int(
+            integer(a(0), b.name(), budget)?.bit_and(integer(a(1), b.name(), budget)?.as_ref())?,
+        )),
+        B::BitOr => Ok(Value::Int(
+            integer(a(0), b.name(), budget)?.bit_or(integer(a(1), b.name(), budget)?.as_ref())?,
+        )),
+        B::BitXor => Ok(Value::Int(
+            integer(a(0), b.name(), budget)?.bit_xor(integer(a(1), b.name(), budget)?.as_ref())?,
+        )),
+        B::BitNot => Ok(Value::Int(integer(a(0), b.name(), budget)?.bit_not()?)),
+        B::BitCount => Ok(Value::Int(integer(a(0), b.name(), budget)?.bit_count().into())),
         B::ILog2 => {
-            let n = integer(a(0), "ilog2")?;
+            let n = integer(a(0), "ilog2", budget)?;
             if n.is_zero() || n.is_negative() {
                 return Err(OpError::new("`ilog2` needs a positive integer"));
             }
             Ok(Value::Int((n.bits() - 1).into()))
         }
         B::Choose => choose(
-            nonnegative_int(a(0), "choose")?,
-            nonnegative_int(a(1), "choose")?,
+            nonnegative_int(a(0), "choose", budget)?.as_ref(),
+            nonnegative_int(a(1), "choose", budget)?.as_ref(),
             budget,
         ),
-        B::Factorial => factorial(nonnegative_int(a(0), "factorial")?, budget),
+        B::Factorial => factorial(nonnegative_int(a(0), "factorial", budget)?.as_ref(), budget),
         B::Gcd | B::Lcm => {
-            let (x, y) = (integer(a(0), b.name())?.abs(), integer(a(1), b.name())?.abs());
+            let (x, y) = (
+                integer(a(0), b.name(), budget)?.abs(),
+                integer(a(1), b.name(), budget)?.abs(),
+            );
             let d = gcd(x.clone(), y.clone(), budget)?;
             let result = if b == B::Gcd {
                 d
@@ -121,7 +130,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             };
             Ok(Value::Int(result))
         }
-        B::EulerPhi => euler_phi(nonnegative_int(a(0), "euler_phi")?, budget),
+        B::EulerPhi => euler_phi(nonnegative_int(a(0), "euler_phi", budget)?.as_ref(), budget),
         B::LnGamma => float1(a(0), "ln_gamma", |x| (x > 0.0).then(|| libm::lgamma(x))),
         B::Erf => float1(a(0), "erf", |x| Some(libm::erf(x))),
         B::Erfc => float1(a(0), "erfc", |x| Some(libm::erfc(x))),
@@ -248,7 +257,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             Value::Map(m) => Ok(Value::list(m.values().cloned().collect())),
             v => Err(expected("a map", v, "values")),
         },
-        B::Get => get(a(0), a(1), args.get(2)),
+        B::Get => get(a(0), a(1), args.get(2), budget),
         B::Contains => ops::contains(a(0), a(1), budget).map(Value::Bool),
         B::Highest | B::Lowest => extremes(a(0), args.get(1), b == B::Highest, budget),
         B::Enumerate => {
@@ -275,7 +284,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             Ok(Value::list(items))
         }
         B::Insert => insert(a(0), a(1), a(2), budget),
-        B::Remove => remove(a(0), a(1)),
+        B::Remove => remove(a(0), a(1), budget),
         B::Pop => Err(
             OpError::new("`pop` changes a list, so call it as a method on a variable")
                 .help("write `let top = xs.pop()`"),
@@ -297,10 +306,10 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::Bernoulli | B::ScoreLaw => Ok(Dist::bernoulli(to_prob(a(0))?).into_value()),
         B::OneOf => one_of(a(0), budget),
         B::Binomial | B::Poisson | B::Geometric => {
-            let counts = counts(b, args)?.expect("called with plain arguments");
+            let counts = counts(b, args, budget)?.expect("called with plain arguments");
             Ok(counts.list(budget)?.into_value())
         }
-        B::Bag => bag(a(0)),
+        B::Bag => bag(a(0), budget),
         B::Normal => continuous(Family::normal(number(a(0), "normal")?, number(a(1), "normal")?)),
         B::Lognormal => continuous(Family::lognormal(
             number(a(0), "lognormal")?,
@@ -347,9 +356,9 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             let date = match args.len() {
                 1 => dates::parse(&text(a(0), "date")?),
                 3 => dates::from_parts(
-                    date_count(a(0), "date")?,
-                    date_count(a(1), "date")?,
-                    date_count(a(2), "date")?,
+                    date_count(a(0), "date", budget)?,
+                    date_count(a(1), "date", budget)?,
+                    date_count(a(2), "date", budget)?,
                 ),
                 _ => {
                     return Err(OpError::new(
@@ -370,7 +379,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         }
         B::AddWorkdays => {
             let d = date_value(a(0), b.name())?;
-            let n = date_count(a(1), b.name())?;
+            let n = date_count(a(1), b.name(), budget)?;
             let holidays = holiday_calendar(args.get(2), b.name(), budget)?;
             date_result(dates::add_workdays_with_holidays(d, n, &holidays))
         }
@@ -383,7 +392,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         }
         B::AddMonths | B::AddYears => {
             let d = date_value(a(0), b.name())?;
-            let n = date_count(a(1), b.name())?;
+            let n = date_count(a(1), b.name(), budget)?;
             date_result(if b == B::AddMonths {
                 dates::add_months(d, n)
             } else {
@@ -569,17 +578,17 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
             Ok(Value::Prob(p))
         }
         B::IterItems => iter_items(v, budget),
-        B::RepeatCount => match v {
-            Value::Int(n) if *n >= 0 => Ok(Value::Int(n.clone())),
-            Value::Int(_) => Err(OpError::new("`repeat` needs a count of 0 or more")),
-            Value::Float(f) if f.fract() == 0.0 && *f >= 0.0 && *f < 9.2e18 => Ok(Value::Int((*f as i64).into())),
-            v if v.is_uncertain() => Err(OpError::new(format!("`repeat` needs a number, not a {}", v.kind()))
-                .help("draw a value first, like `let n ~ d6`, then `repeat n { … }`")),
-            other => Err(OpError::new(format!(
-                "`repeat` needs a whole number, found {}",
-                article(&other.kind())
-            ))),
-        },
+        B::RepeatCount => {
+            if v.is_uncertain() {
+                return Err(OpError::new(format!("`repeat` needs a number, not a {}", v.kind()))
+                    .help("draw a value first, like `let n ~ d6`, then `repeat n { … }`"));
+            }
+            let n = integer(v, "repeat count", budget)?;
+            if n.is_negative() {
+                return Err(OpError::new("`repeat` needs a count of 0 or more"));
+            }
+            Ok(Value::Int(n.into_owned()))
+        }
         B::Settled => match v {
             v if v.is_uncertain() => Err(
                 OpError::new(format!("`match` needs a settled value, not a {}", v.kind()))
@@ -606,14 +615,14 @@ fn probability_of(v: &Value) -> OpResult<Value> {
 
 /// The parameters of `binomial`, `poisson` or `geometric`, checked; `None`
 /// for another built-in, or when an argument is a distribution.
-pub fn counts(b: Builtin, args: &[Value]) -> OpResult<Option<Counts>> {
+pub fn counts(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Option<Counts>> {
     use Builtin as B;
     if args.iter().any(Value::is_uncertain) {
         return Ok(None);
     }
     Ok(Some(match b {
         B::Binomial => {
-            let n = whole(&args[0], "binomial's number of trials")?;
+            let n = whole(&args[0], "binomial's number of trials", budget)?;
             if n < 0 {
                 return Err(OpError::new("binomial needs a number of trials of 0 or more"));
             }
@@ -958,8 +967,8 @@ fn iter_items(v: &Value, budget: &mut Budget) -> OpResult<Value> {
     }
 }
 
-fn date_count(v: &Value, func: &str) -> OpResult<i64> {
-    integer(v, func)?
+fn date_count(v: &Value, func: &str, budget: &mut Budget) -> OpResult<i64> {
+    integer(v, func, budget)?
         .to_i64()
         .ok_or_else(|| OpError::new("date out of range"))
 }
@@ -1029,29 +1038,14 @@ fn finite_float(x: f64, func: &str) -> OpResult<Value> {
     }
 }
 
-fn whole(v: &Value, what: &str) -> OpResult<i64> {
-    match v {
-        Value::Int(i) => i
-            .to_i64()
-            .ok_or_else(|| OpError::new(format!("{what} is outside the supported count range"))),
-        Value::Float(f) if f.fract() == 0.0 && f.abs() < 9.2e18 => Ok(*f as i64),
-        other => Err(OpError::new(format!(
-            "{what} must be a whole number, not {}",
-            article(&other.kind())
-        ))),
-    }
+fn whole(v: &Value, what: &str, budget: &mut Budget) -> OpResult<i64> {
+    integer(v, what, budget)?
+        .to_i64()
+        .ok_or_else(|| OpError::new(format!("{what} is outside the supported count range")))
 }
 
-/// Integer mathematics must not round its inputs through floating point.
-fn integer<'a>(v: &'a Value, func: &str) -> OpResult<&'a Integer> {
-    match v {
-        Value::Int(n) => Ok(n),
-        other => Err(expected("an int", other, func)),
-    }
-}
-
-fn nonnegative_int<'a>(v: &'a Value, func: &str) -> OpResult<&'a Integer> {
-    let n = integer(v, func)?;
+fn nonnegative_int<'a>(v: &'a Value, func: &str, budget: &mut Budget) -> OpResult<Cow<'a, Integer>> {
+    let n = integer(v, func, budget)?;
     if n.is_negative() {
         Err(OpError::new(format!("`{func}` needs nonnegative integers")))
     } else {
@@ -1260,7 +1254,7 @@ fn round(v: &Value, digits: Option<&Value>, budget: &mut Budget) -> OpResult<Val
     let Some(digits) = digits else {
         return to_int(v, f64::round);
     };
-    let digits = integer(digits, "round's digits")?;
+    let digits = integer(digits, "round's digits", budget)?;
     if let Value::Int(n) = v {
         if *digits >= 0 {
             return Ok(v.clone());
@@ -1347,8 +1341,8 @@ fn min_max(args: &[Value], want_max: bool, budget: &mut Budget) -> OpResult<Valu
 }
 
 fn slice(v: &Value, start: &Value, end: Option<&Value>, budget: &mut Budget) -> OpResult<Value> {
-    let start = integer(start, "slice")?;
-    let end = end.map(|v| integer(v, "slice")).transpose()?;
+    let start = integer(start, "slice", budget)?;
+    let end = end.map(|v| integer(v, "slice", budget)).transpose()?;
     let length: Integer = match v {
         Value::List(xs) => xs.len().into(),
         Value::Str(s) => s.chars().count().into(),
@@ -1358,7 +1352,8 @@ fn slice(v: &Value, start: &Value, end: Option<&Value>, budget: &mut Budget) -> 
         }
         other => return Err(expected("a list, range or string", other, "slice")),
     };
-    let end = end.unwrap_or(&length);
+    let end = end.as_deref().unwrap_or(&length);
+    let start = start.as_ref();
     if start.is_negative() || start > end || end > &length {
         return Err(OpError::new("`slice` needs 0 <= start <= end <= length"));
     }
@@ -1411,20 +1406,17 @@ fn sum(v: &Value, budget: &mut Budget) -> OpResult<Value> {
     Ok(acc)
 }
 
-fn get(coll: &Value, key: &Value, default: Option<&Value>) -> OpResult<Value> {
+fn get(coll: &Value, key: &Value, default: Option<&Value>, budget: &mut Budget) -> OpResult<Value> {
     let found = match coll {
         Value::Map(m) => m
             .get(key)
             .or_else(|| m.iter().find(|(k, _)| equals(k, key)).map(|(_, v)| v))
             .cloned(),
-        Value::List(items) => match key {
-            Value::Int(i) => i
-                .to_u64()
-                .and_then(|n| usize::try_from(n).ok())
-                .and_then(|n| items.get(n))
-                .cloned(),
-            _ => None,
-        },
+        Value::List(items) => integer(key, "index", budget)?
+            .to_u64()
+            .and_then(|n| usize::try_from(n).ok())
+            .and_then(|n| items.get(n))
+            .cloned(),
         Value::Bag(b) => Some(Value::Int(b.get(key).copied().unwrap_or(0).into())),
         other => return Err(expected("a map or a list", other, "get")),
     };
@@ -1446,7 +1438,7 @@ fn extremes(v: &Value, n: Option<&Value>, highest: bool, budget: &mut Budget) ->
     match n {
         None => items.into_iter().next().ok_or_else(|| OpError::new("empty list")),
         Some(n) => {
-            let n = whole(n, "the count")?.max(0) as usize;
+            let n = whole(n, "the count", budget)?.max(0) as usize;
             items.truncate(n);
             Ok(Value::list(items))
         }
@@ -1458,7 +1450,7 @@ fn insert(coll: &Value, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<V
         Value::List(items) => {
             budget.collection(items.len() as u128 + 1)?;
             let mut items = items.to_vec();
-            let i = as_index(a, items.len() as u128 + 1)? as usize;
+            let i = as_index(a, items.len() as u128 + 1, budget)? as usize;
             items.insert(i, b.clone());
             Ok(Value::list(items))
         }
@@ -1472,11 +1464,11 @@ fn insert(coll: &Value, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<V
     }
 }
 
-fn remove(coll: &Value, key: &Value) -> OpResult<Value> {
+fn remove(coll: &Value, key: &Value, budget: &mut Budget) -> OpResult<Value> {
     match coll {
         Value::List(items) => {
             let mut items = items.to_vec();
-            let i = as_index(key, items.len() as u128)? as usize;
+            let i = as_index(key, items.len() as u128, budget)? as usize;
             items.remove(i);
             Ok(Value::list(items))
         }
@@ -1553,21 +1545,18 @@ fn one_of(v: &Value, budget: &mut Budget) -> OpResult<Value> {
     }
 }
 
-fn bag(v: &Value) -> OpResult<Value> {
+fn bag(v: &Value, budget: &mut Budget) -> OpResult<Value> {
     let mut counts = BTreeMap::new();
     match v {
         Value::Map(m) => {
             for (k, n) in m.iter() {
-                let n = match n {
-                    Value::Int(n) if *n >= 0 => n
-                        .to_u64()
-                        .ok_or_else(|| OpError::new("bag count exceeds the supported count range"))?,
-                    other => {
-                        return Err(OpError::new(format!(
-                            "bag counts must be whole numbers of 0 or more, found {other:?}"
-                        )));
-                    }
-                };
+                let n = integer(n, "bag count", budget)?;
+                if n.is_negative() {
+                    return Err(OpError::new("bag counts must be whole numbers of 0 or more"));
+                }
+                let n = n
+                    .to_u64()
+                    .ok_or_else(|| OpError::new("bag count exceeds the supported count range"))?;
                 if n > 0 {
                     counts.insert(k.clone(), n);
                 }

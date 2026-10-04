@@ -5,7 +5,31 @@ use crate::error::{OpError, OpResult};
 use crate::value::{EnumValue, Record, Value};
 use probl_number::Integer;
 use probl_syntax::ast::{BinOp, UnOp};
+use std::borrow::Cow;
 use std::sync::Arc;
+
+/// Checked integer context: preserve ints, convert exactly integral finite
+/// floats, and never round or admit other numeric types implicitly.
+pub fn integer<'a>(v: &'a Value, context: &str, budget: &mut Budget) -> OpResult<Cow<'a, Integer>> {
+    match v {
+        Value::Int(n) => Ok(Cow::Borrowed(n)),
+        Value::Float(f) if f.is_finite() && f.fract() == 0.0 => {
+            let n = Integer::from_f64(*f).expect("finite integral float fits the integer hard limit");
+            budget.integer_allocation(n.bits(), 1)?;
+            budget.work(n.bits().div_ceil(64).max(1))?;
+            Ok(Cow::Owned(n))
+        }
+        _ => {
+            let found = match v {
+                Value::Float(f) => format!("the float {f:?}"),
+                _ => article(&v.kind()),
+            };
+            Err(OpError::new(format!(
+                "`{context}` needs an int (or an exactly integral finite float), found {found}"
+            )))
+        }
+    }
+}
 
 /// The outcomes of a value: those of a distribution, or the value itself.
 pub fn outcomes(v: &Value) -> std::borrow::Cow<'_, [(Value, f64)]> {
@@ -477,7 +501,9 @@ fn add(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
             items.extend(y.iter().cloned());
             Ok(Value::list(items))
         }
-        (Value::Date(d), Value::Int(n)) | (Value::Int(n), Value::Date(d)) => {
+        (Value::Date(d), n @ (Value::Int(_) | Value::Float(_)))
+        | (n @ (Value::Int(_) | Value::Float(_)), Value::Date(d)) => {
+            let n = integer(n, "date offset", budget)?;
             date_plus(*d, n.to_i64().ok_or_else(|| OpError::new("date out of range"))?)
         }
         (Value::Str(_), _) | (_, Value::Str(_)) => {
@@ -493,10 +519,12 @@ fn add(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
 fn sub(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
     match (a, b) {
         (Value::Date(x), Value::Date(y)) => Ok(Value::Int((*x as i64 - *y as i64).into())),
-        (Value::Date(d), Value::Int(n)) => match n.negated().to_i64() {
-            Some(m) => date_plus(*d, m),
-            None => Err(OpError::new("date out of range")),
-        },
+        (Value::Date(d), n @ (Value::Int(_) | Value::Float(_))) => {
+            match integer(n, "date offset", budget)?.negated().to_i64() {
+                Some(m) => date_plus(*d, m),
+                None => Err(OpError::new("date out of range")),
+            }
+        }
         _ => arith(BinOp::Sub, a, b, budget),
     }
 }
@@ -816,29 +844,22 @@ pub fn contains(coll: &Value, item: &Value, budget: &mut Budget) -> OpResult<boo
 }
 
 fn range(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
-    match (a, b) {
-        (Value::Int(lo), Value::Int(hi)) => {
-            let hi = if op == BinOp::RangeExcl {
-                hi.sub(&Integer::ONE)?
-            } else {
-                hi.clone()
-            };
-            budget.integer_work(lo, &hi, false)?;
-            if op == BinOp::RangeExcl {
-                budget.integer_allocation(hi.bits(), 1)?;
-            }
-            Ok(Value::Range(lo.clone(), hi))
-        }
-        _ if a.is_uncertain() || b.is_uncertain() => {
-            Err(OpError::new("a range needs plain whole numbers, not distributions")
-                .help("draw a value first, like `let n ~ d6`"))
-        }
-        _ => Err(OpError::new(format!(
-            "a range needs whole numbers, found {} and {}",
-            article(&a.kind()),
-            article(&b.kind())
-        ))),
+    if a.is_uncertain() || b.is_uncertain() {
+        return Err(OpError::new("a range needs plain whole numbers, not distributions")
+            .help("draw a value first, like `let n ~ d6`"));
     }
+    let lo = integer(a, "range bound", budget)?;
+    let hi = integer(b, "range bound", budget)?;
+    let hi = if op == BinOp::RangeExcl {
+        hi.sub(&Integer::ONE)?
+    } else {
+        hi.into_owned()
+    };
+    budget.integer_work(&lo, &hi, false)?;
+    if op == BinOp::RangeExcl {
+        budget.integer_allocation(hi.bits(), 1)?;
+    }
+    Ok(Value::Range(lo.into_owned(), hi))
 }
 
 /// The number of integers in `lo..=hi`, without overflowing.
@@ -887,17 +908,14 @@ pub fn index(coll: &Value, i: &Value, budget: &mut Budget) -> OpResult<Value> {
 pub fn index_plain(coll: &Value, i: &Value, budget: &mut Budget) -> OpResult<Value> {
     match coll {
         Value::List(items) => {
-            let k = as_index(i, items.len() as u128)?;
+            let k = as_index(i, items.len() as u128, budget)?;
             Ok(items[k as usize].clone())
         }
         Value::Range(lo, hi) => {
-            let k = match i {
-                Value::Int(n) if !n.is_negative() => n.clone(),
-                Value::Float(f) if *f >= 0.0 && f.fract() == 0.0 => {
-                    Integer::from_f64(*f).ok_or_else(|| OpError::new("index out of range"))?
-                }
-                _ => return Err(OpError::new("an index must be a nonnegative integer")),
-            };
+            let k = integer(i, "index", budget)?;
+            if k.is_negative() {
+                return Err(OpError::new("index out of range"));
+            }
             let n = lo.add(&k)?;
             if &n > hi {
                 return Err(OpError::new("index out of range"));
@@ -906,7 +924,7 @@ pub fn index_plain(coll: &Value, i: &Value, budget: &mut Budget) -> OpResult<Val
         }
         Value::Str(s) => {
             budget.string_work(s)?;
-            let k = as_index(i, s.chars().count() as u128)?;
+            let k = as_index(i, s.chars().count() as u128, budget)?;
             let c = s.chars().nth(k as usize).expect("checked scalar index");
             crate::text::value(c.encode_utf8(&mut [0; 4]), budget)
         }
@@ -922,17 +940,8 @@ pub fn index_plain(coll: &Value, i: &Value, budget: &mut Budget) -> OpResult<Val
     }
 }
 
-pub fn as_index(i: &Value, len: u128) -> OpResult<u128> {
-    let k = match i {
-        Value::Int(k) => k.to_u128(),
-        Value::Float(f) if f.is_finite() && f.fract() == 0.0 => Integer::from_f64(*f).and_then(|n| n.to_u128()),
-        other => {
-            return Err(OpError::new(format!(
-                "an index must be a whole number, not {}",
-                article(&other.kind())
-            )));
-        }
-    };
+pub fn as_index(i: &Value, len: u128, budget: &mut Budget) -> OpResult<u128> {
+    let k = integer(i, "index", budget)?.to_u128();
     k.filter(|k| *k < len).ok_or_else(|| {
         OpError::new(format!("index {i} is out of range for a length of {len}")).help("indices start at 0")
     })

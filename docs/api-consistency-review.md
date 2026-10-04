@@ -2,7 +2,7 @@
 
 Reviewed 4 October 2026, against `064595e` (`feat: median_low and median_high`).
 
-Follow-up: the manual checks are now represented in [Rust regression tests](../crates/probl-engine/tests/api_consistency.rs), with known failures compiled but marked `#[ignore = "FIXME(API-XX): …"]`. See [test coverage and quality](testing.md) for commands, the finding-to-test map, and the coverage assessment. The numbered findings remain unfixed.
+Follow-up: the manual checks are now represented in [Rust regression tests](../crates/probl-engine/tests/api_consistency.rs), with known failures compiled but marked `#[ignore = "FIXME(API-XX): …"]`. See [test coverage and quality](testing.md) for commands, the finding-to-test map, and the coverage assessment. Findings 3 and 9 are now fixed; the other numbered findings remain open.
 
 The recent statistics changes establish useful rules, but several neighboring APIs still disagree about ordering, identity, and probability mass. Some disagreements silently change answers or discard data. I would address these contracts before adding more built-ins.
 
@@ -60,6 +60,8 @@ Finite `cdf` and `pmf` return the known, unnormalized mass. The continuous-mixtu
 Sources: [finite queries](../crates/probl-engine/src/builtins.rs#L551), [continuous queries](../crates/probl-engine/src/builtins.rs#L662), [mixture CDF](../crates/probl-engine/src/continuous.rs#L871).
 
 ### 3. High: implicit map-key conversion can silently discard entries
+
+**Fixed:** typed map conversion now rejects key collisions, including annotated map literals. This also protects the new float-to-int conversion. The audit regression is enabled. The reproduction below describes the earlier behavior.
 
 ```probl
 let original = [1: "int", 1.0: "float"]
@@ -200,6 +202,8 @@ report max(support(d))    # 1000000
 Sources: [quantile validation](../crates/probl-engine/src/builtins.rs#L802), [finite quantile selection](../crates/probl-engine/src/dist.rs#L411).
 
 ### 9. Medium: `get` can silently mistake a valid index for a missing item
+
+**Fixed:** integer contexts now accept exactly integral finite floats with no rounding. Indexing, list `get`, mutations, and slices share validation; `get` defaults apply only to out-of-range integer positions. The audit regressions are enabled, with broader coverage in [integer_conversion.rs](../crates/probl-engine/tests/integer_conversion.rs). The reproduction below describes the earlier behavior.
 
 ```probl
 let xs = [10, 20]

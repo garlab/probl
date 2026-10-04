@@ -28,3 +28,25 @@ report bit_not(one_of([-1, 0]))
 report bit_count(one_of([-3, 4]))
 let bits ~ one_of([2^100, -2^100 - 1])
 report bit_xor(bits, bits) == 0 and bit_not(bits) == -bits - 1
+
+# Integer contexts convert only exactly integral finite floats.
+let whole = 2.0
+let converted: int = whole
+fn integer_arg(n: int) -> int { n }
+report [typeof whole, typeof converted, typeof integer_arg(whole)]
+report [converted, factorial(5.0), choose(5.0,2.0), bit_length(2.0^100)]
+let seq = [10,20,30]
+report [seq[1.0], seq.get(1.0,-1), seq.get(-1.0,-1), seq.get(1e100,-1)]
+report slice(seq,1.0,3.0)
+report slice("a🙂b",1.0,2.0)
+var changed: list[int] = [1.0,2.0]
+changed[0.0] = 3.0
+changed.insert(2.0,4.0)
+report changed
+report date(2026.0,10.0,4.0).add_months(1.0)
+report mean(binomial(2.0,50%))
+report len(roll(2.0,1.0))
+let large_converted:int = 2.0^100
+report large_converted
+let combined:bag[int] = bag([1,1.0])
+report [len(combined), combined.get(1)]

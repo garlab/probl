@@ -449,7 +449,7 @@ impl<'p> Engine<'p> {
         for a in args {
             values.push(self.eval(f, a, w)?);
         }
-        let counts = builtins::counts(*b, &values).map_err(|err| err.at(e.span))?;
+        let counts = builtins::counts(*b, &values, &mut self.budget).map_err(|err| err.at(e.span))?;
         Ok(counts.filter(Counts::direct))
     }
 
@@ -537,7 +537,9 @@ impl<'p> Engine<'p> {
             Likelihood::Binomial { value, trials } => {
                 let v = self.eval(f, value, w)?;
                 let n = self.eval(f, trials, w)?;
-                match builtins::counts(Builtin::Binomial, &[n, Value::Prob(0.5)]).map_err(|e| e.at(from))? {
+                match builtins::counts(Builtin::Binomial, &[n, Value::Prob(0.5)], &mut self.budget)
+                    .map_err(|e| e.at(from))?
+                {
                     Some(Counts::Binomial { n, .. }) => Some(Seen::Binomial {
                         trials: n,
                         k: count(&v),
@@ -1424,6 +1426,14 @@ impl<'p> Engine<'p> {
             (Value::Analytic(_) | Value::Event(_), TypeSpec::Prob) => {
                 return Err(analytic::unsupported("converting this outcome to prob").at(span));
             }
+            (v @ Value::Float(_), TypeSpec::Int) => Value::Int(
+                ops::integer(&v, "int conversion", &mut self.budget)
+                    .map_err(|e| e.at(span))?
+                    .into_owned(),
+            ),
+            (Value::Analytic(_), TypeSpec::Int) => {
+                return Err(analytic::unsupported("converting this outcome to int").at(span));
+            }
             (Value::Prob(p), TypeSpec::Float) => Value::Float(p),
             (v @ (Value::Int(_) | Value::Float(_)), TypeSpec::Prob) => ops::make_prob(&v).map_err(|e| e.at(span))?,
             (Value::List(xs), TypeSpec::List(t)) => {
@@ -1437,10 +1447,11 @@ impl<'p> Engine<'p> {
             (Value::Map(xs), TypeSpec::Map(kt, vt)) => {
                 let mut out = BTreeMap::new();
                 for (k, v) in xs.iter() {
-                    out.insert(
-                        self.coerce_at(k.clone(), kt, span, depth + 1)?,
-                        self.coerce_at(v.clone(), vt, span, depth + 1)?,
-                    );
+                    let key = self.coerce_at(k.clone(), kt, span, depth + 1)?;
+                    let value = self.coerce_at(v.clone(), vt, span, depth + 1)?;
+                    if out.insert(key, value).is_some() {
+                        return Err(RuntimeError::new(span, "map key collision during type conversion"));
+                    }
                 }
                 Value::map(out)
             }
@@ -1973,7 +1984,7 @@ impl<'p> Engine<'p> {
         if matches!(target, Value::Dead) {
             return Err(self.no_value(f, place.slot, span));
         }
-        update(target, &keys, v).map_err(|e| e.at(span))
+        update(target, &keys, v, &mut self.budget).map_err(|e| e.at(span))
     }
 
     fn read_place(&mut self, f: FnId, place: &Place, w: &World, span: Span) -> Result<Value> {
@@ -2379,23 +2390,23 @@ impl<'p> Engine<'p> {
     }
 
     fn roll(&mut self, values: &[Value]) -> OpResult<Value> {
-        let count = match &values[0] {
-            Value::Int(n) if *n >= 0 && *n <= 1000 => n.to_u64().unwrap() as u32,
-            Value::Int(_) => return Err(OpError::new("roll needs between 0 and 1000 dice")),
-            v if v.is_uncertain() => {
-                return Err(OpError::new("the number of dice to roll must be a plain number")
-                    .help("draw it first, like `let n ~ d4`"));
-            }
-            v => {
-                return Err(OpError::new(format!(
-                    "roll needs a number of dice, found {}",
-                    ops::article(&v.kind())
-                )));
-            }
-        };
+        if values[0].is_uncertain() {
+            return Err(OpError::new("the number of dice to roll must be a plain number")
+                .help("draw it first, like `let n ~ d4`"));
+        }
+        let count = ops::integer(&values[0], "roll count", &mut self.budget)?;
+        let count = count
+            .to_u64()
+            .filter(|n| *n <= 1000)
+            .ok_or_else(|| OpError::new("roll needs between 0 and 1000 dice"))? as u32;
         let die = match &values[1] {
-            Value::Int(sides) if *sides >= 1 && *sides <= u32::MAX as i64 => {
-                Dist::dice(1, sides.to_u64().unwrap() as u32, &mut self.budget)?
+            v @ (Value::Int(_) | Value::Float(_)) => {
+                let sides = ops::integer(v, "roll sides", &mut self.budget)?;
+                let sides = sides
+                    .to_u64()
+                    .filter(|n| *n >= 1 && *n <= u32::MAX as u64)
+                    .ok_or_else(|| OpError::new("roll needs between 1 and 4294967295 sides"))?;
+                Dist::dice(1, sides as u32, &mut self.budget)?
             }
             Value::Dist(d) => (**d).clone(),
             v => {
@@ -2494,7 +2505,7 @@ enum PathKey<'a> {
     Index(Value),
 }
 
-fn update(target: &mut Value, keys: &[PathKey], v: Value) -> OpResult<()> {
+fn update(target: &mut Value, keys: &[PathKey], v: Value, budget: &mut Budget) -> OpResult<()> {
     let Some((first, rest)) = keys.split_first() else {
         *target = v;
         return Ok(());
@@ -2505,12 +2516,12 @@ fn update(target: &mut Value, keys: &[PathKey], v: Value) -> OpResult<()> {
             let slot = r
                 .get_mut(name)
                 .ok_or_else(|| OpError::new(format!("this record has no field `{name}`")))?;
-            update(slot, rest, v)
+            update(slot, rest, v, budget)
         }
         (PathKey::Index(i), Value::List(items)) => {
             let items = Arc::make_mut(items);
-            let k = ops::as_index(i, items.len() as u128)? as usize;
-            update(&mut items[k], rest, v)
+            let k = ops::as_index(i, items.len() as u128, budget)? as usize;
+            update(&mut items[k], rest, v, budget)
         }
         (PathKey::Index(k), Value::Map(m)) => {
             let m = Arc::make_mut(m);
@@ -2521,7 +2532,7 @@ fn update(target: &mut Value, keys: &[PathKey], v: Value) -> OpResult<()> {
             let slot = m
                 .get_mut(k)
                 .ok_or_else(|| OpError::new(format!("the key {k:?} isn't in the map")))?;
-            update(slot, rest, v)
+            update(slot, rest, v, budget)
         }
         (PathKey::Field(name), other) => Err(OpError::new(format!(
             "can't set the field `{name}` of {}",

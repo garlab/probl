@@ -77,7 +77,7 @@ d6   2d6   d20   3d8                  # dice: these are distributions
 
 Strings are immutable Unicode text, stored as UTF-8. Length, indexing, iteration and slicing count Unicode scalar values, with each element represented by a one-scalar string. For example, `len("🙂")` is 1 and `"a🙂b"[1]` is `"🙂"`. A displayed character can contain several scalars: `len("é")` is 2 (an `e` followed by a combining accent), and `len("🇫🇷")` is 2. Slices and reversal can separate these components. Text equality is exact, without automatic Unicode normalization; precomposed `"é"` and decomposed `"é"` are different strings.
 
-Use `slice(xs, start, end)` for a string, list or range. Start is inclusive, end exclusive, and omitting end selects the rest. Both bounds must be ints with `0 <= start <= end <= len(xs)`; invalid bounds are errors. Equal bounds give an empty result. Slicing preserves the sequence type, including compact ranges.
+Use `slice(xs, start, end)` for a string, list or range. Start is inclusive, end exclusive, and omitting end selects the rest. Both bounds use checked integer conversion (`1.0` is accepted, `1.4` is rejected), with `0 <= start <= end <= len(xs)`; invalid bounds are errors. Equal bounds give an empty result. Slicing preserves the sequence type, including compact ranges.
 
 ```probl
 report "a🙂bc".slice(1, 3)           # "🙂b"
@@ -135,11 +135,13 @@ report anchor.year()           # 2027; also month() and day()
 report anchor                  # still 2027-01-31
 ```
 
-`add_months` and `add_years` clamp to the last valid day of the target month. Consequently, adding one month twice may differ from adding two months once. For recurring schedules, compute each date from the original anchor, as in the [invoice example](../examples/12_invoice_calendar.probl). These functions, component extraction and workday helpers also lift over finite distributions. Month/year/workday counts and constructor components must be ints. All transformations return new dates and reject results outside the supported range.
+`add_months` and `add_years` clamp to the last valid day of the target month. Consequently, adding one month twice may differ from adding two months once. For recurring schedules, compute each date from the original anchor, as in the [invoice example](../examples/12_invoice_calendar.probl). These functions, component extraction and workday helpers also lift over finite distributions. Month/year/workday counts and constructor components use checked integer conversion: `1.0` is accepted, `1.4` is rejected. All transformations return new dates and reject results outside the supported range.
 
 ### Math
 
 Integers grow automatically: `factorial(30)` and `choose(100, 50)` return exact integers, and `10^100 + 1 - 10^100` is 1. There is no separate bigint syntax or type. Integer arithmetic and comparisons preserve all digits, including when comparing an integer with a float. `/`, negative powers, real math functions and mixed float/complex arithmetic produce approximations. `(10^400) / (10^400)` is 1.0, but passing `10^400` directly to `sin` is an error because it cannot be converted to a finite float. Resource limits bound integer size and computation; see [integer semantics](semantics.md#1-values-and-types).
+
+Integer contexts accept exactly integral finite floats without rounding. This applies equally to `let n: int = 1.0`, `factorial(5.0)`, and `[10, 20].get(1.0, -1)`. Fractional inputs are errors; use `floor`, `ceil`, `trunc`, or `round` when rounding is intended. An unannotated `let x = 1.0` remains a float. Conversion preserves the stored float's value, including any rounding that happened before conversion.
 
 Math functions use radians: `sin(pi / 2)` is 1 and `atan2(1, -1)` is `3 * pi / 4`. The constants `pi`, `e` and `euler_gamma` are floats; they can be hidden by your own names. `euler_gamma` is the Euler–Mascheroni constant, distinct from Euler's number `e` and the `gamma(shape, scale)` distribution. Results are floating-point approximations, so test identities with a tolerance rather than exact equality.
 

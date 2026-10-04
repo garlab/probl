@@ -453,8 +453,8 @@ fn declared_types_are_checked() {
         1.0,
     );
     assert!(error("fn f(x: int) { x }\nreport f(\"a\") == 1").contains("`x` should be an int, but it's a str"));
-    assert!(error("fn f(x) -> int { x / 2 }\nreport f(3) == 1").contains("the result should be an int"));
-    assert!(error("var n: int = 1\nn = n / 2").contains("`n` should be an int, but it's a float"));
+    assert!(error("fn f(x) -> int { x / 2 }\nreport f(3) == 1").contains("exactly integral finite float"));
+    assert!(error("var n: int = 1\nn = n / 2").contains("exactly integral finite float"));
     assert!(error("let d: dist[int] = one_of([\"a\"])").contains("should be a dist[int]"));
     assert!(compile_error("let p: prob = \"x\"").contains("expected a probability, found a string"));
     assert!(compile_error("let p: probability = 1").contains("unknown type `probability`"));

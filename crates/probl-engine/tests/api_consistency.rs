@@ -187,7 +187,6 @@ both_modes! {
     }
 
     #[test]
-    #[ignore = "FIXME(API-03): map key conversion silently overwrites a colliding entry"]
     fn map_key_conversion_rejects_collisions() {
         for source in [
             "let original=[1: \"int\", 1.0: \"float\"]; let typed: map[prob,str]=original; report typed",
@@ -482,24 +481,16 @@ both_modes! {
     }
 
     #[test]
-    #[ignore = "FIXME(API-09): get accepts an integral float as missing while indexing succeeds"]
     fn get_and_index_use_the_same_index_admissibility() {
-        // Permit either the strict-int policy or the current index policy, but
-        // not a successful index followed by a spurious default from get.
-        let index = run(MODE, "let xs=[10,20]; report xs[1.0]");
-        let get = run(MODE, "let xs=[10,20]; report xs.get(1.0,-1)");
-        match (index, get) {
-            (Ok(a), Ok(b)) => assert_eq!(report_values(&a), report_values(&b)),
-            (Err(a), Err(b)) => {
-                assert_eq!(a.kind, ErrorKind::Language);
-                assert_eq!(b.kind, ErrorKind::Language);
-            }
-            (a, b) => panic!("index contracts differ: {a:?} versus {b:?}"),
+        for expr in ["xs[1.0]", "xs.get(1.0,-1)"] {
+            assert_eq!(
+                scalar(MODE, &format!("let xs=[10,20]; report {expr}")),
+                Value::Int(20.into())
+            );
         }
     }
 
     #[test]
-    #[ignore = "FIXME(API-09): get defaults conceal invalid index types"]
     fn get_does_not_hide_a_nonnumeric_index_behind_a_default() {
         language_error(MODE, "report get([10,20],\"wrong\",-1)", "index");
     }
@@ -616,11 +607,14 @@ both_modes! {
     }
 
     #[test]
-    fn current_sequence_capabilities_and_strict_slice_indices_are_explicit() {
+    fn sequence_capabilities_and_checked_slice_indices_are_explicit() {
         for query in ["mean(1..3)", "median(1..3)"] {
             language_error(MODE, &format!("report {query}"), "nonempty list");
         }
-        language_error(MODE, "report slice([10,20],1.0)", "int");
+        assert_eq!(
+            scalar(MODE, "report slice([10,20],1.0)"),
+            Value::list(vec![Value::Int(20.into())])
+        );
         language_error(MODE, "report \"abc\".get(1,\"?\")", "map or a list");
         for query in ["sort([true,false])", "min([true,false])"] {
             language_error(MODE, &format!("report {query}"), "compare");

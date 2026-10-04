@@ -427,7 +427,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         B::Slice => doc(
             "slice(xs, start: int, end: int?)",
-            "A sequence from start (inclusive) to end (exclusive, defaults to length). Requires 0 <= start <= end <= length. Strings count Unicode scalar values and return strings; lists return lists; ranges stay compact ranges. Equal bounds give an empty result. Does not mutate xs.",
+            "A sequence from start (inclusive) to end (exclusive, defaults to length). Bounds accept ints or exactly integral finite floats, without rounding, and require 0 <= start <= end <= length. Strings count Unicode scalar values and return strings; lists return lists; ranges stay compact ranges. Equal bounds give an empty result. Does not mutate xs.",
         ),
         B::Sum => doc("sum(xs: list)", "The items added up; 0 for an empty list."),
         B::Count => doc(
@@ -462,7 +462,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Values => doc("values(m: map) -> list", "A map's values, in the order of their keys."),
         B::Get => doc(
             "get(m, key) or get(m, key, default)",
-            "A map's value for `key`, a list's item at index `key` (from 0), or how many times `key` is in a bag. Without `default`, a missing key is an error.",
+            "A map's value for `key`, a list's item at index `key` (from 0), or how many times `key` is in a bag. List indices accept ints or exactly integral finite floats, without rounding. For maps/lists, default handles a missing key or out-of-range position; without it, absence is an error. An invalid list index type is always an error. Bags return zero for absent items.",
         ),
         B::Contains => doc(
             "contains(xs, x) -> bool",

@@ -59,7 +59,7 @@ fn bit_length_and_integer_log_are_exact() {
 #[test]
 fn bit_queries_check_domains_and_take_constant_work() {
     for name in ["bit_length", "ilog2"] {
-        for input in ["1.0", "true", "50%", "complex(1)", "\"7\"", "[]"] {
+        for input in ["1.4", "true", "50%", "complex(1)", "\"7\"", "[]"] {
             assert!(error(&format!("report {name}({input})")).contains("needs an int"));
         }
         for args in ["", "1, 2"] {
@@ -151,7 +151,7 @@ fn bit_operations_require_integer_arguments_and_correct_arity() {
         ("bit_not", 1),
         ("bit_count", 1),
     ] {
-        for input in ["1.0", "true", "50%", "complex(1)", "\"7\"", "[]"] {
+        for input in ["1.4", "true", "50%", "complex(1)", "\"7\"", "[]"] {
             let args = if arity == 1 {
                 input.to_owned()
             } else {

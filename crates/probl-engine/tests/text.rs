@@ -110,7 +110,7 @@ fn slices_preserve_types_and_use_strict_exclusive_bounds() {
         for bounds in ["-1", "0, -1", "2, 1", "0, 4", "4", "10^100", "0, 10^100"] {
             assert!(error(&format!("report slice({xs}, {bounds})")).contains("0 <= start"));
         }
-        for bounds in ["0.0", "0, 2.0", "true", "0, 50%", "complex(0)"] {
+        for bounds in ["0.4", "0, 2.4", "true", "0, 50%", "complex(0)"] {
             assert!(error(&format!("report slice({xs}, {bounds})")).contains("needs an int"));
         }
     }
