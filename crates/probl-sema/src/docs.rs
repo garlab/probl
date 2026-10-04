@@ -179,11 +179,11 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         // Math
         B::Min => doc(
             "min(a, b, …) or min(xs)",
-            "The smallest of two or more values, or the elements of one nonempty list, range or string. Validates ordering even for singleton inputs. A lone scalar or die is an error; use min(support(d)) for a finite distribution's minimum.",
+            "The smallest of two or more values, or the elements of one nonempty list, range or string. Finite distribution candidates lift in either form: min([d6,3]) agrees with min(d6,3), without drawing. Validates ordering even for singleton inputs. A lone scalar or die is an error; use min(support(d)) for a finite distribution's minimum.",
         ),
         B::Max => doc(
             "max(a, b, …) or max(xs)",
-            "The largest of two or more values, or the elements of one nonempty list, range or string. Validates ordering even for singleton inputs. A lone scalar or die is an error; use max(support(d)) for a finite distribution's maximum.",
+            "The largest of two or more values, or the elements of one nonempty list, range or string. Finite distribution candidates lift in either form: max([d6,3]) agrees with max(d6,3), without drawing. Validates ordering even for singleton inputs. A lone scalar or die is an error; use max(support(d)) for a finite distribution's maximum.",
         ),
         B::Abs => doc(
             "abs(x)",

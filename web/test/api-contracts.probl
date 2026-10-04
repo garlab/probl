@@ -34,3 +34,12 @@ report "é🦀a".get(3, "?")
 report (2^100..2^100+2).get(1)
 report min("cba")
 report max("cba")
+
+# List candidates lift just like positional min/max arguments.
+report min([d6, 3])
+report max([d6, 3])
+report min([3d6+3, 2d8+1])
+report max([3d6+3, 2d8+1])
+report max([1, 23, 4])
+report pmf(max([d2, d2]), 1)
+report support(max([d6]))

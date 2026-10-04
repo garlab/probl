@@ -1427,18 +1427,25 @@ fn min_max(args: &[Value], want_max: bool, budget: &mut Budget) -> OpResult<Valu
     };
     let mut best: Option<Value> = None;
     for v in values {
-        budget.work(1)?;
-        ops::compare(&v, &v)?;
+        // A sequence supplies the candidates just like positional arguments.
+        // Validate even a singleton recipe by its outcomes, then lift each
+        // comparison. Reducing incrementally avoids a Cartesian product of
+        // every candidate and preserves missing mass without drawing.
+        let v = ops::lift1(&v, budget, |v, budget| {
+            budget.work(1)?;
+            ops::compare(v, v)?;
+            Ok(v.clone())
+        })?;
         best = Some(match best {
             None => v,
-            Some(b) => {
-                let ord = ops::compare(&v, &b)?;
+            Some(b) => ops::lift2(&b, &v, budget, |b, v, _| {
+                let ord = ops::compare(v, b)?;
                 if (want_max && ord.is_gt()) || (!want_max && ord.is_lt()) {
-                    v
+                    Ok(v.clone())
                 } else {
-                    b
+                    Ok(b.clone())
                 }
-            }
+            })?,
         });
     }
     best.ok_or_else(|| OpError::new(format!("`{name}` of an empty list")))

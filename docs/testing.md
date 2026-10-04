@@ -54,6 +54,8 @@ Validation after comparator sorting and the API-01/API-08 fixes: `cargo test --a
 
 Validation after fixing the remaining findings and settling the design choices: `cargo test --all` passed with **595 passing tests and zero ignored tests**. All 32 formerly ignored audit cases were enabled; 26 new tests were added. Clippy with warnings denied, formatting, native/WASM builds and native/WASM parity all passed. No golden outputs needed updating.
 
+[min_max.rs](../crates/probl-engine/tests/min_max.rs) adds seven tests for list/positional recipe equivalence, singleton and tie types, independent recipes versus correlated draws, nested values, invalid inputs, unresolved bounds and incremental reduction under work limits. Following this fix, **602 tests pass with zero ignored tests**; Clippy, formatting and native/WASM parity pass too.
+
 The existing shared `close` helper uses absolute error below `1e-9`. That is suitable for some moderate-size values, but would accept zero for a `1e-13` tail and would miss a small violation of `[0,1]`. Choose assertions according to the property rather than applying one tolerance everywhere.
 
 ## What is already covered
