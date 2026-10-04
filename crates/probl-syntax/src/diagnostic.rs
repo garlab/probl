@@ -99,13 +99,8 @@ impl Diagnostic {
     }
 }
 
-/// Render several diagnostics, one after the other.
 pub fn render_all(diagnostics: &[Diagnostic], file: &SourceFile, color: bool) -> String {
-    diagnostics
-        .iter()
-        .map(|d| d.render(file, color))
-        .collect::<Vec<_>>()
-        .join("")
+    diagnostics.iter().map(|d| d.render(file, color)).collect()
 }
 
 fn clamp(span: Span, len: usize) -> std::ops::Range<usize> {

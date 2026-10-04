@@ -83,8 +83,10 @@ pub fn analyze(program: &mut Program, src: &str) -> Vec<Diagnostic> {
     checker.errors.into_values().collect()
 }
 
-/// Whether running `s` may print: itself, or through what it calls. Needs
-/// the functions' effects, which `analyze` fills in.
+/// Whether calling a function value may print: a lambda prints, or `print`
+/// or a function that prints is used as a value. Which function a call of a
+/// value runs isn't known statically, so any of them could. Needs the
+/// functions' effects, which `analyze` fills in.
 pub(crate) fn indirect_prints(functions: &[Function]) -> bool {
     functions.iter().any(|f| {
         let mut refs = Direct::default();
@@ -95,6 +97,8 @@ pub(crate) fn indirect_prints(functions: &[Function]) -> bool {
     })
 }
 
+/// Whether running `s` may print: itself, or through what it calls, where
+/// `callable_prints` is [`indirect_prints`].
 pub(crate) fn may_print(s: &Stmt, functions: &[Function], callable_prints: bool) -> bool {
     let mut d = Direct::default();
     d.stmt(s);

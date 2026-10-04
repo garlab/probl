@@ -40,11 +40,11 @@ pub enum IntError {
 
 impl fmt::Display for IntError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Invalid => "invalid integer",
-            Self::TooLarge => "integer size exceeds the limit of 65536 bits",
-            Self::DivisionByZero => "division by zero",
-        })
+        match self {
+            Self::Invalid => f.write_str("invalid integer"),
+            Self::TooLarge => write!(f, "integer size exceeds the limit of {MAX_INTEGER_BITS} bits"),
+            Self::DivisionByZero => f.write_str("division by zero"),
+        }
     }
 }
 
@@ -339,10 +339,10 @@ impl FromStr for Integer {
         if digits.is_empty() || !digits.bytes().all(|c| c.is_ascii_digit()) {
             return Err(IntError::Invalid);
         }
-        if digits.trim_start_matches('0').len() > MAX_INTEGER_DIGITS {
+        let digits = digits.trim_start_matches('0');
+        if digits.len() > MAX_INTEGER_DIGITS {
             return Err(IntError::TooLarge);
         }
-        let digits = digits.trim_start_matches('0');
         if digits.is_empty() {
             return Ok(Self::ZERO);
         }

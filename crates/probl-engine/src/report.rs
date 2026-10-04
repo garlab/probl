@@ -3,7 +3,7 @@
 
 use crate::value::{Value, fmt_float};
 use crate::weight::Weight;
-use probl_sema::ir::{Program, ReportKind};
+use probl_sema::ir::{ReportKind, ReportSite};
 use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -555,8 +555,8 @@ pub struct Format {
     pub weighted: bool,
 }
 
-/// Print every report in source order.
-pub fn render(program: &Program, sinks: &[Sink], format: Format) -> String {
+/// Render reports, each with what its sink collected, in source order.
+pub fn render(sites: &[ReportSite], sinks: &[Sink], format: Format) -> String {
     let mut out = String::new();
     let mut simple: Vec<(String, String)> = Vec::new();
     let flush = |simple: &mut Vec<(String, String)>, out: &mut String| {
@@ -566,7 +566,7 @@ pub fn render(program: &Program, sinks: &[Sink], format: Format) -> String {
             writeln!(out, "{label}{}    {text}", " ".repeat(pad)).unwrap();
         }
     };
-    for (site, sink) in program.reports.iter().zip(sinks) {
+    for (site, sink) in sites.iter().zip(sinks) {
         let mut label = site.label.clone();
         if site.kind == ReportKind::PerVisit {
             label.push_str(" (per visit)");

@@ -47,6 +47,15 @@ impl OpError {
         }
     }
 
+    /// A bug in Probl: all the user can do is report it.
+    pub fn internal(message: impl Into<String>) -> OpError {
+        OpError {
+            kind: ErrorKind::Internal,
+            ..OpError::new(message)
+        }
+        .help("this is a bug in Probl; please report it with the program that caused it")
+    }
+
     pub fn help(mut self, help: impl Into<String>) -> OpError {
         self.help = Some(help.into());
         self
@@ -100,10 +109,6 @@ impl RuntimeError {
     pub fn with_help(mut self, help: impl Into<String>) -> RuntimeError {
         self.help = Some(help.into());
         self
-    }
-
-    pub fn is_unsupported(&self) -> bool {
-        self.kind == ErrorKind::Unsupported
     }
 
     pub fn to_diagnostic(&self) -> Diagnostic {

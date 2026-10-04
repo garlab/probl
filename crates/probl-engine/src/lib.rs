@@ -183,6 +183,9 @@ pub struct Outcome {
     pub evidence: Option<Weight>,
     /// What each `report` collected, in the order of `Program::reports`.
     pub reports: Vec<Sink>,
+    /// How the reports were rendered into `output`, to render some of them
+    /// again with [`report::render`].
+    pub format: Format,
     /// When sampling: how.
     pub sample: Option<Sampled>,
     /// The data the program read, if any.
@@ -260,13 +263,9 @@ fn panic_detail(panic: &(dyn Any + Send)) -> String {
 }
 
 fn internal(detail: String) -> RuntimeError {
-    RuntimeError {
-        message: "internal error: the engine crashed".to_string(),
-        span: Default::default(),
-        notes: vec![detail],
-        help: Some("this is a bug in Probl; please report it with the program that caused it".to_string()),
-        kind: ErrorKind::Internal,
-    }
+    OpError::internal("internal error: the engine crashed")
+        .at(Span::default())
+        .with_note(detail)
 }
 
 fn run_here(
@@ -390,7 +389,7 @@ fn run_here(
             header.push_str(&format!(" · unresolved {:.1e}", unresolved.to_f64()));
         }
     }
-    let body = report::render(program, &engine.sinks, format);
+    let body = report::render(&program.reports, &engine.sinks, format);
     let output = if body.is_empty() {
         header
     } else {
@@ -403,6 +402,7 @@ fn run_here(
         unresolved,
         evidence,
         reports: std::mem::take(&mut engine.sinks),
+        format,
         sample: None,
         data: sources(options),
         updates: Vec::new(),
@@ -592,11 +592,7 @@ fn run_batches(
                 let mut ignore = |_: &str| {};
                 // The data, copied: threads sharing it would all touch its
                 // reference counts, and slow each other down.
-                let copied: Vec<Value> = if threads > 1 {
-                    inputs.iter().map(Value::unshared).collect()
-                } else {
-                    inputs.to_vec()
-                };
+                let copied: Vec<Value> = inputs.iter().map(Value::unshared).collect();
                 let mut engine = interp::Engine::new(program, live, conj, config.clone(), &copied, &mut ignore);
                 loop {
                     let index = next.fetch_add(1, Ordering::Relaxed);
@@ -772,7 +768,7 @@ fn sampled(
         run_squares: Some(totals.squares),
         weighted: program.main().effects.observes,
     };
-    let body = report::render(program, &engine.sinks, format);
+    let body = report::render(&program.reports, &engine.sinks, format);
     let output = if body.is_empty() {
         header
     } else {
@@ -785,6 +781,7 @@ fn sampled(
         unresolved,
         evidence: engine.observed.then_some(evidence),
         reports: std::mem::take(&mut engine.sinks),
+        format,
         sample: Some(Sampled {
             runs,
             seed,

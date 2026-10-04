@@ -27,8 +27,11 @@ pub const MAX_SOURCE: usize = 8 * 1024 * 1024;
 /// used. The symbols are there if it parses, even with other errors.
 pub fn compile_with_symbols(src: &str) -> (Option<ir::Program>, Vec<Diagnostic>, Option<symbols::Symbols>) {
     if src.len() > MAX_SOURCE {
-        let (program, diags) = compile(src);
-        return (program, diags, None);
+        let d = Diagnostic::error(
+            probl_syntax::Span::default(),
+            format!("the program is larger than {MAX_SOURCE} bytes"),
+        );
+        return (None, vec![d], None);
     }
     let (ast, mut diags) = parse_program(src);
     if diags.iter().any(Diagnostic::is_error) {
@@ -44,23 +47,6 @@ pub fn compile_with_symbols(src: &str) -> (Option<ir::Program>, Vec<Diagnostic>,
 /// Parse and lower a program. The IR is only returned when there are no
 /// errors; warnings are returned either way.
 pub fn compile(src: &str) -> (Option<ir::Program>, Vec<Diagnostic>) {
-    if src.len() > MAX_SOURCE {
-        let d = Diagnostic::error(
-            probl_syntax::Span::default(),
-            format!("the program is larger than {MAX_SOURCE} bytes"),
-        );
-        return (None, vec![d]);
-    }
-    let (ast, mut diags) = parse_program(src);
-    if diags.iter().any(Diagnostic::is_error) {
-        return (None, diags);
-    }
-    let (program, mut lower_diags) = lower(&ast, src);
-    diags.append(&mut lower_diags);
-    diags.sort_by_key(|d| d.span.lo);
-    if diags.iter().any(Diagnostic::is_error) {
-        (None, diags)
-    } else {
-        (Some(program), diags)
-    }
+    let (program, diags, _) = compile_with_symbols(src);
+    (program, diags)
 }

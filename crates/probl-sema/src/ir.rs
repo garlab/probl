@@ -317,7 +317,7 @@ impl TypeSpec {
 
     /// How the type is written in source, given the program's types.
     pub fn describe_in(&self, records: &[RecordType], enums: &[EnumType]) -> String {
-        let program = (records, enums);
+        let describe = |t: &TypeSpec| t.describe_in(records, enums);
         match self {
             TypeSpec::Int => "int".into(),
             TypeSpec::Float => "float".into(),
@@ -328,21 +328,14 @@ impl TypeSpec {
             TypeSpec::Date => "date".into(),
             TypeSpec::Unit => "()".into(),
             TypeSpec::Function => "fn".into(),
-            TypeSpec::List(t) => format!("list[{}]", t.describe_in(program.0, program.1)),
-            TypeSpec::Map(k, v) => format!(
-                "map[{}, {}]",
-                k.describe_in(program.0, program.1),
-                v.describe_in(program.0, program.1)
-            ),
-            TypeSpec::Bag(t) => format!("bag[{}]", t.describe_in(program.0, program.1)),
-            TypeSpec::Dist(t) => format!("dist[{}]", t.describe_in(program.0, program.1)),
-            TypeSpec::Record(r) => program.0[*r as usize].name.clone(),
-            TypeSpec::Enum(e) => program.1[*e as usize].name.clone(),
+            TypeSpec::List(t) => format!("list[{}]", describe(t)),
+            TypeSpec::Map(k, v) => format!("map[{}, {}]", describe(k), describe(v)),
+            TypeSpec::Bag(t) => format!("bag[{}]", describe(t)),
+            TypeSpec::Dist(t) => format!("dist[{}]", describe(t)),
+            TypeSpec::Record(r) => records[*r as usize].name.clone(),
+            TypeSpec::Enum(e) => enums[*e as usize].name.clone(),
             TypeSpec::AnonRecord(fields) => {
-                let fields: Vec<String> = fields
-                    .iter()
-                    .map(|(n, t)| format!("{n}: {}", t.describe_in(program.0, program.1)))
-                    .collect();
+                let fields: Vec<String> = fields.iter().map(|(n, t)| format!("{n}: {}", describe(t))).collect();
                 format!("{{ {} }}", fields.join(", "))
             }
         }

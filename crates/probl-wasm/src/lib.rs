@@ -158,17 +158,14 @@ fn declaration(source: &str, newlines: &[usize], at: usize) -> (usize, String, O
         code = code.chars().take(119).collect::<String>() + "…";
     }
     // Comment lines just above, nearest last.
-    let mut above: Vec<&str> = source[..start]
+    let mut doc: Vec<&str> = source[..start]
         .lines()
         .rev()
         .take_while(|l| l.trim_start().starts_with('#'))
         .map(|l| l.trim_start().trim_start_matches('#').trim())
         .collect();
-    above.reverse();
-    let mut doc: Vec<&str> = above;
-    if let Some(t) = trailing {
-        doc.push(t);
-    }
+    doc.reverse();
+    doc.extend(trailing);
     let doc = (!doc.is_empty()).then(|| doc.join("\n"));
     let number = newlines.partition_point(|&i| i < start) + 1;
     (number, code, doc)

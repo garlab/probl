@@ -33,3 +33,30 @@ fn conjugate_priors_are_updated_exactly_unless_turned_off() {
         "{stats}"
     );
 }
+
+#[test]
+fn the_repl_shows_each_input_s_reports_whole() {
+    use std::io::Write;
+    let mut repl = Command::new(env!("CARGO_BIN_EXE_probl"))
+        .arg("repl")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let input = "for k in 1..3 { report k * 2 by k }\n\"a {1}\"\nd6 > 3\n";
+    repl.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let output = repl.wait_with_output().unwrap();
+    let out = String::from_utf8_lossy(&output.stdout);
+    // A table keeps all of its rows, and an expression's text is its label,
+    // braces and all.
+    for line in [
+        "k * 2\n",
+        "  1    2",
+        "  2    4",
+        "  3    6",
+        "\"a {1}\"    a 1\n",
+        "d6 > 3    50.00%\n",
+    ] {
+        assert!(out.contains(line), "{line:?} in\n{out}");
+    }
+}

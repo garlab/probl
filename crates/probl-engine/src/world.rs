@@ -2,7 +2,6 @@
 
 use crate::analytic::Constraints;
 use crate::value::Value;
-pub type Returned = (Value, Weight, Constraints);
 use crate::weight::Weight;
 use probl_sema::SlotSet;
 use probl_sema::ir::SlotId;
@@ -11,6 +10,10 @@ use std::collections::BTreeSet;
 use std::collections::hash_map::Entry;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+
+/// A returned value, the weight of the world that returned it, and the
+/// restrictions on analytic draws that its caller can see.
+pub type Returned = (Value, Weight, Constraints);
 
 /// One possible state of the program: the variables of the current frame,
 /// and how likely it is (including every observation so far).
@@ -164,10 +167,10 @@ pub fn merge_values(pairs: Vec<Returned>) -> Vec<Returned> {
     let mut out: Vec<Returned> = Vec::with_capacity(pairs.len());
     let mut index: FxHashMap<(Value, Constraints), usize> = FxHashMap::default();
     for (v, w, constraints) in pairs {
-        match index.get(&(v.clone(), constraints.clone())) {
-            Some(&i) => out[i].1 += w,
-            None => {
-                index.insert((v.clone(), constraints.clone()), out.len());
+        match index.entry((v.clone(), constraints.clone())) {
+            Entry::Occupied(entry) => out[*entry.get()].1 += w,
+            Entry::Vacant(entry) => {
+                entry.insert(out.len());
                 out.push((v, w, constraints));
             }
         }

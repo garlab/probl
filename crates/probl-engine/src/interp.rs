@@ -12,7 +12,7 @@ use crate::chain::{Chain, Solution};
 use crate::conjugate::{self, Seen};
 use crate::continuous::{Family, Rng};
 use crate::dist::{Budget, Counts, Dist};
-use crate::error::{ErrorKind, OpError, OpResult, Result, RuntimeError};
+use crate::error::{OpError, OpResult, Result, RuntimeError};
 use crate::ops::{self, Truth};
 use crate::report::Sink;
 use crate::value::{Closure, Delayed, Value, fmt_prob};
@@ -598,7 +598,7 @@ impl<'p> Engine<'p> {
                 span,
                 format!("more than {} worlds are too many to follow", self.config.max_worlds),
             )
-            .with_help("simplify the model, raise the limit, or wait for sample mode (v0.2)"));
+            .with_help("simplify the model, raise the limit, or sample it with `@mode sample(runs: 10_000)`"));
         }
         Ok(())
     }
@@ -2023,15 +2023,13 @@ impl<'p> Engine<'p> {
             Value::Dead => Err(self.no_value(f, s, span)),
             Value::Delayed(_) => {
                 let name = &self.prog.functions[f as usize].slots[s as usize].name;
-                Err(OpError {
-                    message: "internal error: a variable was read before it was drawn".into(),
-                    help: Some("this is a bug in Probl; please report it with the program that caused it".into()),
-                    kind: ErrorKind::Internal,
-                }
-                .at(span)
-                .with_note(format!(
-                    "`{name}`'s draw was delayed for an exact update (docs/semantics.md, section 14)"
-                )))
+                Err(
+                    OpError::internal("internal error: a variable was read before it was drawn")
+                        .at(span)
+                        .with_note(format!(
+                            "`{name}`'s draw was delayed for an exact update (docs/semantics.md, section 14)"
+                        )),
+                )
             }
             v => analytic::resolve(v, &w.constraints, &mut self.budget).map_err(|e| e.at(span)),
         }

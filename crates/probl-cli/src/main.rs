@@ -484,6 +484,8 @@ fn repl() -> ExitCode {
     let stdin = std::io::stdin();
     let mut session = String::new();
     let mut lines = stdin.lock().lines();
+    // The session's reports so far: the new input's come after them.
+    let mut reported = 0;
     // Data read during the session stays the same until `:reload`, so that
     // running the session again doesn't change earlier bindings.
     let mut files = LocalFiles::new(".", false, None);
@@ -521,7 +523,6 @@ fn repl() -> ExitCode {
         let Some(program) = program else {
             continue;
         };
-        let before = probl_sema::compile(&session).0.map_or(0, |p| p.reports.len());
         let mut options = Options {
             today: Some(today),
             ..Options::default()
@@ -536,22 +537,13 @@ fn repl() -> ExitCode {
         let mut print = |line: &str| println!("{line}");
         match probl_engine::run(&program, &options, &mut print) {
             Ok(outcome) => {
-                // Show only what the new input reported.
-                let lines: Vec<&str> = outcome.output.lines().collect();
-                let body = lines.iter().skip(2).copied().collect::<Vec<_>>();
-                let new_reports = program.reports.len() - before;
-                if new_reports > 0 {
-                    for line in body
-                        .iter()
-                        .rev()
-                        .take(new_reports)
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                    {
-                        println!("{line}");
-                    }
-                }
+                let new = probl_engine::report::render(
+                    &program.reports[reported..],
+                    &outcome.reports[reported..],
+                    outcome.format,
+                );
+                print!("{new}");
+                reported = program.reports.len();
                 session = candidate;
             }
             Err(e) => eprint!("{}", e.to_diagnostic().render(&file, color())),
@@ -606,5 +598,25 @@ fn as_report_if_expression(input: &str) -> String {
         return input.to_string();
     }
     let text = input.trim();
-    format!("report ({text}) as {text:?}\n")
+    format!("report ({text}) as \"{}\"\n", escape(text))
+}
+
+/// `text` as the inside of a Probl string literal: its braces would
+/// otherwise be interpolations, and Rust's `{:?}` writes escapes like
+/// `\u{301}` that Probl doesn't have.
+fn escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\\' | '"' | '{' | '}' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            _ => out.push(c),
+        }
+    }
+    out
 }

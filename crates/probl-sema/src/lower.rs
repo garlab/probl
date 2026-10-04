@@ -45,6 +45,11 @@ pub fn lower_with_symbols(program: &ast::Program, src: &str) -> (Program, Vec<Di
     (program, diags, symbols)
 }
 
+/// The scope of names usable anywhere in the program (functions, types,
+/// fields and variants). Scopes still open when lowering ends are cut to
+/// the end of the source.
+const EVERYWHERE: Span = Span { lo: 0, hi: u32::MAX };
+
 /// The most arms a `match` without guards is lowered to an `if … else if …`
 /// chain for. Each arm nests one level deeper in that chain, and the passes
 /// that walk it recurse: longer matches use a flag instead, whose statements
@@ -194,7 +199,6 @@ impl<'a> Lowerer<'a> {
         self.symbols.definitions.len() - 1
     }
 
-    /// Record a use of a name.
     fn refer(&mut self, span: Span, def: usize) {
         self.symbols.references.push((span, def));
     }
@@ -291,7 +295,15 @@ impl<'a> Lowerer<'a> {
     /// function.
     fn declare_as(&mut self, name: &str, span: Span, mutable: bool, kind: DefKind) -> (SlotId, usize) {
         let top = self.at_top_level();
-        let def = self.define(name, kind, span, Span::new(span.hi as usize, u32::MAX as usize));
+        let def = self.define(
+            name,
+            kind,
+            span,
+            Span {
+                lo: span.hi,
+                hi: u32::MAX,
+            },
+        );
         self.symbols.definitions[def].mutable = mutable;
         if top {
             self.symbols.definitions[def].global = true;
@@ -622,8 +634,7 @@ impl<'a> Lowerer<'a> {
                     let id = self.new_fn(name, FnKind::Named, decl.span, None);
                     self.funcs[id as usize].n_params = decl.params.len() as u32;
                     self.fn_by_name.insert(name.clone(), id);
-                    let everywhere = Span::new(0, u32::MAX as usize);
-                    let def = self.define(name, DefKind::Function, decl.name.span, everywhere);
+                    let def = self.define(name, DefKind::Function, decl.name.span, EVERYWHERE);
                     self.fn_defs.insert(name.clone(), def);
                     fn_decls.push((id, decl));
                 }
@@ -774,7 +785,7 @@ impl<'a> Lowerer<'a> {
         }
         let id = self.records.len() as u32;
         self.record_by_name.insert(name.clone(), id);
-        let def = self.define(name, DefKind::Record, decl.name.span, Span::new(0, u32::MAX as usize));
+        let def = self.define(name, DefKind::Record, decl.name.span, EVERYWHERE);
         self.type_defs.insert(name.clone(), def);
         self.records.push(RecordType {
             name: name.clone(),
@@ -797,7 +808,7 @@ impl<'a> Lowerer<'a> {
             }
             // An unknown type has been reported; the program won't run.
             let ty = self.type_spec(ty).unwrap_or(TypeSpec::Unit);
-            let def = self.define(&field.name, DefKind::Field, field.span, Span::new(0, u32::MAX as usize));
+            let def = self.define(&field.name, DefKind::Field, field.span, EVERYWHERE);
             self.symbols.definitions[def].owner = Some(self.records[id as usize].name.clone());
             self.symbols.definitions[def].ty = Some(ty.describe_in(&self.records, &self.enums));
             self.field_defs.entry(field.name.clone()).or_default().push((id, def));
@@ -860,15 +871,14 @@ impl<'a> Lowerer<'a> {
             return;
         }
         let ty = self.enums.len() as u32;
-        let everywhere = Span::new(0, u32::MAX as usize);
-        let def = self.define(name, DefKind::Enum, decl.name.span, everywhere);
+        let def = self.define(name, DefKind::Enum, decl.name.span, EVERYWHERE);
         self.type_defs.insert(name.clone(), def);
         let mut variants = Vec::new();
         for (i, variant) in decl.variants.iter().enumerate() {
             if variants.contains(&variant.name) {
                 self.error(variant.span, format!("the variant `{}` appears twice", variant.name));
             }
-            let def = self.define(&variant.name, DefKind::Variant, variant.span, everywhere);
+            let def = self.define(&variant.name, DefKind::Variant, variant.span, EVERYWHERE);
             self.symbols.definitions[def].owner = Some(name.clone());
             self.variant_defs.insert((ty, i as u32), def);
             variants.push(variant.name.clone());
@@ -895,7 +905,7 @@ impl<'a> Lowerer<'a> {
         });
         let mut stmts = Vec::new();
         for param in &decl.params {
-            if self.ctx[self.ctx.len() - 1].scopes[0].contains_key(&param.name.name) {
+            if self.ctx.last().unwrap().scopes[0].contains_key(&param.name.name) {
                 self.error(
                     param.name.span,
                     format!("the parameter `{}` appears twice", param.name.name),
