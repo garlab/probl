@@ -52,7 +52,7 @@ export async function load(module, { onPrint = () => {}, onProgress = () => {} }
   }
 
   return {
-    /** `{diagnostics: [...]}` for a program's source. */
+    /** `{diagnostics, symbols}` for a program's source; `symbols` is null when it doesn't parse. */
     check: (source) => JSON.parse(call(exports.probl_check, source)),
     /** Run `{source, today?, mode?, runs?, seed?, conjugate?, files?}`.
      * Snapshot the UTC date once, before entering WASM; an explicit date replays a run. */

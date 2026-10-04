@@ -47,7 +47,7 @@ export const probl = StreamLanguage.define({
     if (stream.match(/^@[A-Za-z_]+/)) return 'meta';
     if (stream.match(/^0(?:[bB][01](?:_?[01])*|[xX][\da-fA-F](?:_?[\da-fA-F])*)\b/)) return 'number';
     if (stream.match(/^\d*d\d+\b/)) return 'number';
-    if (stream.match(/^\d[\d_]*(\.[\d_]+)?(e[+-]?\d+)?%?/)) return 'number';
+    if (stream.match(/^\d[\d_]*(\.[\d_]+)?([eE][+-]?\d[\d_]*)?%?/)) return 'number';
     if (stream.peek() === '"') {
       stream.next();
       state.string = true;

@@ -802,9 +802,6 @@ pub fn estimate(p: f64, se: f64) -> String {
     format!("{} ± {}%", fmt_percent(p, decimals), fixed(se, decimals))
 }
 
-/// `mean · sd · 5% · median · 95%`, and a sparkline for small integer ranges.
-/// Probabilities (as values, not facts) are shown as percentages. A sampled
-/// mean shows its standard error when it's visible at the printed precision.
 /// Numeric components of a report containing a continuous marginal.
 /// These are report summaries, not conversions of scalar outcomes in programs.
 pub fn analytic_mixture(dist: &[(Value, f64)]) -> Option<crate::continuous::Mixture> {
@@ -841,6 +838,9 @@ fn analytic_stats(m: &crate::continuous::Mixture) -> String {
     )
 }
 
+/// `mean · sd · 5% · median · 95%`, and a sparkline for small integer ranges.
+/// Probabilities (as values, not facts) are shown as percentages. A sampled
+/// mean shows its standard error when it's visible at the printed precision.
 fn numeric_stats(dist: &[(Value, f64)], mean_se: Option<f64>) -> Option<String> {
     let nums: Vec<(f64, f64)> = dist
         .iter()
@@ -933,9 +933,10 @@ fn sparkline(dist: &[(Value, f64)]) -> Option<String> {
     Some(format!("{lo} {bars} {hi}"))
 }
 
-// Rendering uses the same midpoint rule as median(). Other percentile
-// columns still select outcomes. An unrepresentable fractional bigint
-// midpoint is labelled rather than silently replaced with the lower bound.
+/// The `q` quantile of a report's values, for its summary. The median uses
+/// the same midpoint rule as `median()`; the other columns select outcomes.
+/// An unrepresentable fractional bigint midpoint is labelled rather than
+/// silently replaced with the lower bound.
 fn summary_quantile(dist: &[(Value, f64)], q: f64) -> Option<Value> {
     if q != 0.5 {
         return Some(quantile(dist, q));
