@@ -146,3 +146,10 @@ fn syntax_errors() {
     insta::assert_snapshot!(parse_errors("fn f() {\n  let a = 1\n  a +* 2\n}\nreport 30 %"));
     insta::assert_snapshot!(parse_errors("3 = x\nlet y 5"));
 }
+
+#[test]
+fn a_failed_arm_is_skipped_whole() {
+    let (program, diags) = parse_program("match x {\n  [1, 2 3, 4, 5] => 1\n  [a, b] => a + b\n}");
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(sexpr::program(&program), "(match x ([a b] => (+ a b)))\n");
+}

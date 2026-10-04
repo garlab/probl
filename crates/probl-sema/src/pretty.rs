@@ -41,7 +41,7 @@ struct Printer<'a> {
 impl Printer<'_> {
     fn slot(&self, s: SlotId) -> String {
         match self.f.slots.get(s as usize) {
-            Some(info) if info.name == "(temporary)" => format!("${s}"),
+            Some(info) if info.name == TEMP => format!("${s}"),
             Some(info) => format!("{}_{s}", info.name),
             None => format!("?{s}"),
         }

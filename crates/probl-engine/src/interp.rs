@@ -1084,7 +1084,7 @@ impl<'p> Engine<'p> {
                     let v = &w.slots[*slot as usize];
                     if !self.conforms(v, ty) {
                         let name = &self.prog.functions[f as usize].slots[*slot as usize].name;
-                        let what = if name == "(temporary)" {
+                        let what = if name == TEMP {
                             "the result".to_string()
                         } else {
                             format!("`{name}`")
@@ -1346,7 +1346,7 @@ impl<'p> Engine<'p> {
         let names = &self.prog.functions[f as usize].slots;
         let parts: Vec<String> = head
             .iter()
-            .filter(|&&i| !names[i].name.starts_with('$') && names[i].name != "(temporary)")
+            .filter(|&&i| names[i].name != TEMP)
             .map(|&i| format!("`{}` is {:?}", names[i].name, slots[i]))
             .collect();
         let err = RuntimeError::new(stmt.span, "some worlds can never leave this loop")

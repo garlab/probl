@@ -209,7 +209,13 @@ impl Pass<'_> {
                 live
             }
             StmtKind::Loop { body, .. } => {
-                let mut head = SlotSet::with_capacity(self.size);
+                // An enclosing loop analyzes this one again on each of its
+                // own rounds, with live sets that only grow. Starting from
+                // the head found last time, which is below the new one, still
+                // reaches it, and takes one round when nothing changed:
+                // starting afresh would double the work at every level of
+                // nesting.
+                let mut head = std::mem::take(&mut self.live.loop_head[stmt.id as usize]);
                 loop {
                     let inner = LoopCtx {
                         after: out.clone(),

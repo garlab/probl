@@ -17,6 +17,10 @@ pub type StmtId = u32;
 /// The function holding the top-level statements.
 pub const MAIN: FnId = 0;
 
+/// The name of compiler-generated variables. Each is assigned once per path
+/// and never changed afterwards.
+pub const TEMP: &str = "(temporary)";
+
 #[derive(Debug)]
 pub struct Program {
     /// `functions[MAIN]` is the top level; its slots include the globals.

@@ -45,9 +45,11 @@ pub fn lower_with_symbols(program: &ast::Program, src: &str) -> (Program, Vec<Di
     (program, diags, symbols)
 }
 
-/// The name of compiler-generated variables. Each is assigned once per path
-/// and never changed afterwards.
-const TEMP: &str = "(temporary)";
+/// The most arms a `match` without guards is lowered to an `if … else if …`
+/// chain for. Each arm nests one level deeper in that chain, and the passes
+/// that walk it recurse: longer matches use a flag instead, whose statements
+/// don't nest.
+const MAX_CHAINED_ARMS: usize = 32;
 
 struct FnBuild {
     name: String,
@@ -1905,7 +1907,7 @@ impl<'a> Lowerer<'a> {
             self.text(scrutinee.span)
         );
 
-        if arms.iter().all(|a| a.guard.is_none()) {
+        if arms.len() <= MAX_CHAINED_ARMS && arms.iter().all(|a| a.guard.is_none()) {
             // An `if … else if …` chain, built from the last arm backwards.
             let fail = self.stmt(span, StmtKind::Fail { message });
             let mut chain = Block { stmts: vec![fail] };
@@ -1930,7 +1932,7 @@ impl<'a> Lowerer<'a> {
             return;
         }
 
-        // With guards, a flag records whether an arm has matched.
+        // With guards, or many arms, a flag records whether an arm has matched.
         let matched = self.temp(span);
         let init = self.stmt(
             span,
@@ -2094,9 +2096,13 @@ impl<'a> Lowerer<'a> {
         for e in exprs {
             let mut hoisted = Vec::new();
             let v = self.expr_expected(e, types.get(values.len()).and_then(Option::as_ref), &mut hoisted);
-            let later = self.later(&hoisted);
-            for prev in values.iter_mut() {
-                self.stabilize(prev, later, out);
+            // Without statements, nothing can change the earlier operands:
+            // skipping them keeps long lists and `chance`s linear.
+            if !hoisted.is_empty() {
+                let later = self.later(&hoisted);
+                for prev in values.iter_mut() {
+                    self.stabilize(prev, later, out);
+                }
             }
             out.extend(hoisted);
             values.push(v);
@@ -3259,9 +3265,11 @@ fn closest(name: &str, candidates: &[String]) -> Option<String> {
         4..=7 => 2,
         _ => 3,
     };
+    // Names are ASCII, so lengths that differ by more than the limit rule a
+    // candidate out before the quadratic distance.
     candidates
         .iter()
-        .filter(|c| c.as_str() != name && !c.starts_with('$'))
+        .filter(|c| c.as_str() != name && c.len().abs_diff(name.len()) <= limit)
         .map(|c| (edit_distance(name, c), c))
         .filter(|(d, _)| *d <= limit)
         .min_by_key(|(d, _)| *d) // the first of equals: candidates come nearest-first

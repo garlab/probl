@@ -315,6 +315,43 @@ fn i3_deep_nesting_is_a_diagnostic() {
     assert!(compile_error(&src).contains("nested too deeply"));
     let chain = format!("var x = 0\n{}{{ 2 }}", "if x == 1 { 1 } else ".repeat(3000));
     assert!(compile_error(&chain).contains("nested too deeply"));
+    // Loops in the parser build these trees, as deep as they're long.
+    let n = 10_000;
+    for src in [
+        format!("report {}", vec!["1"; n].join(" + ")),
+        format!("report true{}", " and true".repeat(n)),
+        format!("let x = {{a: 1}}\nreport x{}", ".a".repeat(n)),
+        format!("let x = [1]\nreport x{}", "[0]".repeat(n)),
+        format!("fn f() {{ f }}\nreport f{}", "()".repeat(n)),
+        format!("let f = {}1", "x -> ".repeat(n)),
+        format!("let x: {}int{} = 1", "list[".repeat(n), "]".repeat(n)),
+        format!("match 1 {{ {} => 1 }}", vec!["1"; n].join(" | ")),
+        format!("match [1] {{ [{}] => 1 }}", vec!["_"; n].join(", ")),
+    ] {
+        assert!(compile_error(&src).contains("nested too deeply"), "{}", &src[..40]);
+    }
+}
+
+#[test]
+fn i3_long_matches_and_nested_loops_stay_cheap() {
+    // A `match` without guards is an `if … else if …` chain only while it's
+    // short: one with many arms mustn't nest as deep as it's long.
+    let arms: String = (0..5_000).map(|i| format!("  {i} => {i}\n")).collect();
+    close(
+        chance(&format!(
+            "let y = match 4_999 {{\n{arms}  _ => -1\n}}\nreport y == 4_999"
+        )),
+        1.0,
+    );
+    // Liveness solves each loop by iteration, inside the iterations of the
+    // loops around it: their rounds mustn't multiply.
+    let depth = 60;
+    let src = format!(
+        "var x = 0\n{}x += 1\nbreak\n{}}}\nreport x",
+        "loop {\n".repeat(depth),
+        "}\nbreak\n".repeat(depth - 1)
+    );
+    close(mean(&src), 1.0);
 }
 
 // ── I4: found by the oracle (crates/probl-oracle) ────────────────────────

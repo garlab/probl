@@ -212,18 +212,31 @@ impl Parser {
     }
 
     /// Run `f` one level deeper, or fail if the program nests too deeply.
+    /// The levels `f` adds with [`Parser::deeper`] end with it.
     fn nested<T>(&mut self, f: impl FnOnce(&mut Parser) -> PResult<T>) -> PResult<T> {
+        let saved = self.depth;
+        self.deeper()?;
+        let result = f(self);
+        self.depth = saved;
+        result
+    }
+
+    /// Go one level deeper, or fail if the program nests too deeply. Loops
+    /// that wrap what they've parsed in a new node, like `a + b + c` or
+    /// `x.f().g`, call it on each turn: their trees grow as deep as the loop
+    /// runs, without the parser recursing, and the passes after it recurse
+    /// through them all the same.
+    fn deeper(&mut self) -> PResult<()> {
         if self.depth >= MAX_NESTING {
             let span = self.span();
             self.error(span, "this is nested too deeply").help(format!(
-                "expressions, blocks and patterns can nest at most {MAX_NESTING} levels"
+                "expressions, blocks and patterns can nest at most {MAX_NESTING} levels, \
+                 and each operator or `.` in a chain like `a + b + c` counts as one"
             ));
             return Err(Failed);
         }
         self.depth += 1;
-        let result = f(self);
-        self.depth -= 1;
-        result
+        Ok(())
     }
 
     fn with_restriction<T>(&mut self, restricted: bool, f: impl FnOnce(&mut Parser) -> T) -> T {
@@ -393,6 +406,10 @@ impl Parser {
     }
 
     fn type_expr(&mut self) -> PResult<TypeExpr> {
+        self.nested(|p| p.type_expr_inner())
+    }
+
+    fn type_expr_inner(&mut self) -> PResult<TypeExpr> {
         if self.at(&Tok::LBrace) {
             let lo = self.bump().span;
             let mut fields = Vec::new();
@@ -640,8 +657,10 @@ impl Parser {
         if !self.at(&Tok::Pipe) {
             return Ok(first);
         }
+        // Lowering joins the alternatives' tests in a chain of `or`.
         let mut alts = vec![first];
         while self.eat(&Tok::Pipe) {
+            self.deeper()?;
             alts.push(self.pattern_alt()?);
         }
         let span = alts[0].span.to(alts.last().unwrap().span);
@@ -678,8 +697,10 @@ impl Parser {
             }
             Tok::LBracket => {
                 self.bump();
+                // Lowering joins the items' tests in a chain of `and`.
                 let mut items = Vec::new();
                 while !self.at(&Tok::RBracket) {
+                    self.deeper()?;
                     items.push(self.pattern()?);
                     if !self.eat(&Tok::Comma) {
                         break;
@@ -744,7 +765,7 @@ impl Parser {
             _ => return Ok(None),
         };
         self.expect(&Tok::Arrow, "")?;
-        let body = self.expr()?;
+        let body = self.nested(|p| p.expr())?;
         let span = lo.to(body.span);
         Ok(Some(Expr {
             kind: ExprKind::Lambda {
@@ -788,6 +809,7 @@ impl Parser {
             if prec < min {
                 break;
             }
+            self.deeper()?;
             for _ in 0..len {
                 self.bump();
             }
@@ -857,6 +879,9 @@ impl Parser {
     fn postfix(&mut self) -> PResult<Expr> {
         let mut expr = self.primary()?;
         loop {
+            if matches!(self.peek(), Tok::Dot | Tok::LParen | Tok::LBracket | Tok::With) {
+                self.deeper()?;
+            }
             match self.peek() {
                 Tok::Dot => {
                     self.bump();
@@ -1197,15 +1222,28 @@ impl Parser {
                 if p.at(&Tok::RBrace) {
                     break;
                 }
+                let start = p.pos;
                 match arm(p) {
                     Ok(a) => arms.push(a),
                     Err(Failed) => {
-                        // Skip to the next arm.
-                        while !matches!(p.peek(), Tok::Newline | Tok::Comma | Tok::RBrace | Tok::Eof) {
+                        // Skip to the next arm, past the brackets the failed
+                        // one left open: the commas inside them don't
+                        // separate arms, and stopping at each would report an
+                        // error for every one.
+                        let mut open = p.tokens[start..p.pos].iter().fold(0usize, |open, t| match t.tok {
+                            Tok::LParen | Tok::LBracket | Tok::LBrace => open + 1,
+                            Tok::RParen | Tok::RBracket | Tok::RBrace => open.saturating_sub(1),
+                            _ => open,
+                        });
+                        loop {
+                            match p.peek() {
+                                Tok::Eof => return Err(Failed),
+                                Tok::Newline | Tok::Comma | Tok::RBrace if open == 0 => break,
+                                Tok::LParen | Tok::LBracket | Tok::LBrace => open += 1,
+                                Tok::RParen | Tok::RBracket | Tok::RBrace => open = open.saturating_sub(1),
+                                _ => {}
+                            }
                             p.bump();
-                        }
-                        if p.at(&Tok::Eof) {
-                            return Err(Failed);
                         }
                         continue;
                     }

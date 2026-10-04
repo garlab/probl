@@ -228,20 +228,19 @@ impl Lexer<'_> {
     fn word(&mut self) {
         let lo = self.pos;
         self.word_tail();
-        let text = &self.src[lo..self.pos];
+        let src = self.src;
+        let text = &src[lo..self.pos];
         if text == "_" {
             self.push(Tok::Underscore, lo);
         } else if let Some(sides) = text
             .strip_prefix('d')
             .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
         {
-            let sides = sides.to_string();
-            self.dice(lo, None, &sides);
+            self.dice(lo, None, sides);
         } else if let Some(tok) = keyword(text) {
             self.push(tok, lo);
         } else {
-            let text = text.to_string();
-            self.push(Tok::Ident(text), lo);
+            self.push(Tok::Ident(text.to_string()), lo);
         }
     }
 
@@ -434,25 +433,29 @@ impl Lexer<'_> {
 /// - when it repeats a previous line break, or starts the file.
 pub fn filter_newlines(tokens: Vec<Token>) -> Vec<Token> {
     let mut out: Vec<Token> = Vec::with_capacity(tokens.len());
-    let mut stack: Vec<Tok> = Vec::new();
-    for (i, token) in tokens.iter().enumerate() {
+    // For each open bracket, innermost last: whether it's `(` or `[`.
+    let mut in_parens: Vec<bool> = Vec::new();
+    let mut tokens = tokens.into_iter().peekable();
+    while let Some(token) = tokens.next() {
         match token.tok {
-            Tok::LParen | Tok::LBracket | Tok::LBrace => stack.push(token.tok.clone()),
+            Tok::LParen | Tok::LBracket => in_parens.push(true),
+            Tok::LBrace => in_parens.push(false),
             Tok::RParen | Tok::RBracket | Tok::RBrace => {
-                stack.pop();
+                in_parens.pop();
             }
             Tok::Newline => {
-                let in_parens = matches!(stack.last(), Some(Tok::LParen | Tok::LBracket));
+                // At most the first of consecutive line breaks is kept, and
+                // whether it is depends on the tokens around the whole run.
+                while tokens.next_if(|t| t.tok == Tok::Newline).is_some() {}
                 let after_continuation = out.last().is_none_or(|prev| continues_line(&prev.tok));
-                let next = tokens[i + 1..].iter().find(|t| t.tok != Tok::Newline);
-                let before_continuation = next.is_some_and(|t| t.tok == Tok::Dot);
-                if in_parens || after_continuation || before_continuation {
+                let before_continuation = tokens.peek().is_some_and(|t| t.tok == Tok::Dot);
+                if in_parens.last() == Some(&true) || after_continuation || before_continuation {
                     continue;
                 }
             }
             _ => {}
         }
-        out.push(token.clone());
+        out.push(token);
     }
     out
 }
@@ -461,8 +464,7 @@ pub fn filter_newlines(tokens: Vec<Token>) -> Vec<Token> {
 fn continues_line(tok: &Tok) -> bool {
     matches!(
         tok,
-        Tok::Newline
-            | Tok::Semi
+        Tok::Semi
             | Tok::Comma
             | Tok::Dot
             | Tok::Colon
