@@ -18,7 +18,7 @@ repeat len(counts) {
   let successes ~ binomial(visitors, rate)
   replicated.push(successes)
 }
-fn spread(xs) { max(xs) - min(xs) }
+fn spread(xs) { maximum(xs) - minimum(xs) }
 
 report rate * 100 as "common conversion rate (%)"
 report sum(replicated) as "sign-ups in a replicated pilot"

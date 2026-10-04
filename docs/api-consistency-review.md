@@ -204,7 +204,7 @@ A list of records likewise fails, but wrapping the same records in `one_of` retu
 let d = one_of([0: 1, 1000000: 1e-13])
 report pmf(d, 1000000)     # positive: about 1e-13
 report quantile(d, 100%)   # 0
-report max(support(d))    # 1000000
+report maximum(support(d))    # 1000000
 ```
 
 `Dist::quantile` subtracts `1e-12` from every requested cumulative probability. That tolerance can overwhelm the probability being queried. A retained finite maximum must be the 100th percentile.
@@ -236,7 +236,7 @@ Sources: [list get](../crates/probl-engine/src/builtins.rs#L1414), [index valida
 
 ## Settled design choices
 
-- **min/max require a population or multiple values.** A single argument must be a nonempty list, range or string; a lone scalar or `min(d6)` fails. Use `min(support(d6))` for a finite support bound. Multi-argument lifting, such as `min(d6, 3)`, is unchanged. Lists of finite recipes lift too: `max([3d6+3, 2d8+1])` agrees with its positional form, without drawing. All candidate outcomes are validated, including unordered singletons. [Regression tests](../crates/probl-engine/tests/min_max.rs) cover both forms, independence, correlations, missing mass and work limits.
+- **Comparison and population extrema are separate.** `min(a,b,…)`/`max(a,b,…)` require at least two candidates and retain finite-recipe lifting. `minimum(xs,compare?)`/`maximum(xs,compare?)` select an existing collection element; they never lift collection elements. On a distribution they query closed-support bounds and reject unresolved mass or nonfinite bounds. `highest`/`lowest` require an explicit count and always return lists. [Regression tests](../crates/probl-engine/tests/min_max.rs) cover these contracts.
 - **Boolean ordering stays explicit.** Statistical low/high medians, quantiles and CDFs order false before true. Ordinary comparisons, default sort and min/max do not order booleans. Custom sort comparators can order them explicitly.
 - **Sequence support is consistent.** `get` supports lists, strings and ranges with checked integer indices and defaults for absence. Strings use Unicode scalar positions. Integer ranges support all population statistics without materialization, except `support`, which creates a list under collection limits. See the [capability table](semantics.md#1-values-and-types).
 - **Existing overloads remain explicit.** `round(x)` returns an int. With `digits`, int inputs stay ints and other numeric inputs return floats, including `digits=0`. Bag counts are defined for every typed key, with zero for absence, so `get` always returns a count and does not use its fallback. Maps and sequences use the fallback only for absence; invalid index types still fail.

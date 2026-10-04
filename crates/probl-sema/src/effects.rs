@@ -4,7 +4,7 @@
 use crate::builtins::Builtin;
 use crate::ir::*;
 use probl_syntax::{Diagnostic, Span};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Fill in `Function::effects` and check the observe-after-report rule.
 pub fn analyze(program: &mut Program, src: &str) -> Vec<Diagnostic> {
@@ -19,9 +19,12 @@ pub fn analyze(program: &mut Program, src: &str) -> Vec<Diagnostic> {
         })
         .collect();
 
+    let referenced: BTreeSet<_> = direct.iter().flat_map(|d| d.references.iter().copied()).collect();
+    let builtin_prints = direct.iter().any(|d| d.references_print);
+
     // Effects reach callers through calls, `simulate` blocks (except their
     // observations, which are local to them), and calls of closures. The
-    // closure called isn't known statically, so any lambda's effects count.
+    // callee isn't known statically, so lambdas and referenced functions count.
     let mut effects: Vec<Effects> = direct
         .iter()
         .map(|d| Effects {
@@ -32,9 +35,12 @@ pub fn analyze(program: &mut Program, src: &str) -> Vec<Diagnostic> {
     let mut lambda;
     loop {
         let mut changed = false;
-        lambda = Effects::default();
-        for (f, e) in program.functions.iter().zip(&effects) {
-            if f.kind == FnKind::Lambda {
+        lambda = Effects {
+            prints: builtin_prints,
+            observes: false,
+        };
+        for (i, (f, e)) in program.functions.iter().zip(&effects).enumerate() {
+            if f.kind == FnKind::Lambda || referenced.contains(&(i as FnId)) {
                 lambda.prints |= e.prints;
                 lambda.observes |= e.observes;
             }
@@ -79,14 +85,23 @@ pub fn analyze(program: &mut Program, src: &str) -> Vec<Diagnostic> {
 
 /// Whether running `s` may print: itself, or through what it calls. Needs
 /// the functions' effects, which `analyze` fills in.
-pub(crate) fn may_print(s: &Stmt, functions: &[Function]) -> bool {
+pub(crate) fn indirect_prints(functions: &[Function]) -> bool {
+    functions.iter().any(|f| {
+        let mut refs = Direct::default();
+        refs.block(&f.body);
+        (f.kind == FnKind::Lambda && f.effects.prints)
+            || refs.references_print
+            || refs.references.iter().any(|&g| functions[g as usize].effects.prints)
+    })
+}
+
+pub(crate) fn may_print(s: &Stmt, functions: &[Function], callable_prints: bool) -> bool {
     let mut d = Direct::default();
     d.stmt(s);
-    let lambda_prints = functions.iter().any(|f| f.kind == FnKind::Lambda && f.effects.prints);
     d.prints
         || d.calls.iter().any(|&g| functions[g as usize].effects.prints)
         || d.simulates.iter().any(|&c| functions[c as usize].effects.prints)
-        || (d.calls_closures && lambda_prints)
+        || (d.calls_closures && callable_prints)
 }
 
 /// For each statement: whether it's a `while` or `loop` that may be solved
@@ -94,33 +109,35 @@ pub(crate) fn may_print(s: &Stmt, functions: &[Function]) -> bool {
 /// Its body mustn't report or print, which happen once per visit to a
 /// state. Needs the functions' effects, which `analyze` fills in.
 pub fn solvable_loops(program: &Program) -> Vec<bool> {
-    fn visit(b: &Block, functions: &[Function], solvable: &mut [bool]) {
+    fn visit(b: &Block, functions: &[Function], solvable: &mut [bool], callable_prints: bool) {
         for s in &b.stmts {
             match &s.kind {
                 StmtKind::If { then, otherwise, .. } => {
-                    visit(then, functions, solvable);
-                    visit(otherwise, functions, solvable);
+                    visit(then, functions, solvable, callable_prints);
+                    visit(otherwise, functions, solvable, callable_prints);
                 }
                 StmtKind::Chance { arms, otherwise, .. } => {
-                    arms.iter().for_each(|(_, body)| visit(body, functions, solvable));
+                    arms.iter()
+                        .for_each(|(_, body)| visit(body, functions, solvable, callable_prints));
                     if let Some(body) = otherwise {
-                        visit(body, functions, solvable);
+                        visit(body, functions, solvable, callable_prints);
                     }
                 }
                 StmtKind::Loop { body, bounded } => {
                     let mut d = Direct::default();
                     d.block(body);
                     solvable[s.id as usize] =
-                        !bounded && !d.reports && !body.stmts.iter().any(|s| may_print(s, functions));
-                    visit(body, functions, solvable);
+                        !bounded && !d.reports && !body.stmts.iter().any(|s| may_print(s, functions, callable_prints));
+                    visit(body, functions, solvable, callable_prints);
                 }
                 _ => {}
             }
         }
     }
+    let callable_prints = indirect_prints(&program.functions);
     let mut solvable = vec![false; program.stmt_count as usize];
     for f in &program.functions {
-        visit(&f.body, &program.functions, &mut solvable);
+        visit(&f.body, &program.functions, &mut solvable, callable_prints);
     }
     solvable
 }
@@ -134,6 +151,8 @@ struct Direct {
     calls: Vec<FnId>,
     simulates: Vec<FnId>,
     calls_closures: bool,
+    references: Vec<FnId>,
+    references_print: bool,
 }
 
 impl Direct {
@@ -212,7 +231,9 @@ impl Direct {
 
     fn expr(&mut self, e: &Expr) {
         match &e.kind {
-            ExprKind::Lit(_) | ExprKind::Slot(_) | ExprKind::Closure { .. } | ExprKind::Input(_) => {}
+            ExprKind::Closure { func, .. } => self.references.push(*func),
+            ExprKind::Lit(Lit::Builtin(Builtin::Print)) => self.references_print = true,
+            ExprKind::Lit(_) | ExprKind::Slot(_) | ExprKind::Input(_) => {}
             ExprKind::Unary(_, x) | ExprKind::Field(x, _) => self.expr(x),
             ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => {
                 self.expr(a);
@@ -232,7 +253,10 @@ impl Direct {
                 match func {
                     Builtin::Print => self.prints = true,
                     Builtin::Map | Builtin::Filter | Builtin::Count | Builtin::Reduce => self.calls_closures = true,
-                    Builtin::Sort | Builtin::SortDesc if args.len() == 2 => self.calls_closures = true,
+                    Builtin::Sort | Builtin::SortDesc | Builtin::Minimum | Builtin::Maximum if args.len() == 2 => {
+                        self.calls_closures = true
+                    }
+                    Builtin::Highest | Builtin::Lowest if args.len() == 3 => self.calls_closures = true,
                     _ => {}
                 }
                 args.iter().for_each(|x| self.expr(x));

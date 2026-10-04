@@ -187,6 +187,7 @@ impl Printer<'_> {
     fn expr(&self, e: &Expr) -> String {
         match &e.kind {
             ExprKind::Lit(l) => match l {
+                Lit::Builtin(b) => b.name().into(),
                 Lit::Unit => "()".into(),
                 Lit::Bool(b) => b.to_string(),
                 Lit::Int(v) => v.to_string(),

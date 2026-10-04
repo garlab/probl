@@ -560,24 +560,24 @@ both_modes! {
     }
 
     #[test]
-    fn min_max_require_collections_or_multiple_values() {
+    fn min_max_require_multiple_values_and_population_extrema_are_explicit() {
         for operation in ["min", "max"] {
             for scalar in ["1", "d6", "complex(1)"] {
-                language_error(MODE, &format!("report {operation}({scalar})"), "at least two values");
+                assert!(common::compile_error(&format!("report {operation}({scalar})")).contains("at least 2 arguments"));
             }
         }
         truth(
             MODE,
-            "report min(support(d6))==1 and max(support(d6))==6 and P(min(d6,3)<=3)==100%",
+            "report minimum(d6)==1 and maximum(d6)==6 and P(min(d6,3)<=3)==100%",
         );
         assert_eq!(
             values(
                 MODE,
-                "report min(\"cba\"); report lowest(\"cba\"); report min([\"c\",\"b\",\"a\"])"
+                "report minimum(\"cba\"); report lowest(\"cba\",1)[0]; report minimum([\"c\",\"b\",\"a\"])"
             ),
             vec![Value::str("a"); 3]
         );
-        language_error(MODE, "report highest(d6)", "needs a list");
+        language_error(MODE, "report highest(d6,1)", "needs a list");
     }
 
     #[test]
@@ -590,21 +590,21 @@ both_modes! {
             Value::list(vec![Value::Int(20.into())])
         );
         assert_eq!(scalar(MODE, "report \"abc\".get(1,\"?\")"), Value::str("b"));
-        for query in ["sort([true,false])", "min([true,false])"] {
+        for query in ["sort([true,false])", "minimum([true,false])"] {
             language_error(MODE, &format!("report {query}"), "compare");
         }
     }
 
     #[test]
     fn complex_ordering_is_rejected_when_comparison_is_required() {
-        for query in ["min([complex(1,2),complex(2,3)])", "sort([complex(1,2),complex(2,3)])"] {
+        for query in ["minimum([complex(1,2),complex(2,3)])", "sort([complex(1,2),complex(2,3)])"] {
             language_error(MODE, &format!("report {query}"), "no ordering");
         }
     }
 
     #[test]
     fn singleton_sort_and_min_validate_ordering() {
-        language_error(MODE, "report min([complex(1,2)])", "no ordering");
+        language_error(MODE, "report minimum([complex(1,2)])", "no ordering");
         language_error(MODE, "report sort([complex(1,2)])", "no ordering");
     }
 

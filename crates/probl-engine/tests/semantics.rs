@@ -439,7 +439,10 @@ fn constants() {
     close(mean("var total = 0\nfor e in [1, 2] { total += e }\nreport total"), 3.0);
     close(mean("let xs = [1, 2].map(e -> e * 10)\nreport xs[1]"), 20.0);
     close(chance("enum Letter { e, f }\nreport e == Letter.e"), 1.0);
-    assert!(compile_error("fn pi() { 3 }\nreport pi").contains("the function `pi` can't be used as a value"));
+    assert_eq!(
+        distribution("fn pi() { 3 }\nlet f=pi; report f()"),
+        vec![(Value::Int(3.into()), 1.0)]
+    );
     assert!(compile_error("pi = 3").contains("can't assign to `pi`: it's a constant"));
     assert!(compile_error("pi()").contains("`pi` is a constant, not a function"));
     assert!(compile_error("report pie").contains("did you mean `pi`?"));

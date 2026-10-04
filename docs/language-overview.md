@@ -335,11 +335,27 @@ fn attack(a: Fighter, target: Fighter) -> int {
 }
 
 let doubled = [3, 5, 8].map(x -> x * 2)   # lambdas; x.f(y) is the same as f(x, y)
+let magnitudes = [-2, 3].map(abs)        # named functions and builtins are values
+let largest = [1, 2, 3].reduce(0, max)   # the initial value remains required
 ```
 
-Collection callbacks (`map`, `filter`, `count`, `reduce`) cannot execute draws, observations, scores or probabilistic branches in the caller's worlds. This restriction is the same in enumeration and sampling, including helper calls. Use a loop for random traversal. A callback can compute a local distribution with `simulate`, or transform an existing distribution without drawing it.
+Collection callbacks (`map`, `filter`, `count`, `reduce`, and ordering comparators) cannot execute draws, observations, scores or probabilistic branches in the caller's worlds. This restriction is the same in enumeration and sampling, including helper calls. Use a loop for random traversal. A callback can compute a local distribution with `simulate`, or transform an existing distribution without drawing it.
 
 Functions can branch, draw and observe, so calling one can split the caller's world. A call doesn't normalize anything: the splits and observations inside a function become part of the caller's weights. There is one restriction: **a function can read anything in scope, but it can only assign its own local variables.** It returns whatever it changes. That keeps every function a *probabilistic function of its inputs*, so the engine can compute the distribution of `attack(hero, goblin)` once and reuse it in every world and every round. (A function that calls `print`, directly or not, runs every time instead: its output is debug output, one line per world that runs it.)
+
+Function references capture their free variables when the reference is created. Builtins retain their normal argument counts, including optional and variadic arguments. Calls through a variable retain the same runtime validation and callback effect rules.
+
+For extrema, `min(a,b,…)`/`max(a,b,…)` compare at least two candidates; distribution candidates produce a distribution. Use `minimum(xs,compare?)`/`maximum(xs,compare?)` to select a collection element, or `minimum(d)`/`maximum(d)` for distribution support bounds:
+
+```probl
+report max(d6, 3)                         # a distribution
+report maximum(3d8)                       # 24
+report maximum([-8, -3, -12])              # -3
+report [complex(1),complex(2)].maximum((a,b)->abs(a)-abs(b))
+report [3,1,2].highest(2)                  # [3,2]; count is required
+```
+
+Collection selectors retain the first element on ties and never combine recipes implicitly. Distribution bounds require fully resolved support and a finite endpoint; continuous bounds refer to closed support. See [extrema semantics](semantics.md) for the complete contract.
 
 ### Types
 
@@ -806,7 +822,7 @@ From loosest to tightest binding:
 | Integer and special functions | `choose(n, k)` `factorial(n)` `gcd(a, b)` `lcm(a, b)` `euler_phi(n)` `ln_gamma(x)` `erf(x)` `erfc(x)` |
 | Complex numbers | `complex(re, im?)` `real(z)` `imag(z)` `conj(z)` `abs(z)` `abs2(z)` `arg(z)` `cis(theta)` |
 | Constants | `pi` `e` `euler_gamma` `today`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
-| Collections | `len` `slice(xs, start, end?)` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `highest(n)` `lowest(n)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
+| Collections | `len` `slice(xs, start, end?)` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `minimum` `maximum` `highest(n, compare?)` `lowest(n, compare?)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
 | Text | `str` `upper` `lower` `trim(s, chars?)` `trim_start(s, chars?)` `trim_end(s, chars?)` `starts_with` `ends_with` `chars` `split` `join` |
 | Dates | `date("2027-01-31")` or `date(year, month, day)`; `days(n)` `weeks(n)` `add_workdays(d, n, holidays?)` `is_workday(d, holidays?)` `weekday(d)` `add_months(d, n)` `add_years(d, n)` `start_of_month(d)` `end_of_month(d)` `year(d)` `month(d)` `day(d)` |
 | Debugging | `print` |

@@ -31,7 +31,7 @@ fn#0 the top level ()
   report actual_11 as "profit from chosen order"    [live: quantities_1 demand_9 actual_11]
   $12 = call fn#1 profit(20, demand_9)    [live: quantities_1 demand_9 actual_11 $12]
   report (- actual_11 $12) as "gain over ordering 20"    [live: quantities_1 demand_9 actual_11]
-  report (- max(map(quantities_1, closure fn#6 [demand_9])) actual_11) as "regret after demand"    [live: ]
+  report (- maximum(map(quantities_1, closure fn#6 [demand_9])) actual_11) as "regret after demand"    [live: ]
 fn#1 profit (order_0, demand_1)
   return (- (+ (* 10 min(order_0, demand_1)) (* 2 max((- order_0 demand_1), 0))) (* 6 order_0))    [live: ]
 fn#2 a simulate block () captures [demand_model_0 <- parent slot 0, chosen_2 <- parent slot 2]
@@ -44,7 +44,7 @@ fn#3 a simulate block () captures [demand_model_0 <- parent slot 0, quantity_2 <
   return $3    [live: ]
 fn#4 a simulate block () captures [demand_model_0 <- parent slot 0, quantities_2 <- parent slot 1]
   d_1 ~ demand_model_0    [live: d_1 quantities_2]
-  return max(map(quantities_2, closure fn#5 [d_1]))    [live: ]
+  return maximum(map(quantities_2, closure fn#5 [d_1]))    [live: ]
 fn#5 a lambda (q_0) captures [d_1 <- parent slot 1]
   $2 = call fn#1 profit(q_0, d_1)    [live: $2]
   return $2    [live: ]

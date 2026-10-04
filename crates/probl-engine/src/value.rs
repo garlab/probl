@@ -43,6 +43,7 @@ pub enum Value {
     /// A continuous distribution (docs/semantics.md, section 13).
     Continuous(Arc<Family>),
     Closure(Arc<Closure>),
+    Builtin(probl_sema::Builtin),
     /// Days since 1970-01-01.
     Date(i32),
     /// A variable's value that isn't drawn yet, internal to the engine
@@ -381,7 +382,7 @@ impl Value {
                 None => "distribution".into(),
             },
             Value::Continuous(f) => format!("{} distribution", f.name()),
-            Value::Closure(_) => "function".into(),
+            Value::Closure(_) | Value::Builtin(_) => "function".into(),
             Value::Date(_) => "date".into(),
             Value::Delayed(_) => "value not drawn yet".into(),
             Value::Analytic(_) => "float".into(),
@@ -434,6 +435,7 @@ impl Value {
             Value::Record(_) => 11,
             Value::Dist(_) => 12,
             Value::Closure(_) => 13,
+            Value::Builtin(_) => 19,
             Value::Continuous(_) => 14,
             Value::Delayed(_) => 15,
             Value::Complex(_) => 16,
@@ -505,6 +507,7 @@ fn eq_other(x: &Value, y: &Value) -> bool {
         (Value::Enum(a), Value::Enum(b)) => a.ty == b.ty && a.variant == b.variant,
         (Value::Dist(a), Value::Dist(b)) => Arc::ptr_eq(a, b) || a == b,
         (Value::Closure(a), Value::Closure(b)) => Arc::ptr_eq(a, b) || a == b,
+        (Value::Builtin(a), Value::Builtin(b)) => a == b,
         (Value::Date(a), Value::Date(b)) => a == b,
         (Value::Continuous(a), Value::Continuous(b)) => family_key(a) == family_key(b),
         (Value::Analytic(a), Value::Analytic(b)) => a.key() == b.key(),
@@ -547,6 +550,7 @@ fn hash_other<H: Hasher>(value: &Value, state: &mut H) {
         Value::Enum(e) => (e.ty, e.variant).hash(state),
         Value::Dist(d) => d.hash(state),
         Value::Closure(c) => c.hash(state),
+        Value::Builtin(b) => b.hash(state),
         Value::Date(d) => d.hash(state),
         Value::Continuous(f) => family_key(f).hash(state),
         Value::Analytic(a) => a.key().hash(state),
@@ -594,6 +598,7 @@ impl Ord for Value {
             (Value::Record(a), Value::Record(b)) => a.cmp(b),
             (Value::Dist(a), Value::Dist(b)) => a.cmp(b),
             (Value::Closure(a), Value::Closure(b)) => a.cmp(b),
+            (Value::Builtin(a), Value::Builtin(b)) => a.cmp(b),
             (Value::Continuous(a), Value::Continuous(b)) => family_key(a).cmp(&family_key(b)),
             (Value::Analytic(a), Value::Analytic(b)) => a.key().cmp(&b.key()),
             (Value::Event(a), Value::Event(b)) => a.key().cmp(&b.key()),
@@ -733,7 +738,7 @@ fn write_value(v: &Value, f: &mut fmt::Formatter<'_>, nested: bool) -> fmt::Resu
             }
             write!(f, ")")
         }
-        Value::Closure(_) => write!(f, "<function>"),
+        Value::Closure(_) | Value::Builtin(_) => write!(f, "<function>"),
         Value::Date(d) => write!(f, "{}", crate::dates::format(*d)),
         Value::Continuous(family) => write!(f, "{family}"),
         Value::Analytic(a) => write!(f, "<analytic float: {} * {} + {}>", a.scale, a.family, a.offset),

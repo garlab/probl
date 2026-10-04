@@ -9,7 +9,7 @@ Error: `f` takes 2 arguments, but 1 was given
    │         ──┬─  
    │           ╰─── here
 ───╯
-Error: `max` takes at least 1 argument, but 0 were given
+Error: `max` takes at least 2 arguments, but 0 were given
    ╭─[ test.probl:3:9 ]
    │
  3 │ let w = max()

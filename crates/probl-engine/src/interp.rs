@@ -768,6 +768,13 @@ impl<'p> Engine<'p> {
                             *func
                         }
                         Callee::Value(e) => match self.eval(f, e, &w)? {
+                            Value::Builtin(b) => {
+                                let value = self.builtin_values(b, &key, w.weight, span)?;
+                                let mut nw = w;
+                                self.assign(f, dest, value, &mut nw, span)?;
+                                out.push(nw);
+                                continue;
+                            }
                             Value::Closure(c) => {
                                 self.check_arity(&c, args.len(), span)?;
                                 key.extend(c.captured.iter().cloned());
@@ -1515,7 +1522,7 @@ impl<'p> Engine<'p> {
             (TypeSpec::Str, Value::Str(_)) => true,
             (TypeSpec::Date, Value::Date(_)) => true,
             (TypeSpec::Unit, Value::Unit) => true,
-            (TypeSpec::Function, Value::Closure(_)) => true,
+            (TypeSpec::Function, Value::Closure(_) | Value::Builtin(_)) => true,
             (TypeSpec::List(t), Value::List(items)) => items.iter().all(|x| self.conforms(x, t)),
             (TypeSpec::List(t), Value::Range(..)) => **t == TypeSpec::Int,
             (TypeSpec::Map(k, t), Value::Map(m)) => m.iter().all(|(a, b)| self.conforms(a, k) && self.conforms(b, t)),
@@ -1870,6 +1877,9 @@ impl<'p> Engine<'p> {
 
     /// Call a closure that must not split worlds (used by `map`, `filter`, …).
     fn call_pure(&mut self, closure: &Value, args: Vec<Value>, what: &'static str, span: Span) -> Result<Value> {
+        if let Value::Builtin(b) = closure {
+            return self.builtin_values(*b, &args, Weight::ONE, span);
+        }
         let Value::Closure(c) = closure else {
             return Err(RuntimeError::new(
                 span,
@@ -2283,6 +2293,7 @@ impl<'p> Engine<'p> {
 
     fn literal(&mut self, l: &Lit) -> OpResult<Value> {
         Ok(match l {
+            Lit::Builtin(b) => Value::Builtin(*b),
             Lit::Unit => Value::Unit,
             Lit::Bool(b) => Value::Bool(*b),
             Lit::Int(i) => {
@@ -2319,8 +2330,46 @@ impl<'p> Engine<'p> {
         for a in args {
             values.push(self.eval(f, a, w)?);
         }
+        self.builtin_values(b, &values, w.weight, span)
+    }
+
+    fn check_function_arity(&self, value: &Value, given: usize, span: Span) -> Result<()> {
+        match value {
+            Value::Closure(c) => self.check_arity(c, given, span),
+            Value::Builtin(b) => {
+                let (min, max) = b.arity();
+                if given < min || given > max || (*b == Builtin::Date && given == 2) {
+                    return Err(RuntimeError::new(
+                        span,
+                        format!(
+                            "`{}` takes {}, but {given} were given",
+                            b.name(),
+                            if *b == Builtin::Date {
+                                "one ISO string or three integers".into()
+                            } else if min == max {
+                                format!("{min} argument(s)")
+                            } else if max == usize::MAX {
+                                format!("at least {min} arguments")
+                            } else {
+                                format!("{min} to {max} arguments")
+                            }
+                        ),
+                    ));
+                }
+                Ok(())
+            }
+            _ => Err(RuntimeError::new(
+                span,
+                "expected a comparator function, like `(a, b) -> a - b`",
+            )),
+        }
+    }
+
+    /// Shared dispatch for direct calls and first-class builtin values.
+    fn builtin_values(&mut self, b: Builtin, values: &[Value], weight: Weight, span: Span) -> Result<Value> {
+        self.check_function_arity(&Value::Builtin(b), values.len(), span)?;
         let at = |err: OpError| err.at(span);
-        builtins::check_query_input(b, &values).map_err(at)?;
+        builtins::check_query_input(b, values).map_err(at)?;
         if values.iter().any(analytic::contains)
             && !matches!(
                 b,
@@ -2336,6 +2385,7 @@ impl<'p> Engine<'p> {
             return Err(analytic::unsupported(&format!("`{}` on this outcome", b.name())).at(span));
         }
         match b {
+            Builtin::Typeof => crate::type_name::of(&values[0], &self.prog.enums, &mut self.budget).map_err(at),
             Builtin::RunDate => self.config.today.map(Value::Date).ok_or_else(|| {
                 RuntimeError::new(span, "the host did not supply an execution date for `today`")
                     .with_help("set Options.today, or supply today in the WASM request")
@@ -2348,10 +2398,10 @@ impl<'p> Engine<'p> {
                     }
                     crate::text::push_value(&mut text, value, &mut self.budget).map_err(at)?;
                 }
-                let line = if w.weight == Weight::ONE {
+                let line = if weight == Weight::ONE {
                     text
                 } else {
-                    format!("[{}] {text}", fmt_weight(w.weight))
+                    format!("[{}] {text}", fmt_weight(weight))
                 };
                 self.printed += line.len() + 1;
                 if self.printed > self.config.max_output {
@@ -2363,15 +2413,19 @@ impl<'p> Engine<'p> {
                 }
                 Ok(Value::Unit)
             }
-            Builtin::Map | Builtin::Filter | Builtin::Reduce => self.higher_order(b, &values, span),
-            Builtin::Count if values.len() == 2 => self.higher_order(b, &values, span),
-            Builtin::Sort | Builtin::SortDesc if values.len() == 2 => self.higher_order(b, &values, span),
-            Builtin::Roll => self.roll(&values).map_err(at),
+            Builtin::Map | Builtin::Filter | Builtin::Reduce => self.higher_order(b, values, span),
+            Builtin::Count if values.len() == 2 => self.higher_order(b, values, span),
+            Builtin::Sort | Builtin::SortDesc | Builtin::Minimum | Builtin::Maximum if values.len() == 2 => {
+                self.higher_order(b, values, span)
+            }
+            Builtin::Highest | Builtin::Lowest if values.len() == 3 => self.higher_order(b, values, span),
+            Builtin::Min | Builtin::Max => builtins::call_plain(b, values, &mut self.budget).map_err(at),
+            Builtin::Roll => self.roll(values).map_err(at),
             Builtin::Take => Err(RuntimeError::new(
                 span,
                 "use `deck.take()` to draw and remove an item from a mutable bag",
             )),
-            _ if b.lifting() == Lifting::Raw => builtins::call_raw(b, &values, &mut self.budget).map_err(at),
+            _ if b.lifting() == Lifting::Raw => builtins::call_raw(b, values, &mut self.budget).map_err(at),
             _ if values.iter().any(|v| matches!(v, Value::Continuous(_))) => {
                 let kind = values
                     .iter()
@@ -2383,7 +2437,7 @@ impl<'p> Engine<'p> {
                         .with_help("draw a value first, like `let x ~ normal(0, 1)`"),
                 )
             }
-            _ => ops::lift_n(&values, &mut self.budget, &|a, budget| {
+            _ => ops::lift_n(values, &mut self.budget, &|a, budget| {
                 builtins::call_plain(b, a, budget)
             })
             .map_err(at),
@@ -2426,9 +2480,38 @@ impl<'p> Engine<'p> {
         Ok(pool)
     }
 
+    fn compare_callback(
+        &mut self,
+        comparator: &Value,
+        a: &Value,
+        other: &Value,
+        b: Builtin,
+        span: Span,
+    ) -> Result<std::cmp::Ordering> {
+        self.budget.work(1).map_err(|e| e.at(span))?;
+        match self.call_pure(comparator, vec![a.clone(), other.clone()], b.name(), span)? {
+            Value::Int(n) => Ok(n.cmp(&probl_number::Integer::ZERO)),
+            Value::Float(x) if x.is_finite() => Ok(x.partial_cmp(&0.0).expect("finite comparator result")),
+            other => Err(RuntimeError::new(
+                span,
+                format!(
+                    "the comparator given to `{}` must return a finite int or float (negative, zero, or positive), found {}",
+                    b.name(),
+                    ops::article(&other.kind())
+                ),
+            )),
+        }
+    }
+
     /// Collection operations which call a function, including custom sorting.
     fn higher_order(&mut self, b: Builtin, values: &[Value], span: Span) -> Result<Value> {
         if let Value::Dist(d) = &values[0] {
+            if matches!(b, Builtin::Minimum | Builtin::Maximum) {
+                return Err(RuntimeError::new(
+                    span,
+                    "a comparator is supported only for collection extrema, not distribution support bounds",
+                ));
+            }
             let mut results = Vec::with_capacity(d.outcomes.len());
             for (coll, p) in &d.outcomes {
                 let mut args = values.to_vec();
@@ -2437,37 +2520,59 @@ impl<'p> Engine<'p> {
             }
             return ops::combine(results, d.missing, &mut self.budget).map_err(|e| e.at(span));
         }
+        if matches!(b, Builtin::Highest | Builtin::Lowest) {
+            if let Value::Dist(d) = &values[1] {
+                let mut results = Vec::with_capacity(d.outcomes.len());
+                for (count, p) in &d.outcomes {
+                    let mut args = values.to_vec();
+                    args[1] = count.clone();
+                    results.push((self.higher_order(b, &args, span)?, *p));
+                }
+                return ops::combine(results, d.missing, &mut self.budget).map_err(|e| e.at(span));
+            }
+        }
         let items = builtins::items(&values[0], b.name(), &mut self.budget).map_err(|e| e.at(span))?;
         match b {
-            Builtin::Sort | Builtin::SortDesc => {
-                // Validate the function even when no comparisons are needed.
-                let Value::Closure(c) = &values[1] else {
-                    return Err(RuntimeError::new(
-                        span,
-                        format!("`{}` needs a comparator function, like `(a, b) -> a - b`", b.name()),
-                    ));
+            Builtin::Sort
+            | Builtin::SortDesc
+            | Builtin::Minimum
+            | Builtin::Maximum
+            | Builtin::Highest
+            | Builtin::Lowest => {
+                let comparator = values.last().unwrap();
+                // Validate even empty/singleton collections without invoking the callback.
+                self.check_function_arity(comparator, 2, span)?;
+                if matches!(b, Builtin::Minimum | Builtin::Maximum) {
+                    let mut iter = items.into_iter();
+                    let mut best = iter.next().ok_or_else(|| {
+                        RuntimeError::new(span, format!("`{}` needs a nonempty collection", b.name()))
+                    })?;
+                    for x in iter {
+                        let order = self.compare_callback(comparator, &x, &best, b, span)?;
+                        if (b == Builtin::Maximum && order.is_gt()) || (b == Builtin::Minimum && order.is_lt()) {
+                            best = x;
+                        }
+                    }
+                    return Ok(best);
+                }
+                let count = if matches!(b, Builtin::Highest | Builtin::Lowest) {
+                    Some(builtins::extreme_count(&values[1], &mut self.budget).map_err(|e| e.at(span))?)
+                } else {
+                    None
                 };
-                self.check_arity(c, 2, span)?;
                 crate::ordering::reserve_sort(items.len(), &mut self.budget).map_err(|e| e.at(span))?;
                 let mut items = items;
-                crate::ordering::try_sort_by(&mut items, |a, b_value| {
-                    let result = self.call_pure(&values[1], vec![a.clone(), b_value.clone()], b.name(), span)?;
-                    let order = match result {
-                        Value::Int(n) => n.cmp(&probl_number::Integer::ZERO),
-                        Value::Float(x) if x.is_finite() => x.partial_cmp(&0.0).expect("finite comparator result"),
-                        other => {
-                            return Err(RuntimeError::new(
-                                span,
-                                format!(
-                                    "the comparator given to `{}` must return a finite int or float (negative, zero, or positive), found {}",
-                                    b.name(),
-                                    ops::article(&other.kind())
-                                ),
-                            ));
-                        }
-                    };
-                    Ok(if b == Builtin::SortDesc { order.reverse() } else { order })
+                crate::ordering::try_sort_by(&mut items, |a, other| {
+                    let order = self.compare_callback(comparator, a, other, b, span)?;
+                    Ok(if matches!(b, Builtin::SortDesc | Builtin::Highest) {
+                        order.reverse()
+                    } else {
+                        order
+                    })
                 })?;
+                if let Some(n) = count {
+                    items.truncate(n);
+                }
                 Ok(Value::list(items))
             }
             Builtin::Map => {

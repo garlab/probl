@@ -21,6 +21,8 @@ pub fn category(b: Builtin) -> &'static str {
     match b {
         B::Min
         | B::Max
+        | B::Minimum
+        | B::Maximum
         | B::Abs
         | B::Floor
         | B::Ceil
@@ -178,12 +180,20 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
     match b {
         // Math
         B::Min => doc(
-            "min(a, b, …) or min(xs)",
-            "The smallest of two or more values, or the elements of one nonempty list, range or string. Finite distribution candidates lift in either form: min([d6,3]) agrees with min(d6,3), without drawing. Validates ordering even for singleton inputs. A lone scalar or die is an error; use min(support(d)) for a finite distribution's minimum.",
+            "min(a, b, …)",
+            "The smallest of at least two values. Finite distribution arguments combine independently without drawing: min(d6,3) is a distribution. For a collection element or a distribution support bound, use minimum.",
         ),
         B::Max => doc(
-            "max(a, b, …) or max(xs)",
-            "The largest of two or more values, or the elements of one nonempty list, range or string. Finite distribution candidates lift in either form: max([d6,3]) agrees with max(d6,3), without drawing. Validates ordering even for singleton inputs. A lone scalar or die is an error; use max(support(d)) for a finite distribution's maximum.",
+            "max(a, b, …)",
+            "The largest of at least two values. Finite distribution arguments combine independently without drawing: max(d6,3) is a distribution. For a collection element or a distribution support bound, use maximum.",
+        ),
+        B::Minimum => doc(
+            "minimum(xs, compare?) or minimum(distribution)",
+            "The smallest element of a nonempty list, range or string, or the lower bound of a distribution's closed support. Collection comparators follow sort's finite numeric contract and return an original element; ties retain the first. Collection elements are never implicitly drawn or lifted. A comparator is not accepted for distribution bounds. Unordered singletons, scalar inputs, unresolved distributions and nonfinite bounds are errors.",
+        ),
+        B::Maximum => doc(
+            "maximum(xs, compare?) or maximum(distribution)",
+            "The largest element of a nonempty list, range or string, or the upper bound of a distribution's closed support: maximum(3d8) is 24. Collection comparators follow sort's finite numeric contract and return an original element; ties retain the first. Collection elements are never implicitly drawn or lifted. A comparator is not accepted for distribution bounds. Unordered singletons, scalar inputs, unresolved distributions and nonfinite bounds are errors.",
         ),
         B::Abs => doc(
             "abs(x)",
@@ -469,12 +479,12 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "Whether a list, range or bag holds `x`, a map has the key `x`, or a string contains the text `x`. `x in xs` is the same. Maps and bags use exact typed identity; list membership uses language equality.",
         ),
         B::Highest => doc(
-            "highest(xs: list) or highest(xs: list, n: int) -> list",
-            "The largest item, or the `n` largest, largest first: `roll(4, d6).highest(3)`.",
+            "highest(xs, n: int, compare?) -> list",
+            "Up to n largest elements of a list, range or string, largest first: roll(4,d6).highest(3). The nonnegative count is required. Optional numeric comparator follows sort; ties preserve input order. Use maximum for a single element.",
         ),
         B::Lowest => doc(
-            "lowest(xs: list) or lowest(xs: list, n: int) -> list",
-            "The smallest item, or the `n` smallest, smallest first.",
+            "lowest(xs, n: int, compare?) -> list",
+            "Up to n smallest elements of a list, range or string, smallest first. The nonnegative count is required. Optional numeric comparator follows sort; ties preserve input order. Use minimum for a single element.",
         ),
         B::Enumerate => doc(
             "enumerate(xs) -> list",

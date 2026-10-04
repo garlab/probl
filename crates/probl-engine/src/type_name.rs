@@ -82,7 +82,7 @@ impl Names<'_> {
             Value::Str(_) => "str",
             Value::Date(_) => "date",
             Value::Range(..) => "range",
-            Value::Closure(_) => "fn",
+            Value::Closure(_) | Value::Builtin(_) => "fn",
             Value::Continuous(_) => "dist[float]",
             Value::Enum(e) => &self.enums[e.ty as usize].name,
             Value::Record(r) if r.ty.is_some() => r.ty.as_deref().unwrap(),

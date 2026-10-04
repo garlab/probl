@@ -21,7 +21,7 @@ for quantity in quantities {
 # A clairvoyant decision is a bound on information's value, not an available policy.
 let perfect = simulate {
   let d ~ demand_model
-  max(quantities.map(q -> profit(q, d)))
+  maximum(quantities.map(q -> profit(q, d)))
 }
 report chosen as "order chosen before demand"
 report mean(perfect) - best_expected as "value of perfect information"
@@ -31,7 +31,7 @@ let demand ~ demand_model
 let actual = profit(chosen, demand)
 report actual as "profit from chosen order"
 report actual - profit(20, demand) as "gain over ordering 20"
-report max(quantities.map(q -> profit(q, demand))) - actual as "regret after demand"
+report maximum(quantities.map(q -> profit(q, demand))) - actual as "regret after demand"
 
 # ── Output ─────────────────────────────────────────────
 # enumerated

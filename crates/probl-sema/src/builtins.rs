@@ -42,8 +42,10 @@ const ANY: usize = usize::MAX;
 
 builtins! {
     // Math
-    Min = "min", 1..=ANY, Lift, true;
-    Max = "max", 1..=ANY, Lift, true;
+    Min = "min", 2..=ANY, Lift, true;
+    Max = "max", 2..=ANY, Lift, true;
+    Minimum = "minimum", 1..=2, Raw, true;
+    Maximum = "maximum", 1..=2, Raw, true;
     Abs = "abs", 1..=1, Lift, true;
     Floor = "floor", 1..=1, Lift, true;
     Ceil = "ceil", 1..=1, Lift, true;
@@ -123,8 +125,8 @@ builtins! {
     Values = "values", 1..=1, Lift, true;
     Get = "get", 2..=3, Lift, true;
     Contains = "contains", 2..=2, Lift, true;
-    Highest = "highest", 1..=2, Lift, true;
-    Lowest = "lowest", 1..=2, Lift, true;
+    Highest = "highest", 2..=3, Lift, true;
+    Lowest = "lowest", 2..=3, Lift, true;
     Enumerate = "enumerate", 1..=1, Lift, true;
     Zip = "zip", 2..=2, Lift, true;
     // Mutating methods; lowering turns `xs.push(v)` into `xs = push(xs, v)`.

@@ -20,19 +20,20 @@
 //! does the same in every world the draw would have split, observations
 //! multiply weights in either order, and reports add up the same weights.
 
-use crate::effects::may_print;
+use crate::effects::{indirect_prints, may_print};
 use crate::ir::*;
 
 /// Move every movable draw of the program down to its first use.
 pub fn move_draws(program: &mut Program) {
+    let callable_prints = indirect_prints(&program.functions);
     for i in 0..program.functions.len() {
         let body = std::mem::take(&mut program.functions[i].body);
-        let body = block(body, &program.functions);
+        let body = block(body, &program.functions, callable_prints);
         program.functions[i].body = body;
     }
 }
 
-fn block(b: Block, functions: &[Function]) -> Block {
+fn block(b: Block, functions: &[Function], callable_prints: bool) -> Block {
     let mut out: Vec<Stmt> = Vec::with_capacity(b.stmts.len());
     // Draws being carried down, in their order, with the slot each draws.
     // A draw's type check (`let x: bool ~ …`) travels with it.
@@ -45,9 +46,11 @@ fn block(b: Block, functions: &[Function]) -> Block {
                 continue;
             }
         }
-        nested(&mut s, functions);
+        nested(&mut s, functions, callable_prints);
         // The draws that can't pass `s` land just before it, in order.
-        let (land, pass): (Vec<_>, Vec<_>) = carried.into_iter().partition(|(_, slot)| stops(&s, *slot, functions));
+        let (land, pass): (Vec<_>, Vec<_>) = carried
+            .into_iter()
+            .partition(|(_, slot)| stops(&s, *slot, functions, callable_prints));
         out.extend(land.into_iter().flat_map(|(d, _)| d));
         carried = pass;
         just_carried = match movable(&s) {
@@ -66,21 +69,21 @@ fn block(b: Block, functions: &[Function]) -> Block {
 }
 
 /// Move the draws in the blocks inside `s`.
-fn nested(s: &mut Stmt, functions: &[Function]) {
+fn nested(s: &mut Stmt, functions: &[Function], callable_prints: bool) {
     match &mut s.kind {
         StmtKind::If { then, otherwise, .. } => {
-            *then = block(std::mem::take(then), functions);
-            *otherwise = block(std::mem::take(otherwise), functions);
+            *then = block(std::mem::take(then), functions, callable_prints);
+            *otherwise = block(std::mem::take(otherwise), functions, callable_prints);
         }
         StmtKind::Chance { arms, otherwise, .. } => {
             for (_, b) in arms.iter_mut() {
-                *b = block(std::mem::take(b), functions);
+                *b = block(std::mem::take(b), functions, callable_prints);
             }
             if let Some(b) = otherwise {
-                *b = block(std::mem::take(b), functions);
+                *b = block(std::mem::take(b), functions, callable_prints);
             }
         }
-        StmtKind::Loop { body, .. } => *body = block(std::mem::take(body), functions),
+        StmtKind::Loop { body, .. } => *body = block(std::mem::take(body), functions, callable_prints),
         _ => {}
     }
 }
@@ -125,11 +128,11 @@ fn written_out(e: &Expr) -> bool {
 }
 
 /// Whether a draw of `slot` must land before `s`.
-fn stops(s: &Stmt, slot: SlotId, functions: &[Function]) -> bool {
+fn stops(s: &Stmt, slot: SlotId, functions: &[Function], callable_prints: bool) -> bool {
     let mut uses = false;
     let mut leaves = false;
     visit(s, &mut |x| uses |= x == slot, &mut leaves);
-    uses || leaves || may_print(s, functions)
+    uses || leaves || may_print(s, functions, callable_prints)
 }
 
 /// Call `f` with every slot `s` reads or writes, anywhere inside it; set

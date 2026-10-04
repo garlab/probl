@@ -257,7 +257,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         },
         B::Get => get(a(0), a(1), args.get(2), budget),
         B::Contains => ops::contains(a(0), a(1), budget).map(Value::Bool),
-        B::Highest | B::Lowest => extremes(a(0), args.get(1), b == B::Highest, budget),
+        B::Highest | B::Lowest => extremes(a(0), a(1), b == B::Highest, budget),
         B::Enumerate => {
             let items = items(a(0), "enumerate", budget)?;
             Ok(Value::list(
@@ -422,6 +422,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::IsListOfLen => Ok(Value::Bool(
             matches!((a(0), a(1)), (Value::List(items), Value::Int(n)) if *n == items.len() as i64),
         )),
+        B::Minimum | B::Maximum => unreachable!("population extrema receive distributions whole"),
         B::Typeof | B::RunDate | B::Count | B::Map | B::Filter | B::Reduce | B::Print | B::Roll | B::Take => {
             unreachable!("`{}` is handled by the interpreter", b.name())
         }
@@ -449,6 +450,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
 pub fn check_query_input(b: Builtin, args: &[Value]) -> OpResult<()> {
     use Builtin as B;
     let expected = match b {
+        B::Minimum | B::Maximum => "a distribution or nonempty list, range or string",
         B::P => "a boolean distribution (dist[bool])",
         B::Pdf => "a continuous distribution",
         B::Mean
@@ -465,6 +467,10 @@ pub fn check_query_input(b: Builtin, args: &[Value]) -> OpResult<()> {
     };
     let v = &args[0];
     let valid = match b {
+        B::Minimum | B::Maximum => matches!(
+            v,
+            Value::Dist(_) | Value::Continuous(_) | Value::List(_) | Value::Range(..) | Value::Str(_)
+        ),
         B::P => matches!(v, Value::Dist(_)),
         B::Pdf => matches!(v, Value::Dist(_) | Value::Continuous(_)),
         _ => matches!(
@@ -485,7 +491,7 @@ pub fn check_query_input(b: Builtin, args: &[Value]) -> OpResult<()> {
         ))
         .help(help));
     }
-    if matches!(v, Value::List(xs) if xs.is_empty()) {
+    if !matches!(b, B::Minimum | B::Maximum) && matches!(v, Value::List(xs) if xs.is_empty()) {
         return Err(OpError::new(format!("`{}` needs a nonempty list", b.name())));
     }
     Ok(())
@@ -547,6 +553,7 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
         return continuous_query(b, args);
     }
     match b {
+        B::Minimum | B::Maximum => population_extreme(v, b == B::Maximum, budget),
         B::P => probability_of(v),
         B::Pdf => Err(OpError::new("pdf needs a continuous distribution")
             .help("for a distribution whose outcomes can be listed, use `pmf`")),
@@ -1411,27 +1418,11 @@ fn round(v: &Value, digits: Option<&Value>, budget: &mut Budget) -> OpResult<Val
 
 fn min_max(args: &[Value], want_max: bool, budget: &mut Budget) -> OpResult<Value> {
     let name = if want_max { "max" } else { "min" };
-    let values: Vec<Value> = if let [single] = args {
-        match single {
-            Value::Range(lo, hi) => {
-                if hi < lo {
-                    return Err(OpError::new(format!("`{name}` of an empty range")));
-                }
-                return Ok(Value::Int(if want_max { hi.clone() } else { lo.clone() }));
-            }
-            Value::List(_) | Value::Str(_) => items(single, name, budget)?,
-            other => return Err(expected("a list, range or string, or at least two values", other, name)),
-        }
-    } else {
-        args.to_vec()
-    };
     let mut best: Option<Value> = None;
-    for v in values {
-        // A sequence supplies the candidates just like positional arguments.
-        // Validate even a singleton recipe by its outcomes, then lift each
-        // comparison. Reducing incrementally avoids a Cartesian product of
+    for v in args {
+        // Validate candidate outcomes, then lift each comparison. Reducing incrementally avoids a Cartesian product of
         // every candidate and preserves missing mass without drawing.
-        let v = ops::lift1(&v, budget, |v, budget| {
+        let v = ops::lift1(v, budget, |v, budget| {
             budget.work(1)?;
             ops::compare(v, v)?;
             Ok(v.clone())
@@ -1557,17 +1548,92 @@ fn get(coll: &Value, key: &Value, default: Option<&Value>, budget: &mut Budget) 
     }
 }
 
-fn extremes(v: &Value, n: Option<&Value>, highest: bool, budget: &mut Budget) -> OpResult<Value> {
+/// Select an existing element; recipes inside collections are never lifted.
+fn population_extreme(v: &Value, want_max: bool, budget: &mut Budget) -> OpResult<Value> {
+    let name = if want_max { "maximum" } else { "minimum" };
+    match v {
+        Value::Range(lo, hi) => {
+            budget.integer_work(lo, hi, false)?;
+            if hi < lo {
+                return Err(OpError::new(format!("`{name}` needs a nonempty range")));
+            }
+            Ok(Value::Int(if want_max { hi.clone() } else { lo.clone() }))
+        }
+        Value::Continuous(f) => {
+            let (lo, hi) = f.support();
+            finite_bound(if want_max { hi } else { lo }, name)
+        }
+        Value::Dist(d) => {
+            if d.missing > 0.0 {
+                return Err(OpError::new(format!(
+                    "`{name}` cannot determine a support bound while the distribution has unresolved mass"
+                )));
+            }
+            let mut best = None;
+            for (x, p) in &d.outcomes {
+                if *p <= 0.0 {
+                    continue;
+                }
+                let x = match x {
+                    Value::Continuous(_) | Value::Dist(_) => population_extreme(x, want_max, budget)?,
+                    x => x.clone(),
+                };
+                select_extreme(&mut best, x, want_max, budget)?;
+            }
+            best.ok_or_else(|| OpError::new(format!("`{name}` needs a nonempty distribution")))
+        }
+        Value::List(_) | Value::Str(_) => {
+            let mut best = None;
+            for x in items(v, name, budget)? {
+                select_extreme(&mut best, x, want_max, budget)?;
+            }
+            best.ok_or_else(|| OpError::new(format!("`{name}` needs a nonempty collection")))
+        }
+        other => Err(expected(
+            "a distribution or nonempty list, range or string",
+            other,
+            name,
+        )),
+    }
+}
+
+fn finite_bound(x: f64, name: &str) -> OpResult<Value> {
+    if !x.is_finite() {
+        return Err(OpError::new(format!("`{name}` has no finite support bound")));
+    }
+    Ok(Value::Float(x))
+}
+
+fn select_extreme(best: &mut Option<Value>, x: Value, want_max: bool, budget: &mut Budget) -> OpResult<()> {
+    budget.work(1)?;
+    ops::compare(&x, &x)?;
+    let replace = match best {
+        None => true,
+        Some(b) => {
+            let ord = ops::compare(&x, b)?;
+            if want_max { ord.is_gt() } else { ord.is_lt() }
+        }
+    };
+    if replace {
+        *best = Some(x);
+    }
+    Ok(())
+}
+
+pub fn extreme_count(n: &Value, budget: &mut Budget) -> OpResult<usize> {
+    let n = integer(n, "the count", budget)?;
+    if n.is_negative() {
+        return Err(OpError::new("the count must be nonnegative"));
+    }
+    Ok(n.to_u64().and_then(|n| usize::try_from(n).ok()).unwrap_or(usize::MAX))
+}
+
+fn extremes(v: &Value, n: &Value, highest: bool, budget: &mut Budget) -> OpResult<Value> {
+    let n = extreme_count(n, budget)?;
     let mut items = items(v, if highest { "highest" } else { "lowest" }, budget)?;
     sort(&mut items, highest, budget)?;
-    match n {
-        None => items.into_iter().next().ok_or_else(|| OpError::new("empty list")),
-        Some(n) => {
-            let n = whole(n, "the count", budget)?.max(0) as usize;
-            items.truncate(n);
-            Ok(Value::list(items))
-        }
-    }
+    items.truncate(n);
+    Ok(Value::list(items))
 }
 
 fn insert(coll: &Value, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {

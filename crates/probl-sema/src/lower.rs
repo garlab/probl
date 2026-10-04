@@ -2394,10 +2394,24 @@ impl<'a> Lowerer<'a> {
                 None => builtin(Builtin::RunDate, vec![], span),
             };
         }
-        if self.fn_by_name.contains_key(name) || Builtin::from_name(name).is_some() {
-            self.error(span, format!("the function `{name}` can't be used as a value"))
-                .help(format!("call it, or wrap it in a lambda: `x -> {name}(x)`"));
-        } else if self.record_by_name.contains_key(name) || self.enum_by_name.contains_key(name) {
+        if let Some(&func) = self.fn_by_name.get(name) {
+            if let Some(&def) = self.fn_defs.get(name) {
+                self.refer(span, def);
+            }
+            let caller = self.cur_func();
+            self.funcs[caller as usize].calls.insert(func);
+            return Expr {
+                kind: ExprKind::Closure {
+                    func,
+                    capture_args: Vec::new(),
+                },
+                span,
+            };
+        }
+        if let Some(b) = Builtin::from_name(name) {
+            return lit(Lit::Builtin(b), span);
+        }
+        if self.record_by_name.contains_key(name) || self.enum_by_name.contains_key(name) {
             self.error(span, format!("the type `{name}` can't be used as a value"));
         } else {
             self.unknown_name(name, span);

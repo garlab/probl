@@ -9,7 +9,7 @@ expression: tree
 (for successes counts (block (observe successes from (call binomial visitors rate))))
 (var replicated = [])
 (repeat (call len counts) (block (let successes ~ (call binomial visitors rate)) (.push replicated successes)))
-(fn spread (xs) (block (- (call max xs) (call min xs))))
+(fn spread (xs) (block (- (call maximum xs) (call minimum xs))))
 (report (* rate 100) as "common conversion rate (%)")
 (report (call sum replicated) as "sign-ups in a replicated pilot")
 (report (call spread replicated) as "replicated range across days")

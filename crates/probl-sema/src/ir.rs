@@ -424,6 +424,7 @@ pub enum InterpPart {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Lit {
+    Builtin(Builtin),
     Unit,
     Bool(bool),
     Int(probl_number::Integer),

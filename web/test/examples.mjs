@@ -149,8 +149,7 @@ for (const mode of ['enumerate', 'sample']) {
     '@epsilon 0.1\nlet d=simulate {var n=0; while 50% {n+=1}; n}; report pmf(one_of([d,uniform(100,101)]),0)',
     'report P(geometric(50%)>1)',
     'report [1:"a"][1.0]',
-    'report min(d6)',
-    'report max([complex(1)])',
+    'report maximum([complex(1)])',
     'report "abc".get(0.5,"?")',
     'report mean(1..0)',
     'report mean(lognormal(1000,1))',
@@ -164,6 +163,20 @@ for (const mode of ['enumerate', 'sample']) {
   }
 }
 console.log('same  remaining API contract validation in both modes');
+
+// The old unary comparison/top-n forms are now compile errors.
+for (const source of ['report min(d6)', 'report max([1,2])', 'report highest([1,2])', 'report [1,2].reduce(max)']) {
+  assert.ok(probl.run({source}).error, source);
+}
+for (const source of [
+  'report maximum([d6,d8])',
+  'report maximum(normal(0,1))',
+  'report minimum(geometric(50%))',
+  'report maximum(d6,(a,b)->a-b)',
+  'fn cmp(a,b){let x ~ d1; a-b}; report [1,2].maximum(cmp)',
+]) {
+  assert.equal(probl.run({source}).error?.kind, 'language', source);
+}
 
 // Queries cannot silently turn a scalar or entire list into a point mass.
 for (const mode of ['enumerate', 'sample']) {

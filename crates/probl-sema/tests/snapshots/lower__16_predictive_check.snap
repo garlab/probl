@@ -35,4 +35,4 @@ fn#0 the top level ()
   $12 = call fn#1 spread(counts_0)    [live: $11 $12]
   report (>= $11 $12) as "replicated range at least observed"    [live: ]
 fn#1 spread (xs_0)
-  return (- max(xs_0) min(xs_0))    [live: ]
+  return (- maximum(xs_0) minimum(xs_0))    [live: ]

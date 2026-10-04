@@ -324,7 +324,7 @@ both_modes! {
             report s.get(0)==s[0] and s.get(1.0)==s[1] and s.get(3,"?")=="?" and s.get(-1,"?")=="?"
             report "".get(0,"?")=="?"
             report (2^100..2^100+2).get(1.0)==2^100+1 and (2..4).get(3,-1)==-1
-            report min(s)=="a" and max(s)=="🦀" and min(["x"])=="x"
+            report minimum(s)=="a" and maximum(s)=="🦀" and minimum(["x"])=="x"
             report min(3,1,2)==1 and max(3,1,2)==3
             report P(min(d6,3)<=3)==100%
         "#,
@@ -334,8 +334,8 @@ both_modes! {
                 rejects(MODE, &format!("report ({coll}).get({key},0)"), "index");
             }
         }
-        for op in ["min", "max"] {
-            rejects(MODE, &format!("report {op}(4)"), "at least two");
+        for op in ["minimum", "maximum"] {
+            rejects(MODE, &format!("report {op}(4)"), "expects");
             rejects(MODE, &format!("report {op}([complex(1)])"), "ordering");
             rejects(MODE, &format!("report {op}([{{x:1}}])"), "compare");
             rejects(MODE, &format!("report {op}(\"\")"), "empty");
