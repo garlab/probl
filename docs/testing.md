@@ -8,7 +8,7 @@ No instrumented coverage percentage has been measured for this assessment. The r
 
 ## Executable checks from the audit
 
-[api_consistency.rs](../crates/probl-engine/tests/api_consistency.rs) contains 51 checks, each registered separately for enumeration and sampling: **102 tests**, of which **58 pass and 44 are ignored known failures**. Findings API-03 and API-09 have been fixed and their checks enabled. The 22 remaining failing checks cover the other seven findings. They assert the desired invariant, not the observed incorrect answer.
+[api_consistency.rs](../crates/probl-engine/tests/api_consistency.rs) contains 51 checks, each registered separately for enumeration and sampling: **102 tests**, of which **70 pass and 32 are ignored known failures**. Findings API-01, API-03, API-08 and API-09 have been fixed and their checks enabled. The 16 remaining failing checks cover the other five findings. They assert the desired invariant, not the observed incorrect answer.
 
 ```sh
 # Normal, green suite: ignored bodies are still compiled.
@@ -18,7 +18,7 @@ cargo test -p probl-engine --test api_consistency
 cargo test -p probl-engine --test api_consistency -- --ignored
 
 # Work on one defect, in both modes.
-cargo test -p probl-engine --test api_consistency lower_median -- --ignored
+cargo test -p probl-engine --test api_consistency incomplete_cdf -- --ignored
 
 # List the outstanding compiled tests (the normal run prints FIXME reasons).
 cargo test -p probl-engine --test api_consistency -- --ignored --list
@@ -48,6 +48,10 @@ Validation when the audit tests were first added: `cargo test --all` passed with
 [integer_conversion.rs](../crates/probl-engine/tests/integer_conversion.rs) adds checks in both modes for exact contextual conversion, declared boundaries, recursive containers, indexing and defaults, integer arguments, date/range/count operations, fractional rejection, probabilistic errors, large values and resource limits. Native/WASM fixtures also exercise this contract.
 
 Validation after fixing API-03 and API-09: `cargo test --all` passed with **499 passing tests and 44 ignored known failures**. The integer-conversion suite contributes 23 tests, and six audit tests were enabled. Clippy, formatting, native/WASM builds, and the native/WASM parity suite all passed.
+
+[ordering.rs](../crates/probl-engine/tests/ordering.rs) adds 26 tests covering custom comparators, stable ties in both directions, callback errors and effects (including print visibility to caching and draw scheduling), work limits, bounded behavior for inconsistent comparators, nested numeric order statistics, singleton validation, tiny positive tails and adjacent representable probabilities around mass boundaries. The same API has native/WASM fixtures.
+
+Validation after comparator sorting and the API-01/API-08 fixes: `cargo test --all` passed with **537 passing tests and 32 ignored known failures**. Twelve audit tests were enabled. Clippy, formatting, native/WASM builds, and the native/WASM parity suite all passed.
 
 The existing shared `close` helper uses absolute error below `1e-9`. That is suitable for some moderate-size values, but would accept zero for a `1e-13` tail and would miss a small violation of `[0,1]`. Choose assertions according to the property rather than applying one tolerance everywhere.
 

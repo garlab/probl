@@ -406,18 +406,10 @@ impl Dist {
         Some(nums.iter().map(|(x, w)| (x - mean).powi(2) * w).sum::<f64>() / total)
     }
 
-    /// The smallest value whose cumulative probability (among the resolved
-    /// outcomes) reaches `q`.
+    /// Quantile in storage order. Language queries first build a population in
+    /// language order, which can differ for nested mixed numeric values.
     pub fn quantile(&self, q: f64) -> Option<Value> {
-        let total = self.total();
-        let mut acc = 0.0;
-        for (v, w) in &self.outcomes {
-            acc += w / total;
-            if acc >= q - 1e-12 {
-                return Some(v.clone());
-            }
-        }
-        self.outcomes.last().map(|(v, _)| v.clone())
+        crate::stats::quantile(&self.outcomes, q).cloned()
     }
 }
 

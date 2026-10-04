@@ -116,8 +116,8 @@ builtins! {
     Map = "map", 2..=2, Lift, true;
     Filter = "filter", 2..=2, Lift, true;
     Reduce = "reduce", 3..=3, Lift, true;
-    Sort = "sort", 1..=1, Lift, true;
-    SortDesc = "sort_desc", 1..=1, Lift, true;
+    Sort = "sort", 1..=2, Lift, true;
+    SortDesc = "sort_desc", 1..=2, Lift, true;
     Reverse = "reverse", 1..=1, Lift, true;
     Keys = "keys", 1..=1, Lift, true;
     Values = "values", 1..=1, Lift, true;

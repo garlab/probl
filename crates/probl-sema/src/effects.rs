@@ -232,6 +232,7 @@ impl Direct {
                 match func {
                     Builtin::Print => self.prints = true,
                     Builtin::Map | Builtin::Filter | Builtin::Count | Builtin::Reduce => self.calls_closures = true,
+                    Builtin::Sort | Builtin::SortDesc if args.len() == 2 => self.calls_closures = true,
                     _ => {}
                 }
                 args.iter().for_each(|x| self.expr(x));

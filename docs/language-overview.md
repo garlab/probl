@@ -137,6 +137,19 @@ report anchor                  # still 2027-01-31
 
 `add_months` and `add_years` clamp to the last valid day of the target month. Consequently, adding one month twice may differ from adding two months once. For recurring schedules, compute each date from the original anchor, as in the [invoice example](../examples/12_invoice_calendar.probl). These functions, component extraction and workday helpers also lift over finite distributions. Month/year/workday counts and constructor components use checked integer conversion: `1.0` is accepted, `1.4` is rejected. All transformations return new dates and reject results outside the supported range.
 
+### Sorting with a comparator
+
+`sort` and `sort_desc` return stable copies: tied elements keep their original order. Supply a comparator to order values such as complex numbers or records:
+
+```probl
+let xs = [complex(2,3), complex(1,4), complex(0,5)]
+report xs.sort((a, b) -> real(a) - real(b))
+# [complex(0,5), complex(1,4), complex(2,3)]
+report xs.sort_desc((a, b) -> abs(a) - abs(b))
+```
+
+The comparator returns a negative number, zero, or a positive number to put `a` before, tied with, or after `b`. It must return an int or finite float and define a consistent order. As with other collection callbacks, it cannot draw, observe or branch on uncertainty outside a local `simulate`. Default sorting rejects unordered types, including singleton complex lists.
+
 ### Math
 
 Integers grow automatically: `factorial(30)` and `choose(100, 50)` return exact integers, and `10^100 + 1 - 10^100` is 1. There is no separate bigint syntax or type. Integer arithmetic and comparisons preserve all digits, including when comparing an integer with a float. `/`, negative powers, real math functions and mixed float/complex arithmetic produce approximations. `(10^400) / (10^400)` is 1.0, but passing `10^400` directly to `sin` is an error because it cannot be converted to a finite float. Resource limits bound integer size and computation; see [integer semantics](semantics.md#1-values-and-types).

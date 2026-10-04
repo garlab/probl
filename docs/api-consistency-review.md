@@ -2,7 +2,7 @@
 
 Reviewed 4 October 2026, against `064595e` (`feat: median_low and median_high`).
 
-Follow-up: the manual checks are now represented in [Rust regression tests](../crates/probl-engine/tests/api_consistency.rs), with known failures compiled but marked `#[ignore = "FIXME(API-XX): …"]`. See [test coverage and quality](testing.md) for commands, the finding-to-test map, and the coverage assessment. Findings 3 and 9 are now fixed; the other numbered findings remain open.
+Follow-up: the manual checks are now represented in [Rust regression tests](../crates/probl-engine/tests/api_consistency.rs), with known failures compiled but marked `#[ignore = "FIXME(API-XX): …"]`. See [test coverage and quality](testing.md) for commands, the finding-to-test map, and the coverage assessment. Findings 1, 3, 8 and 9 are now fixed; the other numbered findings remain open.
 
 The recent statistics changes establish useful rules, but several neighboring APIs still disagree about ordering, identity, and probability mass. Some disagreements silently change answers or discard data. I would address these contracts before adding more built-ins.
 
@@ -11,6 +11,8 @@ This review inspected the 136 public built-in declarations, their dispatch and v
 ## Findings to fix
 
 ### 1. High: order statistics can contradict the language's ordering
+
+**Fixed:** finite medians and quantiles now order a separate population with the language comparator. Storage identity is unchanged. The audit regressions are enabled; [ordering.rs](../crates/probl-engine/tests/ordering.rs) also covers nested int/float/prob combinations and reversed inputs. The reproduction below describes the earlier behavior.
 
 ```probl
 let xs = [[1.0, 0], [1, 100]]
@@ -175,6 +177,8 @@ Sources: [weighted one_of](../crates/probl-engine/src/builtins.rs#L1510), [disca
 
 ### 8. Medium: quantile still has two independent contract holes
 
+**Fixed:** lists and finite distributions share ordering validation, including singletons. Quantiles use compensated sums without a fixed probability tolerance and handle retained minimum/maximum endpoints explicitly. Report percentiles share the finite quantile helper. The audit regressions are enabled. The reproductions below describe the earlier behavior.
+
 **Input validation differs by representation.** Run these separately:
 
 ```probl
@@ -225,7 +229,7 @@ Sources: [list get](../crates/probl-engine/src/builtins.rs#L1414), [index valida
 These are weaker findings than the silent wrong answers above. Some are explicitly documented today.
 
 - **One-argument min/max remain an identity trap.** `min(d6)` and `max(d6)` both return the original die distribution through lifting; only `min(support(d6))` and `max(support(d6))` give its bounds. This follows existing lifting rules, but resembles the scalar-statistics confusion we just removed. I would require at least two scalar arguments, while retaining a single collection argument. That preserves useful `min(d6, 3)` lifting and rejects misleading singleton scalar calls. Any direct distribution-bound API should be explicit.
-- **Ordering admissibility depends on the operation and sometimes population size.** `sort([complex(1,2)])` and `min([complex(1,2)])` succeed; adding another complex value fails. Medians validate even singletons. Boolean median/CDF ordering is documented as `false < true`, while `sort([false,true])` and `min([false,true])` fail. Decide whether “ordered population” has one shared admissibility rule. Singleton passthrough can be defensible, so it is not ranked as an independent wrong-answer bug.
+- **Ordering admissibility still has deliberate exceptions.** Default `sort`/`sort_desc` now validate even singleton inputs, and optional numeric comparators allow explicit ordering of complex values and records. `min([complex(1,2)])` retains its singleton identity behavior. Boolean median/CDF/quantile ordering is documented as `false < true`, while default sorting and min/max follow ordinary language comparisons, which do not order booleans. A comparator can explicitly order them.
 - **Sequence support is uneven.** `sum(1..3)` and `min(1..3)` work; `mean(1..3)` and `median(1..3)` fail. Strings support indexing, slicing, sorting, and `lowest`, but not `get`; `min("cba")` returns the whole string while `lowest("cba")` returns `"a"`. A small capability table would make deliberate exceptions visible. Numeric ranges are a useful next statistics input, preferably with direct formulas rather than forced materialization.
 - **Optional arguments sometimes select a different operation.** `round(1.5)` returns an int, while `round(1.5, 0)` returns a float. This is documented, not a new bug, but `digits=0` is not a semantically neutral default. Bag `get` also always returns zero for absence, even with a different supplied default; the generic documentation currently promises missing-key errors without a default. Clarify these contracts before users build generic wrappers around them.
 

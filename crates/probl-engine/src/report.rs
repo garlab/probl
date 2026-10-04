@@ -948,15 +948,9 @@ fn summary_quantile(dist: &[(Value, f64)], q: f64) -> Option<Value> {
 }
 
 fn quantile(dist: &[(Value, f64)], q: f64) -> Value {
-    let total: f64 = dist.iter().map(|(_, p)| p).sum();
-    let mut acc = 0.0;
-    for (v, p) in dist {
-        acc += p / total;
-        if acc >= q - 1e-12 {
-            return v.clone();
-        }
-    }
-    dist.last().unwrap().0.clone()
+    crate::stats::quantile(dist, q)
+        .expect("nonempty report population")
+        .clone()
 }
 
 /// A report table: one row per `by` key.

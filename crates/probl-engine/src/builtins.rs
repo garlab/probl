@@ -230,11 +230,9 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::Sum => sum(a(0), budget),
         B::Count if args.len() == 1 => len(a(0)),
         B::Sort | B::SortDesc => {
+            assert_eq!(args.len(), 1, "comparator sorting is handled by the interpreter");
             let mut items = items(a(0), b.name(), budget)?;
-            sort(&mut items)?;
-            if b == B::SortDesc {
-                items.reverse();
-            }
+            sort(&mut items, b == B::SortDesc, budget)?;
             Ok(Value::list(items))
         }
         B::Reverse => match a(0) {
@@ -808,59 +806,28 @@ fn statistical_compare(a: &Value, b: &Value) -> OpResult<std::cmp::Ordering> {
     }
 }
 
-fn quantile(v: &Value, q: f64, what: &str, budget: &mut Budget) -> OpResult<Value> {
-    fn check(v: &Value, budget: &mut Budget) -> OpResult<()> {
+/// Public ordering is separate from the typed total order used for storage.
+/// Never put this reordered vector back into a Dist or a world/cache key.
+fn ordered_outcomes(d: &Dist, budget: &mut Budget) -> OpResult<Vec<(Value, f64)>> {
+    budget.collection(d.outcomes.len() as u128)?;
+    for (x, _) in &d.outcomes {
         budget.work(1)?;
-        match v {
-            Value::Complex(_) => {
-                ops::compare(v, v)?;
-            }
-            Value::List(xs) => {
-                for x in xs.iter() {
-                    check(x, budget)?;
-                }
-            }
-            Value::Map(xs) => {
-                for (k, v) in xs.iter() {
-                    check(k, budget)?;
-                    check(v, budget)?;
-                }
-            }
-            Value::Bag(xs) => {
-                for x in xs.keys() {
-                    check(x, budget)?;
-                }
-            }
-            Value::Record(r) => {
-                for (_, x) in &r.fields {
-                    check(x, budget)?;
-                }
-            }
-            Value::Dist(d) => {
-                for (x, _) in &d.outcomes {
-                    check(x, budget)?;
-                }
-            }
-            _ => {}
-        }
-        Ok(())
+        statistical_compare(x, x)?;
     }
+    crate::ordering::reserve_sort(d.outcomes.len(), budget)?;
+    let mut outcomes = d.outcomes.clone();
+    crate::ordering::try_sort_by(&mut outcomes, |(a, _), (b, _)| {
+        budget.work(1)?;
+        statistical_compare(a, b)
+    })?;
+    Ok(outcomes)
+}
+
+fn quantile(v: &Value, q: f64, what: &str, budget: &mut Budget) -> OpResult<Value> {
     let d = stat_dist(v, what, budget)?;
-    // An empirical order statistic requires mutually comparable elements.
-    // Boolean quantiles use false < true, as for a Bernoulli distribution.
-    if let Value::List(xs) = v {
-        for x in xs.iter() {
-            statistical_compare(x, x)?;
-            statistical_compare(&xs[0], x)?;
-        }
-    }
-    for (value, _) in &d.outcomes {
-        // The total order used to store outcomes is not a mathematical order
-        // for complex numbers. Preserve existing categorical quantiles while
-        // rejecting complex data, including inside collections.
-        check(value, budget)?;
-    }
-    d.quantile(q)
+    let outcomes = ordered_outcomes(&d, budget)?;
+    crate::stats::quantile(&outcomes, q)
+        .cloned()
         .ok_or_else(|| OpError::new(format!("`{what}` needs at least one resolved outcome")))
 }
 
@@ -878,9 +845,9 @@ fn median(v: &Value, b: Builtin, budget: &mut Budget) -> OpResult<Value> {
             ))
             .help("use `median_low` or `median_high` for ordered values such as strings"));
         }
-        statistical_compare(&d.outcomes[0].0, x)?;
     }
-    let (lo, hi) = crate::stats::median_bounds(&d.outcomes)
+    let outcomes = ordered_outcomes(&d, budget)?;
+    let (lo, hi) = crate::stats::median_bounds(&outcomes)
         .ok_or_else(|| OpError::new(format!("`{}` needs at least one resolved outcome", b.name())))?;
     match b {
         Builtin::MedianLow => Ok(lo.clone()),
@@ -1185,15 +1152,18 @@ pub fn items(v: &Value, func: &str, budget: &mut Budget) -> OpResult<Vec<Value>>
     }
 }
 
-fn sort(items: &mut [Value]) -> OpResult<()> {
-    let mut err = None;
-    items.sort_by(|x, y| {
-        ops::compare(x, y).unwrap_or_else(|e| {
-            err.get_or_insert(e);
-            std::cmp::Ordering::Equal
-        })
-    });
-    err.map_or(Ok(()), Err)
+fn sort(items: &mut [Value], descending: bool, budget: &mut Budget) -> OpResult<()> {
+    // Even a singleton must have a language ordering; internal storage order
+    // doesn't make complex values, records or distributions sortable.
+    for x in items.iter() {
+        budget.work(1)?;
+        ops::compare(x, x)?;
+    }
+    crate::ordering::reserve_sort(items.len(), budget)?;
+    crate::ordering::try_sort_by(items, |x, y| {
+        budget.work(1)?;
+        ops::compare(x, y).map(|c| if descending { c.reverse() } else { c })
+    })
 }
 
 /// Real inputs keep their real domains; an explicit complex input requests the
@@ -1431,10 +1401,7 @@ fn get(coll: &Value, key: &Value, default: Option<&Value>, budget: &mut Budget) 
 
 fn extremes(v: &Value, n: Option<&Value>, highest: bool, budget: &mut Budget) -> OpResult<Value> {
     let mut items = items(v, if highest { "highest" } else { "lowest" }, budget)?;
-    sort(&mut items)?;
-    if highest {
-        items.reverse();
-    }
+    sort(&mut items, highest, budget)?;
     match n {
         None => items.into_iter().next().ok_or_else(|| OpError::new("empty list")),
         Some(n) => {

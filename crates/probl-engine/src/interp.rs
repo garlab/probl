@@ -2365,6 +2365,7 @@ impl<'p> Engine<'p> {
             }
             Builtin::Map | Builtin::Filter | Builtin::Reduce => self.higher_order(b, &values, span),
             Builtin::Count if values.len() == 2 => self.higher_order(b, &values, span),
+            Builtin::Sort | Builtin::SortDesc if values.len() == 2 => self.higher_order(b, &values, span),
             Builtin::Roll => self.roll(&values).map_err(at),
             Builtin::Take => Err(RuntimeError::new(
                 span,
@@ -2425,7 +2426,7 @@ impl<'p> Engine<'p> {
         Ok(pool)
     }
 
-    /// `map`, `filter`, `count(xs, test)` and `reduce`, which call a function.
+    /// Collection operations which call a function, including custom sorting.
     fn higher_order(&mut self, b: Builtin, values: &[Value], span: Span) -> Result<Value> {
         if let Value::Dist(d) = &values[0] {
             let mut results = Vec::with_capacity(d.outcomes.len());
@@ -2438,6 +2439,37 @@ impl<'p> Engine<'p> {
         }
         let items = builtins::items(&values[0], b.name(), &mut self.budget).map_err(|e| e.at(span))?;
         match b {
+            Builtin::Sort | Builtin::SortDesc => {
+                // Validate the function even when no comparisons are needed.
+                let Value::Closure(c) = &values[1] else {
+                    return Err(RuntimeError::new(
+                        span,
+                        format!("`{}` needs a comparator function, like `(a, b) -> a - b`", b.name()),
+                    ));
+                };
+                self.check_arity(c, 2, span)?;
+                crate::ordering::reserve_sort(items.len(), &mut self.budget).map_err(|e| e.at(span))?;
+                let mut items = items;
+                crate::ordering::try_sort_by(&mut items, |a, b_value| {
+                    let result = self.call_pure(&values[1], vec![a.clone(), b_value.clone()], b.name(), span)?;
+                    let order = match result {
+                        Value::Int(n) => n.cmp(&probl_number::Integer::ZERO),
+                        Value::Float(x) if x.is_finite() => x.partial_cmp(&0.0).expect("finite comparator result"),
+                        other => {
+                            return Err(RuntimeError::new(
+                                span,
+                                format!(
+                                    "the comparator given to `{}` must return a finite int or float (negative, zero, or positive), found {}",
+                                    b.name(),
+                                    ops::article(&other.kind())
+                                ),
+                            ));
+                        }
+                    };
+                    Ok(if b == Builtin::SortDesc { order.reverse() } else { order })
+                })?;
+                Ok(Value::list(items))
+            }
             Builtin::Map => {
                 let mut out = Vec::with_capacity(items.len());
                 for x in items {

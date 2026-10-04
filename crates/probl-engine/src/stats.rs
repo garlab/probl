@@ -35,6 +35,31 @@ pub(crate) fn half_split(part: f64, total: f64) -> bool {
     (part - total / 2.0).abs() <= 4.0 * f64::EPSILON * total.abs()
 }
 
+/// Lower quantile in an already ordered, resolved finite population. Work in
+/// weight space with compensated sums; a fixed probability epsilon can erase
+/// a genuine tail or cross a nearby mass boundary.
+pub(crate) fn quantile(outcomes: &[(Value, f64)], q: f64) -> Option<&Value> {
+    let mut positive = outcomes.iter().filter(|(_, w)| *w > 0.0);
+    let first = &positive.next()?.0;
+    let last = &outcomes.iter().rev().find(|(_, w)| *w > 0.0)?.0;
+    if q <= 0.0 {
+        return Some(first);
+    }
+    if q >= 1.0 {
+        return Some(last);
+    }
+    let total = sum(outcomes.iter().map(|(_, w)| *w));
+    let target = q * total;
+    let mut acc = Sum::default();
+    for (v, w) in outcomes.iter().filter(|(_, w)| *w > 0.0) {
+        acc.add(*w);
+        if acc.value() >= target {
+            return Some(v);
+        }
+    }
+    Some(last)
+}
+
 /// Endpoints of the median interval, in an ordered, resolved finite population.
 pub(crate) fn median_bounds(outcomes: &[(Value, f64)]) -> Option<(&Value, &Value)> {
     let total = sum(outcomes.iter().map(|(_, w)| *w));

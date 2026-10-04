@@ -1,0 +1,31 @@
+# Comparator sorting and finite order statistics use public language ordering.
+let xs = [complex(2,3), complex(1,4), complex(0,5)]
+report xs.sort((a,b) -> real(a)-real(b))
+report xs.sort_desc((a,b) -> abs(a)-abs(b))
+report xs
+
+let rows = [{k:2,id:"a"},{k:1,id:"b"},{k:2,id:"c"},{k:1,id:"d"}]
+report rows.sort((a,b)->a.k-b.k).map(x->x.id)
+report rows.sort_desc((a,b)->a.k-b.k).map(x->x.id)
+report [1.0,1,prob(1),2].sort_desc().map(x->typeof x)
+report [3,1,2].sort((a,b)->(a-b)*10^400)
+report "a🙂é".sort((a,b)->if a==b {0} else if a>b {-1} else {1})
+report one_of([[3,1,2],[5,4]]).sort((a,b)->a-b)
+report [].sort((a,b)->1/0)
+
+let nested = [[1.0,0],[1,100]]
+report nested.sort()
+report median_low(nested)
+report median_high(nested)
+report quantile(nested,50%)
+report median_low(one_of(nested))
+report median_high(one_of(nested))
+report quantile(one_of(nested),50%)
+report cdf(nested,quantile(nested,50%))
+
+let d=one_of([0:1,1000000:1e-30])
+report quantile(d,100%)
+report quantile([1,4],0.49999999999999994)
+report quantile([1,4],0.5)
+report quantile([1,4],0.5000000000000001)
+report median([1,4])

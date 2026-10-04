@@ -18,6 +18,7 @@ const cli = `${root}/target/release/probl`;
 const probl = await load(wasm);
 let failed = 0;
 const cases = probl.examples().map((e) => ({ ...e, path: `examples/${e.name}.probl` }));
+cases.push({ name: 'ordering', path: 'web/test/ordering.probl', source: await readFile(`${root}/web/test/ordering.probl`, 'utf8') });
 cases.push({ name: 'statistics', path: 'web/test/statistics.probl', source: await readFile(`${root}/web/test/statistics.probl`, 'utf8') });
 cases.push({ name: 'analytic', path: 'web/test/analytic.probl', source: await readFile(`${root}/web/test/analytic.probl`, 'utf8') });
 cases.push({ name: 'math', path: 'web/test/math.probl', source: await readFile(`${root}/web/test/math.probl`, 'utf8') });
@@ -53,6 +54,8 @@ for (const mode of ['enumerate', 'sample']) {
     'report [1].filter(x -> { observe true; true })',
     'report [1].count(x -> { let r ~ d1; true })',
     'report [1].map(x -> ~d6)',
+    'report [2,1].sort((a,b) -> { let r ~ d1; a-b })',
+    'report [2,1].sort_desc((a,b) -> { observe true; a-b })',
     'report [1].map(x -> { var deck = bag([1]); deck.take() })',
     'report [1].map(x -> { score 50%; x })',
     'report [1].map(x -> if 30% { x } else { x })',
@@ -111,6 +114,33 @@ for (const mode of ['enumerate', 'sample']) {
   assert.match(result.output, /100(?:\.0+)?%/);
 }
 console.log('same  checked integer conversion in both modes');
+
+// Sorting and quantiles reject unordered values and invalid callbacks uniformly.
+for (const mode of ['enumerate', 'sample']) {
+  for (const source of [
+    'report [complex(1)].sort()',
+    'report [complex(2,3),complex(1,4)].sort()',
+    'report [{x:1}].sort_desc()',
+    'report [].sort(0)',
+    'report [1].sort(x->0)',
+    'report [2,1].sort((a,b)->a<b)',
+    'report [2,1].sort((a,b)->d1)',
+    'report [2,1].sort((a,b)->1/0)',
+    'report quantile(one_of([1,"a"]),50%)',
+    'report quantile(one_of([{x:1}]),0%)',
+    'report quantile(one_of([complex(1)]),100%)',
+  ]) {
+    const result = probl.run({ source, mode, ...(mode === 'sample' ? { runs: 10, seed: 19 } : {}) });
+    assert.equal(result.error?.kind, 'language', source);
+  }
+  const result = probl.run({
+    source: 'let xs=[complex(2,3),complex(1,4)]; report xs.sort((a,b)->real(a)-real(b))==[complex(1,4),complex(2,3)]',
+    mode, ...(mode === 'sample' ? { runs: 10, seed: 19 } : {}),
+  });
+  assert.equal(result.error, undefined);
+  assert.match(result.output, /100(?:\.0+)?%/);
+}
+console.log('same  comparator sorting and ordered quantiles in both modes');
 
 // Queries cannot silently turn a scalar or entire list into a point mass.
 for (const mode of ['enumerate', 'sample']) {

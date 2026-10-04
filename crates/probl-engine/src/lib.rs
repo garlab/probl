@@ -14,6 +14,7 @@ pub mod error;
 pub mod interp;
 mod math;
 pub mod ops;
+mod ordering;
 pub mod report;
 mod stats;
 mod text;

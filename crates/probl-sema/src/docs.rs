@@ -447,12 +447,12 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "The elements of a list, range or string combined one by one, starting from start. String elements are one-scalar strings. The function cannot draw, observe or branch on uncertainty outside a local simulate scope, in either execution mode.",
         ),
         B::Sort => doc(
-            "sort(xs) -> list",
-            "The elements of a list, range or string, smallest first. Text uses Unicode scalar order, not locale collation.",
+            "sort(xs, compare?) -> list",
+            "A stable sorted copy of a list, range or string. By default, uses language ordering; text uses Unicode scalar order, not locale collation. Optional compare(a, b) returns a finite int or float: negative puts a first, zero ties, positive puts b first. For complex values, use xs.sort((a,b) -> abs(a)-abs(b)). The comparator must define a consistent order and cannot draw, observe or branch on uncertainty outside a local simulate scope. Ties keep input order.",
         ),
         B::SortDesc => doc(
-            "sort_desc(xs) -> list",
-            "The elements of a list, range or string, largest first.",
+            "sort_desc(xs, compare?) -> list",
+            "A stable sorted copy, largest first. Accepts the same numeric comparator as sort; reverses its ordering while preserving the input order of ties. Without a comparator, even singleton elements must have a language ordering.",
         ),
         B::Reverse => doc(
             "reverse(xs)",
@@ -604,7 +604,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         B::Quantile => doc(
             "quantile(d, q: prob)",
-            "The smallest value with a share `q` at or below it in a distribution or nonempty ordered list: `quantile(d, 95%)`. Lists weight repetitions equally. Always selects an element for lists and finite distributions; no interpolation. Complex elements and scalar inputs are errors.",
+            "The smallest value with a share `q` at or below it in a distribution or nonempty ordered list: `quantile(d, 95%)`. Lists weight repetitions equally. Uses language ordering and selects an element for finite populations, without interpolation. At 0%/100%, selects the retained minimum/maximum, including tiny tails. Unordered elements (even singleton records or complex values) and scalar inputs are errors.",
         ),
         B::Support => doc(
             "support(d) -> list",

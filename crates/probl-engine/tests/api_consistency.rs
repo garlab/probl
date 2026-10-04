@@ -135,7 +135,6 @@ both_modes! {
     }
 
     #[test]
-    #[ignore = "FIXME(API-01): median_low walks storage order instead of language order"]
     fn lower_median_agrees_with_language_order() {
         for input in ["xs", "one_of(xs)"] {
             for xs in ["[[1.0,0],[1,100]]", "[[1,100],[1.0,0]]"] {
@@ -146,7 +145,6 @@ both_modes! {
     }
 
     #[test]
-    #[ignore = "FIXME(API-01): median_high walks storage order instead of language order"]
     fn upper_median_agrees_with_language_order() {
         for input in ["xs", "one_of(xs)"] {
             let actual = scalar(MODE, &format!("let xs=[[1.0,0],[1,100]]\nreport median_high({input})"));
@@ -155,7 +153,6 @@ both_modes! {
     }
 
     #[test]
-    #[ignore = "FIXME(API-01): quantile walks storage order instead of language order"]
     fn quantile_agrees_with_language_order() {
         for input in ["xs", "one_of(xs)"] {
             let actual = scalar(MODE, &format!("let xs=[[1.0,0],[1,100]]\nreport quantile({input},50%)"));
@@ -452,19 +449,16 @@ both_modes! {
     }
 
     #[test]
-    #[ignore = "FIXME(API-08): distribution quantiles accept incomparable outcome types"]
     fn heterogeneous_distribution_quantiles_are_rejected() {
         language_error(MODE, "report quantile(one_of([1,\"a\"]),50%)", "compare");
     }
 
     #[test]
-    #[ignore = "FIXME(API-08): distribution quantiles expose record storage order"]
     fn unordered_record_distribution_quantiles_are_rejected() {
         language_error(MODE, "report quantile(one_of([{x:1},{x:2}]),50%)", "compare");
     }
 
     #[test]
-    #[ignore = "FIXME(API-08): fixed 1e-12 tolerance skips a positive tail at q=1"]
     fn hundredth_percentile_is_the_retained_finite_maximum() {
         assert_eq!(
             scalar(MODE, "let d=one_of([0:1,1000000:1e-13]); report quantile(d,100%)"),
@@ -629,13 +623,9 @@ both_modes! {
     }
 
     #[test]
-    fn current_singleton_sort_and_min_pass_through_without_comparing() {
-        // Characterization only: the review leaves singleton validation open.
-        // Revise deliberately if ordered operations gain uniform validation.
-        truth(
-            MODE,
-            "report min([complex(1,2)])==complex(1,2) and sort([complex(1,2)])==[complex(1,2)]",
-        );
+    fn singleton_sort_validates_ordering_while_min_keeps_its_identity_overload() {
+        truth(MODE, "report min([complex(1,2)])==complex(1,2)");
+        language_error(MODE, "report sort([complex(1,2)])", "no ordering");
     }
 
     #[test]
