@@ -4,6 +4,8 @@ description = "Exact integers shared by Probl's syntax and runtime"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+readme.workspace = true
 
 [dependencies]
 num-bigint.workspace = true

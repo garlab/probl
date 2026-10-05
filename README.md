@@ -81,3 +81,9 @@ PROBL_URL=https://probl-playground.pages.dev bun test/page.mjs   # test the depl
 - [Project audit](docs/project-audit.md): the review that led to the reference semantics
 - [Benchmarks](docs/benchmarks.md): realistic models, what they cost, and what to build next (`cargo run --release -p probl-bench`)
 - [Examples](examples/): eighteen sample programs with their expected output, covering games, forecasts, calendars, decisions, monitoring and risk
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
