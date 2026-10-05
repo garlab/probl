@@ -76,6 +76,7 @@ PROBL_URL=https://probl-playground.pages.dev bun test/page.mjs   # test the depl
 - [Better inference](docs/inference-proposal.md): exact updates for conjugate priors, what a general method needs first, and its [design review](docs/inference-proposal-review.md)
 - [Complex values and quantum simulation](docs/quantum-and-complex.md): the implemented scalar foundation and a possible future quantum engine
 - [Playground plan](docs/playground-plan.md): Probl in the browser, what it took, and what's left
+- [Probl as a library](docs/library-proposal.md): a proposed `probl` crate, for running programs from Rust, which the command line and the playground would share
 - [Implementation plan](docs/implementation-plan.md): status, architecture, phases, testing and risks
 - [Project audit](docs/project-audit.md): the review that led to the reference semantics
 - [Benchmarks](docs/benchmarks.md): realistic models, what they cost, and what to build next (`cargo run --release -p probl-bench`)
