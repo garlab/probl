@@ -1,6 +1,6 @@
 # New use cases and what to build next
 
-Reviewed 30 September 2026 against `a0c0255`, before adding examples 14–18. The examples were written and executed first; the recommendations below come from using them and trying natural extensions. This review adds examples, documentation and playground integration. It does not change language semantics or inference algorithms.
+Reviewed 30 September 2026 against `99d0c40`, before adding examples 14–18. The examples were written and executed first; the recommendations below come from using them and trying natural extensions. This review adds examples, documentation and playground integration. It does not change language semantics or inference algorithms.
 
 **Follow-up, 1 October 2026:** callback restrictions now apply in both modes, sparse or constant sampled probabilities no longer print zero error as certainty, report/key support is shown when low, and tiny nonzero summaries retain their scale. Repeated-key classification from the earlier review is also corrected. These fixes have [regression tests](../crates/probl-engine/tests/reporting_regressions.rs); the findings below describe the reviewed version. Observation helpers still force delayed parameters, and the model/result-interface recommendations remain open.
 

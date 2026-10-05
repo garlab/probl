@@ -1,6 +1,6 @@
 **Review of the inference proposal**
 
-Reviewed on 27 September 2026 against `cf771d2`. This reviews [inference-proposal.md](inference-proposal.md), the current reference semantics, and the interpreter/reporting interfaces. The proposed inference methods are not implemented; findings concern their contracts and implementation plan, not reproduced defects in a new sampler.
+Reviewed on 27 September 2026 against `b1ae570`. This reviews [inference-proposal.md](inference-proposal.md), the current reference semantics, and the interpreter/reporting interfaces. The proposed inference methods are not implemented; findings concern their contracts and implementation plan, not reproduced defects in a new sampler.
 
 **Recommendation: ship part 1 first, with an opt-out for validation. Defer part 2 until its trace target, transition kernel, and report estimators are specified.** The conjugate updates address the measured bottleneck directly. The MCMC proposal currently describes a family of possible algorithms, but not enough detail to establish that the chosen algorithm targets Probl's posterior or produces trustworthy error estimates.
 

@@ -1,6 +1,6 @@
 **Probl — language design and architecture audit**
 
-Reviewed on 26 September 2026 against commit `a37c0b6` (workspace version `0.0.1`). The review covers the language proposal, implementation plan, examples, compiler pipeline, runtime, reporting, and tests. Design findings come first; implementation findings are restricted to semantic architecture, numerical reliability, and security boundaries.
+Reviewed on 26 September 2026 against commit `6d0557a` (workspace version `0.0.1`). The review covers the language proposal, implementation plan, examples, compiler pipeline, runtime, reporting, and tests. Design findings come first; implementation findings are restricted to semantic architecture, numerical reliability, and security boundaries.
 
 **Assessment:** Probl has a useful core: imperative models over weighted states, explicit draws, value semantics, and liveness-based state merging. Keep those. Before expanding into forecasting, strengthen the distinction between events and probabilities, specify inference and reporting scopes, and make accuracy claims enforceable. Those decisions affect the language's meaning and the runtime's data structures; postponing them until tooling or sampling will make them expensive to change.
 

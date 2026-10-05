@@ -1,6 +1,6 @@
 # Distribution operator API survey
 
-Reviewed 1 October 2026 against `1c24f7f`. This is a design survey, not a change to the language reference or runtime. It covers all 18 examples, the 133 public built-ins, operators, distribution consumption, and the compiler boundaries that would enforce the proposed rules.
+Reviewed 1 October 2026 against `92b11a6`. This is a design survey, not a change to the language reference or runtime. It covers all 18 examples, the 133 public built-ins, operators, distribution consumption, and the compiler boundaries that would enforce the proposed rules.
 
 **The proposed separation is viable for every existing example.** Twelve need only draw-syntax migration; six also need expression changes under the candidate rules below. Executable equivalents of those changes produce identical CLI output to the originals, including the seeded sampled examples. The main implementation prerequisite is static checking: the current compiler cannot generally reject distribution/outcome mismatches before execution. The remaining design decisions concern which operations explicitly accept distributions, transformations of joint outcomes, and the supported scope of continuous distribution algebra.
 

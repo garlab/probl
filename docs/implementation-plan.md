@@ -4,7 +4,7 @@
 
 ## 0. Status
 
-The engine enumerates and samples. All ten examples run: the enumerated 01–06 and 10 print their documented output exactly, as checked against independent calculations, and the sampled 07–09 agree with an independent reference simulation within their sampling error. The audit of commit `a37c0b6` found that several of the language's promises weren't well defined, and that the tests couldn't catch it. All five of its recommended steps are done:
+The engine enumerates and samples. All ten examples run: the enumerated 01–06 and 10 print their documented output exactly, as checked against independent calculations, and the sampled 07–09 agree with an independent reference simulation within their sampling error. The audit of commit `6d0557a` found that several of the language's promises weren't well defined, and that the tests couldn't catch it. All five of its recommended steps are done:
 
 1. **Reference semantics.** [docs/semantics.md](semantics.md) is normative for the engine: types and event identity, evaluation order, calls versus `simulate`, evidence, reports, termination and approximation, and resource limits.
 2. **Lowering and the numerical contract.** Operands are evaluated left to right, effects decide what can be memoized, weights can't underflow, and fractions are labelled as approximations.

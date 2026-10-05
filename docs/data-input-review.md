@@ -1,6 +1,6 @@
 **Review of the data-input proposal**
 
-Reviewed against `9a47954`, 26 September 2026. This is a design review of [data-input.md](data-input.md), checked against the current compiler and runtime. The input feature is not implemented, so the scenarios below identify missing contracts rather than reproduced loader bugs.
+Reviewed against `3a295ea`, 26 September 2026. This is a design review of [data-input.md](data-input.md), checked against the current compiler and runtime. The input feature is not implemented, so the scenarios below identify missing contracts rather than reproduced loader bugs.
 
 The overall direction is sound: declared schemas control interpretation, inputs are loaded before simulation, and the engine receives values without filesystem access. Keep those decisions. Six issues should be resolved before implementation; the most important prerequisite is that the current IR does not retain enough type information to decode the examples.
 

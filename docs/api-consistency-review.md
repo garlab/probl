@@ -1,6 +1,6 @@
 # API consistency review
 
-Reviewed 4 October 2026, against `064595e` (`feat: median_low and median_high`).
+Reviewed 4 October 2026, against `a31bb27` (`feat: median_low and median_high`).
 
 Follow-up: the manual checks are represented in [Rust regression tests](../crates/probl-engine/tests/api_consistency.rs). See [test coverage and quality](testing.md) for commands, the finding-to-test map, and the coverage assessment. All nine numbered findings are now fixed, and all 102 audit tests are active. The design choices below have also been settled. Broader regression coverage is in [api_contracts.rs](../crates/probl-engine/tests/api_contracts.rs).
 
