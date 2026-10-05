@@ -910,6 +910,7 @@ pub enum Part {
 
 /// Moments, CDF and quantiles of a mixture of numbers and continuous
 /// distributions, each with its probability.
+#[derive(Clone, Debug)]
 pub struct Mixture {
     pub parts: Vec<(Part, f64)>,
 }

@@ -95,6 +95,15 @@ impl Weight {
         libm::log10(self.mant) + self.exp as f64 * std::f64::consts::LOG10_2
     }
 
+    /// The natural logarithm, even of a weight far outside the range of an
+    /// `f64`: −∞ for zero.
+    pub fn ln(self) -> f64 {
+        if self.is_zero() {
+            return f64::NEG_INFINITY;
+        }
+        libm::log(self.mant) + self.exp as f64 * std::f64::consts::LN_2
+    }
+
     pub fn sum(weights: impl IntoIterator<Item = Weight>) -> Weight {
         weights.into_iter().fold(Weight::ZERO, |a, b| a + b)
     }

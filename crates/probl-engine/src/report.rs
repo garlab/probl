@@ -8,6 +8,10 @@ use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
+mod results;
+
+pub use results::{GroupResult, Numeric, Quantity, Reach, ReportResult, Status, Support, Uncertainty, results};
+
 /// Everything one report site saw for one key.
 #[derive(Clone, Debug)]
 pub struct Acc {
@@ -557,6 +561,12 @@ pub struct Format {
 
 /// Render reports, each with what its sink collected, in source order.
 pub fn render(sites: &[ReportSite], sinks: &[Sink], format: Format) -> String {
+    render_results(sites, &results(sites, sinks, format, format.unresolved), format)
+}
+
+/// Render reports from their [`results`], in source order: the renderer
+/// only formats the numbers they hold.
+pub fn render_results(sites: &[ReportSite], results: &[ReportResult], format: Format) -> String {
     let mut out = String::new();
     let mut simple: Vec<(String, String)> = Vec::new();
     let flush = |simple: &mut Vec<(String, String)>, out: &mut String| {
@@ -566,16 +576,16 @@ pub fn render(sites: &[ReportSite], sinks: &[Sink], format: Format) -> String {
             writeln!(out, "{label}{}    {text}", " ".repeat(pad)).unwrap();
         }
     };
-    for (site, sink) in sites.iter().zip(sinks) {
+    for (site, result) in sites.iter().zip(results) {
         let mut label = site.label.clone();
         if site.kind == ReportKind::PerVisit {
             label.push_str(" (per visit)");
         }
-        let reach = reach_note(site.kind, sink, format);
+        let reach = reach_note(result.reach, format);
         if site.key_label.is_none() {
-            let text = match sink.groups.values().next() {
+            let text = match result.groups.first() {
                 None => "(never reached)".to_string(),
-                Some(acc) => format!("{}{reach}", value_text(acc, format)),
+                Some(group) => format!("{}{reach}", value_text(group, format)),
             };
             simple.push((label, text));
             continue;
@@ -588,10 +598,10 @@ pub fn render(sites: &[ReportSite], sinks: &[Sink], format: Format) -> String {
             out.push('\n');
         }
         writeln!(out, "{label}{reach}").unwrap();
-        if sink.groups.is_empty() {
+        if result.groups.is_empty() {
             writeln!(out, "  (never reached)").unwrap();
         } else {
-            out.push_str(&table(site.key_label.as_deref().unwrap_or(""), sink, format, site.kind));
+            out.push_str(&table(site.key_label.as_deref().unwrap_or(""), result, format));
         }
         out.push('\n');
     }
@@ -603,31 +613,20 @@ pub fn render(sites: &[ReportSite], sinks: &[Sink], format: Format) -> String {
 }
 
 /// " (reached in 1.00% of worlds)" when a report sees part of the weight.
-fn reach_note(kind: ReportKind, sink: &Sink, format: Format) -> String {
-    if kind == ReportKind::PerVisit || sink.groups.is_empty() || format.program_total.is_zero() {
+fn reach_note(reach: Option<Reach>, format: Format) -> String {
+    let Some(reach) = reach else {
+        return String::new();
+    };
+    if reach.share >= 0.99995 {
         return String::new();
     }
-    if let Some(all_squares) = format.run_squares {
-        // The share of the runs' weight that reached the report, counting
-        // each run once, and its standard error (section 14).
-        let total = format.program_total;
-        let p = sink.reached.ratio(total);
-        if p >= 0.99995 {
-            return String::new();
-        }
-        let squares = sink.reached_squares;
-        let spread = squares.scale((1.0 - p) * (1.0 - p)) + all_squares.saturating_sub(squares).scale(p * p);
-        let se = spread.ratio(total * total).sqrt();
-        return format!(" (reached in {} of runs)", estimate(p, se));
-    }
-    let share = sink.reach().ratio(format.program_total);
-    if share >= 0.99995 {
-        return String::new();
+    if let Some(se) = reach.se {
+        return format!(" (reached in {} of runs)", estimate(reach.share, se));
     }
     format!(
         " (reached in {} of worlds)",
         pct(
-            share,
+            reach.share,
             Format {
                 fractions: false,
                 ..format
@@ -636,28 +635,27 @@ fn reach_note(kind: ReportKind, sink: &Sink, format: Format) -> String {
     )
 }
 
-fn value_text(acc: &Acc, format: Format) -> String {
-    if acc.is_event() {
-        return chance_text(acc, format, ReportKind::Once);
+fn value_text(group: &GroupResult, format: Format) -> String {
+    if let Some(fact) = &group.fact {
+        return chance_text(fact, format);
     }
-    let dist = acc.distribution();
-    let mean_se = acc.sampled().then(|| acc.mean_se().1);
-    let mut text = if let Some(m) = analytic_mixture(&dist) {
-        analytic_stats(&m)
+    let dist = &group.distribution;
+    let mut text = if let Some(numeric) = group.numeric.as_ref().filter(|n| n.mixture().is_some()) {
+        analytic_stats(numeric)
     } else if dist.len() == 1 {
         display(&dist[0].0)
-    } else if let Some(stats) = numeric_stats(&dist, mean_se) {
-        stats
+    } else if let Some(numeric) = &group.numeric {
+        numeric_stats(numeric, dist)
     } else if dist.iter().all(|(v, _)| matches!(v, Value::Date(_))) {
-        let [a, b, c] = [0.05, 0.5, 0.95]
-            .map(|q| summary_quantile(&dist, q).map_or_else(|| "out of range".into(), |v| display(&v)));
+        let [a, b, c] =
+            [0.05, 0.5, 0.95].map(|q| summary_quantile(dist, q).map_or_else(|| "out of range".into(), |v| display(&v)));
         format!("5% {a} · median {b} · 95% {c}")
-    } else if acc.sampled() {
-        categorical_sampled(acc, &dist)
+    } else if group.support.is_some() {
+        categorical_sampled(group)
     } else {
-        categorical(&dist, format)
+        categorical(dist, format)
     };
-    let share = acc.unresolved_share(format.unresolved);
+    let share = group.unresolved_share;
     if share >= 0.00005 {
         write!(
             text,
@@ -672,54 +670,44 @@ fn value_text(acc: &Acc, format: Format) -> String {
         )
         .unwrap();
     }
-    text.push_str(&reliability_note(acc));
+    text.push_str(&reliability_note(group.support));
     text
 }
 
 /// A probability, or the range it lies in when unresolved weight is visible;
 /// when sampling, an estimate and its standard error.
-fn chance_text(acc: &Acc, format: Format, kind: ReportKind) -> String {
-    if acc.sampled() {
-        let p = acc.chance();
-        let se = acc.chance_se();
-        let mut text = if let Some((lo, hi)) = acc
-            .chance_interval95(kind)
-            .filter(|_| !format.weighted)
-            .filter(|_| p == 0.0 || p == 1.0 || acc.contributing_runs() < 30)
-        {
+fn chance_text(fact: &Quantity, format: Format) -> String {
+    let p = fact.point.unwrap_or(f64::NAN);
+    if let Some(sampling) = fact.sampling {
+        let runs = thousands(sampling.support.contributing_runs as i64);
+        let mut text = if let Some((lo, hi)) = sampling.wilson {
             format!(
-                "{} (95% Wilson interval {}–{}; {} contributing runs)",
+                "{} (95% Wilson interval {}–{}; {runs} contributing runs)",
                 pct(p, format),
                 pct(lo, format),
                 pct(hi, format),
-                thousands(acc.contributing_runs() as i64)
             )
-        } else if se == 0.0 {
-            let note = if acc.moments.as_ref().is_some_and(|m| m.integrated) {
+        } else if let (Status::Estimated, Some(se)) = (sampling.status, sampling.se) {
+            estimate(p, se)
+        } else {
+            let note = if sampling.status == Status::IntegratedZero {
                 "zero empirical MC error; integrated outcomes"
             } else {
                 "MC error not estimable"
             };
-            format!(
-                "{} ({note}; {} contributing runs)",
-                pct(p, format),
-                thousands(acc.contributing_runs() as i64)
-            )
-        } else {
-            estimate(p, se)
+            format!("{} ({note}; {runs} contributing runs)", pct(p, format))
         };
-        text.push_str(&reliability_note(acc));
+        text.push_str(&reliability_note(Some(sampling.support)));
         return text;
     }
-    let (lo, hi) = acc.chance_bounds(format.unresolved);
-    if hi - lo >= 0.00005 {
+    if let Some((lo, hi)) = fact.bounds.filter(|(lo, hi)| hi - lo >= 0.00005) {
         let plain = Format {
             fractions: false,
             ..format
         };
         return format!("{}–{}", pct(lo, plain), pct(hi, plain));
     }
-    pct(acc.chance(), format)
+    pct(p, format)
 }
 
 /// Two-sided 95% Wilson score interval for ordinary independent Bernoulli
@@ -741,14 +729,14 @@ fn wilson95(successes: u64, trials: u64) -> (f64, f64) {
     )
 }
 
-fn reliability_note(acc: &Acc) -> String {
-    if !acc.sampled() || acc.effective() >= 30.0 {
+fn reliability_note(support: Option<Support>) -> String {
+    let Some(support) = support.filter(|s| s.effective < 30.0) else {
         return String::new();
-    }
+    };
     format!(
         " (low sample support: {} contributing runs; effective sample size {})",
-        thousands(acc.contributing_runs() as i64),
-        fixed(acc.effective(), 1)
+        thousands(support.contributing_runs as i64),
+        fixed(support.effective, 1)
     )
 }
 
@@ -767,13 +755,13 @@ fn categorical(dist: &[(Value, f64)], format: Format) -> String {
 }
 
 /// Sampled values with their probabilities and standard errors.
-fn categorical_sampled(acc: &Acc, dist: &[(Value, f64)]) -> String {
-    let mut by_chance: Vec<&(Value, f64)> = dist.iter().collect();
+fn categorical_sampled(group: &GroupResult) -> String {
+    let mut by_chance: Vec<&(Value, f64)> = group.distribution.iter().collect();
     by_chance.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     let shown = by_chance.len().min(12);
     let mut parts: Vec<String> = by_chance[..shown]
         .iter()
-        .map(|(v, p)| format!("{} {}", display(v), sampled_value_text(acc, v, *p)))
+        .map(|(v, p)| format!("{} {}", display(v), sampled_value_text(group, v, *p)))
         .collect();
     if by_chance.len() > shown {
         parts.push(format!("… {} more", by_chance.len() - shown));
@@ -781,12 +769,16 @@ fn categorical_sampled(acc: &Acc, dist: &[(Value, f64)]) -> String {
     parts.join(" · ")
 }
 
-fn sampled_value_text(acc: &Acc, value: &Value, p: f64) -> String {
-    let se = acc.value_se(value, p);
-    if se == 0.0 {
-        format!("{}% (MC error not estimable)", fixed(p * 100.0, 2))
-    } else {
-        estimate(p, se)
+/// A sampled value's probability `p` (zero for a value the group never
+/// reported), with its standard error.
+fn sampled_value_text(group: &GroupResult, value: &Value, p: f64) -> String {
+    let quantity = group.values.iter().flatten().find(|(v, _)| v == value).map(|(_, q)| q);
+    match quantity
+        .and_then(|q| q.sampling)
+        .filter(|s| s.status == Status::Estimated)
+    {
+        Some(Uncertainty { se: Some(se), .. }) => estimate(p, se),
+        _ => format!("{}% (MC error not estimable)", fixed(p * 100.0, 2)),
     }
 }
 
@@ -826,11 +818,16 @@ pub fn analytic_mixture(dist: &[(Value, f64)]) -> Option<crate::continuous::Mixt
     Some(Mixture { parts })
 }
 
-fn analytic_stats(m: &crate::continuous::Mixture) -> String {
-    let mean = m.mean();
-    let sd = m.sd();
+/// A continuous marginal's quantile, by the report convention.
+fn mixture_quantile(numeric: &Numeric, q: f64, decimals: usize) -> String {
+    fixed(numeric.quantile(q).and_then(|x| x.point).unwrap_or(f64::NAN), decimals)
+}
+
+fn analytic_stats(numeric: &Numeric) -> String {
+    let mean = numeric.mean.point.unwrap_or(f64::NAN);
+    let sd = numeric.sd.point.unwrap_or(f64::NAN);
     let decimals = if mean.abs().max(sd) < 100.0 { 2 } else { 0 };
-    let [a, b, c] = [0.05, 0.5, 0.95].map(|q| fixed(if q == 0.5 { m.median() } else { m.quantile(q) }, decimals));
+    let [a, b, c] = [0.05, 0.5, 0.95].map(|q| mixture_quantile(numeric, q, decimals));
     format!(
         "mean {} · sd {} · 5% {a} · median {b} · 95% {c}",
         fixed(mean, decimals),
@@ -841,25 +838,13 @@ fn analytic_stats(m: &crate::continuous::Mixture) -> String {
 /// `mean · sd · 5% · median · 95%`, and a sparkline for small integer ranges.
 /// Probabilities (as values, not facts) are shown as percentages. A sampled
 /// mean shows its standard error when it's visible at the printed precision.
-fn numeric_stats(dist: &[(Value, f64)], mean_se: Option<f64>) -> Option<String> {
-    let nums: Vec<(f64, f64)> = dist
-        .iter()
-        .map(|(v, p)| match v {
-            Value::Int(n) => n
-                .to_f64()
-                .filter(|x| n.cmp_f64(*x).is_some_and(|c| c.is_eq()))
-                .map(|x| (x, *p)),
-            Value::Float(x) | Value::Prob(x) => Some((*x, *p)),
-            _ => None,
-        })
-        .collect::<Option<_>>()?;
-    let percent = dist.iter().all(|(v, _)| matches!(v, Value::Prob(_)));
+fn numeric_stats(numeric: &Numeric, dist: &[(Value, f64)]) -> String {
+    let nums = numeric.points().unwrap_or_default();
+    let percent = numeric.percent;
     let total: f64 = nums.iter().map(|(_, p)| p).sum();
-    let mean = nums.iter().map(|(x, p)| x * p).sum::<f64>() / total;
-    let sd = (nums.iter().map(|(x, p)| (x - mean).powi(2) * p).sum::<f64>() / total).sqrt();
-    if !mean.is_finite() || !sd.is_finite() {
-        return None;
-    }
+    let mean = numeric.mean.point.unwrap_or(f64::NAN);
+    let sd = numeric.sd.point.unwrap_or(f64::NAN);
+    let mean_se = numeric.mean.sampling.and_then(|s| s.se);
     let show = |x: f64, decimals: usize| {
         if percent { fmt_percent(x, 2) } else { fixed(x, decimals) }
     };
@@ -878,7 +863,7 @@ fn numeric_stats(dist: &[(Value, f64)], mean_se: Option<f64>) -> Option<String> 
         show(mean, decimals)
     };
     let [a, b, c] = [0.05, 0.5, 0.95].map(|q| {
-        let Some(v) = summary_quantile(dist, q) else {
+        let Some(v) = numeric.quantile_value(q) else {
             return "out of range".to_string();
         };
         if percent {
@@ -904,7 +889,7 @@ fn numeric_stats(dist: &[(Value, f64)], mean_se: Option<f64>) -> Option<String> 
     if let Some(spark) = sparkline(dist) {
         write!(text, " · {spark}").unwrap();
     }
-    Some(text)
+    text
 }
 
 const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
@@ -955,21 +940,21 @@ fn quantile(dist: &[(Value, f64)], q: f64) -> Value {
 }
 
 /// A report table: one row per `by` key.
-fn table(key_label: &str, sink: &Sink, format: Format, kind: ReportKind) -> String {
-    let groups: Vec<(&Value, &Acc)> = sink.groups.iter().collect();
-    let keys: Vec<String> = groups.iter().map(|(k, _)| display(k)).collect();
+fn table(key_label: &str, result: &ReportResult, format: Format) -> String {
+    let groups = &result.groups;
+    let keys: Vec<String> = groups.iter().map(|g| display(&g.key)).collect();
     let mut rows: Vec<Vec<String>> = Vec::new();
     let header: Vec<String>;
+    let all_facts = groups.iter().all(|g| g.fact.is_some());
 
-    if groups.iter().all(|(_, a)| a.is_event()) {
+    if all_facts {
         header = Vec::new();
-        for (key, (_, acc)) in keys.iter().zip(&groups) {
-            rows.push(vec![key.clone(), chance_text(acc, format, kind)]);
+        for (key, group) in keys.iter().zip(groups) {
+            rows.push(vec![key.clone(), value_text(group, format)]);
         }
     } else {
-        let dists: Vec<Vec<(Value, f64)>> = groups.iter().map(|(_, a)| a.distribution()).collect();
-        let numeric = dists.iter().all(|d| {
-            d.iter().all(|(v, _)| {
+        let numeric = groups.iter().all(|g| {
+            g.distribution.iter().all(|(v, _)| {
                 matches!(
                     v,
                     Value::Int(_) | Value::Float(_) | Value::Analytic(_) | Value::Continuous(_)
@@ -978,17 +963,19 @@ fn table(key_label: &str, sink: &Sink, format: Format, kind: ReportKind) -> Stri
         });
         if numeric {
             header = ["5%", "25%", "median", "75%", "95%"].map(String::from).to_vec();
-            for (key, d) in keys.iter().zip(&dists) {
-                if let Some(m) = analytic_mixture(d) {
-                    let decimals = if m.mean().abs().max(m.sd()) < 100.0 { 2 } else { 0 };
-                    let mut row = vec![key.clone()];
-                    row.extend(
-                        [0.05, 0.25, 0.5, 0.75, 0.95]
-                            .map(|q| fixed(if q == 0.5 { m.median() } else { m.quantile(q) }, decimals)),
+            for (key, group) in keys.iter().zip(groups) {
+                if let Some(numeric) = group.numeric.as_ref().filter(|n| n.mixture().is_some()) {
+                    let (mean, sd) = (
+                        numeric.mean.point.unwrap_or(f64::NAN),
+                        numeric.sd.point.unwrap_or(f64::NAN),
                     );
+                    let decimals = if mean.abs().max(sd) < 100.0 { 2 } else { 0 };
+                    let mut row = vec![key.clone()];
+                    row.extend([0.05, 0.25, 0.5, 0.75, 0.95].map(|q| mixture_quantile(numeric, q, decimals)));
                     rows.push(row);
                     continue;
                 }
+                let d = &group.distribution;
                 let scale = d
                     .iter()
                     .filter_map(|(v, _)| v.as_f64())
@@ -1003,16 +990,19 @@ fn table(key_label: &str, sink: &Sink, format: Format, kind: ReportKind) -> Stri
                 rows.push(row);
             }
         } else {
-            let mut columns: Vec<Value> = dists.iter().flat_map(|d| d.iter().map(|(v, _)| v.clone())).collect();
+            let mut columns: Vec<Value> = groups
+                .iter()
+                .flat_map(|g| g.distribution.iter().map(|(v, _)| v.clone()))
+                .collect();
             columns.sort();
             columns.dedup();
             header = columns.iter().map(display).collect();
-            for ((key, d), (_, acc)) in keys.iter().zip(&dists).zip(&groups) {
+            for (key, group) in keys.iter().zip(groups) {
                 let mut row = vec![key.clone()];
                 for c in &columns {
-                    let p = d.iter().find(|(v, _)| v == c).map_or(0.0, |(_, p)| *p);
-                    row.push(if acc.sampled() {
-                        sampled_value_text(acc, c, p)
+                    let p = group.distribution.iter().find(|(v, _)| v == c).map_or(0.0, |(_, p)| *p);
+                    row.push(if group.support.is_some() {
+                        sampled_value_text(group, c, p)
                     } else {
                         pct(p, format)
                     });
@@ -1025,12 +1015,12 @@ fn table(key_label: &str, sink: &Sink, format: Format, kind: ReportKind) -> Stri
     // Reliability belongs to a key, not to the whole table. Include it for
     // numeric/date/categorical rows too, where no probability cell carries it.
     let mut header = header;
-    if !groups.iter().all(|(_, a)| a.is_event()) && groups.iter().any(|(_, a)| !reliability_note(a).is_empty()) {
+    if !all_facts && groups.iter().any(|g| !reliability_note(g.support).is_empty()) {
         if !header.is_empty() {
             header.push("reliability".to_string());
         }
-        for (row, (_, acc)) in rows.iter_mut().zip(&groups) {
-            row.push(reliability_note(acc).trim().to_string());
+        for (row, group) in rows.iter_mut().zip(groups) {
+            row.push(reliability_note(group.support).trim().to_string());
         }
     }
     let mut all = Vec::new();
@@ -1119,7 +1109,8 @@ pub fn fraction(x: f64) -> Option<(u64, u64)> {
     None
 }
 
-fn display(v: &Value) -> String {
+/// A value as reports print it.
+pub fn display(v: &Value) -> String {
     match v {
         Value::Int(i) => integer_text(i),
         // Twelve significant digits hide rounding like 0.30000000000000004.
@@ -1283,7 +1274,11 @@ mod tests {
         assert_eq!(acc.contributing_runs(), 2);
         assert!((acc.effective() - 100.0 / 82.0).abs() < 1e-12);
         assert_eq!(acc.chance_interval95(ReportKind::Once), None);
-        assert!(reliability_note(acc).contains("2 contributing runs"));
+        let support = Support {
+            contributing_runs: acc.contributing_runs(),
+            effective: acc.effective(),
+        };
+        assert!(reliability_note(Some(support)).contains("2 contributing runs"));
 
         // A partially resolved numeric distribution contributes its resolved
         // mass to the mean's denominator, rather than one whole visit.
@@ -1307,6 +1302,9 @@ mod tests {
             unresolved: Weight::new(0.005),
             ..plain()
         };
-        assert_eq!(chance_text(acc, format, ReportKind::Once), "0.00%–99.80%");
+        let group = results::group(&Value::Unit, acc, format, ReportKind::Once, format.unresolved);
+        let fact = group.fact.unwrap();
+        assert!(!fact.complete && fact.bounds == Some((lo, hi)));
+        assert_eq!(chance_text(&fact, format), "0.00%–99.80%");
     }
 }

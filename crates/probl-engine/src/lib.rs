@@ -183,6 +183,8 @@ pub struct Outcome {
     pub evidence: Option<Weight>,
     /// What each `report` collected, in the order of `Program::reports`.
     pub reports: Vec<Sink>,
+    /// What each report says, as numbers: what `output` prints them from.
+    pub results: Vec<report::ReportResult>,
     /// How the reports were rendered into `output`, to render some of them
     /// again with [`report::render`].
     pub format: Format,
@@ -389,7 +391,8 @@ fn run_here(
             header.push_str(&format!(" · unresolved {:.1e}", unresolved.to_f64()));
         }
     }
-    let body = report::render(&program.reports, &engine.sinks, format);
+    let results = report::results(&program.reports, &engine.sinks, format, unresolved);
+    let body = report::render_results(&program.reports, &results, format);
     let output = if body.is_empty() {
         header
     } else {
@@ -402,6 +405,7 @@ fn run_here(
         unresolved,
         evidence,
         reports: std::mem::take(&mut engine.sinks),
+        results,
         format,
         sample: None,
         data: sources(options),
@@ -768,7 +772,10 @@ fn sampled(
         run_squares: Some(totals.squares),
         weighted: program.main().effects.observes,
     };
-    let body = report::render(&program.reports, &engine.sinks, format);
+    // The report lines don't show unresolved weight when sampling (the
+    // summary line does), but the results still say what's incomplete.
+    let results = report::results(&program.reports, &engine.sinks, format, unresolved);
+    let body = report::render_results(&program.reports, &results, format);
     let output = if body.is_empty() {
         header
     } else {
@@ -781,6 +788,7 @@ fn sampled(
         unresolved,
         evidence: engine.observed.then_some(evidence),
         reports: std::mem::take(&mut engine.sinks),
+        results,
         format,
         sample: Some(Sampled {
             runs,
