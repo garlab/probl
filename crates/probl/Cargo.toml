@@ -1,0 +1,13 @@
+[package]
+name = "probl"
+description = "Compile and run Probl programs from Rust: a language where conditions are probabilities"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+readme.workspace = true
+
+[dependencies]
+probl-syntax.workspace = true
+probl-sema.workspace = true
+probl-engine.workspace = true
