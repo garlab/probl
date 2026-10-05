@@ -1,17 +1,16 @@
 //! The `probl` command-line tool.
 
 use clap::{Parser, Subcommand, ValueEnum};
-use probl_cli::{LocalFiles, parse_size};
-use probl_engine::Options;
-use probl_engine::data::{self, InputLimits, Resolver, Snapshots};
+use probl::__internal::{EngineChecks, engine_checks};
+use probl::{Cancel, Date, ErrorKind, Files, Limits, LocalFiles, Options, Program, Snapshots};
+use probl_cli::parse_size;
+use probl_engine::data::{self, InputLimits};
 use probl_engine::report::thousands;
-use probl_sema::ir::{DataFormat, Mode, Program};
-use probl_syntax::{Diagnostic, SourceFile, render_all};
+use probl_sema::ir::DataFormat;
+use probl_syntax::{SourceFile, render_all};
 use std::io::{BufRead, IsTerminal, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Parser)]
 #[command(
@@ -47,34 +46,6 @@ impl FormatArg {
     }
 }
 
-/// What the command line asks for, over the program's `@mode`.
-struct ModeChoice {
-    mode: Option<ModeArg>,
-    runs: Option<u64>,
-    seed: Option<u64>,
-}
-
-impl ModeChoice {
-    fn resolve(&self, program: &Mode) -> Option<Mode> {
-        let sample =
-            self.mode == Some(ModeArg::Sample) || (self.mode.is_none() && (self.runs.is_some() || self.seed.is_some()));
-        if self.mode == Some(ModeArg::Enumerate) {
-            return Some(Mode::Enumerate);
-        }
-        if !sample {
-            return None;
-        }
-        let (runs, seed) = match program {
-            Mode::Sample { runs, seed } => (*runs, *seed),
-            _ => (10_000, 0),
-        };
-        Some(Mode::Sample {
-            runs: self.runs.unwrap_or(runs),
-            seed: self.seed.unwrap_or(seed),
-        })
-    }
-}
-
 #[derive(Subcommand)]
 enum Command {
     /// Run a program and print its reports.
@@ -82,7 +53,7 @@ enum Command {
         file: PathBuf,
         /// Pin the execution-date snapshot (`today`); defaults to the UTC date at launch.
         #[arg(long, value_parser = parse_execution_date, value_name = "YYYY-MM-DD")]
-        today: Option<i32>,
+        today: Option<Date>,
         /// Also print the simplest fraction near each probability, like ≈ 244/495 (a hint, not a proof).
         #[arg(long)]
         fractions: bool,
@@ -193,80 +164,92 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            let mut options = Options {
-                today: Some(today),
-                merge: !no_merge,
-                memoize: !no_memo,
-                epsilon,
-                fractions,
-                conjugate: !no_conjugate,
-                solve: !no_solve,
-                ..Options::default()
+            let mut options = Options::new()
+                .today(today)
+                .fractions(fractions)
+                .conjugate(!no_conjugate);
+            if let Some(e) = epsilon {
+                options = options.epsilon(e);
+            }
+            options = match mode {
+                Some(ModeArg::Enumerate) => options.enumerate(),
+                Some(ModeArg::Sample) => options.sample(),
+                None => options,
             };
+            if let Some(n) = runs {
+                options = options.runs(n);
+            }
+            if let Some(s) = seed {
+                options = options.seed(s);
+            }
+            let mut limits = Limits::default();
             if let Some(n) = max_worlds {
-                options.limits.max_worlds = n;
+                limits.max_worlds = n;
             }
             if let Some(n) = max_work {
-                options.limits.max_work = n;
+                limits.max_work = n;
             }
             if let Some(mb) = stack_mb {
-                options.limits.stack_size = mb * 1024 * 1024;
+                limits.stack_size = mb * 1024 * 1024;
             }
             if let Some(d) = max_depth {
-                options.limits.max_call_depth = d;
+                limits.max_call_depth = d;
             }
             if let Some(n) = threads {
-                options.limits.max_threads = n.max(1);
+                limits.max_threads = n.max(1);
             }
-            if let Some(seconds) = timeout {
-                let cancel = Arc::new(AtomicBool::new(false));
-                options.cancel = Some(cancel.clone());
+            if let Some(n) = max_input {
+                limits.max_input_bytes = n;
+            }
+            options = options.limits(limits);
+            let checks = EngineChecks {
+                merge: !no_merge,
+                memoize: !no_memo,
+                solve: !no_solve,
+            };
+            options = engine_checks(options, checks);
+            let cancel = timeout.map(|seconds| {
+                let cancel = Cancel::new();
+                let timer = cancel.clone();
                 let duration = std::time::Duration::from_secs_f64(seconds.max(0.0));
                 std::thread::spawn(move || {
                     std::thread::sleep(duration);
-                    cancel.store(true, Ordering::Relaxed);
+                    timer.cancel();
                 });
+                cancel
+            });
+            if let Some(cancel) = &cancel {
+                options = options.cancel(cancel);
             }
-            let limits = input_limits(max_input, &options);
-            run_file(&file, &mut options, &limits, stats, &ModeChoice { mode, runs, seed })
+            run_file(&file, options, cancel.as_ref(), stats)
         }
-        Command::Check { file, data, max_input } => {
-            check_file(&file, data.then(|| input_limits(max_input, &Options::default())))
-        }
+        Command::Check { file, data, max_input } => check_file(&file, data.then_some(max_input)),
         Command::Schema {
             file,
             format,
             max_input,
-        } => schema(&file, format, &input_limits(max_input, &Options::default())),
+        } => schema(&file, format, max_input),
         Command::Repl => repl(),
         Command::Ir { file } => ir_file(&file),
     }
 }
 
-fn parse_execution_date(s: &str) -> Result<i32, String> {
-    probl_engine::dates::parse(s).ok_or_else(|| "expected YYYY-MM-DD within 0001-01-01..9999-12-31".to_string())
+fn parse_execution_date(s: &str) -> Result<Date, String> {
+    s.parse().map_err(|e: probl::ParseDateError| e.to_string())
 }
 
 /// The CLI reads the clock once. Neither the compiler nor engine reads it.
-fn execution_date() -> Result<i32, String> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let seconds = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(d) => i128::from(d.as_secs()),
-        Err(e) => -i128::from(e.duration().as_secs()) - i128::from(e.duration().subsec_nanos() != 0),
-    };
-    i64::try_from(seconds)
-        .ok()
-        .and_then(probl_engine::dates::from_unix_seconds)
-        .ok_or_else(|| "the system clock is outside the supported date range".to_string())
+fn execution_date() -> Result<Date, String> {
+    Date::today_utc().ok_or_else(|| "the system clock is outside the supported date range".to_string())
 }
 
 fn color() -> bool {
     std::io::stderr().is_terminal()
 }
 
-fn read(path: &PathBuf) -> Option<SourceFile> {
+fn read(path: &Path) -> Option<String> {
     match std::fs::read_to_string(path) {
-        Ok(text) => Some(SourceFile::new(path.display().to_string(), text)),
+        Ok(text) => Some(text),
         Err(e) => {
             eprintln!("error: can't read {}: {e}", path.display());
             None
@@ -274,123 +257,108 @@ fn read(path: &PathBuf) -> Option<SourceFile> {
     }
 }
 
-fn report_diagnostics(diags: &[Diagnostic], file: &SourceFile) {
-    if !diags.is_empty() {
-        eprint!("{}", render_all(diags, file, color()));
-    }
-}
-
-fn input_limits(max_input: Option<u64>, options: &Options) -> InputLimits {
-    let default = InputLimits::default();
-    InputLimits {
-        max_bytes: max_input.unwrap_or(default.max_bytes),
-        max_collection: options.limits.max_collection,
-        max_integer_bits: options.limits.max_integer_bits,
-        max_integer_bytes: options.limits.max_integer_bytes,
-        ..default
-    }
-}
-
-/// Read the program's data, reporting any problem.
-fn load_data(
-    program: &Program,
-    files: &mut dyn Resolver,
-    snapshots: &mut Snapshots,
-    limits: &InputLimits,
-    cancel: Option<&AtomicBool>,
-    file: &SourceFile,
-) -> Option<Arc<data::Inputs>> {
-    match data::load(program, files, snapshots, limits, cancel) {
-        Ok(inputs) => Some(Arc::new(inputs)),
+/// Compile a program, printing its diagnostics.
+fn compile(name: &str, text: &str) -> Option<Program> {
+    match probl::compile(name, text) {
+        Ok(program) => {
+            for warning in program.warnings() {
+                eprint!("{}", warning.render(color()));
+            }
+            Some(program)
+        }
         Err(e) => {
-            eprint!("{}", e.to_diagnostic().render(file, color()));
+            eprint!("{}", e.render(color()));
             None
         }
     }
 }
 
-fn run_file(path: &PathBuf, options: &mut Options, limits: &InputLimits, stats: bool, choice: &ModeChoice) -> ExitCode {
-    let Some(file) = read(path) else {
-        return ExitCode::FAILURE;
-    };
-    let (program, diags) = probl_sema::compile(&file.text);
-    report_diagnostics(&diags, &file);
-    let Some(program) = program else {
-        return ExitCode::FAILURE;
-    };
-    if !program.inputs.is_empty() {
-        let mut files = LocalFiles::next_to(path, options.cancel.clone());
-        let cancel = options.cancel.clone();
-        let loaded = load_data(
-            &program,
-            &mut files,
-            &mut Snapshots::default(),
-            limits,
-            cancel.as_deref(),
-            &file,
-        );
-        let Some(inputs) = loaded else {
-            return ExitCode::FAILURE;
-        };
-        options.inputs = Some(inputs);
+/// Read a program's data with these options, reporting any problem.
+fn load(program: &Program, files: &mut dyn Files, options: Options) -> Option<Options> {
+    if !program.reads_data() {
+        return Some(options);
     }
-    options.mode = choice.resolve(&program.settings.mode);
+    match program.load(files, &options) {
+        Ok(data) => Some(options.data(data)),
+        Err(e) => {
+            eprint!("{}", e.render(color()));
+            None
+        }
+    }
+}
+
+fn run_file(path: &Path, options: Options, cancel: Option<&Cancel>, stats: bool) -> ExitCode {
+    let Some(text) = read(path) else {
+        return ExitCode::FAILURE;
+    };
+    let Some(program) = compile(&path.display().to_string(), &text) else {
+        return ExitCode::FAILURE;
+    };
+    let mut files = LocalFiles::next_to(path).stdin(true);
+    if let Some(cancel) = cancel {
+        files = files.cancel(cancel);
+    }
+    let Some(options) = load(&program, &mut files, options) else {
+        return ExitCode::FAILURE;
+    };
     let mut print = |line: &str| println!("{line}");
-    match probl_engine::run(&program, options, &mut print) {
+    match program.run_with(&options, &mut print) {
         Ok(outcome) => {
-            println!("{}", outcome.output);
+            println!("{}", outcome.text());
             if stats {
-                if let Some(today) = outcome.today {
-                    eprintln!(
-                        "execution date: {} (UTC default; --today overrides it)",
-                        probl_engine::dates::format(today)
-                    );
+                if let Some(today) = outcome.today() {
+                    eprintln!("execution date: {today} (UTC default; --today overrides it)");
                 }
-                let s = &outcome.stats;
+                let s = outcome.stats();
                 let mut line = format!(
                     "stats: peak {} worlds · {} world-steps · {} calls ({} reused)",
-                    s.peak_worlds, s.world_steps, s.calls, s.memo_hits
+                    s.peak_worlds(),
+                    s.world_steps(),
+                    s.calls(),
+                    s.reused_calls()
                 );
                 let count = |n: u64, one: &str, many: &str| {
                     format!("{} {}", thousands(n as i64), if n == 1 { one } else { many })
                 };
-                if s.solved_loops > 0 {
+                if s.solved_loops() > 0 {
                     line.push_str(&format!(
                         " · {} solved ({})",
-                        count(s.solved_loops, "loop", "loops"),
-                        count(s.chain_states, "state", "states")
+                        count(s.solved_loops(), "loop", "loops"),
+                        count(s.chain_states(), "state", "states")
                     ));
                 }
-                if s.solved_calls > 0 {
+                if s.solved_calls() > 0 {
                     line.push_str(&format!(
                         " · {} solved ({})",
-                        count(s.solved_calls, "recursive call", "recursive calls"),
-                        count(s.call_rounds, "round", "rounds")
+                        count(s.solved_calls(), "recursive call", "recursive calls"),
+                        count(s.call_rounds(), "round", "rounds")
                     ));
                 }
                 eprintln!("{line}");
-                for (variable, u) in &outcome.updates {
-                    let (line, _) = file.line_col(variable.span.lo);
+                for u in s.exact_updates() {
                     eprintln!(
-                        "exact updates: `{}` (line {line}) · {} draws delayed · {} observations · drawn {} times",
-                        variable.name,
-                        thousands(u.delayed as i64),
-                        thousands(u.exact as i64),
-                        thousands(u.drawn as i64)
+                        "exact updates: `{}` (line {}) · {} draws delayed · {} observations · drawn {} times",
+                        u.variable(),
+                        u.line(),
+                        thousands(u.delayed() as i64),
+                        thousands(u.observations() as i64),
+                        thousands(u.drawn() as i64)
                     );
                 }
-                for source in &outcome.data {
+                for source in outcome.data() {
                     eprintln!(
                         "data: {} · {} bytes · sha256 {}",
-                        source.identity, source.bytes, source.sha256
+                        source.identity(),
+                        source.bytes(),
+                        source.sha256()
                     );
                 }
             }
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprint!("{}", e.to_diagnostic().render(&file, color()));
-            if e.kind == probl_engine::ErrorKind::Internal {
+            eprint!("{}", e.render(color()));
+            if e.kind() == ErrorKind::Internal {
                 return ExitCode::from(70);
             }
             ExitCode::FAILURE
@@ -398,38 +366,50 @@ fn run_file(path: &PathBuf, options: &mut Options, limits: &InputLimits, stats: 
     }
 }
 
-/// Compile a program; with `data`, also read its data with these limits.
-fn check_file(path: &PathBuf, data: Option<InputLimits>) -> ExitCode {
-    let Some(file) = read(path) else {
+/// Compile a program; with `data`, also read its data, with at most that many
+/// bytes if given.
+fn check_file(path: &Path, data: Option<Option<u64>>) -> ExitCode {
+    let Some(text) = read(path) else {
         return ExitCode::FAILURE;
     };
-    let (program, diags) = probl_sema::compile(&file.text);
-    report_diagnostics(&diags, &file);
-    let Some(program) = program else {
+    let name = path.display().to_string();
+    let Some(program) = compile(&name, &text) else {
         return ExitCode::FAILURE;
     };
     let mut sources = String::new();
-    if let Some(limits) = data {
-        if !program.inputs.is_empty() {
-            let mut files = LocalFiles::next_to(path, None);
-            let Some(inputs) = load_data(&program, &mut files, &mut Snapshots::default(), &limits, None, &file) else {
+    if let Some(max_input) = data.filter(|_| program.reads_data()) {
+        let mut limits = Limits::default();
+        if let Some(n) = max_input {
+            limits.max_input_bytes = n;
+        }
+        let mut files = LocalFiles::next_to(path).stdin(true);
+        match program.load(&mut files, &Options::new().limits(limits)) {
+            Ok(data) => {
+                let n = data.sources().len();
+                sources = format!(", and so is its data ({n} file{})", if n == 1 { "" } else { "s" });
+            }
+            Err(e) => {
+                eprint!("{}", e.render(color()));
                 return ExitCode::FAILURE;
-            };
-            let n = inputs.sources().len();
-            sources = format!(", and so is its data ({n} file{})", if n == 1 { "" } else { "s" });
+            }
         }
     }
-    eprintln!("{}: ok{sources}", file.name);
+    eprintln!("{name}: ok{sources}");
     ExitCode::SUCCESS
 }
 
 /// Print a suggested type for a data file.
-fn schema(path: &str, format: Option<FormatArg>, limits: &InputLimits) -> ExitCode {
+fn schema(path: &str, format: Option<FormatArg>, max_input: Option<u64>) -> ExitCode {
     let Some(format) = format.map(FormatArg::format).or_else(|| DataFormat::from_path(path)) else {
         eprintln!("error: can't tell the format of {path} from its name: say it with --format csv, json or lines");
         return ExitCode::FAILURE;
     };
-    let mut files = LocalFiles::new(".", true, None);
+    let default = InputLimits::default();
+    let limits = InputLimits {
+        max_bytes: max_input.unwrap_or(default.max_bytes),
+        ..default
+    };
+    let mut files = LocalFiles::new(".").stdin(true);
     let reader = files.resolve(path).and_then(|id| files.open(&id));
     let mut bytes = Vec::new();
     let read = reader.and_then(|r| {
@@ -441,7 +421,7 @@ fn schema(path: &str, format: Option<FormatArg>, limits: &InputLimits) -> ExitCo
         eprintln!("error: can't read {path}: {why}");
         return ExitCode::FAILURE;
     }
-    match data::suggest(&bytes, format, path, limits) {
+    match data::suggest(&bytes, format, path, &limits) {
         Ok(text) => {
             print!("{text}");
             ExitCode::SUCCESS
@@ -453,12 +433,15 @@ fn schema(path: &str, format: Option<FormatArg>, limits: &InputLimits) -> ExitCo
     }
 }
 
-fn ir_file(path: &PathBuf) -> ExitCode {
-    let Some(file) = read(path) else {
+fn ir_file(path: &Path) -> ExitCode {
+    let Some(text) = read(path) else {
         return ExitCode::FAILURE;
     };
+    let file = SourceFile::new(path.display().to_string(), text);
     let (program, diags) = probl_sema::compile(&file.text);
-    report_diagnostics(&diags, &file);
+    if !diags.is_empty() {
+        eprint!("{}", render_all(&diags, &file, color()));
+    }
     let Some(program) = program else {
         return ExitCode::FAILURE;
     };
@@ -487,9 +470,9 @@ fn repl() -> ExitCode {
     // The session's reports so far: the new input's come after them.
     let mut reported = 0;
     // Data read during the session stays the same until `:reload`, so that
-    // running the session again doesn't change earlier bindings.
-    let mut files = LocalFiles::new(".", false, None);
-    let mut snapshots = Snapshots::default();
+    // running the session again doesn't change earlier bindings. Standard
+    // input is the session, not data.
+    let mut files = Snapshots::new(LocalFiles::new("."));
     loop {
         let mut input = String::new();
         let mut prompt = "probl> ";
@@ -511,42 +494,27 @@ fn repl() -> ExitCode {
             continue;
         }
         if input.trim() == ":reload" {
-            snapshots.clear();
+            files.clear();
             println!("the data will be read again");
             continue;
         }
         let input = as_report_if_expression(&input);
         let candidate = format!("{session}{input}");
-        let (program, diags) = probl_sema::compile(&candidate);
-        let file = SourceFile::new("<repl>", candidate.clone());
-        report_diagnostics(&diags, &file);
-        let Some(program) = program else {
+        let Some(program) = compile("<repl>", &candidate) else {
             continue;
         };
-        let mut options = Options {
-            today: Some(today),
-            ..Options::default()
+        let Some(options) = load(&program, &mut files, Options::new().today(today)) else {
+            continue;
         };
-        if !program.inputs.is_empty() {
-            let limits = input_limits(None, &options);
-            let Some(inputs) = load_data(&program, &mut files, &mut snapshots, &limits, None, &file) else {
-                continue;
-            };
-            options.inputs = Some(inputs);
-        }
         let mut print = |line: &str| println!("{line}");
-        match probl_engine::run(&program, &options, &mut print) {
+        match program.run_with(&options, &mut print) {
             Ok(outcome) => {
-                let new = probl_engine::report::render(
-                    &program.reports[reported..],
-                    &outcome.reports[reported..],
-                    outcome.format,
-                );
-                print!("{new}");
-                reported = program.reports.len();
+                let reports = outcome.reports().len();
+                print!("{}", outcome.render(reported..reports));
+                reported = reports;
                 session = candidate;
             }
-            Err(e) => eprint!("{}", e.to_diagnostic().render(&file, color())),
+            Err(e) => eprint!("{}", e.render(color())),
         }
     }
 }

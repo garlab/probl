@@ -16,10 +16,8 @@
 //! worlds. Runs stop after a time limit, so models that explode say so
 //! instead of hanging.
 
-use probl_cli::LocalFiles;
-use probl_engine::data::{self, InputLimits, Inputs, Snapshots};
-use probl_engine::{Limits, Options, Outcome};
-use probl_sema::ir::Program;
+use probl::__internal::{EngineChecks, engine_checks};
+use probl::{Cancel, Data, Limits, LocalFiles, Mode, Options, Outcome, Program};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -99,24 +97,28 @@ struct Settings {
     /// Solve loops that cycle as Markov chains (the default).
     solve: bool,
     /// The model's data, read once before the runs.
-    inputs: Option<Arc<Inputs>>,
+    data: Option<Data>,
 }
 
 fn run_once(program: &Program, settings: &Settings, merge: bool, limit: Duration) -> Run {
-    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel = Cancel::new();
     let mut limits = Limits::default();
     if let Some(n) = settings.threads {
         limits.max_threads = n;
     }
-    let options = Options {
+    let mut options = Options::new()
+        .cancel(&cancel)
+        .limits(limits)
+        .conjugate(settings.conjugate);
+    if let Some(data) = &settings.data {
+        options = options.data(data.clone());
+    }
+    let checks = EngineChecks {
         merge,
-        cancel: Some(cancel.clone()),
-        limits,
-        inputs: settings.inputs.clone(),
-        conjugate: settings.conjugate,
         solve: settings.solve,
-        ..Options::default()
+        ..EngineChecks::default()
     };
+    let options = engine_checks(options, checks);
     // A watchdog cancels the run at the time limit.
     let done = Arc::new(AtomicBool::new(false));
     let watchdog = {
@@ -126,18 +128,18 @@ fn run_once(program: &Program, settings: &Settings, merge: bool, limit: Duration
             while !done.load(Ordering::Relaxed) && start.elapsed() < limit {
                 std::thread::sleep(Duration::from_millis(20));
             }
-            cancel.store(true, Ordering::Relaxed);
+            cancel.cancel();
         })
     };
     let mut print = |_: &str| {};
     let start = Instant::now();
-    let result = probl_engine::run(program, &options, &mut print);
+    let result = program.run_with(&options, &mut print);
     let time = start.elapsed();
     done.store(true, Ordering::Relaxed);
     watchdog.join().unwrap();
     Run {
         time,
-        result: result.map_err(|e| e.message),
+        result: result.map_err(|e| e.to_string()),
     }
 }
 
@@ -151,7 +153,7 @@ struct Measured {
 }
 
 fn measure(name: &str, program: &Program, settings: &Settings) -> Measured {
-    let enumerated = !matches!(program.settings.mode, probl_sema::ir::Mode::Sample { .. });
+    let enumerated = !matches!(program.mode(), Mode::Sample { .. });
     // The heap is counted in a run of its own, which isn't timed: counting
     // slows allocation down, much more so when threads allocate at once.
     IN_USE.store(0, Ordering::Relaxed);
@@ -176,7 +178,7 @@ fn measure(name: &str, program: &Program, settings: &Settings) -> Measured {
     let unmerged = (enumerated && first.result.is_ok()).then(|| {
         let limit = (first.time * 20).clamp(Duration::from_secs(1), Duration::from_secs(30));
         let run = run_once(program, settings, false, limit);
-        run.result.map(|o| (run.time, o.stats.world_steps))
+        run.result.map(|o| (run.time, o.stats().world_steps()))
     });
     Measured {
         name: name.to_string(),
@@ -247,7 +249,7 @@ fn bytes(n: usize) -> String {
 /// What the output's summary line says after the mode: unresolved weight,
 /// the effective sample size, evidence.
 fn note(outcome: &Outcome) -> String {
-    let header = outcome.output.lines().next().unwrap_or("");
+    let header = outcome.text().lines().next().unwrap_or("");
     let parts: Vec<&str> = header.split(" · ").skip(1).collect();
     parts
         .into_iter()
@@ -259,24 +261,24 @@ fn note(outcome: &Outcome) -> String {
 fn row(m: &Measured) -> String {
     let (worlds, steps, per_step, calls, note) = match &m.outcome {
         Ok(o) => {
-            let s = &o.stats;
-            let per_step = if s.world_steps > 0 {
-                format!("{:.0} ns", m.time.as_secs_f64() * 1e9 / s.world_steps as f64)
+            let s = o.stats();
+            let per_step = if s.world_steps() > 0 {
+                format!("{:.0} ns", m.time.as_secs_f64() * 1e9 / s.world_steps() as f64)
             } else {
                 "".into()
             };
-            let calls = if s.calls > 0 {
+            let calls = if s.calls() > 0 {
                 format!(
                     "{} ({:.0}% reused)",
-                    count(s.calls),
-                    100.0 * s.memo_hits as f64 / s.calls as f64
+                    count(s.calls()),
+                    100.0 * s.reused_calls() as f64 / s.calls() as f64
                 )
             } else {
                 "".into()
             };
             (
-                count(s.peak_worlds as u64),
-                count(s.world_steps),
+                count(s.peak_worlds() as u64),
+                count(s.world_steps()),
                 per_step,
                 calls,
                 note(o),
@@ -287,7 +289,7 @@ fn row(m: &Measured) -> String {
     let unmerged = match &m.unmerged {
         None => String::new(),
         Some(Ok((time, steps))) => {
-            let merged = m.outcome.as_ref().map_or(1, |o| o.stats.world_steps.max(1));
+            let merged = m.outcome.as_ref().map_or(1, |o| o.stats().world_steps().max(1));
             format!(
                 "{} steps ({:.0}×), {}",
                 count(*steps),
@@ -322,7 +324,7 @@ fn main() {
         }),
         conjugate: !args.iter().any(|a| a == "--no-conjugate"),
         solve: !args.iter().any(|a| a == "--no-solve"),
-        inputs: None,
+        data: None,
     };
     let filter: Vec<String> = args.into_iter().filter(|a| !a.starts_with("--")).collect();
     println!(
@@ -331,20 +333,20 @@ fn main() {
     println!("|---|---|--:|--:|--:|--:|--:|--:|---|---|");
     for (name, path) in models(&filter) {
         let src = std::fs::read_to_string(&path).unwrap();
-        let (program, _) = probl_sema::compile(&src);
-        let Some(program) = program else {
+        let Ok(program) = probl::compile(&name, &src) else {
             println!("| {name} | | | | | | | | | **doesn't compile** |");
             continue;
         };
-        let mut files = LocalFiles::next_to(&path, None);
-        let limits = InputLimits::default();
-        settings.inputs = match data::load(&program, &mut files, &mut Snapshots::default(), &limits, None) {
-            Ok(inputs) => Some(Arc::new(inputs)),
-            Err(e) => {
-                println!("| {name} | | | | | | | | | **can't read its data: {}** |", e.message);
-                continue;
+        settings.data = None;
+        if program.reads_data() {
+            match program.load(&mut LocalFiles::next_to(&path), &Options::new()) {
+                Ok(data) => settings.data = Some(data),
+                Err(e) => {
+                    println!("| {name} | | | | | | | | | **can't read its data: {e}** |");
+                    continue;
+                }
             }
-        };
+        }
         let m = measure(&name, &program, &settings);
         println!("{}", row(&m));
     }
@@ -357,8 +359,9 @@ mod tests {
     fn every_model_compiles() {
         for (name, path) in super::models(&[]) {
             let src = std::fs::read_to_string(&path).unwrap();
-            let (program, diags) = probl_sema::compile(&src);
-            assert!(program.is_some(), "{name} doesn't compile: {diags:?}");
+            if let Err(e) = probl::compile(&name, &src) {
+                panic!("{name} doesn't compile:\n{}", e.render(false));
+            }
         }
     }
 }

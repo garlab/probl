@@ -9,46 +9,16 @@
 //! the module's memory. Natively, they're ordinary Rust functions, which
 //! the tests call.
 
-use probl_engine::data::{self, InputLimits, Resolver, Snapshots};
-use probl_engine::{Limits, Options, Progress, RuntimeError};
+use probl::{Date, Limits, MemoryFiles, Options};
 use probl_sema::Builtin;
-use probl_sema::ir::Mode;
 use probl_sema::symbols::{DefKind, Symbols};
-use probl_syntax::{Diagnostic, Severity, SourceFile, Span};
-use serde_json::{Map, Value as Json, json};
+use probl_syntax::{Severity, SourceFile, Span};
+use serde_json::{Value as Json, json};
 use std::io::Read;
 use std::sync::Arc;
 
-/// The playground's limits: lower than the command line's, since a browser
-/// tab has less memory and a smaller stack, and one thread.
-pub fn limits() -> Limits {
-    Limits {
-        max_integer_bytes: 64 * 1024 * 1024,
-        max_string_bytes: 4 * 1024 * 1024,
-        max_string_alloc_bytes: 64 * 1024 * 1024,
-        max_worlds: 1_000_000,
-        max_outcomes: 1_000_000,
-        max_collection: 1_000_000,
-        max_work: 2_000_000_000,
-        max_call_depth: 150,
-        max_cached_calls: 200_000,
-        max_output: 1024 * 1024,
-        max_threads: 1,
-        max_chain_states: 20_000,
-        ..Limits::default()
-    }
-}
-
-/// The limits on data a program reads.
-fn input_limits() -> InputLimits {
-    InputLimits {
-        max_integer_bytes: limits().max_integer_bytes,
-        max_bytes: 8 * 1024 * 1024,
-        max_values: 1_000_000,
-        max_collection: 1_000_000,
-        ..InputLimits::default()
-    }
-}
+/// A function told how many sampled runs are done, and how many there are.
+pub type Progress = Arc<dyn Fn(u64, u64) + Send + Sync>;
 
 /// The name programs are shown under in diagnostics.
 const FILE: &str = "playground.probl";
@@ -62,8 +32,8 @@ pub fn check(source: &str) -> String {
     let file = SourceFile::new(FILE, source);
     let (_, diags, symbols) = probl_sema::compile_with_symbols(source);
     let symbols = symbols.map(|s| self::symbols(&s, source));
-    json!({ "diagnostics": diags.iter().map(|d| diagnostic(d, &file)).collect::<Vec<_>>(), "symbols": symbols })
-        .to_string()
+    let diagnostics: Vec<Json> = diags.iter().map(|d| compiler_diagnostic(d, &file)).collect();
+    json!({ "diagnostics": diagnostics, "symbols": symbols }).to_string()
 }
 
 /// Offsets in UTF-16 code units, as JavaScript counts them, for byte offsets
@@ -253,145 +223,210 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
         }
     };
     let source = request["source"].as_str().unwrap_or_default();
-    let file = SourceFile::new(FILE, source);
-    let (program, diags) = probl_sema::compile(source);
-    let diagnostics: Vec<Json> = diags.iter().map(|d| diagnostic(d, &file)).collect();
-    let Some(program) = program else {
-        let first = diags.iter().find(|d| d.is_error()).map(|d| diagnostic(d, &file));
-        return json!({ "error": first, "diagnostics": diagnostics }).to_string();
+    let program = match probl::compile(FILE, source) {
+        Ok(program) => program,
+        Err(e) => {
+            let diagnostics: Vec<Json> = e.diagnostics().iter().map(|d| diagnostic(d, source)).collect();
+            let first = e
+                .diagnostics()
+                .iter()
+                .find(|d| d.severity() == probl::Severity::Error)
+                .map(|d| diagnostic(d, source));
+            return json!({ "error": first, "diagnostics": diagnostics }).to_string();
+        }
     };
-    let failed = |e: RuntimeError| json!({ "error": runtime_error(&e, &file), "diagnostics": diagnostics }).to_string();
-    let mut options = Options {
-        limits: limits(),
-        conjugate: request["conjugate"].as_bool().unwrap_or(true),
-        mode: mode(&request, &program.settings.mode),
-        progress,
-        ..Options::default()
-    };
+    let diagnostics: Vec<Json> = program.warnings().iter().map(|d| diagnostic(d, source)).collect();
+    let failed = |error: Json| json!({ "error": error, "diagnostics": diagnostics }).to_string();
+    let mut options = mode(&request, Options::new())
+        .limits(Limits::browser())
+        .conjugate(request["conjugate"].as_bool().unwrap_or(true));
+    if let Some(progress) = progress {
+        options = options.progress(move |done, total| progress(done, total));
+    }
     if let Some(today) = request.get("today") {
-        options.today = match today.as_str().and_then(probl_engine::dates::parse) {
-            Some(d) => Some(d),
+        match today.as_str().and_then(|s| s.parse::<Date>().ok()) {
+            Some(date) => options = options.today(date),
             None => {
-                return failed(RuntimeError::new(
-                    Default::default(),
-                    "today must be YYYY-MM-DD within 0001-01-01..9999-12-31",
-                ));
+                let message = "today must be YYYY-MM-DD within 0001-01-01..9999-12-31";
+                let mut error = compiler_diagnostic(
+                    &probl_syntax::Diagnostic::error(Span::default(), message),
+                    &SourceFile::new(FILE, source),
+                );
+                error["kind"] = json!("language");
+                return failed(error);
             }
-        };
-    }
-    if !program.inputs.is_empty() {
-        let mut files = Files(request["files"].as_object().cloned().unwrap_or_default());
-        match data::load(&program, &mut files, &mut Snapshots::default(), &input_limits(), None) {
-            Ok(inputs) => options.inputs = Some(Arc::new(inputs)),
-            Err(e) => return failed(e),
         }
     }
-    match probl_engine::run_on_this_thread(&program, &options, print) {
+    if program.reads_data() {
+        let given = request["files"].as_object().cloned().unwrap_or_default();
+        let mut files = Files(
+            given
+                .iter()
+                .map(|(path, text)| (path.clone(), text.as_str().unwrap_or_default()))
+                .collect(),
+        );
+        match program.load(&mut files, &options) {
+            Ok(data) => options = options.data(data),
+            Err(e) => return failed(error(&e, source)),
+        }
+    }
+    match program.run_with(&options, print) {
         Ok(outcome) => {
-            let s = &outcome.stats;
+            let s = outcome.stats();
             let mut stats = json!({
-                "peak_worlds": s.peak_worlds,
-                "world_steps": s.world_steps,
-                "calls": s.calls,
-                "reused_calls": s.memo_hits,
-                "solved_loops": s.solved_loops,
-                "chain_states": s.chain_states,
-                "solved_calls": s.solved_calls,
-                "call_rounds": s.call_rounds,
+                "peak_worlds": s.peak_worlds(),
+                "world_steps": s.world_steps(),
+                "calls": s.calls(),
+                "reused_calls": s.reused_calls(),
+                "solved_loops": s.solved_loops(),
+                "chain_states": s.chain_states(),
+                "solved_calls": s.solved_calls(),
+                "call_rounds": s.call_rounds(),
             });
-            if let Some(sampled) = &outcome.sample {
-                stats["runs"] = json!(sampled.runs);
-                stats["effective_runs"] = json!(sampled.effective);
+            if let Some(sampled) = outcome.sampling() {
+                stats["runs"] = json!(sampled.runs());
+                stats["effective_runs"] = json!(sampled.effective_runs());
             }
-            json!({ "output": outcome.output, "today": outcome.today.map(probl_engine::dates::format), "stats": stats, "diagnostics": diagnostics }).to_string()
+            let today = outcome.today().map(|d| d.to_string());
+            json!({ "output": outcome.text(), "today": today, "stats": stats, "diagnostics": diagnostics }).to_string()
         }
-        Err(e) => failed(e),
+        Err(e) => failed(error(&e, source)),
     }
 }
 
-/// The mode a request asks for, as the command line's `--mode`, `--runs`
-/// and `--seed` would: `None` keeps the program's.
-fn mode(request: &Json, program: &Mode) -> Option<Mode> {
-    let asked = request["mode"].as_str();
-    let (runs, seed) = (request["runs"].as_u64(), request["seed"].as_u64());
-    if asked == Some("enumerate") {
-        return Some(Mode::Enumerate);
-    }
-    if asked != Some("sample") && runs.is_none() && seed.is_none() {
-        return None;
-    }
-    let (default_runs, default_seed) = match program {
-        Mode::Sample { runs, seed } => (*runs, *seed),
-        _ => (10_000, 0),
+/// The options a request asks for, as the command line's `--mode`, `--runs`
+/// and `--seed` would.
+fn mode(request: &Json, options: Options) -> Options {
+    let mut options = match request["mode"].as_str() {
+        Some("enumerate") => options.enumerate(),
+        Some("sample") => options.sample(),
+        _ => options,
     };
-    Some(Mode::Sample {
-        runs: runs.unwrap_or(default_runs),
-        seed: seed.unwrap_or(default_seed),
-    })
+    if let Some(runs) = request["runs"].as_u64() {
+        options = options.runs(runs);
+    }
+    if let Some(seed) = request["seed"].as_u64() {
+        options = options.seed(seed);
+    }
+    options
 }
 
 /// The files a program may read: only those given, by the path it's
 /// written with.
-struct Files(Map<String, Json>);
+struct Files(MemoryFiles);
 
-impl Resolver for Files {
+impl probl::Files for Files {
     fn resolve(&mut self, path: &str) -> Result<String, String> {
         if path == "-" {
             return Err("the playground has no standard input".into());
         }
-        if self.0.contains_key(path) {
-            Ok(path.to_string())
-        } else {
-            Err(format!("`{path}` isn't one of the playground's files"))
+        if !self.0.contains(path) {
+            return Err(format!("`{path}` isn't one of the playground's files"));
         }
+        self.0.resolve(path)
     }
 
     fn open(&mut self, identity: &str) -> Result<Box<dyn Read + Send>, String> {
-        let text = self.0.get(identity).and_then(Json::as_str).unwrap_or_default();
-        Ok(Box::new(std::io::Cursor::new(text.as_bytes().to_vec())))
+        self.0.open(identity)
     }
 }
 
 /// A diagnostic as JSON. `from` and `to` count UTF-16 code units, as
 /// JavaScript strings do; `line` and `column` start at 1.
-fn diagnostic(d: &Diagnostic, file: &SourceFile) -> Json {
-    let mut out = located(d.span, file);
-    out["severity"] = json!(match d.severity {
+fn diagnostic(d: &probl::Diagnostic, source: &str) -> Json {
+    let severity = match d.severity() {
+        probl::Severity::Warning => "warning",
+        _ => "error",
+    };
+    let span = d.span();
+    let fields = Fields {
+        from: utf16(source, span.start),
+        to: utf16(source, span.end),
+        line_column: d.line_column(),
+        severity,
+        message: d.message(),
+        notes: d.notes(),
+        help: d.help(),
+    };
+    fields.json(d.render(false))
+}
+
+/// A diagnostic of the compiler's, for the editor, as JSON (see
+/// [`diagnostic`]).
+fn compiler_diagnostic(d: &probl_syntax::Diagnostic, file: &SourceFile) -> Json {
+    let severity = match d.severity {
         Severity::Error => "error",
         Severity::Warning => "warning",
-    });
-    out["message"] = json!(d.message);
-    out["notes"] = json!(d.notes);
-    out["help"] = json!(d.help);
-    out["rendered"] = json!(d.render(file, false));
-    out
-}
-
-fn runtime_error(e: &RuntimeError, file: &SourceFile) -> Json {
-    let mut out = diagnostic(&e.to_diagnostic(), file);
-    out["kind"] = json!(match e.kind {
-        probl_engine::ErrorKind::Language => "language",
-        probl_engine::ErrorKind::Unsupported => "unsupported",
-        probl_engine::ErrorKind::Limit => "limit",
-        probl_engine::ErrorKind::Internal => "internal",
-    });
-    out
-}
-
-/// Where a span is, for an editor.
-fn located(span: Span, file: &SourceFile) -> Json {
-    let text = &file.text;
-    let clamp = |i: u32| {
-        let mut i = (i as usize).min(text.len());
-        while !text.is_char_boundary(i) {
-            i -= 1;
-        }
-        i
     };
-    let (lo, hi) = (clamp(span.lo), clamp(span.hi.max(span.lo)));
-    let utf16 = |i: usize| text[..i].encode_utf16().count();
-    let (line, column) = file.line_col(lo as u32);
-    json!({ "from": utf16(lo), "to": utf16(hi), "line": line, "column": column })
+    let (lo, hi) = (d.span.lo as usize, d.span.hi.max(d.span.lo) as usize);
+    let fields = Fields {
+        from: utf16(&file.text, lo),
+        to: utf16(&file.text, hi),
+        line_column: file.line_col(clamp(&file.text, lo) as u32),
+        severity,
+        message: &d.message,
+        notes: &d.notes,
+        help: d.help.as_deref(),
+    };
+    fields.json(d.render(file, false))
+}
+
+/// What a diagnostic's JSON says.
+struct Fields<'a> {
+    from: usize,
+    to: usize,
+    line_column: (usize, usize),
+    severity: &'a str,
+    message: &'a str,
+    notes: &'a [String],
+    help: Option<&'a str>,
+}
+
+impl Fields<'_> {
+    fn json(self, rendered: String) -> Json {
+        let (line, column) = self.line_column;
+        json!({
+            "from": self.from,
+            "to": self.to,
+            "line": line,
+            "column": column,
+            "severity": self.severity,
+            "message": self.message,
+            "notes": self.notes,
+            "help": self.help,
+            "rendered": rendered,
+        })
+    }
+}
+
+/// An error, as a diagnostic with its kind.
+fn error(e: &probl::Error, source: &str) -> Json {
+    let mut out = e
+        .diagnostics()
+        .first()
+        .map_or_else(|| json!({ "message": e.to_string() }), |d| diagnostic(d, source));
+    out["kind"] = json!(match e.kind() {
+        probl::ErrorKind::Unsupported => "unsupported",
+        probl::ErrorKind::Limit => "limit",
+        probl::ErrorKind::Internal => "internal",
+        probl::ErrorKind::Usage => "usage",
+        _ => "language",
+    });
+    out
+}
+
+/// `at`, moved back to the start of the character it's in.
+fn clamp(text: &str, at: usize) -> usize {
+    let mut i = at.min(text.len());
+    while !text.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// A byte offset in `text` as UTF-16 code units.
+fn utf16(text: &str, at: usize) -> usize {
+    text[..clamp(text, at)].encode_utf16().count()
 }
 
 /// The bundled examples: `[{"name", "title", "source", "files"}]`, the
@@ -519,9 +554,7 @@ mod exports {
         // SAFETY: the pointer and length describe `line`.
         let mut printed = |line: &str| unsafe { print(line.as_ptr(), line.len()) };
         // SAFETY: `progress` takes two numbers.
-        let told = probl_engine::Progress(std::sync::Arc::new(|done, total| unsafe {
-            progress(done as f64, total as f64)
-        }));
+        let told: super::Progress = std::sync::Arc::new(|done, total| unsafe { progress(done as f64, total as f64) });
         give(super::run(&request, &mut printed, Some(told)))
     }
 

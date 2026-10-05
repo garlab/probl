@@ -1,7 +1,6 @@
 //! The playground's API, run natively (the same code runs in WebAssembly).
 
-use probl_engine::Options;
-use probl_engine::data::{self, Resolver, Snapshots};
+use probl::{MemoryFiles, Options};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
@@ -37,20 +36,6 @@ fn execution_date_is_supplied_by_the_host_and_returned_for_replay() {
     }
 }
 
-/// The files of an example, for the engine's own loader.
-struct Given(serde_json::Map<String, Value>);
-
-impl Resolver for Given {
-    fn resolve(&mut self, path: &str) -> Result<String, String> {
-        Ok(path.to_string())
-    }
-
-    fn open(&mut self, identity: &str) -> Result<Box<dyn std::io::Read + Send>, String> {
-        let text = self.0[identity].as_str().unwrap().as_bytes().to_vec();
-        Ok(Box::new(std::io::Cursor::new(text)))
-    }
-}
-
 #[test]
 fn the_examples_print_what_the_command_line_prints() {
     let all = examples();
@@ -61,26 +46,21 @@ fn the_examples_print_what_the_command_line_prints() {
         let output = answer["output"]
             .as_str()
             .unwrap_or_else(|| panic!("{}: {answer}", example["name"]));
-        // The engine as `probl run` calls it, on every thread.
-        let program = probl_sema::compile(source).0.unwrap();
-        let mut options = Options {
-            today: probl_engine::dates::parse("2026-09-29"),
-            ..Options::default()
-        };
-        if !program.inputs.is_empty() {
-            let mut files = Given(example["files"].as_object().unwrap().clone());
-            let inputs = data::load(
-                &program,
-                &mut files,
-                &mut Snapshots::default(),
-                &Default::default(),
-                None,
-            )
-            .unwrap();
-            options.inputs = Some(Arc::new(inputs));
+        // The library as `probl run` calls it, on every thread.
+        let program = probl::compile("example.probl", source).unwrap();
+        let mut options = Options::new().today("2026-09-29".parse().unwrap());
+        if program.reads_data() {
+            let mut files: MemoryFiles = example["files"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(path, text)| (path.clone(), text.as_str().unwrap()))
+                .collect();
+            let data = program.load(&mut files, &options).unwrap();
+            options = options.data(data);
         }
-        let expected = probl_engine::run(&program, &options, &mut |_| {}).unwrap().output;
-        assert_eq!(output, expected, "{}", example["name"]);
+        let expected = program.run(&options).unwrap();
+        assert_eq!(output, expected.text(), "{}", example["name"]);
     }
 }
 
@@ -126,7 +106,7 @@ fn what_programs_print_comes_as_it_happens() {
 fn sampling_says_how_far_it_is() {
     let told = Arc::new(Mutex::new(Vec::new()));
     let sink = told.clone();
-    let progress = probl_engine::Progress(Arc::new(move |done, total| sink.lock().unwrap().push((done, total))));
+    let progress: probl_wasm::Progress = Arc::new(move |done, total| sink.lock().unwrap().push((done, total)));
     let request = json!({ "source": "report d6 > 4", "runs": 2500 }).to_string();
     probl_wasm::run(&request, &mut |_| {}, Some(progress));
     assert_eq!(*told.lock().unwrap(), [(1000, 2500), (2000, 2500), (2500, 2500)]);
