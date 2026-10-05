@@ -20,7 +20,7 @@ Three things point the same way.
 2. **The library defines its own types, and re-exports nothing from the other crates.** `probl-number`, `probl-syntax`, `probl-sema` and `probl-engine` are still published, since `probl` depends on them. Their descriptions identify them as internal, and dependencies on them pin the exact matching release. Their implementation APIs can change while the supported `probl` API follows its own compatibility contract. A description alone does not prevent Cargo from selecting mismatched versions.
 3. **Keep result and program types opaque.** Use private fields with constructors and accessors. Use `#[non_exhaustive]` for extensible enums and public-field structs such as `Limits`; opaque structs already allow fields to be added without changing their construction syntax. Existing methods and behavioral promises still need compatibility checks.
 4. **The workspace's own tools may still use the internal crates**, for what an embedder doesn't need: editor features, the IR printer, schema suggestions (see [what stays](#what-stays-on-the-internal-crates)). Their internal dependencies are pinned and they are tested and released together.
-5. **Load data separately and reuse it across runs.** `Program::load` and `Options::data` are part of the initial API. The library preserves the engine's checks that supplied data matches the program and applicable limits.
+5. **Load data separately and reuse it across runs.** `Program::load` and `Options::data` are part of the initial API. The library preserves the engine's checks that supplied data matches the program and applicable limits. A mismatch is the caller's mistake, so it's a `Usage` error, not the internal error the engine reports today.
 6. **Expose structured inference results, including uncertainty.** Formatted outcome labels are sufficient initially, but real numeric summaries must be accessible without parsing output. Result types must preserve unresolved bounds, sampling error status, confidence intervals where available, and the distinction between probability evidence and density evidence.
 7. **Engine-debugging controls use an explicitly unstable interface.** The CLI uses a hidden `__internal` module in `probl` for its engine switches. This module is excluded from the supported API and may change every release; hiding its documentation does not restrict access. The CLI pins its `probl` dependency to the matching version.
 
@@ -51,7 +51,11 @@ impl Program {
 }
 
 #[non_exhaustive]
-pub enum Mode { Auto, Enumerate, Sample { runs: u64, seed: u64 } }  // Beam, Particles when built
+pub enum Mode {
+    Auto,
+    Enumerate,
+    #[non_exhaustive] Sample { runs: u64, seed: u64 },
+}                                                    // Beam, Particles when built
 
 /// How to run; every setting is optional.  Options::new().runs(50_000).seed(7)
 #[derive(Clone, Default)]
@@ -165,8 +169,10 @@ pub struct NumericSummary { /* … */ }
 impl NumericSummary {
     pub fn mean(&self) -> Option<&Estimate>;
     pub fn sd(&self) -> Option<&Estimate>;
-    pub fn quantile(&self, q: f64) -> Result<Estimate, Error>;
+    pub fn quantile(&self, q: f64) -> Result<Estimate, SummaryError>;
 }
+#[non_exhaustive]
+pub enum SummaryError { InvalidQuantile, Unavailable }  // q not finite in [0, 1]; no such summary
 
 #[non_exhaustive]
 pub enum EvidenceKind { Probability, Density }
@@ -193,7 +199,7 @@ impl Error {
     pub fn render(&self, color: bool) -> String;     // as the command line prints it
 }
 #[non_exhaustive]
-pub enum ErrorKind { Compile, Language, Unsupported, Limit, Internal }
+pub enum ErrorKind { Compile, Usage, Language, Unsupported, Limit, Internal }
 
 pub struct Diagnostic { /* with its source, so it can render itself */ }
 impl Diagnostic {
@@ -236,7 +242,7 @@ limits.max_worlds = 10_000;
 
 ### Data
 
-A program that uses `read` needs its data loaded first. `program.load(&mut files, &options)` reads it with the limits and the cancellation in `options`, and `options.data(data)` gives it to a run. Loading is a step of its own so that a run never reads files, and so that the same data can be used for several runs, with different seeds for example. Running a program that reads data without giving it its data is an error. The library retains the engine's input-manifest and limit checks when a `Data` value is supplied to another program or used with different options.
+A program that uses `read` needs its data loaded first. `program.load(&mut files, &options)` reads it with the limits and the cancellation in `options`, and `options.data(data)` gives it to a run. Loading is a step of its own so that a run never reads files, and so that the same data can be used for several runs, with different seeds for example. Running a program that reads data without its data, or with data loaded for another program, is a `Usage` error. The engine already checks both, and checks that the loaded strings and integers fit the run's limits, which can differ from those the data was loaded with. Today it reports data loaded for another program as an internal error, a bug in Probl; the library reports it as the caller's mistake.
 
 `Files` is today's `Resolver` under the library's name: `resolve` turns a path, as the program writes it, into an identity, and `open` reads what an identity stands for ([reading data](data-input.md#where-data-comes-from)). The library has three:
 
@@ -256,7 +262,7 @@ A program that uses `read` needs its data loaded first. `program.load(&mut files
 
 An `Estimate` describes one quantity, such as a probability or a mean. Its `point()` gives the estimate over the resolved population whenever that quantity is defined, including when some mass remains unresolved. For example, the craps program's tiny unresolved tail must not make its useful win-probability estimate disappear. `None` means no point can be computed, such as when no mass has resolved; it does not mean merely that the result is incomplete.
 
-`is_complete()` states whether unresolved mass affects this quantity. When it is false, the point is explicitly conditional on resolved mass, and `bounds()` gives bounds for the full-population quantity where the engine can establish them. There is no epsilon threshold that silently changes the meaning of `point()` or marks a small positive tail as complete. The separate `resolved_point()` accessor is unnecessary because every point uses the same resolved-population calculation.
+`is_complete()` states whether unresolved mass affects this quantity. When it is false, the point is explicitly conditional on resolved mass, and `bounds()` gives bounds for the full-population quantity where the engine can establish them. There is no epsilon threshold that silently changes the meaning of `point()` or marks a small positive tail as complete.
 
 For complete enumeration, the point is the model's result up to numerical rounding. For sampling, it is a sampled estimate even when `is_complete()` is true: completion refers to accounted-for execution mass, not to visiting every possible outcome or eliminating Monte Carlo error. Callers receive a result object with its completion and uncertainty metadata, not a promise that an available point is exact.
 
@@ -269,11 +275,11 @@ Sampling uncertainty is separate from unresolved bounds. `sampling()` is absent 
 - `NotComputed`: the engine does not currently compute sampling uncertainty for this statistic. It does not imply zero error.
 - `IntegratedZero`: the engine identifies zero empirical Monte Carlo error from integrated outcomes. It is not a general guarantee that all symbolic or integrated computations have zero sampling error.
 
-A confidence interval can still be available when the empirical standard error is not useful: for example, the CLI's 95% Wilson interval after zero observed successes. Preserve the current rules for when that interval applies; do not substitute it for weighted or integrated report uncertainty. Any resolved-only estimate's sampling information must be labelled as such and must not be confused with bounds for the complete population.
+A confidence interval can still be available when the empirical standard error is not useful. Today the renderer gives a 95% Wilson interval when every contributing run agreed (the estimate is 0% or 100%) or fewer than 30 runs contributed, provided the report isn't weighted and each run contributed one ordinary observation. Preserve these rules; do not substitute a Wilson interval for weighted or integrated report uncertainty. When `is_complete()` is false, the sampling information describes the estimate over resolved mass, and is separate from the bounds for the full population.
 
 Formatted outcome and group labels are display strings in the first release. They are not a serialization format or a promise of exact typed identity, and distinct outcomes must not be merged merely because their labels coincide. A later typed-value API can be added without exposing the engine's `Value`.
 
-Real numeric summaries are included in the first release. `mean()` and `sd()` return available summaries; `quantile(q)` checks a finite `q` in `[0, 1]` and uses the existing report convention. Unsupported or unrepresentable results are reported explicitly, rather than silently returning zero or an empty table. These accessors expose the renderer's numerical precision; they do not make `f64` an exact representation of arbitrary integers. Typed dates, complex summaries, and density-query methods can follow separately. No caller should need to parse `text()` to obtain the supported numeric summaries.
+Real numeric summaries are included in the first release. `mean()` and `sd()` return available summaries. `quantile(q)` uses the existing report convention; a `q` that isn't a finite number in `[0, 1]` gives `SummaryError::InvalidQuantile`, and a report without quantiles gives `SummaryError::Unavailable`. These are the caller's to handle, so they don't use the program's `Error`, whose diagnostics point into the source. Unsupported or unrepresentable results are reported explicitly, rather than silently returning zero or an empty table. These accessors expose the renderer's numerical precision; they do not make `f64` an exact representation of arbitrary integers. Typed dates, complex summaries, and density-query methods can follow separately. No caller should need to parse `text()` to obtain the supported numeric summaries.
 
 `stats()` has what `--stats` prints: the peak number of worlds, world-steps, calls and reused calls, solved loops and their states, solved recursive calls and their rounds, and, for each variable updated exactly, its draws delayed, observations and draws. `sampling()` has the runs, the seed and the effective number of runs. `data()` has, for each source, its identity, size and SHA-256, so that results can be traced to their data.
 
@@ -289,11 +295,12 @@ For sampling, evidence carries the existing relative standard error and its avai
 
 ### Errors and diagnostics
 
-One `Error` type covers compiling, loading data and running, so that `?` works throughout. Its kinds are those of the engine, and `Compile`:
+One `Error` type covers compiling, loading data and running, so that `?` works throughout. Its kinds are those of the engine, with `Compile` and `Usage`:
 
 | Kind | What happened |
 |---|---|
 | `Compile` | The program didn't compile; `diagnostics()` has every error and warning |
+| `Usage` | The host misused the library: it ran a program that reads data without its data, or with data loaded for another program |
 | `Language` | The program did something the language doesn't allow |
 | `Unsupported` | The program uses a feature that isn't built yet |
 | `Limit` | The run reached a limit, or was cancelled |
@@ -369,10 +376,10 @@ The module is marked `#[doc(hidden)]` and explicitly documented in source as out
 
 - **Nothing printed changes.** The examples' golden tests (`crates/probl-cli/tests/examples.rs`), the command line's other tests, `probl-wasm`'s API tests and the playground's (`web/test/examples.mjs`, which checks that the WebAssembly build prints what `probl run` prints) pass unchanged.
 - **The reports agree with the text.** For every example, the structured probabilities, bounds, numeric summaries, and confidence intervals agree with the renderer at its printed precision. Also test the unrounded values against independent known answers; formatted agreement alone can hide a shared bug.
-- **Uncertainty stays explicit.** Incomplete distributions and world cutoffs retain defined point estimates, mark them incomplete, and expose full-population bounds where available. Test tiny positive tails as well as large missing mass, per-group denominators, and local missing mass. With no resolved mass, the point is absent; with a complete population it agrees with the ordinary result. Tiny tails never become complete through a display threshold, and an unbounded mean does not gain an unsupported error bound. Sampling tests distinguish an unavailable error estimate from integrated zero and retain the existing Wilson interval eligibility rules. Numeric statistics whose errors are not computed report that status.
+- **Uncertainty stays explicit.** Incomplete distributions and world cutoffs retain defined point estimates, mark them incomplete, and expose full-population bounds where available. Test tiny positive tails as well as large missing mass, per-group denominators, and local missing mass. With no resolved mass, the point is absent; with a complete population it agrees with the ordinary result. Tiny tails never become complete through a display threshold, and an unbounded mean does not gain an unsupported error bound. Sampling tests distinguish an unavailable error estimate from integrated zero and retain the existing Wilson interval eligibility rules. Numeric statistics whose errors are not computed report that status. `quantile` rejects a `q` outside `[0, 1]`, or not finite, with `InvalidQuantile`.
 - **Evidence retains its scale and meaning.** Test a tiny positive likelihood whose ordinary `f64` value would underflow, density evidence above one, incomplete evidence, and sampled evidence with known or unavailable relative error. No probability clamping or normalization may change the quantity exposed.
 - **Known answers.** The analytic craps win probability is 244/495. The shipped example also tracks an unbounded roll count and stops with a tiny unresolved tail: its point is available, `is_complete()` is false, and its bounds contain the analytic answer within numerical tolerance. Means and quantiles agree with analytic numeric examples, including continuous reports without finite tables. Sampling calibration uses repeated seeds and the existing statistical test strategy, rather than requiring every random estimate to fall within a fixed number of standard errors.
-- **Data remains reusable and checked.** Load once and run with different seeds; reject incompatible program inputs and preserve the engine's limit checks. Running with loaded data must not reopen files.
+- **Data remains reusable and checked.** Load once and run with different seeds. Running without the data, or with data loaded for another program, is a `Usage` error, never `Internal`; the engine's limit checks on loaded strings and integers still apply. Running with loaded data must not reopen files.
 - **The API is the API.** The examples in `crates/probl/examples/` and the doc tests use only the supported `probl` API. Run `cargo semver-checks` against published baselines to detect covered source-compatibility changes, alongside behavioral tests. The `__internal` module is explicitly excluded from the compatibility promise, and the CLI's use of it is exercised by integration tests.
 
 ## Publishing
@@ -381,7 +388,7 @@ Publish the real library and CLI packages under the same project ownership. Pack
 
 The publishable dependency order is `probl-number`, `probl-syntax`, `probl-sema`, `probl-engine`, `probl`, then `probl-cli`. Keep one release version across them initially. `probl-bench`, `probl-oracle` and `probl-wasm` retain `publish = false`.
 
-The workspace currently uses path-only internal dependencies. Add exact registry versions alongside those paths for every dependency on an internal crate, and for the CLI's dependency on `probl`. For example, using the current workspace version:
+Every dependency on an internal crate, and the CLI's dependency on `probl`, needs an exact registry version alongside its path. For example, at the current workspace version:
 
 ```toml
 [workspace.dependencies]
@@ -391,7 +398,7 @@ probl = { path = "crates/probl", version = "=0.0.1" }
 
 Apply the same rule throughout the internal graph and update the pins with each release. The paths serve workspace development; published packages resolve their declared registry versions. This prevents an existing `probl` release from picking up a later, incompatible internal API. Embedders can use normal version requirements for the supported `probl` API. [Cargo dependency rules](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html)
 
-Add license information and appropriate repository, description, and README metadata to the published packages. Use a release toolchain supporting workspace publication; the locally checked Cargo 1.98.1 supports `cargo publish --workspace`. Its availability is separate from the library's minimum supported Rust version. Run `cargo publish --workspace --dry-run` and inspect the packaged contents before uploading, then verify that installation from the published CLI package produces `probl` and that an external project can depend only on `probl`.
+Each published package needs license, repository, description and README metadata. `cargo publish --workspace` needs Cargo 1.90 or later: that's a requirement on the release toolchain, separate from the crates' minimum supported Rust version (`rust-version`, 1.85). Run `cargo publish --workspace --dry-run` and inspect the packaged contents before uploading, then verify that installation from the published CLI package produces `probl` and that an external project can depend only on `probl`.
 
 ## Initial scope and deferred additions
 
