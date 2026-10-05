@@ -4,6 +4,7 @@ description = "A small, independent reference interpreter used to check the Prob
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish = false
 
 [dependencies]

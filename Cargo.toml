@@ -6,12 +6,14 @@ members = ["crates/*"]
 version = "0.0.1"
 edition = "2024"
 rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
 
 [workspace.dependencies]
-probl-number = { path = "crates/probl-number" }
-probl-syntax = { path = "crates/probl-syntax" }
-probl-sema = { path = "crates/probl-sema" }
-probl-engine = { path = "crates/probl-engine" }
+probl-number = { path = "crates/probl-number", version = "0.0.1" }
+probl-syntax = { path = "crates/probl-syntax", version = "0.0.1" }
+probl-sema = { path = "crates/probl-sema", version = "0.0.1" }
+probl-engine = { path = "crates/probl-engine", version = "0.0.1" }
 ariadne = "0.5"
 rustc-hash = "2"
 clap = { version = "4", features = ["derive"] }

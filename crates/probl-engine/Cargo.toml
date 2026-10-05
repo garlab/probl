@@ -4,6 +4,8 @@ description = "Values, distributions and the world-set interpreter for Probl"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+readme.workspace = true
 
 [dependencies]
 probl-number.workspace = true
