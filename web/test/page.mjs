@@ -99,7 +99,7 @@ try {
   for (const source of ['report mean(pi)', 'report median(pi)']) {
     await page.evaluate((source) => window.playground.setSource(source), source);
     const scalar = await run(page);
-    expect(scalar.error && scalar.result.includes('expects a distribution or a nonempty list')
+    expect(scalar.error && scalar.result.includes('expects a distribution, nonempty list or nonempty range')
       && scalar.result.includes('report x'), `${source} explains how to summarize worlds`, scalar.result);
   }
 
