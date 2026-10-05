@@ -1,6 +1,6 @@
 [package]
 name = "probl-syntax"
-description = "Lexer, parser, AST and diagnostics for Probl"
+description = "Internal to Probl, with no stable API: its lexer, parser, AST and diagnostics. Use the `probl` crate."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

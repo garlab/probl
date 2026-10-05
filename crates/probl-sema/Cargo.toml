@@ -1,6 +1,6 @@
 [package]
 name = "probl-sema"
-description = "Name resolution, lowering to IR and liveness analysis for Probl"
+description = "Internal to Probl, with no stable API: name resolution, lowering to IR and liveness analysis. Use the `probl` crate."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

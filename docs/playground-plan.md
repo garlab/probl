@@ -64,7 +64,7 @@ Programs, options and results cross as JSON strings, so the interface stays smal
 - **`examples()`** gives the bundled examples with their data files.
 - **`docs()`** gives the reference: every built-in and keyword, with its signature and a summary.
 
-The API is plain Rust around `probl_sema::compile` and `probl_engine::run_on_this_thread`, so its tests run natively with `cargo test`. The module exports it as plain functions, and a small loader passes the text through the module's memory (see [Phase 1, as built](#phase-1-as-built)).
+The API is plain Rust around the `probl` library ([Probl as a library](library-proposal.md)), which runs a program on the calling thread when built for WebAssembly, so its tests run natively with `cargo test`. The editor's features use the compiler directly. The module exports it as plain functions, and a small loader passes the text through the module's memory (see [Phase 1, as built](#phase-1-as-built)).
 
 ### The worker
 

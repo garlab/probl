@@ -47,6 +47,17 @@ See [test coverage and quality](docs/testing.md) for the existing test layers, e
 
 The newer examples explore [stock decisions](examples/14_stock_decision.probl), [service queues](examples/15_service_queue.probl), [predictive model checks](examples/16_predictive_check.probl), [sensor tracking](examples/17_sensor_tracking.probl) and [correlated losses](examples/18_correlated_losses.probl). The [use-case review](docs/use-case-gaps.md) describes what they can express today and which language improvements they motivate.
 
+Programs can also run from Rust, with the `probl` crate: the library the command line and the playground are built on. A run gives its text, as `probl run` prints it, and each report's numbers, with what's known about their accuracy. The command line is the `probl-cli` crate, which installs the `probl` command.
+
+```rust
+let craps = probl::compile("craps.probl", &source)?;
+let outcome = craps.run(&probl::Options::new())?;
+let win = outcome.report("win").unwrap().groups()[0].probability().unwrap();
+println!("{:?}, complete: {}", win.point(), win.is_complete());
+```
+
+`cargo run -p probl --example craps` runs a longer example ([crates/probl/examples/craps.rs](crates/probl/examples/craps.rs)).
+
 The playground runs the same engine in the browser, compiled to WebAssembly. Beside the editor are the language guide, with programs to run, and a reference. The editor completes names, describes them on hover, and goes to their definitions with Cmd-click or Ctrl-click. It needs [Bun](https://bun.sh), and Rust's WebAssembly target:
 
 ```sh
@@ -76,7 +87,7 @@ PROBL_URL=https://probl-playground.pages.dev bun test/page.mjs   # test the depl
 - [Better inference](docs/inference-proposal.md): exact updates for conjugate priors, what a general method needs first, and its [design review](docs/inference-proposal-review.md)
 - [Complex values and quantum simulation](docs/quantum-and-complex.md): the implemented scalar foundation and a possible future quantum engine
 - [Playground plan](docs/playground-plan.md): Probl in the browser, what it took, and what's left
-- [Probl as a library](docs/library-proposal.md): a proposed `probl` crate, for running programs from Rust, which the command line and the playground would share
+- [Probl as a library](docs/library-proposal.md): the `probl` crate, for running programs from Rust, which the command line and the playground share
 - [Implementation plan](docs/implementation-plan.md): status, architecture, phases, testing and risks
 - [Project audit](docs/project-audit.md): the review that led to the reference semantics
 - [Benchmarks](docs/benchmarks.md): realistic models, what they cost, and what to build next (`cargo run --release -p probl-bench`)

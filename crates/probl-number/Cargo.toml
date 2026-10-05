@@ -1,6 +1,6 @@
 [package]
 name = "probl-number"
-description = "Exact integers shared by Probl's syntax and runtime"
+description = "Internal to Probl, with no stable API: exact integers shared by its syntax and runtime. Use the `probl` crate."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

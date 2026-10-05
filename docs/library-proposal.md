@@ -1,6 +1,6 @@
 # Proposal: Probl as a Rust library
 
-> Revised October 5, 2026. Proposed, not built. This adds a crate named `probl`: a small public API for compiling and running Probl programs from Rust, which the command line and the [playground](playground-plan.md) would both be built on. The crate split, separate data loading, and initial result capabilities are decided below. The API sketch defines the intended contract; implementation must preserve the engine's uncertainty information before publication.
+> Revised October 5, 2026, and built: `crates/probl` has the API below, and the command line, the [playground](playground-plan.md) and the benchmarks are built on it. [As built](#as-built) records what the implementation settled where this proposal left room. The exact version pins under [Publishing](#publishing) wait for the first release.
 
 ## The problem
 
@@ -55,7 +55,9 @@ pub enum Mode {
     Auto,
     Enumerate,
     #[non_exhaustive] Sample { runs: u64, seed: u64 },
-}                                                    // Beam, Particles when built
+    #[non_exhaustive] Beam { worlds: u64 },             // designed, not built: Unsupported
+    #[non_exhaustive] Particles { runs: u64, seed: u64 }, // designed, not built: Unsupported
+}
 
 /// How to run; every setting is optional.  Options::new().runs(50_000).seed(7)
 #[derive(Clone, Default)]
@@ -93,10 +95,10 @@ pub trait Files {
     fn resolve(&mut self, path: &str) -> Result<String, String>;   // path → identity
     fn open(&mut self, identity: &str) -> Result<Box<dyn Read + Send>, String>;
 }
-pub struct MemoryFiles { /* path → bytes */ }             // the playground's
-pub struct LocalFiles  { /* moved from probl-cli */ }     // not on wasm32
-pub struct Snapshots<F: Files> { /* F, and the bytes it has given */ }  // the REPL's
-#[derive(Clone)] pub struct Data { /* Arc<Inputs> */ }
+pub struct MemoryFiles { /* path → bytes */ }             // insert, contains, FromIterator
+pub struct LocalFiles  { /* moved from probl-cli */ }     // new, next_to, stdin, cancel; not on wasm32
+pub struct Snapshots<F: Files> { /* F, and the bytes it has given */ }  // the REPL's; clear
+#[derive(Clone)] pub struct Data { /* Arc<Inputs> */ }   // sources(): what was read
 
 #[derive(Clone, Default)] pub struct Cancel { /* Arc<AtomicBool> */ }
 impl Cancel { pub fn cancel(&self); pub fn is_cancelled(&self) -> bool; }
@@ -105,7 +107,7 @@ impl Cancel { pub fn cancel(&self); pub fn is_cancelled(&self) -> bool; }
 pub struct Date { /* days since 1970-01-01 */ }
 impl Date {
     pub fn from_ymd(y: i32, m: u32, d: u32) -> Option<Date>;
-    pub fn today_utc() -> Result<Date, Error>;   // not on wasm32, where the host passes it in
+    pub fn today_utc() -> Option<Date>;          // not on wasm32, where the host passes it in
 }                                                // Display and FromStr: YYYY-MM-DD
 
 pub struct Outcome { /* … */ }
@@ -132,7 +134,7 @@ pub struct Group { /* … */ }
 impl Group {
     pub fn key(&self) -> Option<&str>;               // the `by` value, as Probl prints it
     pub fn probability(&self) -> Option<&Estimate>; // a fact: its probability and uncertainty
-    pub fn distribution(&self) -> Option<&[(String, Estimate)]>; // finite outcome table, if available
+    pub fn distribution(&self) -> Option<&[(String, Estimate)]>; // finite outcome table, in value order
     pub fn numeric(&self) -> Option<&NumericSummary>; // real numeric summaries, including continuous reports
 }
 
@@ -257,7 +259,7 @@ A program that uses `read` needs its data loaded first. `program.load(&mut files
 `reports()` gives the program's reports in order, and `report(label)` finds one by its label. A report without `as` is labelled with its expression, so `report win` is `"win"`. A report has a group for each key of its `by`, or a single group without one. Each group gives:
 
 - `probability()`, for a fact: its probability result, including unresolved bounds and sampling uncertainty;
-- `distribution()`, when a finite outcome table is available: each formatted outcome with its probability result, in presentation order. `None` means a finite table is unavailable, as for an analytic continuous report; it must not be represented as an empty distribution;
+- `distribution()`, when a finite outcome table is available: each formatted outcome with its probability result, in the order of the values, so that numbers and dates come in numeric order (labels alone couldn't be sorted). `None` means a finite table is unavailable, as for an analytic continuous report; it must not be represented as an empty distribution;
 - `numeric()`, for supported real numeric reports: means, standard deviations, and quantiles. These include continuous reports and use the same calculations as the CLI.
 
 An `Estimate` describes one quantity, such as a probability or a mean. Its `point()` gives the estimate over the resolved population whenever that quantity is defined, including when some mass remains unresolved. For example, the craps program's tiny unresolved tail must not make its useful win-probability estimate disappear. `None` means no point can be computed, such as when no mass has resolved; it does not mean merely that the result is incomplete.
@@ -405,3 +407,19 @@ Each published package needs license, repository, description and README metadat
 Separate data loading and the explicitly unstable engine-debugging adapter are decided. Formatted outcome labels are sufficient initially, together with structured numeric summaries and complete uncertainty metadata.
 
 Typed outcome values, typed non-real summaries, density-query methods, and a public editor/tooling API are deferred. They can be added through new methods without exposing the engine's internal types. Before publication, finalize the shared result extraction against the tests above; a thin wrapper around today's scalar `Acc` accessors would not satisfy this proposal.
+
+## As built
+
+Built October 5, 2026. Where the proposal left room, the implementation settled it this way:
+
+- **One calculation, two uses.** `probl_engine::report::results` computes every report's numbers, and the renderer only formats them (`report::render_results`). The engine's `Outcome` keeps the results, and the library wraps them. Every example still prints exactly what it printed before, and a test checks that each example's structured probabilities and means are the ones its text shows.
+- **Bounds.** Unresolved bounds are given when enumerating, for facts and for each value of a table: as if the unresolved weight, and the group's missing mass, had all gone to that value or none of it. When sampling, an estimate over runs cut short isn't complete, but has no bounds: the plug-in bounds would themselves be estimates. Means, standard deviations and quantiles have no bounds.
+- **Statuses.** A fact's sampled standard error of zero is `IntegratedZero` when its runs integrated outcomes (the renderer's "zero empirical MC error"), and `NotEstimable` otherwise. A value's or a mean's zero is `NotEstimable`, as the renderer prints it; standard deviations and quantiles are `NotComputed`. The sampled evidence's relative standard error is `Estimated` whenever it's finite, zero included (every run had the same weight), and `NotEstimable` with a single run.
+- **Unresolved weight**, when sampling, is per run, so that it compares with enumeration's.
+- **Facts** have a `probability()` and no `distribution()`: a table of `true` and `false` would only say it again.
+- **`Date::today_utc()`** gives `None` when the clock is outside the supported dates, rather than an error with no place in a program.
+- **`Mode`** has `Beam` and `Particles`, which programs can already ask for, and which runs refuse as `Unsupported`.
+- **`LocalFiles`** reads standard input only when `.stdin(true)` allows it, and stops waiting for it when `.cancel(&cancel)` is cancelled. The command line allows it for `run`, `check` and `schema`, and the REPL doesn't.
+- **The playground** keeps its own wording for files it doesn't have, with a thin `Files` around `MemoryFiles`, and its `run` takes the progress function as `probl_wasm::Progress`.
+- **`__internal`** has `EngineChecks` (`merge`, `memoize`, `solve`) and `engine_checks(options, checks)`, used by `probl run`'s hidden switches and by the benchmarks.
+- **Not yet in the API:** a report's reach ("reached in 40% of worlds"), which the renderer prints and the shared results already compute, and typed values. Both can be added as methods.

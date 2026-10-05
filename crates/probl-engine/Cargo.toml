@@ -1,6 +1,6 @@
 [package]
 name = "probl-engine"
-description = "Values, distributions and the world-set interpreter for Probl"
+description = "Internal to Probl, with no stable API: values, distributions and the world-set interpreter. Use the `probl` crate."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -152,15 +152,15 @@ It's a starting point, to paste into the program and edit: `probl run` never gue
 
 ## Where data comes from
 
-A program only names paths. What a path refers to, and whether it may be read at all, is the policy of whoever runs the program, and a program can't widen it. In the engine, that policy is a `Resolver` (`probl_engine::data`). It turns each path into an identity, such as a full file name, and opens it, or refuses.
+A program only names paths. What a path refers to, and whether it may be read at all, is the policy of whoever runs the program, and a program can't widen it. In the library, that policy is a `Files` (`probl::Files`; the engine's `Resolver` underneath). It turns each path into an identity, such as a full file name, and opens it, or refuses.
 
-The command line runs your own programs, so its policy (`probl_cli::LocalFiles`) is broad, but it reads only files:
+The command line runs your own programs, so its policy (`probl::LocalFiles`) is broad, but it reads only files:
 - **Relative paths** are relative to the directory of the program's file, as it was named. A program reached through a link reads data next to the link, not next to its target. The REPL uses the working directory.
 - **Absolute paths** are used as they are, and links in data paths are followed.
 - **Only regular files are read.** That's checked before opening, so a program can't make the command wait on a pipe or read a device.
 - **Standard input** (`-`) is read on a thread of its own, so `--timeout` ends a wait for data that doesn't come.
 
-A hosted playground would give programs no files at all, only what users upload, by giving the loader a different resolver. The same resolver serves `run`, `check --data` and the REPL.
+The playground gives programs no files at all, only what users add, through `probl::MemoryFiles`. The same policy serves `run`, `check --data` and the REPL.
 
 ## Limits
 
@@ -195,7 +195,8 @@ The values are loaded once, before the program runs, then shared, unchanged, by 
 - **`probl-engine`:** `data::load(program, resolver, snapshots, limits, cancel)` reads every input, through the host's resolver. It returns `Inputs`, which only `load` makes. The engine refuses to run a program whose inputs aren't loaded, or were loaded for another program.
   - The [`csv`](https://docs.rs/csv) crate splits CSV files, and [`serde_json`](https://docs.rs/serde_json) parses JSON, with correctly rounded floats. Probl's own layer does the typing, the strictness, the budgets and the error positions.
   - `data::suggest` is the guesser behind `probl schema`.
-- **`probl-cli`:** `LocalFiles`, the command line's policy; `--max-input`; `check --data`; `schema`; the REPL's snapshots and `:reload`; `--stats`.
+- **`probl`:** `Program::load`, and the data as `Data`, which any number of runs can share; `LocalFiles`, the command line's policy; `MemoryFiles`; `Snapshots`, which keep what was read until they're cleared ([Probl as a library](library-proposal.md)).
+- **`probl-cli`:** `--max-input`; `check --data`; `schema`; the REPL's snapshots and `:reload`; `--stats`.
 
 ## Tests
 
