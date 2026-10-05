@@ -135,9 +135,9 @@ impl Group {
 /// One reported quantity, with the same population and denominator as the renderer.
 pub struct Estimate { /* … */ }
 impl Estimate {
-    pub fn point(&self) -> Option<f64>;           // no point for an incomplete population
+    pub fn point(&self) -> Option<f64>;           // estimate over resolved mass, when defined
+    pub fn is_complete(&self) -> bool;           // no unresolved mass affects this quantity
     pub fn bounds(&self) -> Option<Interval>;     // bounds due to unresolved mass, when available
-    pub fn resolved_point(&self) -> Option<f64>;  // explicitly conditional on resolved mass; only when incomplete
     pub fn sampling(&self) -> Option<&SamplingUncertainty>;
 }
 #[non_exhaustive]
@@ -173,7 +173,8 @@ pub enum EvidenceKind { Probability, Density }
 pub struct Evidence { /* … */ }
 impl Evidence {
     pub fn kind(&self) -> EvidenceKind;
-    pub fn log_value(&self) -> Option<f64>;        // natural log; no complete point when unresolved
+    pub fn log_value(&self) -> Option<f64>;        // natural log of resolved evidence contribution, when defined
+    pub fn is_complete(&self) -> bool;            // no unresolved contribution to the evidence
     pub fn log_bounds(&self) -> Option<Interval>; // unresolved bounds in natural-log units, when available
     pub fn relative_standard_error(&self) -> Option<f64>;
     pub fn sampling_status(&self) -> Option<SamplingStatus>;
@@ -253,7 +254,13 @@ A program that uses `read` needs its data loaded first. `program.load(&mut files
 - `distribution()`, when a finite outcome table is available: each formatted outcome with its probability result, in presentation order. `None` means a finite table is unavailable, as for an analytic continuous report; it must not be represented as an empty distribution;
 - `numeric()`, for supported real numeric reports: means, standard deviations, and quantiles. These include continuous reports and use the same calculations as the CLI.
 
-An `Estimate` describes one quantity, such as a probability or a mean. Its `point()` is available for a complete population: an enumerated value up to numerical rounding, or a sampled estimate. It is not a claim that sampling has no error. For incomplete populations, `point()` is absent, `bounds()` gives unresolved bounds where the engine can establish them, and `resolved_point()` may give an explicitly conditional result over resolved mass. Bounds are not invented for statistics the engine cannot bound. This prevents a normalized resolved-only result from being presented as the answer for the whole population.
+An `Estimate` describes one quantity, such as a probability or a mean. Its `point()` gives the estimate over the resolved population whenever that quantity is defined, including when some mass remains unresolved. For example, the craps program's tiny unresolved tail must not make its useful win-probability estimate disappear. `None` means no point can be computed, such as when no mass has resolved; it does not mean merely that the result is incomplete.
+
+`is_complete()` states whether unresolved mass affects this quantity. When it is false, the point is explicitly conditional on resolved mass, and `bounds()` gives bounds for the full-population quantity where the engine can establish them. There is no epsilon threshold that silently changes the meaning of `point()` or marks a small positive tail as complete. The separate `resolved_point()` accessor is unnecessary because every point uses the same resolved-population calculation.
+
+For complete enumeration, the point is the model's result up to numerical rounding. For sampling, it is a sampled estimate even when `is_complete()` is true: completion refers to accounted-for execution mass, not to visiting every possible outcome or eliminating Monte Carlo error. Callers receive a result object with its completion and uncertainty metadata, not a promise that an available point is exact.
+
+Bounds are not invented for statistics the engine cannot bound. A tiny unresolved share relative to a report's resolved mass gives tight probability bounds, but it does not by itself bound the error of a mean over unbounded values. In that case the mean's point can be available with `is_complete() == false` and no finite bounds. Applications choose their own accuracy requirements from the quantity's bounds and sampling information, rather than from the global unresolved weight alone.
 
 Sampling uncertainty is separate from unresolved bounds. `sampling()` is absent for enumeration. Otherwise it records a standard error where available, an optional confidence interval with its method and level, the contributing and effective run counts for that report group, and a status:
 
@@ -274,7 +281,7 @@ Real numeric summaries are included in the first release. `mean()` and `sd()` re
 
 `evidence()` is absent when the program did not observe or score anything. Otherwise `EvidenceKind` distinguishes probability evidence from evidence involving a continuous density. A density can exceed one and must not be presented as a percentage or clamped to `[0, 1]`.
 
-The primary evidence representation is its natural logarithm, computed directly from the engine's extended-range weight. A tiny positive likelihood must not first underflow to zero through an `f64` conversion. A complete evidence result exposes `log_value()`; incomplete evidence exposes valid log bounds where available instead of silently returning only its resolved contribution. Impossible evidence retains the engine's existing error behavior. Logarithmic bounds can use negative infinity to represent zero.
+The primary evidence representation is its natural logarithm, computed directly from the engine's extended-range weight. A tiny positive likelihood must not first underflow to zero through an `f64` conversion. `log_value()` remains available when a resolved contribution can be computed, and `is_complete()` distinguishes complete evidence from a partial contribution. Evidence is not renormalized over resolved worlds: this is the log of the accumulated evidence contribution, unlike a report point conditioned on resolved mass. Incomplete evidence also exposes valid log bounds where available. Impossible evidence retains the engine's existing error behavior. A zero resolved contribution or logarithmic lower bound is represented by negative infinity.
 
 For sampling, evidence carries the existing relative standard error and its availability status. This is a relative error on the evidence estimate, not an absolute error in log units; any displayed log-scale error approximation must be identified accordingly. It must also retain the distinction between a known integrated zero and an error that cannot be estimated.
 
@@ -303,14 +310,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source = std::fs::read_to_string("examples/02_craps.probl")?;
     let craps = compile("02_craps.probl", &source)?;
 
-    let exact = craps.run(&Options::new())?;
-    let win = exact.report("win")
+    let enumerated = craps.run(&Options::new())?;
+    let win = enumerated.report("win")
         .and_then(|r| r.groups().first())
         .and_then(|g| g.probability());
     if let Some(estimate) = win {
-        // For this complete enumeration: Some(244.0 / 495.0), up to rounding.
+        // Close to 244.0 / 495.0; this example retains a tiny unresolved tail.
         println!("win: {:?}", estimate.point());
-        // A model with unresolved outcomes would expose bounds instead.
+        println!("complete: {}", estimate.is_complete()); // false
+        if let Some(bounds) = estimate.bounds() {
+            println!("win bounds: {}..{}", bounds.lower(), bounds.upper());
+        }
     }
 
     let sampled = craps.run(&Options::new().runs(100_000).seed(1))?;
@@ -359,9 +369,9 @@ The module is marked `#[doc(hidden)]` and explicitly documented in source as out
 
 - **Nothing printed changes.** The examples' golden tests (`crates/probl-cli/tests/examples.rs`), the command line's other tests, `probl-wasm`'s API tests and the playground's (`web/test/examples.mjs`, which checks that the WebAssembly build prints what `probl run` prints) pass unchanged.
 - **The reports agree with the text.** For every example, the structured probabilities, bounds, numeric summaries, and confidence intervals agree with the renderer at its printed precision. Also test the unrounded values against independent known answers; formatted agreement alone can hide a shared bug.
-- **Uncertainty stays explicit.** Incomplete distributions and world cutoffs expose bounds without an unqualified point. Test per-group denominators and local missing mass. Sampling tests distinguish an unavailable error estimate from integrated zero and retain the existing Wilson interval eligibility rules. Numeric statistics whose errors are not computed report that status.
+- **Uncertainty stays explicit.** Incomplete distributions and world cutoffs retain defined point estimates, mark them incomplete, and expose full-population bounds where available. Test tiny positive tails as well as large missing mass, per-group denominators, and local missing mass. With no resolved mass, the point is absent; with a complete population it agrees with the ordinary result. Tiny tails never become complete through a display threshold, and an unbounded mean does not gain an unsupported error bound. Sampling tests distinguish an unavailable error estimate from integrated zero and retain the existing Wilson interval eligibility rules. Numeric statistics whose errors are not computed report that status.
 - **Evidence retains its scale and meaning.** Test a tiny positive likelihood whose ordinary `f64` value would underflow, density evidence above one, incomplete evidence, and sampled evidence with known or unavailable relative error. No probability clamping or normalization may change the quantity exposed.
-- **Known answers.** Enumerating craps, `win` is 244/495. Means and quantiles agree with analytic numeric examples, including continuous reports without finite tables. Sampling calibration uses repeated seeds and the existing statistical test strategy, rather than requiring every random estimate to fall within a fixed number of standard errors.
+- **Known answers.** The analytic craps win probability is 244/495. The shipped example also tracks an unbounded roll count and stops with a tiny unresolved tail: its point is available, `is_complete()` is false, and its bounds contain the analytic answer within numerical tolerance. Means and quantiles agree with analytic numeric examples, including continuous reports without finite tables. Sampling calibration uses repeated seeds and the existing statistical test strategy, rather than requiring every random estimate to fall within a fixed number of standard errors.
 - **Data remains reusable and checked.** Load once and run with different seeds; reject incompatible program inputs and preserve the engine's limit checks. Running with loaded data must not reopen files.
 - **The API is the API.** The examples in `crates/probl/examples/` and the doc tests use only the supported `probl` API. Run `cargo semver-checks` against published baselines to detect covered source-compatibility changes, alongside behavioral tests. The `__internal` module is explicitly excluded from the compatibility promise, and the CLI's use of it is exercised by integration tests.
 
