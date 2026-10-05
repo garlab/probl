@@ -1,0 +1,72 @@
+# Publish the crates to crates.io when a version tag is pushed, through
+# Trusted Publishing: no token is stored, and the one crates.io gives this
+# run lasts for the job.
+#
+# Each published crate's settings on crates.io name this repository, this
+# workflow (release.yml) and the `release` environment as its trusted
+# publisher. The environment waits for a maintainer's approval, and only
+# accepts `v*` tags.
+#
+# To release: set the version in Cargo.toml, commit, then
+#   git tag v0.1.0 && git push origin v0.1.0
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Nothing by default: each job asks for what it needs.
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # Without any publishing permission: the tests, and the packages built
+  # from what crates.io would receive.
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: stable
+      - name: The tag is the version
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "probl") | .version')
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::the tag is $GITHUB_REF_NAME, but the version in Cargo.toml is $version"
+            exit 1
+          fi
+      - run: cargo test --all --locked
+      - run: cargo publish --workspace --dry-run --locked
+
+  # The only job that can get a crates.io token, once a maintainer approves
+  # the `release` environment.
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: stable
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        id: auth
+      # `verify` built these packages from this commit. Building them again
+      # here would run the dependencies' build scripts and macros while the
+      # token is in the environment.
+      - run: cargo publish --workspace --locked --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
