@@ -102,6 +102,14 @@ pub struct Liveness {
     /// clearing these after each statement frees every value nobody will
     /// read, except in worlds that jump out with `break` or `continue`.
     pub dies: Vec<Vec<SlotId>>,
+    /// For each assignment: whether the live values after it can say less
+    /// about a world than before, so that worlds which differed may now be
+    /// the same. It loses more values than it makes: a value read for the
+    /// last time, or the old value of the slot it overwrites, against the
+    /// new one. `f = f - $5` narrows (`$5` and the old `f`, for the new `f`);
+    /// `t = s + r` with `s` still live doesn't (`r`, for `t`). The last
+    /// statement of a block never does: what follows it merges anyway.
+    pub narrows: Vec<bool>,
 }
 
 pub fn analyze(program: &Program) -> Liveness {
@@ -110,6 +118,7 @@ pub fn analyze(program: &Program) -> Liveness {
         after: vec![SlotSet::default(); n],
         loop_head: vec![SlotSet::default(); n],
         dies: vec![Vec::new(); n],
+        narrows: vec![false; n],
     };
     for func in &program.functions {
         let size = func.n_slots();
@@ -141,7 +150,7 @@ struct Pass<'a> {
 
 impl Pass<'_> {
     fn block(&mut self, block: &Block, mut live: SlotSet, lc: &LoopCtx) -> SlotSet {
-        for stmt in block.stmts.iter().rev() {
+        for (i, stmt) in block.stmts.iter().enumerate().rev() {
             let before = self.stmt(stmt, live.clone(), lc);
             let mut touched = before.clone();
             if let Some(slot) = written(stmt) {
@@ -149,6 +158,15 @@ impl Pass<'_> {
             }
             let id = stmt.id as usize;
             self.live.dies[id] = touched.iter().filter(|&s| !live.contains(s)).collect();
+            // At the end of a block, whatever comes next merges anyway: the
+            // `if` that joins its branches, the loop at its next iteration,
+            // or the function's return.
+            let last = i + 1 == block.stmts.len();
+            if let (StmtKind::Set { place, .. }, false) = (&stmt.kind, last) {
+                let overwritten = before.contains(place.slot) && live.contains(place.slot);
+                let lost = before.iter().filter(|&s| !live.contains(s)).count() + usize::from(overwritten);
+                self.live.narrows[id] = lost > usize::from(live.contains(place.slot));
+            }
             self.live.after[id] = live;
             live = before;
         }

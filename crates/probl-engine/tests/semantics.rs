@@ -499,7 +499,20 @@ const DIFFERENTIAL: &[&str] = &[
     "var hp = 10\nvar rounds = 0\nwhile hp > 0 and rounds < 6 { rounds += 1\n let d ~ d4\n hp -= d }\nreport rounds",
     "let a ~ d6\nobserve a != 3\nlet b ~ one_of([a, 7])\nreport b",
     "var deck = bag([1: 2, 2: 2, 3: 1])\nlet x = deck.take()\nlet y = deck.take()\nreport x * 10 + y",
+    HITS,
 ];
+
+/// Two calls in a row, each result used up by an assignment.
+const HITS: &str = "fn hit() -> int {\n  let r ~ d6\n  r\n}\nvar f = 20\nvar g = 20\nrepeat 3 {\n  f -= hit()\n  g -= hit()\n}\nreport f + g";
+
+#[test]
+fn worlds_merge_once_a_call_s_result_is_used_up() {
+    // `f -= hit()` is `$t = hit()` then `f = f - $t`. Once `$t` is used, the
+    // worlds that reached the same `f` are the same, and merge before the
+    // next call multiplies them: otherwise it would be called 1,106 times.
+    let o = exec(HITS, &Options::default()).unwrap();
+    assert_eq!(o.stats.calls, 406);
+}
 
 fn distributions(src: &str, options: &Options) -> Vec<Vec<(Value, f64)>> {
     let o = exec(src, options).unwrap();

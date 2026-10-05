@@ -678,6 +678,13 @@ impl<'p> Engine<'p> {
                     };
                     self.assign(f, place, v, w, span)?;
                 }
+                // When the live values say less than before, as when a
+                // call's result is used up (`f = f - $5`), worlds may now be
+                // the same: merging spares the statements after from
+                // following each of them (a call next would multiply them).
+                if self.live.narrows[stmt.id as usize] && self.merging() {
+                    return Ok(Flow::next(self.merge(worlds, stmt.id)));
+                }
                 Ok(Flow::next(worlds))
             }
             StmtKind::Draw { place, dist } => {
@@ -807,7 +814,12 @@ impl<'p> Engine<'p> {
                             w.clone().unwrap()
                         };
                         nw.weight = nw.weight * *p;
-                        Arc::make_mut(&mut nw.constraints).extend(restrictions.iter().map(|(id, d)| (*id, d.clone())));
+                        // Only copy the constraints (shared with the other
+                        // outcomes' worlds) when the call added some.
+                        if !restrictions.is_empty() {
+                            Arc::make_mut(&mut nw.constraints)
+                                .extend(restrictions.iter().map(|(id, d)| (*id, d.clone())));
+                        }
                         self.assign(f, dest, v.clone(), &mut nw, span)?;
                         out.push(nw);
                     }
@@ -952,7 +964,9 @@ impl<'p> Engine<'p> {
                 for w in worlds {
                     let v = self.eval(f, value, &w)?;
                     let mut constraints = w.constraints;
-                    Arc::make_mut(&mut constraints).retain(|id, _| w.inherited.contains(id));
+                    if constraints.keys().any(|id| !w.inherited.contains(id)) {
+                        Arc::make_mut(&mut constraints).retain(|id, _| w.inherited.contains(id));
+                    }
                     flow.returned.push((v, w.weight, constraints));
                 }
                 Ok(flow)
