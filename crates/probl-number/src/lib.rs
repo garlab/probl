@@ -370,8 +370,14 @@ impl From<u32> for Integer {
 }
 from_integer!(u64, usize, i128, u128);
 impl PartialEq for Integer {
+    #[inline]
     fn eq(&self, rhs: &Self) -> bool {
-        self.cmp(rhs).is_eq()
+        match (&self.0, &rhs.0) {
+            (Repr::Small(a), Repr::Small(b)) => a == b,
+            (Repr::Large(a), Repr::Large(b)) => Arc::ptr_eq(a, b) || (a.hash == b.hash && a.value == b.value),
+            // A large integer is outside the range of a small one (`from_big`).
+            _ => false,
+        }
     }
 }
 impl Eq for Integer {}

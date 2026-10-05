@@ -212,12 +212,32 @@ fn ldexp(m: f64, e: i64) -> f64 {
     }
     // Two steps keep each factor representable.
     let half = e / 2;
-    m * 2f64.powi(half as i32) * 2f64.powi((e - half) as i32)
+    m * pow2(half as i32) * pow2((e - half) as i32)
+}
+
+/// 2^k, as `2f64.powi(k)` gives it, without its loop: exact from 2^-1023
+/// to 2^1023, infinite above, and zero below (its intermediate 2^1024
+/// overflows). A `powi` kept for the rare cases would still be called every
+/// time: the compiler computes both sides of a choice between them.
+fn pow2(k: i32) -> f64 {
+    match k {
+        1024.. => f64::INFINITY,
+        -1022..=1023 => f64::from_bits(((k + 1023) as u64) << 52),
+        -1023 => f64::from_bits(1 << 51),
+        _ => 0.0,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn powers_of_two_are_exact() {
+        for k in -1100..=1100 {
+            assert_eq!(pow2(k).to_bits(), 2f64.powi(k).to_bits(), "2^{k}");
+        }
+    }
 
     #[test]
     fn arithmetic() {
