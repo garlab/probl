@@ -3,18 +3,19 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
+repository = "https://github.com/garlab/probl"
 
 [workspace.dependencies]
-probl-number = { path = "crates/probl-number", version = "0.0.1" }
-probl-syntax = { path = "crates/probl-syntax", version = "0.0.1" }
-probl-sema = { path = "crates/probl-sema", version = "0.0.1" }
-probl-engine = { path = "crates/probl-engine", version = "0.0.1" }
-probl = { path = "crates/probl", version = "0.0.1" }
+probl-number = { path = "crates/probl-number", version = "=0.1.0" }
+probl-syntax = { path = "crates/probl-syntax", version = "=0.1.0" }
+probl-sema = { path = "crates/probl-sema", version = "=0.1.0" }
+probl-engine = { path = "crates/probl-engine", version = "=0.1.0" }
+probl = { path = "crates/probl", version = "=0.1.0" }
 ariadne = "0.5"
 rustc-hash = "2"
 clap = { version = "4", features = ["derive"] }

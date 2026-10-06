@@ -1,6 +1,6 @@
 # Running Probl from Rust
 
-`probl` is the embedding library. `probl-cli` depends on it and installs the executable named `probl`. The browser adapter and benchmarks use the same library for loading, execution and results. The workspace is at version `0.0.1`; the API is young and may change.
+`probl` is the embedding library. `probl-cli` depends on it and installs the executable named `probl`. The browser adapter and benchmarks use the same library for loading, execution and results. The workspace is at version `0.1.0`; the API is young and may change.
 
 ## Compile and run
 
@@ -156,7 +156,7 @@ The intended registry layout is `probl` for embedders and `probl-cli` for instal
 Before the first publication:
 
 1. Complete license, repository, description and README metadata for each published package. Check that the packaged README and license files are present.
-2. Pin every internal workspace dependency and the CLI's `probl` dependency to the exact matching release, alongside its local path. Current `version = "0.0.1"` declarations are not exact pins; use `version = "=0.0.1"` when preparing that release. Keep the release versions aligned.
+2. Pin every internal workspace dependency and the CLI's `probl` dependency to the exact matching release, alongside its local path. They are pinned exactly (`version = "=0.1.0"`); move the pins with each release. Keep the release versions aligned.
 3. Inspect package contents and perform dry runs with the release toolchain. Publish dependencies in order: `probl-number`, `probl-syntax`, `probl-sema`, `probl-engine`, `probl`, then `probl-cli`. Keep benchmarks, oracle and WASM adapter unpublished.
 4. Verify installation of the actual published CLI and compilation of an external application depending only on `probl`. Once a baseline exists, add API compatibility checks alongside behavioral tests.
 
