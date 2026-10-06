@@ -22,13 +22,13 @@ The limits matter: BDD size can be exponential, variable ordering strongly affec
 
 | Existing mechanism | What it already avoids | Remaining limitation |
 | --- | --- | --- |
-| [Liveness and world merging](../crates/probl-engine/src/world.rs) | Keeping distinct histories after their live states become equal | Distinct live assignments still occupy distinct worlds |
-| [Moving draws to their first use](../crates/probl-sema/src/draws.rs) | Drawing independent values before they are needed | An observation or later query may need many values together |
-| [Function-result caching](../crates/probl-engine/src/interp.rs) | Repeating inference for the same arguments and captured values | Many different argument combinations can require separate cache entries |
-| [Solving cyclic loops](../crates/probl-engine/src/chain.rs) | Repeatedly unrolling certain finite-state cycles | The reachable state space still has to be represented |
-| [Analytic continuous values](../crates/probl-engine/src/analytic.rs) | Enumerating or sampling some affine continuous calculations | This representation does not cover general discrete dependencies |
+| [Liveness and world merging](../../crates/probl-engine/src/world.rs) | Keeping distinct histories after their live states become equal | Distinct live assignments still occupy distinct worlds |
+| [Moving draws to their first use](../../crates/probl-sema/src/draws.rs) | Drawing independent values before they are needed | An observation or later query may need many values together |
+| [Function-result caching](../../crates/probl-engine/src/interp.rs) | Repeating inference for the same arguments and captured values | Many different argument combinations can require separate cache entries |
+| [Solving cyclic loops](../../crates/probl-engine/src/chain.rs) | Repeatedly unrolling certain finite-state cycles | The reachable state space still has to be represented |
+| [Analytic continuous values](../../crates/probl-engine/src/analytic.rs) | Enumerating or sampling some affine continuous calculations | This representation does not cover general discrete dependencies |
 
-The [existing benchmarks](benchmarks.md#since-moving-draws) show that draw scheduling reduced the original reliability example from 1,048,576 worlds to 256. A new backend should be compared with these optimizations enabled. A comparison with naive path enumeration would overstate its incremental value.
+The [existing benchmarks](../benchmarks.md#since-moving-draws) show that draw scheduling reduced the original reliability example from 1,048,576 worlds to 256. A new backend should be compared with these optimizations enabled. A comparison with naive path enumeration would overstate its incremental value.
 
 ## A measured gap: posterior reports keep facts live
 
@@ -121,7 +121,7 @@ The following are proposed applications to Probl, not features delivered by the 
 
 **Parameter exploration.** A later compiled-model facility could let the playground update probabilities while retaining the same logical structure. Reuse would be valid only while the supported outcomes and control structure remain compatible. Changing a probability used as an ordinary numeric value, a loop bound, or a collection size can change that structure. Dependency tracking and cache invalidation would be separate work.
 
-These capabilities complement the [forecast inference proposal](inference-proposal.md). They do not replace the need for better methods for general continuous or non-conjugate posteriors.
+These capabilities complement the [forecast inference proposal](../inference.md). They do not replace the need for better methods for general continuous or non-conjugate posteriors.
 
 ## Language contracts to preserve
 
@@ -153,7 +153,7 @@ Compilation must also preserve which errors are reachable. An invalid expression
 
 ### Distribution representation
 
-The current finite [distribution type](../crates/probl-engine/src/dist.rs) contains an explicit vector of outcomes and unresolved probability mass. Keep that implementation detail out of the language contract. A future symbolic distribution should be able to answer supported queries without first converting to this vector.
+The current finite [distribution type](../../crates/probl-engine/src/dist.rs) contains an explicit vector of outcomes and unresolved probability mass. Keep that implementation detail out of the language contract. A future symbolic distribution should be able to answer supported queries without first converting to this vector.
 
 Enumeration of `support(d)` still requires a collection of results and must obey allocation limits. Querying a probability and materializing all outcomes should have separate internal paths. Likewise, extending `simulate` to return a symbolic joint distribution should be a later milestone; a prototype that answers top-level Boolean reports need not redesign every distribution operation first.
 
@@ -196,11 +196,11 @@ Only after this should automatic backend selection or a reusable compiled-model 
 
 ## Verification requirements
 
-Use the [independent rational oracle](../crates/probl-oracle/src/lib.rs) on its supported finite subset, as well as differential checks against enumeration. Compare evidence and posterior probabilities, not just a few rounded report strings. Extend the generator deliberately where the prototype supports constructs the oracle does not yet cover.
+Use the [independent rational oracle](../../crates/probl-oracle/src/lib.rs) on its supported finite subset, as well as differential checks against enumeration. Compare evidence and posterior probabilities, not just a few rounded report strings. Extend the generator deliberately where the prototype supports constructs the oracle does not yet cover.
 
 Regression cases should cover shared versus independent draws; captures and repeated calls when introduced; observations inside only one branch; impossible evidence; zero and unit probabilities; many reports; and extremely small nonzero evidence. Relative or log-scale checks are necessary for tiny probabilities: a broad absolute tolerance can incorrectly accept zero.
 
-Also test rejection or fallback for unsupported constructs, cancellation, memory limits, and observable errors. Native/WASM agreement is necessary for portability, but it is not an independent correctness proof. The [testing review](testing.md) explains the existing oracle's scope and limitations.
+Also test rejection or fallback for unsupported constructs, cancellation, memory limits, and observable errors. Native/WASM agreement is necessary for portability, but it is not an independent correctness proof. The [testing review](../testing.md) explains the existing oracle's scope and limitations.
 
 ## Implementation resources and open questions
 
@@ -214,4 +214,4 @@ The difficult integration decisions are:
 - How to share work among reports without forcing full joint output.
 - Where symbolic execution ends and the current engines resume, without losing correlations or evidence.
 
-The earlier [benchmark assessment](benchmarks.md) correctly favored cheaper changes for its workloads. Its claim that large game states cannot benefit from symbolic methods was too categorical: large state counts alone do not prove that no compact representation exists. The new posterior-reporting example justifies a focused experiment. It does not yet justify replacing the existing inference engine.
+The earlier [benchmark assessment](../benchmarks.md) correctly favored cheaper changes for its workloads. Its claim that large game states cannot benefit from symbolic methods was too categorical: large state counts alone do not prove that no compact representation exists. The new posterior-reporting example justifies a focused experiment. It does not yet justify replacing the existing inference engine.

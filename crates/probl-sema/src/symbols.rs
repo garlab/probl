@@ -1,7 +1,7 @@
 //! Where a program's names are declared and used, recorded as the program is
 //! lowered, so they're resolved exactly as the compiler resolves them. It's
 //! what an editor needs to go to a name's definition, describe it, and
-//! complete names (docs/playground-plan.md).
+//! complete names (docs/playground.md).
 
 use probl_syntax::Span;
 

@@ -1,6 +1,6 @@
 # Probl reference semantics
 
-> Version 0.2, September 2026. This document is normative for the engine. Where it disagrees with the [language overview](language-overview.md), this document wins. It resolves findings D1–D3, I1 and I2 of the [project audit](project-audit.md). Continuous distributions (D6) and sampling (D4), with exact updates for conjugate priors, are in sections 13 and 14, and data read from files in section 15; loops and recursion that cycle are solved as in sections 6 and 10 (D5); what is still open, such as particles, is listed in section 16.
+> Reference contract, updated October 2026. This document is normative for the engine. Where it disagrees with the [language overview](language-overview.md), this document wins. It resolves findings D1–D3, I1 and I2 of the [project audit](design/project-audit.md). Continuous distributions (D6) and sampling (D4), with exact updates for conjugate priors, are in sections 13 and 14, and data read from files in section 15; loops and recursion that cycle are solved as in sections 6 and 10 (D5); what is still open, such as particles, is listed in section 16.
 
 ## 1. Values and types
 
@@ -206,7 +206,7 @@ All these functions require finite inputs and finite results; overflow and singu
 
 Complex arithmetic and helper functions lift over finite distributions. Such distributions remain classical mixtures: outcomes with opposite phases do not cancel. `sum` supports complex elements; `mean` returns a complex weighted arithmetic mean when any outcome is complex. `variance`, `sd`, real-only math functions and distribution parameters do not accept complex arguments. Reports present complex values as categorical outcomes instead of applying real summary statistics. Complex values cannot be conditions or probability weights, even with zero imaginary component. `abs2` is an ordinary float, potentially above 1; it is not automatically normalized or interpreted as a probability.
 
-The data-file schema does not add a complex encoding; read real and imaginary fields and construct values explicitly. The [complex and quantum design note](quantum-and-complex.md) distinguishes these implemented scalar rules from a possible future quantum engine.
+The data-file schema does not add a complex encoding; read real and imaginary fields and construct values explicitly. The [complex and quantum design note](design/quantum-and-complex.md) distinguishes these implemented scalar rules from a possible future quantum engine.
 
 ## 2. Events and identity
 
@@ -503,7 +503,7 @@ When few runs carry the weight (a small effective sample size), this estimate is
 ## 16. Not specified yet
 
 - **Particles, beam search and merged runs** (audit D4): how merged samples keep their statistical bookkeeping, and when particles resample.
-- **A general method for models that aren't conjugate**, such as MCMC: its target, its moves and its report estimators ([inference proposal](inference-proposal.md), section 2).
+- **A general method for models that aren't conjugate**, such as MCMC: its target, its moves and its report estimators ([inference guide](inference.md), section 2).
 - **Nested estimates** (D4): `simulate` blocks that must be sampled, and how their error affects decisions.
-- **Arithmetic on continuous distributions**, beyond comparing them with numbers.
+- **General continuous composition**, beyond the supported affine single-draw arithmetic and threshold conditioning in §13; nonlinear transforms and combinations of independent continuous draws need further representation and inference contracts.
 - **Reports that update with later evidence** (filtering and smoothing).

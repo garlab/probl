@@ -1,13 +1,15 @@
 # Benchmarks: what to build next
 
-> September 2026. Step 5 of the [project audit](project-audit.md): "use realistic game and forecast benchmarks to choose further work: Markov-chain solving, symbolic inference, persistent collections, or a faster interpreter." This document reports the benchmarks and recommends an order. Measured on an Apple M2 Pro (8 performance cores), release build.
+> September 2026. Step 5 of the [project audit](design/project-audit.md): "use realistic game and forecast benchmarks to choose further work: Markov-chain solving, symbolic inference, persistent collections, or a faster interpreter." This document reports the benchmarks and recommends an order. Measured on an Apple M2 Pro (8 performance cores), release build.
+
+This is a historical measurement record: the baseline precedes the improvements documented in the “Since” sections. Timings, memory figures and example counts refer to those measurements, not a freshly benchmarked release. Current priorities are in [architecture](architecture.md#priorities); rerun the commands below to measure your checkout.
 
 ## Summary
 
 1. **Parallel sampling batches first.** Every sampled forecast takes 0.5–2.6 s on one core, and runs are independent. Running example 07's runs as 8 processes takes 0.27 s instead of 1.77 s (6.6×). This is the cheapest large win, and it meets the plan's target for example 07 (under 2 s on 8 cores) several times over. *Done: 6–8× on 12 cores ([below](#since-parallel-batches)).*
 2. **Then cheaper merging, and moving draws to their first use.** Enumeration hits a wall when states are large or many facts stay live together: blackjack from a real deck takes 5.2 s and 952 MB, and a 20-component reliability model 1.4 s and 847 MB. Merging (hashing and comparing world states) takes 34–70% of that time; caching the hashes of collections cuts most of it. Separately, moving each draw to just before its first use turns the reliability model's 1,048,576 worlds into 256, with the same answer. *Both are done: cheaper merging makes enumeration 1.4–2.9× faster ([below](#since-cheaper-merging)), and moving draws takes the reliability model from 1.2 s to 0.6 ms ([below](#since-moving-draws)).*
 3. **Then better inference for evidence-heavy forecasts.** Weighting runs by the evidence (likelihood weighting) degrades as data accumulates: an A/B test's 100,000 runs are worth 852 after 30 days of data, 467 after 60 and 211 after 120, and it gets exponentially worse with more unknown parameters. Forecasts with real data need conjugate updates, MCMC or particles; each needs its contract specified first (audit D4). *Done for conjugate priors: the A/B test's runs are worth 100,000 instead of 863 ([below](#since-exact-updates-for-conjugate-priors)). A general method waits for a benchmark that needs it.*
-4. **Not now, for the original benchmark suite:** symbolic inference, persistent collections and a bytecode interpreter. No benchmark establishes a need for them that a cheaper change cannot address first. Markov-chain solving would make cyclic loops exact and allow recursion to the same call, but no model is slow because of them. *Done for loops: those that cycle are solved exactly ([below](#since-solving-loops-that-cycle)). October follow-up: a [symbolic inference review](symbolic-inference-review.md) identifies a different workload, many posterior reports over live discrete unknowns, and recommends a bounded prototype.*
+4. **Not now, for the original benchmark suite:** symbolic inference, persistent collections and a bytecode interpreter. No benchmark establishes a need for them that a cheaper change cannot address first. Markov-chain solving would make cyclic loops exact and allow recursion to the same call, but no model is slow because of them. *Done for loops: those that cycle are solved exactly ([below](#since-solving-loops-that-cycle)). October follow-up: a [symbolic inference review](design/symbolic-inference.md) identifies a different workload, many posterior reports over live discrete unknowns, and recommends a bounded prototype.*
 
 ## Running them
 
@@ -23,7 +25,7 @@ For each model, the runner reports the median time of up to five runs, the engin
 
 ## The models
 
-The twelve models in [`benches/`](../benches/) are realistic uses of the language, each chosen to stress one of the candidate improvements; the ten examples run alongside them.
+The baseline used twelve models in [`benches/`](../benches), each chosen to stress one candidate improvement, alongside the original ten examples. The runner discovers the current models in both directories, so today's suite includes later examples too.
 
 | Model | What it computes | What it stresses |
 |---|---|---|
@@ -104,7 +106,7 @@ Large states are dominated by merging: a world's slots, including its deck (a ma
 
 **Markov-chain solving.** The models with loops that cycle (`tennis`, craps, snakes and ladders, the tour's `while d6 != 6`) run in milliseconds; what unrolling costs them is exactness (unresolved weight up to 2.3 × 10⁻¹¹ in `tennis`), not time. Solving absorbing chains would make them exact, and would allow recursion that returns to the same call, which enumeration rejects today. *Worth doing for exactness and expressiveness, after the above. Done for loops ([below](#since-solving-loops-that-cycle)).*
 
-**Symbolic inference** (decision diagrams, as in Dice). Moving draws fixes the original `reliability` model more cheaply. The large concrete states in `blackjack_deck` and `snakes_three` motivate sampling (`snakes_three` samples 20,000 games in 1.4 s), but their size alone does not establish whether a symbolic representation would help. This suite did not measure that question. *Deferred for these workloads. The October [symbolic inference review](symbolic-inference-review.md) adds an exploratory posterior-reporting workload that still reaches `2^n` worlds with current optimizations and proposes a bounded Boolean prototype; no symbolic speedup has yet been measured.*
+**Symbolic inference** (decision diagrams, as in Dice). Moving draws fixes the original `reliability` model more cheaply. The large concrete states in `blackjack_deck` and `snakes_three` motivate sampling (`snakes_three` samples 20,000 games in 1.4 s), but their size alone does not establish whether a symbolic representation would help. This suite did not measure that question. *Deferred for these workloads. The October [symbolic inference review](design/symbolic-inference.md) adds an exploratory posterior-reporting workload that still reaches `2^n` worlds with current optimizations and proposes a bounded Boolean prototype; no symbolic speedup has yet been measured.*
 
 **Persistent collections.** No benchmark spends significant time copying large collections: the collections in these models are small (a deck of 10 counts, a pipeline of 3 orders, hands as records), and each world's copy differs from the others. What costs is hashing them, which cached hashes fix. *Not now; revisit if a model with large shared collections shows up.*
 
@@ -175,7 +177,7 @@ The other models already draw where they use the values: only craps' first roll 
 
 ## Since: exact updates for conjugate priors
 
-When sampling, a beta, gamma or normal prior observed through a conjugate form (binomial or Bernoulli counts, Poisson counts, normal values with a known spread) is no longer drawn first and weighted by the data. Each run updates its distribution exactly with each observation and draws it from the result when first needed (docs/semantics.md, section 14; the [inference proposal](inference-proposal.md)). In `ab_test` and example 08, every run then ends with the same weight, the probability of the data. So the effective sample size is the number of runs, and the evidence is exact. The same machine, seed and 12 threads, with `--no-conjugate` for before:
+When sampling, a beta, gamma or normal prior observed through a conjugate form (binomial or Bernoulli counts, Poisson counts, normal values with a known spread) is no longer drawn first and weighted by the data. Each run updates its distribution exactly with each observation and draws it from the result when first needed (docs/semantics.md, section 14; the [inference guide](inference.md)). In `ab_test` and example 08, every run then ends with the same weight, the probability of the data. So the effective sample size is the number of runs, and the evidence is exact. The same machine, seed and 12 threads, with `--no-conjugate` for before:
 
 | model | effective sample size | mean lift's standard error | evidence | time |
 |---|--:|--:|---|--:|

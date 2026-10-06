@@ -1,5 +1,5 @@
 //! The library as an embedder uses it: only `probl`'s supported API
-//! (docs/library-proposal.md, "Tests").
+//! (docs/library.md).
 
 use probl::{
     Data, Date, ErrorKind, Estimate, EvidenceKind, Files, MemoryFiles, Mode, Options, Outcome, SamplingStatus,

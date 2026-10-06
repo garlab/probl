@@ -1,4 +1,4 @@
-//! Regression tests for the findings of docs/project-audit.md. Each test is
+//! Regression tests for the findings of docs/design/project-audit.md. Each test is
 //! named after the finding it covers and checks the behaviour now specified
 //! in docs/semantics.md.
 

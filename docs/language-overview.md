@@ -1,7 +1,7 @@
 # Probl: language overview
 
-> Draft 0.2, September 2026. Enumeration and sampling are implemented; particles, beam search and a few functions marked below are designed but not built yet. The precise rules are in the [reference semantics](semantics.md), which wins where the two disagree.
-> See also: [implementation plan](implementation-plan.md) · [examples](../examples/)
+> Current language guide, October 2026. Enumeration and sampling are implemented; particles, beam search and functions marked as future work are not. Some type checks still happen at runtime. The precise rules are in the [reference semantics](semantics.md), which wins where the two disagree.
+> See also: [architecture and priorities](architecture.md) · [examples](../examples)
 
 Probl is a small programming language for **explicit random choices and weighted worlds**. A draw or a `chance` block explores alternatives, each in its own *world*, weighted by how likely it is. An `if` follows a boolean fact, or makes a fresh trial from a probability or boolean distribution. A program doesn't produce one answer: it produces the distribution over every world it could end up in.
 
@@ -24,7 +24,7 @@ It is built for two kinds of work:
 
 ## 1. The model: weighted worlds
 
-A running Probl program is a set of **worlds**. Each world is an ordinary program state, in which every variable has one plain value, plus a **weight**: the probability of being in that world. A program starts as a single world with weight 1.
+A running Probl program is a set of **worlds**. Each world is an ordinary program state, in which every variable has one plain value, plus a **weight**: initially its probability, then its unnormalized contribution after evidence. A program starts as a single world with weight 1. The walkthrough below describes enumeration; sampling follows one path per run and estimates the same model.
 
 - **Explicit choices split worlds.** `chance { p => A, else => B }` sends a copy of each world into `A` with its weight multiplied by p, and another into `B` with its weight multiplied by 1 − p. `if` and `while` follow boolean facts, and split worlds when given probabilities or boolean distributions.
 - **Drawing splits worlds too.** `let r ~ 2d6` turns each world into eleven, one per total, each weighted by the chance of that total.
@@ -49,8 +49,8 @@ Everything else follows from these five rules.
 
 1. **Choices follow every possibility.** Draw with `~` or use `chance { 30% => A, else => B }` for explicit weighted branching. `if 30% { A } else { B }` makes a fresh trial; a boolean condition follows an existing fact. Bare `observe` requires a boolean fact.
 2. **A program is a set of weighted worlds.** Inside one world, every variable holds a single ordinary value. The uncertainty is in how many worlds there are and how much each one weighs.
-3. **`~` settles a value; `=` keeps a distribution.** `let r ~ 2d6` gives `r` one number per world: a fact. `let d = 2d6` names the distribution itself, and every use of `d` is a fresh, independent roll.
-4. **Identical worlds merge.** When branches rejoin, worlds with the same state combine, ignoring variables that will never be read again. Merging changes nothing but rounding. Draws of distributions written out, like `let pump ~ bernoulli(95%)`, are taken just before their first use, so drawing everything at the top of a model costs nothing.
+3. **`~` draws an outcome; `=` binds an expression's result.** `let r ~ 2d6` gives `r` one number per world. `let d = 2d6` binds the distribution recipe; consuming it twice makes independent draws. An ordinary function call can itself draw, so `=` does not imply that its result is a distribution.
+4. **Identical worlds merge.** When branches rejoin, worlds with the same state combine, ignoring variables that will never be read again. Merging changes nothing but rounding. Draws of distributions written out, like `let pump ~ bernoulli(95%)`, are taken just before their first use, so eligible draws can avoid creating combinations before they are needed. This optimization does not make arbitrary draws or large state spaces free.
 5. **Output looks across worlds.** `report` prints distributions over all worlds, and `observe` conditions them on evidence. Code running inside a world only ever sees that world.
 
 ## 3. Syntax tour
@@ -238,7 +238,7 @@ Complex components are finite floats; overflow and division by zero are errors. 
 
 Roots, logarithms, exponentials, trigonometric and hyperbolic functions (including their inverses) accept complex values. Real inputs keep their real domains: `sqrt(-1)` is still an error. Complex functions return one principal value. Other logarithm branches are explicit: `ln(z) + complex(0, 2*pi*k)` for integer `k`; they do not create probabilistic alternatives. `ln(0)` is undefined. See [complex semantics](semantics.md) for branch cuts and the distinction between real `cbrt(-8)` and principal complex `cbrt(complex(-8))`.
 
-A distribution over complex values is ordinary uncertainty about a number. Opposite outcomes do not cancel. Complex values are a foundation for amplitude calculations; quantum states and gates are future work described in the [design note](quantum-and-complex.md).
+A distribution over complex values is ordinary uncertainty about a number. Opposite outcomes do not cancel. Complex values are a foundation for amplitude calculations; quantum states and gates are future work described in the [design note](design/quantum-and-complex.md).
 
 ### Variables
 
@@ -597,7 +597,7 @@ if mean(if_hit) > mean(if_stand) { hand = hit(hand) }
 
 ## 8. Execution modes
 
-All modes compute the same model; switching mode changes speed and accuracy, never meaning. `enumerate` and `sample` exist today. The others wait until their estimators are specified: merged samples need statistical bookkeeping, and dropped prior weight doesn't bound a posterior (see the [audit](project-audit.md), D2 and D4).
+All modes compute the same model; switching mode changes speed and accuracy, never meaning. `enumerate` and `sample` exist today. The others wait until their estimators are specified: merged samples need statistical bookkeeping, and dropped prior weight doesn't bound a posterior (see the [audit](design/project-audit.md), D2 and D4).
 
 | Mode | How it runs | Use it for | Accuracy shown as |
 |---|---|---|---|
@@ -607,7 +607,7 @@ All modes compute the same model; switching mode changes speed and accuracy, nev
 | `particles(runs: n, seed: s)` | like `sample`, and resamples the runs after observations | time series with streams of evidence | not built yet |
 | `auto` (default) | `enumerate` for now; later, `sample` when a model can't be enumerated, saying so | getting started | as for the mode it picked |
 
-Sampled runs are independent: they never merge, and every call makes its own choices. Evidence weights them (likelihood weighting); the **effective sample size** in the summary line says how many equally weighted runs they're worth, and when it's small, so is the confidence the estimates deserve. The same seed always gives the same output.
+Sampled runs are independent: they never merge, and every call makes its own choices. Evidence weights them (likelihood weighting); the **effective sample size** in the summary line says how many equally weighted runs they're worth, and when it's small, so is the confidence the estimates deserve. The same program, data, execution date, seed and engine version give reproducible successful output across supported hosts.
 
 **Exact updates.** Some priors and observations fit together: a `beta` observed through `binomial` or `bernoulli`, a `gamma` through `poisson`, and a `normal` through `normal` with a known spread (they're *conjugate*). For such a variable, a sampled run doesn't draw it first and weight itself by the data. It keeps the variable's distribution, updates it exactly with each observation, and draws the variable from the result when something first needs its value. The model is the same, but the runs are worth more: in an A/B test with 30 days of data, 100,000 runs are worth 100,000 instead of 863, and the evidence is exact. `probl run --no-conjugate` turns it off, for comparing, and `probl run --stats` shows which variables were updated this way.
 
@@ -683,7 +683,7 @@ This is the standard semantics of probabilistic programs as functions from a sta
 | Every possibility followed, for discrete models | yes, merging equal states | yes, for dice | no, sampling | limited |
 | State and loops | yes | limited | limited | yes |
 | Conditioning on evidence | `observe` | not a focus | not a focus | yes, with advanced inference |
-| Continuous quantities | yes, by sampling | no | yes | yes |
+| Continuous quantities | sampling and a restricted analytic subset | no | yes | yes |
 
 Probl borrows `a to b` estimates from Squiggle, dice notation from AnyDice and tabletop games, and `observe` from probabilistic programming languages like WebPPL. Weighted states, probabilistic branching and state merging all have prior art; Probl's bet is putting them behind ordinary imperative code, with diagnostics that say how an answer was computed. Merging keeps many game models small. A loop whose states come back is solved as a Markov chain, as PRISM does; the others are followed until the weight still playing is negligible. For exact inference at larger scale, the research language Dice (Holtzen et al., 2020) compiles programs to binary decision diagrams, which could become a later backend.
 
@@ -699,8 +699,8 @@ Probl borrows `a to b` estimates from Squiggle, dice notation from AnyDice and t
 | [`06_blackjack_dealer.probl`](../examples/06_blackjack_dealer.probl) | game | cards without replacement, tables with `report … by` |
 | [`07_launch_forecast.probl`](../examples/07_launch_forecast.probl) | forecasting | `a to b` estimates, regime switching, a fan chart over months |
 | [`08_signup_forecast.probl`](../examples/08_signup_forecast.probl) | forecasting | `observe … from`, learning a rate, then forecasting with it |
-| [`09_roadmap.probl`](../examples/09_roadmap.probl) | forecasting | risks and dates: a forecast of this project's own plan |
-| [`10_quantum_key.probl`](../examples/10_quantum_key.probl) | physics | quantum key distribution: a measurement as branching worlds, `observe` inside `simulate`, Bayes' rule for an eavesdropper |
+| [`09_roadmap.probl`](../examples/09_roadmap.probl) | forecasting | risks and dates: an illustrative forecast of the original plan, not a release schedule |
+| [`10_quantum_key.probl`](../examples/10_quantum_key.probl) | physics | a classical BB84 intercept–resend model; measurement probabilities and Bayes' rule, without complex amplitudes |
 | [`11_delivery_dates.probl`](../examples/11_delivery_dates.probl) | forecasting | delivery uncertainty from `today`, weekends, explicit holidays and deadline probability |
 | [`12_invoice_calendar.probl`](../examples/12_invoice_calendar.probl) | forecasting | recurring invoices anchored to a calendar day, payment delays and monthly cash-flow buckets |
 | [`13_renewal_dates.probl`](../examples/13_renewal_dates.probl) | forecasting | leap-day renewals, notice periods and uncertain response dates |
@@ -711,7 +711,7 @@ Probl borrows `a to b` estimates from Squiggle, dice notation from AnyDice and t
 | [`18_correlated_losses.probl`](../examples/18_correlated_losses.probl) | risk | common hazards, equal marginal risks, different joint tails and reserve shortfalls |
 | [`19_analytic_continuous.probl`](../examples/19_analytic_continuous.probl) | arrival times | analytic continuous reports, shared draws and threshold evidence |
 
-Every example ends with the output it should produce, and those outputs are golden tests. The enumerated ones were checked against independent reference calculations, and must be printed exactly. Tests pin `today` to `2026-09-29`; use `--today 2026-09-29` to reproduce date-dependent output. Sampled output is compared within five standard errors for estimates, and 4% for other numbers. Examples 07–09 use independent reference simulations as their baselines; examples 15–16 record seeded engine output, with their headline results also checked independently. See the [use-case review](use-case-gaps.md) for the new examples' validation and the limitations they expose.
+Every example ends with the output it should produce, and those outputs are golden tests. The enumerated ones were checked against independent reference calculations, and must be printed exactly. Tests pin `today` to `2026-09-29`; use `--today 2026-09-29` to reproduce date-dependent output. Sampled output is compared within five standard errors for estimates, and 4% for other numbers. Examples 07–09 use independent reference simulations as their baselines; examples 15–16 record seeded engine output, with their headline results also checked independently. See the [use cases](use-cases.md) for the new examples' validation and the limitations they expose.
 
 ---
 

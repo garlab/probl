@@ -1,100 +1,146 @@
 # Probl
 
-**A programming language for explicit choices, weighted worlds and inference.**
+**A programming language for probabilities, simulations and forecasts.**
 
-In Probl, `if 30% { … } else { … }` runs *both* branches: one in a world with weight 0.3, the other in a world with weight 0.7. A program doesn't produce one answer; it produces the distribution over every world it can end up in. Worlds that reach the same state merge, which keeps many game simulations small enough to follow every possibility. Continuous draws with affine arithmetic and threshold conditions can also be kept analytically. For larger models or unsupported continuous operations, the same program runs by sampling instead.
+Write a model with ordinary variables, functions and loops. Probl follows its possible outcomes and reports their probabilities. Use it to explore game balance, compare decisions, forecast uncertain quantities or update a model with evidence.
+
+[Try the playground](https://probl-playground.pages.dev) · [Language guide](docs/language-overview.md) · [Examples](examples/) · [Documentation](docs/README.md)
 
 ```probl
-# Craps, pass line bet: what's the chance of winning?
-let come_out ~ 2d6               # one world per total
-var win = false
-if come_out in [7, 11] {
-  win = true
-} else if come_out not in [2, 3, 12] {
-  loop {                         # keep rolling for the point
-    let r ~ 2d6
-    if r == come_out { win = true; break }
-    if r == 7 { break }
-  }
-}
-report win                       # 49.29%: the known answer, 244/495
+let total ~ 2d6
+observe total >= 7
+report total >= 10 as "ten or more"
 ```
 
-Probl is aimed at two kinds of work:
+```text
+enumerated · evidence 58.33%
 
-- **Game simulation**: dice, cards, boards and fights. Odds, game length, balance.
-- **Forecasting**: estimates (`5 to 10`), scenarios, evidence (`observe` and `score`), fan charts and dates.
+ten or more    28.57%
+```
 
-## Status
+Here `~` draws two dice, `observe` keeps worlds where their total is at least seven, and `report` asks how often the total is ten or more in those remaining worlds: 6 of 21 equally likely dice pairs.
 
-The engine enumerates and samples. Examples 01–06 print their documented output, checked against independent calculations; the forecasting examples 07–09 sample, and agree with an independent reference simulation within their sampling error. The rules are written down in [the reference semantics](docs/semantics.md). A second, deliberately simple interpreter checks enumeration against them on thousands of generated programs, and sampling is checked against enumeration, standard errors included. When sampling, conjugate priors (a beta with binomial counts, say) are updated exactly instead of weighting each run by the data, so forecasts from data keep every run's worth.
+## How it works
+
+In enumeration mode, `if 30% { … } else { … }` follows both branches, with weights 0.3 and 0.7. A program doesn't produce a single answer but a distribution over its possible outcomes. Worlds with the same remaining state merge, which keeps many game models small. Certain cyclic processes are solved as Markov chains, and a restricted class of continuous calculations stays analytic.
+
+For larger models and broader continuous computations, sampling follows one random path per run and reports estimates with uncertainty information. Switching modes preserves the model; it changes how its answers are computed. The default mode enumerates and does **not** automatically fall back to sampling.
+
+A distribution is a recipe; a drawn value has an identity:
+
+```probl
+let die = d6
+report die + die          # two independent rolls
+
+let roll ~ die
+report roll + roll        # the same roll used twice
+```
+
+Other building blocks include arbitrary-precision integers, complex numbers, immutable Unicode strings and dates, collections, typed CSV/JSON input, and local models with `simulate`. Supported conjugate priors update analytically when sampling. See the [language guide](docs/language-overview.md) for the rules and boundaries.
+
+## Get started
+
+The [browser playground](https://probl-playground.pages.dev) runs locally in your browser; no installation is needed.
+
+To build the CLI from a checkout, install Rust 1.85 or later and run these commands from the repository root:
+
+```sh
+cargo install --path crates/probl-cli --locked
+probl run examples/01_tour.probl
+probl run examples/02_craps.probl --fractions
+probl run examples/07_launch_forecast.probl
+```
+
+The package is named **`probl-cli`** and the installed command is **`probl`**. You can also run without installing:
 
 ```sh
 cargo run --release -p probl-cli -- run examples/02_craps.probl
-cargo run --release -p probl-cli -- run examples/02_craps.probl --fractions   # ≈ 244/495
-cargo run --release -p probl-cli -- run examples/07_launch_forecast.probl      # sampled
-cargo run --release -p probl-cli -- run examples/02_craps.probl --runs 100000  # sampled too
-cargo run --release -p probl-cli -- run examples/08_signup_forecast.probl      # reads examples/data/pilot.csv
-cargo run --release -p probl-cli -- run examples/11_delivery_dates.probl --today 2026-09-29  # replay a dated forecast
-cargo run --release -p probl-cli -- schema examples/data/pilot.csv            # a type to read it with
-cargo run --release -p probl-cli -- repl
+```
+
+Useful commands:
+
+```sh
+probl run model.probl --runs 100000 --seed 42  # select sampling
+probl run model.probl --stats                 # inspect execution and effective sample size
+probl check model.probl                       # compile without running or opening data
+probl check --data model.probl                # also validate declared input files
+probl schema examples/data/pilot.csv          # suggest an input type
+probl repl
+```
+
+Models using `today` get one immutable UTC date snapshot from the host. Add `--today 2026-09-29` to reproduce the calendar examples' documented output. Successful runs are reproducible for the same program, data, date, seed and engine version.
+
+## Explore the examples
+
+| Use case | Start here |
+|---|---|
+| Learn the language | [Tour](examples/01_tour.probl) |
+| Games and odds | [Craps](examples/02_craps.probl), [RPG duel](examples/03_rpg_duel.probl), [Risk](examples/04_risk_battle.probl), [blackjack dealer](examples/06_blackjack_dealer.probl) |
+| Forecast with evidence | [Signup forecast from CSV](examples/08_signup_forecast.probl), [predictive model check](examples/16_predictive_check.probl) |
+| Calendar uncertainty | [Delivery dates](examples/11_delivery_dates.probl), [invoice cash flow](examples/12_invoice_calendar.probl) |
+| Compare decisions | [Stock levels](examples/14_stock_decision.probl), [service queues](examples/15_service_queue.probl) |
+| Monitoring and risk | [Sensor tracking](examples/17_sensor_tracking.probl), [correlated losses](examples/18_correlated_losses.probl) |
+| Analytic continuous inference | [Arrival times and threshold evidence](examples/19_analytic_continuous.probl) |
+
+Each example includes its assumptions and expected output. The [full list](docs/language-overview.md#12-examples) and [use-case assessment](docs/use-cases.md) explain what they demonstrate and what remains difficult.
+
+## Embed in Rust
+
+The **`probl`** crate is the library used by the CLI and playground. Compile once, run repeatedly, and read structured results without parsing text:
+
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "let total ~ 2d6\nreport total >= 10 as \"ten or more\"";
+    let program = probl::compile("dice.probl", source)?;
+    let outcome = program.run(&probl::Options::new())?;
+
+    if let Some(chance) = outcome.report("ten or more")
+        .and_then(|r| r.groups().first())
+        .and_then(|g| g.probability())
+    {
+        println!("point: {:?}, complete: {}", chance.point(), chance.is_complete());
+    }
+    Ok(())
+}
+```
+
+Results retain unresolved bounds, sampling-error status and evidence metadata. An available point estimate is not necessarily a complete or exact answer. See the [library guide](docs/library.md) for setup, data loading and result interpretation, or run `cargo run -p probl --example craps` from this checkout.
+
+## Status and limits
+
+Probl is early-stage software at workspace version `0.0.1`. The language and Rust API are evolving.
+
+- Enumeration uses floating-point weights and can retain unresolved mass; displayed fractions are approximations. State spaces can still grow exponentially.
+- Sampling can be unreliable with rare events or concentrated evidence. Inspect effective sample size and uncertainty; zero empirical variation is not proof of certainty.
+- Analytic continuous enumeration supports affine calculations and threshold conditions on a shared draw. General nonlinear combinations need sampling, and `simulate` always enumerates.
+- Some type errors are detected only at runtime. Modules, optional/null values, general MCMC, particles and beam search are not implemented.
+- Complex scalar arithmetic is available; quantum-amplitude simulation is not.
+
+The [reference semantics](docs/semantics.md) documents these contracts. Verification includes known answers, regression tests, an independent rational-arithmetic interpreter, generated sampling comparisons and native/WASM parity. The [testing guide](docs/testing.md) explains their scope and remaining automation gaps.
+
+## Development
+
+```sh
+cargo fmt --all --check
+cargo clippy --all-targets -- -D warnings
 cargo test --all
 ```
 
-Calendar models can use immutable dates and `today`, captured once in UTC at execution start. Pin it with `--today YYYY-MM-DD` for reproducible runs; `--stats` records the date used. The [delivery](examples/11_delivery_dates.probl), [invoice](examples/12_invoice_calendar.probl) and [renewal](examples/13_renewal_dates.probl) examples cover working days, holidays, month-end cash flow and leap-year arithmetic.
-
-See [test coverage and quality](docs/testing.md) for the existing test layers, executable API audit regressions (including known failures), and recommended coverage tooling.
-
-The newer examples explore [stock decisions](examples/14_stock_decision.probl), [service queues](examples/15_service_queue.probl), [predictive model checks](examples/16_predictive_check.probl), [sensor tracking](examples/17_sensor_tracking.probl) and [correlated losses](examples/18_correlated_losses.probl). The [use-case review](docs/use-case-gaps.md) describes what they can express today and which language improvements they motivate.
-
-Programs can also run from Rust, with the `probl` crate: the library the command line and the playground are built on. A run gives its text, as `probl run` prints it, and each report's numbers, with what's known about their accuracy. The command line is the `probl-cli` crate, which installs the `probl` command.
-
-```rust
-let craps = probl::compile("craps.probl", &source)?;
-let outcome = craps.run(&probl::Options::new())?;
-let win = outcome.report("win").unwrap().groups()[0].probability().unwrap();
-println!("{:?}, complete: {}", win.point(), win.is_complete());
-```
-
-`cargo run -p probl --example craps` runs a longer example ([crates/probl/examples/craps.rs](crates/probl/examples/craps.rs)).
-
-The playground runs the same engine in the browser, compiled to WebAssembly. Beside the editor are the language guide, with programs to run, and a reference. The editor completes names, describes them on hover, and goes to their definitions with Cmd-click or Ctrl-click. It needs [Bun](https://bun.sh), and Rust's WebAssembly target:
+To work on the playground, install [Bun](https://bun.sh), then:
 
 ```sh
 rustup target add wasm32-unknown-unknown
-cd web && bun install && bun run serve        # then open http://localhost:8000
-bun run test                                  # every example in Bun, then the page in headless Chrome
-```
-
-`bun run serve` builds the playground again whenever its sources change: the page's scripts and styles, the language overview, or the Rust crates and examples that make the WebAssembly module. The open page then reloads by itself, and keeps the program in the editor. A build that fails is reported in the terminal, and the page keeps the last one.
-
-It's deployed to Cloudflare Pages with wrangler. `bun run deploy` checks the credentials, creates the Pages project the first time, builds, and uploads `web/dist`. It needs two variables, from the environment or from `web/.env`, which git ignores:
-
-- `CLOUDFLARE_API_TOKEN`: an API token with the permission *Account · Cloudflare Pages · Edit*.
-- `CLOUDFLARE_ACCOUNT_ID`: the account's ID.
-- Optionally, `CLOUDFLARE_PAGES_PROJECT`, the project's name. It's `probl-playground` if unset.
-
-```sh
 cd web
-bun run deploy                                # production: the project's production branch, main
-bun run deploy --preview                      # a preview, named after the current git branch
-PROBL_URL=https://probl-playground.pages.dev bun test/page.mjs   # test the deployed page
+bun install --frozen-lockfile
+bun run serve
 ```
 
-- [Language overview](docs/language-overview.md): the model, the syntax, and a tour of the language
-- [Reference semantics](docs/semantics.md): the precise rules the engine follows
-- [Reading data](docs/data-input.md): CSV, JSON and lines, read with declared types, and its [design review](docs/data-input-review.md)
-- [Better inference](docs/inference-proposal.md): exact updates for conjugate priors, what a general method needs first, and its [design review](docs/inference-proposal-review.md)
-- [Complex values and quantum simulation](docs/quantum-and-complex.md): the implemented scalar foundation and a possible future quantum engine
-- [Playground plan](docs/playground-plan.md): Probl in the browser, what it took, and what's left
-- [Probl as a library](docs/library-proposal.md): the `probl` crate, for running programs from Rust, which the command line and the playground share
-- [Implementation plan](docs/implementation-plan.md): status, architecture, phases, testing and risks
-- [Project audit](docs/project-audit.md): the review that led to the reference semantics
-- [Benchmarks](docs/benchmarks.md): realistic models, what they cost, and what to build next (`cargo run --release -p probl-bench`)
-- [Examples](examples/): eighteen sample programs with their expected output, covering games, forecasts, calendars, decisions, monitoring and risk
+Open `http://localhost:8000`. See [playground development](docs/playground.md) for browser tests and deployment, [architecture](docs/architecture.md) for the crate layout and priorities, and the [documentation index](docs/README.md) for design notes and measured benchmarks.
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option.
+Licensed under either the [MIT license](LICENSE-MIT) or [Apache License, Version 2.0](LICENSE-APACHE), at your option (`MIT OR Apache-2.0`). Both permit commercial use under their terms.
+
+Probl is provided **“as is,” without warranty**. The licenses disclaim liability for damages arising from use of the software, subject to their terms and applicable law. Independently validate models and results before relying on them for financial or other consequential decisions. This notice summarizes the licenses; it does not add a restriction on use.
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.

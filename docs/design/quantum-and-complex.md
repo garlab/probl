@@ -4,7 +4,7 @@ Status: complex scalar values are implemented. Quantum states, gates and measure
 
 ## Why consider quantum simulation?
 
-Probl could combine a small quantum experiment with classical uncertainty about preparation, randomized protocols, measurement outcomes and inference. The existing [BB84 example](../examples/10_quantum_key.probl) encodes the probabilities for an intercept–resend model directly. It does not evolve amplitudes or simulate interference.
+Probl could combine a small quantum experiment with classical uncertainty about preparation, randomized protocols, measurement outcomes and inference. The existing [BB84 example](../../examples/10_quantum_key.probl) encodes the probabilities for an intercept–resend model directly. It does not evolve amplitudes or simulate interference.
 
 A separate state-vector simulator would be a manageable extension. Making arbitrary Probl programs execute as coherent quantum computations would be a much larger language-design project. A useful first experiment would cover Hadamard interference, phase shifts and Bell pairs, before committing to quantum syntax or hardware support.
 
@@ -16,7 +16,7 @@ Probl's `Weight`, `Dist`, `~`, `if`, `observe` and world merging continue to des
 
 The existing engine clears dead variables and merges worlds that agree on their live values. Reusing that rule for amplitudes could create interference when information is merely discarded. Discarding an entangled subsystem requires a partial trace, representable with density matrices or an appropriate classical ensemble. It is not addition of amplitudes based on the remaining variables. Sampling one classical path also does not retain coherent interference between paths.
 
-The [world representation](../crates/probl-engine/src/world.rs), [nonnegative weights](../crates/probl-engine/src/weight.rs) and [finite distributions](../crates/probl-engine/src/dist.rs) therefore remain separate from the [complex scalar kernel](../crates/probl-engine/src/complex.rs).
+The [world representation](../../crates/probl-engine/src/world.rs), [nonnegative weights](../../crates/probl-engine/src/weight.rs) and [finite distributions](../../crates/probl-engine/src/dist.rs) therefore remain separate from the [complex scalar kernel](../../crates/probl-engine/src/complex.rs).
 
 ## Implemented scalar design
 
@@ -27,7 +27,7 @@ The [world representation](../crates/probl-engine/src/world.rs), [nonnegative we
 - Signed zeros are canonicalized. Equality and hashing remain exact, never tolerance-based; approximate identity checks should use `abs(a - b) < tolerance`. `arg(0)` is zero by convention; a negative real value has argument +pi. Logarithms and roots respect this policy: `ln(complex(-1))` has imaginary part +pi and `sqrt(complex(-1))` is `complex(0, 1)`.
 - A purely real complex value compares numerically equal to the corresponding real number with `==`. Storage identity remains typed, as for existing int/float/prob values. Complex numbers have no mathematical ordering; the deterministic internal order for maps, support tables and hashing is not exposed as `<` or `>`.
 - Lists, records, maps, bags, functions, finite distributions, `sum` and `mean` accept complex values. The complex mean is a classical weighted arithmetic mean. Reports show complex outcomes as values, without applying real-valued quantiles or summary statistics. Variance and standard deviation remain real-valued APIs in this first version; callers can explicitly query real parts, imaginary parts or magnitudes.
-- Elementary roots, logs, exponentials, trigonometry and hyperbolic functions, including inverses, accept complex arguments and return principal values. Real arguments retain their real domains. Other logarithm branches remain explicit arithmetic: `ln(z) + complex(0, 2*pi*k)`. No multivalued execution mechanism is introduced; branch choices are not probabilistic alternatives. See [semantics](semantics.md) for the full branch conventions, singularities and numerical behavior.
+- Elementary roots, logs, exponentials, trigonometry and hyperbolic functions, including inverses, accept complex arguments and return principal values. Real arguments retain their real domains. Other logarithm branches remain explicit arithmetic: `ln(z) + complex(0, 2*pi*k)`. No multivalued execution mechanism is introduced; branch choices are not probabilistic alternatives. See [semantics](../semantics.md) for the full branch conventions, singularities and numerical behavior.
 - Rounding, integer functions, `atan2`, `hypot`, `ln_gamma`, `erf`, `erfc`, distribution parameters and probability checks remain real-only. Complex values cannot serve as conditions or weights, even with zero imaginary part.
 - There is no new `i` constant or imaginary-literal syntax. Programs can write `let i = complex(0, 1)`. Data-file formats are unchanged; read real and imaginary fields and construct values explicitly.
 

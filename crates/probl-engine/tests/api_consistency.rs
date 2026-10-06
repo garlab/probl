@@ -1,4 +1,4 @@
-//! Executable checks from docs/api-consistency-review.md (API-01 through API-09).
+//! Executable checks from docs/testing.md#api-regression-contracts (API-01 through API-09).
 //!
 //! All audit regressions are active. Design-choice checks reflect the agreed
 //! typed-identity, explicit population and sequence contracts.

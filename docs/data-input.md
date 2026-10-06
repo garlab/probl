@@ -1,10 +1,6 @@
 # Reading data from files and stdin
 
-> September 2026. Implemented. This started as a proposal, and a [design review](data-input-review.md) shaped what was built: [how the review was resolved](#how-the-review-was-resolved) is at the end. Two decisions frame it:
-> - A program declares the type of what it reads, and that type decides how the data is read.
-> - The language as a whole is statically typed, with inference ([implementation plan](implementation-plan.md), section 8).
-
-Models need data: a year of sales, a list of 300 cards, a pilot's daily sign-ups. The built-in `read` loads CSV, JSON and plain lines. The command `probl schema` suggests the types to read them with.
+> Implemented. The declared type controls how input is decoded. The host controls which sources may be read, and all inputs are validated before simulation. This guide describes the current contract; [the architecture](architecture.md) explains the compiler and runtime boundary.
 
 ## In two examples
 
@@ -68,7 +64,7 @@ tail -n +2 pilot.csv | cut -d, -f3 | probl run counts.probl   # with: let counts
   - `read` is the whole value of a `let` or `var` with a type annotation, at the top level of the program. Anywhere else it's a compile error.
   - The type is not a check made after reading. It decides how each value is read: the text `12` is an int in an `int` field and 12.0 in a `float` one, `007` stays `"007"` in a `str` field, and `Small` is a variant in a field of an enum type.
   - So the program, not the data, decides what the data means. A stray `2.5` or `n/a` is an error at the boundary, with its line number. It doesn't become a float or a string that fails later, somewhere in the model.
-- **The path is a string literal.** Data is read once, before the program runs, by whoever runs it: the command line, a test, later a playground. The engine never touches files. So `read("data_" + month + ".csv")` is a compile error.
+- **The path is a string literal.** Data is read once, before the program runs, by whoever runs it: the command line, a test, an embedding application or the playground. The engine never touches files. So `read("data_" + month + ".csv")` is a compile error.
 - **Relative paths are relative to the program's file**, so a model and its data move together (more under [Where data comes from](#where-data-comes-from)).
 - **Data is a constant.** Every world and every run sees the same value, as if it had been typed in. Reading data isn't evidence: to condition on it, `observe` it, as above.
 - **Standard input can be read only once in a program.** It can't be read at all in the REPL, where it's the session.
@@ -160,7 +156,7 @@ The command line runs your own programs, so its policy (`probl::LocalFiles`) is 
 - **Only regular files are read.** That's checked before opening, so a program can't make the command wait on a pipe or read a device.
 - **Standard input** (`-`) is read on a thread of its own, so `--timeout` ends a wait for data that doesn't come.
 
-The playground gives programs no files at all, only what users add, through `probl::MemoryFiles`. The same policy serves `run`, `check --data` and the REPL.
+The playground serves bundled example data from memory through a restricted `Files` provider around `probl::MemoryFiles`; it cannot open arbitrary local paths. Embedders can supply their own providers. The CLI applies its local-file policy consistently to `run`, `check --data` and the REPL.
 
 ## Limits
 
@@ -195,7 +191,7 @@ The values are loaded once, before the program runs, then shared, unchanged, by 
 - **`probl-engine`:** `data::load(program, resolver, snapshots, limits, cancel)` reads every input, through the host's resolver. It returns `Inputs`, which only `load` makes. The engine refuses to run a program whose inputs aren't loaded, or were loaded for another program.
   - The [`csv`](https://docs.rs/csv) crate splits CSV files, and [`serde_json`](https://docs.rs/serde_json) parses JSON, with correctly rounded floats. Probl's own layer does the typing, the strictness, the budgets and the error positions.
   - `data::suggest` is the guesser behind `probl schema`.
-- **`probl`:** `Program::load`, and the data as `Data`, which any number of runs can share; `LocalFiles`, the command line's policy; `MemoryFiles`; `Snapshots`, which keep what was read until they're cleared ([Probl as a library](library-proposal.md)).
+- **`probl`:** `Program::load`, and the data as `Data`, which any number of runs can share; `LocalFiles`, the command line's policy; `MemoryFiles`; `Snapshots`, which keep what was read until they're cleared ([Rust library](library.md)).
 - **`probl-cli`:** `--max-input`; `check --data`; `schema`; the REPL's snapshots and `:reload`; `--stats`.
 
 ## Tests
@@ -235,20 +231,9 @@ The values are loaded once, before the program runs, then shared, unchanged, by 
 - **Columns whose names can't be field names**, through an explicit mapping.
 - **The data in the summary line**, such as `sample · 50,000 runs · seed 11 · data pilot.csv (14 rows)`.
 
-## Decisions
+## Design decisions
 
-In the proposal's review:
-- The program declares the type of what it reads, and the type drives the reading. Nothing is guessed when running.
-- JSON is in the first version.
-- Names match ignoring case and punctuation, and undeclared columns are ignored.
-- An empty value is an error, except in a `str` field.
-- The language is statically typed, with inference; data is where a type must be written.
-
-From the design review, with the two questions the proposal left open:
-- `read` is the syntax for now, compiled into a manifest that hosts load through. Named inputs can come later without changing what programs mean.
-- Relative paths are relative to the program's file.
-
-## How the review was resolved
+The declared schema controls decoding; nothing is guessed when running. Names match ignoring case and punctuation, undeclared columns are ignored, and empty values are errors except in string fields. Input schemas are checked before loading even though some checks elsewhere in the language remain dynamic. `read` compiles into a manifest, and relative CLI paths resolve next to the program.
 
 1. **A complete, resolved schema.** Record types keep their fields' types, resolved after every type's name is known. The whole declared type is validated at compile time, through named records, with cycles handled. The format/type combinations are checked there too. Runtime checks of named records now check their fields as well. Inputs are validated bindings tied to the program's manifest, not a vector of values.
 2. **Read authority.** A host's `Resolver` decides what a path means and whether it may be read, and a program can't widen that. The command line's policy is documented above: regular files only, with standard input explicit.

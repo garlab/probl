@@ -1,14 +1,28 @@
 # Test coverage and quality
 
-Assessment: 4 October 2026, following the [API consistency review](api-consistency-review.md).
+Current test workflow and coverage gaps, October 2026.
 
 Probl has a substantial test suite, including an independent oracle. It does not yet provide enough assurance about how the expanding APIs compose. The recent bugs are evidence of that gap: individual functions can be exercised while their shared contracts remain untested. A larger test count or a high line-coverage percentage alone would not establish that the answers are correct.
 
-No instrumented coverage percentage has been measured for this assessment. The repository has no coverage-reporting CI job, and `cargo-llvm-cov` and LLVM coverage tools were not installed in this environment. The recommendations below are proposed tooling additions; no new testing tool has been installed.
+The repository does not publish an instrumented coverage baseline. The current CI workflow has no coverage, browser or mutation-testing job. The tooling additions below are proposals, not existing quality gates.
 
-## Executable checks from the audit
+## Run the checks
 
-[api_consistency.rs](../crates/probl-engine/tests/api_consistency.rs) contains 51 checks, each registered separately for enumeration and sampling: **102 active tests**. All nine numbered findings are fixed; none of these regressions is ignored.
+From the repository root:
+
+```sh
+cargo fmt --all --check
+cargo clippy --all-targets -- -D warnings
+cargo test --all
+```
+
+For the actual WASM module and browser, install Bun, the Rust WASM target and a browser, then follow the [playground test commands](playground.md#tests). These checks are separate from `cargo test`.
+
+Generated tests can run larger budgets through `PROBL_ORACLE_CASES`, `PROBL_SAMPLING_CASES`, `PROBL_FUZZ_CASES`, `PROBL_DATA_CASES`, `PROBL_CHAIN_CASES`, `PROBL_RECURSION_CASES` and `PROBL_CONJUGATE_CASES`. Record seeds and preserve minimized failing programs as regressions.
+
+## API regression contracts
+
+[api_consistency.rs](../crates/probl-engine/tests/api_consistency.rs) registers the original manual checks separately for enumeration and sampling. All nine numbered findings are fixed; none of these regressions is ignored.
 
 ```sh
 # Run every original audit regression in both modes.
@@ -40,27 +54,15 @@ The agreed contracts are now explicit: incomplete scalar probability queries rej
 
 Both modes use deterministic queries, a pinned date, and a fixed sampling seed. The sampling cases test API behavior, not statistical convergence. Assertions inspect returned values and raw bounds. Tiny-tail tests use relative error and require positive mass; probability range checks have no tolerance. Ordinary approximate arithmetic uses a scale-aware tolerance, so it does not require accidental bit-for-bit agreement after distribution normalization.
 
-Validation when the audit tests were first added: `cargo test --all` passed with 470 passing tests and 50 ignored; `cargo clippy --all-targets -- -D warnings` passed. Explicitly running the ignored audit cases produced 50 expected failures and no compile-error failures. These figures count registered test cases, including separate execution modes, not distinct bugs or generated inputs.
-
 [integer_conversion.rs](../crates/probl-engine/tests/integer_conversion.rs) adds checks in both modes for exact contextual conversion, declared boundaries, recursive containers, indexing and defaults, integer arguments, date/range/count operations, fractional rejection, probabilistic errors, large values and resource limits. Native/WASM fixtures also exercise this contract.
 
-Validation after fixing API-03 and API-09: `cargo test --all` passed with **499 passing tests and 44 ignored known failures**. The integer-conversion suite contributes 23 tests, and six audit tests were enabled. Clippy, formatting, native/WASM builds, and the native/WASM parity suite all passed.
+[ordering.rs](../crates/probl-engine/tests/ordering.rs) covers custom comparators, stable ties in both directions, callback errors and effects (including print visibility to caching and draw scheduling), work limits, bounded behavior for inconsistent comparators, nested numeric order statistics, singleton validation, tiny positive tails and adjacent representable probabilities around mass boundaries. The same API has native/WASM fixtures.
 
-[ordering.rs](../crates/probl-engine/tests/ordering.rs) adds 26 tests covering custom comparators, stable ties in both directions, callback errors and effects (including print visibility to caching and draw scheduling), work limits, bounded behavior for inconsistent comparators, nested numeric order statistics, singleton validation, tiny positive tails and adjacent representable probabilities around mass boundaries. The same API has native/WASM fixtures.
+[api_contracts.rs](../crates/probl-engine/tests/api_contracts.rs) covers unresolved finite/continuous mixtures, sub-epsilon tails through lifting, the typed key/outcome matrix, probability bounds, relative-weight scaling, representable large moments, overflow and singularity rejection, direct range statistics, bigint ranks, Unicode lookup and resource limits. A unit test separately distinguishes permissible computed-probability roundoff from invalid results. The native/WASM fixture exercises the same contracts.
 
-Validation after comparator sorting and the API-01/API-08 fixes: `cargo test --all` passed with **537 passing tests and 32 ignored known failures**. Twelve audit tests were enabled. Clippy, formatting, native/WASM builds, and the native/WASM parity suite all passed.
+[min_max.rs](../crates/probl-engine/tests/min_max.rs) tests the separate candidate, collection and distribution extrema contracts. They cover comparator selection and stable ties, independent recipes versus correlated draws, exact support bounds, unresolved/unbounded rejection, required top-n counts, callback validation/effects, explicit seeded reduction and work limits. [function_values.rs](../crates/probl-engine/tests/function_values.rs) tests named/builtin references, captures, declared boundaries, arities, probabilistic calls, callback restrictions and print-aware caching/draw scheduling. Most cases run in both inference modes. These enforce the separate candidate, collection and distribution contracts.
 
-[api_contracts.rs](../crates/probl-engine/tests/api_contracts.rs) adds 25 tests across unresolved finite/continuous mixtures, sub-epsilon tails through lifting, the typed key/outcome matrix, probability bounds, relative-weight scaling, representable large moments, overflow and singularity rejection, direct range statistics, bigint ranks, Unicode lookup and resource limits. A unit test separately distinguishes permissible computed-probability roundoff from invalid results. The native/WASM fixture exercises the same contracts.
-
-Validation after fixing the remaining findings and settling the design choices: `cargo test --all` passed with **595 passing tests and zero ignored tests**. All 32 formerly ignored audit cases were enabled; 26 new tests were added. Clippy with warnings denied, formatting, native/WASM builds and native/WASM parity all passed. No golden outputs needed updating.
-
-[min_max.rs](../crates/probl-engine/tests/min_max.rs) now contains ten tests for the separate candidate, collection and distribution extrema contracts. They cover comparator selection and stable ties, independent recipes versus correlated draws, exact support bounds, unresolved/unbounded rejection, required top-n counts, callback validation/effects, explicit seeded reduction and work limits. [function_values.rs](../crates/probl-engine/tests/function_values.rs) adds seven tests for named/builtin references, captures, declared boundaries, arities, probabilistic calls, callback restrictions and print-aware caching/draw scheduling. Most cases run in both inference modes. These replace the earlier seven list-lifting tests with the newly agreed API.
-
-Validation after the extrema split and function values: **612 tests pass with zero ignored tests**. Clippy with warnings denied, formatting, native/WASM builds and native/WASM parity pass. The examples and their parser/lowering snapshots use `minimum`/`maximum`; their golden results are unchanged. At that point, reduction still required an explicit initial value.
-
-[reduction_defaults.rs](../crates/probl-engine/tests/reduction_defaults.rs) adds 22 tests for `reduce(xs, f, initial?)` and extrema defaults. It covers empty/filtered/singleton collections, left-fold order, callback validation and effects, distribution lifting and independence, named defaults through aliases, malformed keywords, eager evaluation order, and print-aware optimization. The former `reduce(xs, initial, f)` call sites are migrated; there is no automatic argument-order detection. Defaults apply only to empty extrema collections and do not compete with existing elements or hide invalid distributions.
-
-Validation after optional reduction seeds and named extrema defaults: **634 tests pass with zero ignored tests**. Formatting, Clippy with warnings denied, native/WASM builds, and native/WASM parity all pass.
+[reduction_defaults.rs](../crates/probl-engine/tests/reduction_defaults.rs) tests `reduce(xs, f, initial?)` and extrema defaults. It covers empty/filtered/singleton collections, left-fold order, callback validation and effects, distribution lifting and independence, named defaults through aliases, malformed keywords, eager evaluation order, and print-aware optimization. The former `reduce(xs, initial, f)` call sites are migrated; there is no automatic argument-order detection. Defaults apply only to empty extrema collections and do not compete with existing elements or hide invalid distributions.
 
 The existing shared `close` helper uses absolute error below `1e-9`. That is suitable for some moderate-size values, but would accept zero for a `1e-13` tail and would miss a small violation of `[0,1]`. Choose assertions according to the property rather than applying one tolerance everywhere.
 
@@ -87,7 +89,7 @@ This closes a concrete automation gap before adding another test framework. Buil
 
 ### 2. Measure coverage with cargo-llvm-cov
 
-Use [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) to publish a browsable line/region coverage artifact. Its current branch coverage is optional and requires nightly; stable line/region reporting is a useful starting point. Start with visibility, then set per-area expectations after measuring a baseline. Avoid an arbitrary global percentage that can be increased by low-value assertions.
+Use [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) to publish a browsable line/region coverage artifact. Stable line/region reporting is a useful starting point; consult the tool's documentation for optional branch-coverage requirements. Start with visibility, then set per-area expectations after measuring a baseline. Avoid an arbitrary global percentage that can be increased by low-value assertions.
 
 Proposed local setup and baseline command:
 

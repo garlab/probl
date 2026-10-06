@@ -1,5 +1,5 @@
 // The Probl playground: an editor, and Probl's engine in WebAssembly,
-// running in workers so the page stays responsive (docs/playground-plan.md).
+// running in workers so the page stays responsive (docs/playground.md).
 //
 // Two workers share the compiled module: the checker checks the program as
 // it's edited, and the runner runs it. Stopping a run ends the runner's

@@ -1,6 +1,6 @@
 //! What each report says, as numbers. The renderer formats these, and the
 //! `probl` library gives them to programs that embed Probl, so the two can't
-//! disagree (docs/library-proposal.md).
+//! disagree (docs/library.md).
 
 use super::{Acc, Format, Sink, summary_quantile};
 use crate::continuous::Mixture;

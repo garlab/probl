@@ -1,10 +1,10 @@
-# Proposal: better inference for forecasts with data
+# Inference: exact updates and remaining limits
 
-> Revised September 2026 after the [review](inference-proposal-review.md), which found part 1 sound and part 2 underspecified. Part 1, exact updates for conjugate priors, is built: [semantics](semantics.md) §14 has its rules, and the [benchmarks](benchmarks.md#since-exact-updates-for-conjugate-priors) its effect. Part 2, a general method, is deferred: its specification needs the four things listed in section 2 before anything is built. This is the next step of the [implementation plan](implementation-plan.md) (section 9), and answers the [project audit](project-audit.md)'s finding D4 for what's built.
+> Exact updates for supported conjugate priors are implemented in sample mode. General MCMC and particle inference are not implemented. The [semantics](semantics.md#14-sampling) defines the estimators; [benchmarks](benchmarks.md#since-exact-updates-for-conjugate-priors) records their measured effect.
 
 ## The problem
 
-Sampling today is likelihood weighting. Each run draws every unknown from its prior and is weighted by how well that explains the data. As data accumulates, fewer and fewer runs carry the weight:
+Without conjugate updates, sampling uses likelihood weighting: each run draws unknowns from their priors and is weighted by how well they explain the data. The following measurements record that baseline before exact updates were added. As data accumulates, fewer and fewer runs carry the weight:
 
 | Model | Runs | Worth (effective sample size) |
 |---|--:|--:|
@@ -12,16 +12,16 @@ Sampling today is likelihood weighting. Each run draws every unknown from its pr
 | the same, 120 days | 100,000 | 211 |
 | example 08, 14 days of sign-ups | 200,000 | 30,933 |
 
-With more unknowns it collapses exponentially. The evidence estimate stays unbiased, but posterior probabilities and means are ratios of weighted sums, which are biased at any finite number of runs. When few runs carry the weight, both the estimates and their standard errors become unreliable (semantics §14), and the tails drift first: in `ab_test`, the 5% quantile of the lift is 5.92 against the exact 6.34. Now that models read real data (`read`), this is the main limit on forecasting with Probl.
+With more unknowns and concentrated evidence, the effective sample size can deteriorate severely. The evidence estimate stays unbiased, but posterior probabilities and means are ratios of weighted sums, which are biased at any finite number of runs. When few runs carry the weight, both the estimates and their standard errors become unreliable (semantics §14), and the tails drift first: in `ab_test`, the 5% quantile of the lift is 5.92 against the exact 6.34. This remains a limit for non-conjugate models; supported conjugate observations use the updates below.
 
 ## Decisions
 
-The review settled the first draft's open questions:
+The implementation and remaining research follow these decisions:
 
-1. **Exact updates are on by default when sampling**, once differential tests pass, with an explicit opt-out for diagnosis and benchmarking: `probl run --no-conjugate`. `--stats` shows, for each variable, how many of its draws were delayed, how many observations updated it exactly, and how many times it was drawn.
+1. **Exact updates are on by default when sampling**, with an explicit opt-out for diagnosis and benchmarking: `probl run --no-conjugate`. `--stats` shows, for each variable, how many of its draws were delayed, how many observations updated it exactly, and how many times it was drawn.
 2. **The general method waits for a concrete benchmark.** A non-conjugate model is chosen first, and the method is specified against it, whether trace Metropolis–Hastings, particles with moves, or something else. Particles wait for a model with a continuous hidden state that changes over time.
-3. **When it comes, the mode is called `mcmc`**, and its output names the actual algorithm. Warmup and retained draws are separate settings with explicit counts, and all tuning stops after warmup. Default counts are starting settings, not evidence of convergence.
-4. **Part 1 ships alone**, without committing to a design that combines it with MCMC.
+3. **A future MCMC mode must name its actual algorithm.** The proposed spelling is `mcmc`; it is not accepted as an implemented mode. Warmup and retained draws need separate settings, with tuning stopped after warmup. Default counts cannot establish convergence.
+4. **Exact updates are implemented independently**, without committing to a design that combines them with MCMC.
 
 ## 1. Exact updates for conjugate priors
 
@@ -53,7 +53,7 @@ With Probl's parameters, `beta(α, β)`, `gamma(shape, scale)` and `normal(mean,
 | Prior of `x` | Observation | Posterior | The weight multiplies by |
 |---|---|---|---|
 | `beta(α, β)` | `observe k from binomial(n, x)` | `beta(α + k, β + n − k)` | the beta-binomial probability C(n, k) B(α + k, β + n − k) / B(α, β) |
-| `beta(α, β)` | `observe v from bernoulli(x)`, or `observe bernoulli(x)` (v is `true`) | `beta(α + 1, β)` if v is `true`, `beta(α, β + 1)` if `false` | α / (α + β), or β / (α + β) |
+| `beta(α, β)` | `observe v from bernoulli(x)`, with boolean `v` | `beta(α + 1, β)` if v is `true`, `beta(α, β + 1)` if `false` | α / (α + β), or β / (α + β) |
 | `gamma(s, θ)` | `observe k from poisson(x)` | `gamma(s + k, θ / (1 + θ))` | the negative-binomial probability Γ(s + k) / (Γ(s) k!) · (θ / (1 + θ))ᵏ · (1 + θ)⁻ˢ |
 | `normal(μ, σ)` | `observe y from normal(x, τ)` | `normal(μ + g (y − μ), σ τ / √(σ² + τ²))`, with g = σ² / (σ² + τ²) | the normal density of `y`, with mean μ and standard deviation √(σ² + τ²) |
 
@@ -93,7 +93,7 @@ Other pairs can come later (gamma–exponential, Dirichlet–categorical, normal
   - The normal update uses √(σ² + τ²) computed without overflow, and the gain form of the posterior mean.
 - **Every constant counts.** Observations update one at a time, never aggregated, so the evidence keeps every normalizing constant, like the binomial coefficients.
 
-### Building it
+### Implementation
 
 - **`probl-sema`:** an analysis of the lowered program. It finds the variables whose draws may be delayed, the conjugate observations, and for every statement the delayable variables it reads.
 - **`probl-engine`:**
@@ -106,7 +106,7 @@ Other pairs can come later (gamma–exponential, Dirichlet–categorical, normal
 
 ### Tests
 
-The review's acceptance checks, for part 1:
+The conjugate suites check the following; see [testing](testing.md) for commands:
 
 - **Formulas:** posteriors and marginals against closed forms and numerical integration, including extremes: the −4234.10 case, long sequences of observations, impossible counts, and densities above 1.
 - **Evidence:** a model whose observations are all exact updates gives the analytic evidence of the whole data set, with every run weighted the same.
@@ -120,28 +120,28 @@ The review's acceptance checks, for part 1:
 
 Models that aren't conjugate still need a method whose runs aren't independent draws from the prior. They include lognormal priors, `a to b` estimates, hierarchical models and regressions. The first draft proposed lightweight Metropolis–Hastings over a run's random choices ([Wingate et al., 2011](https://proceedings.mlr.press/v15/wingate11a.html)), in an `@mode mcmc(…)`. The review found that it described a family of algorithms rather than one. Before a general method is built, its specification needs:
 
-1. **A target and every term of the acceptance ratio** (F1):
+1. **A target and every term of the acceptance ratio**:
    - the unnormalized density of a run's choices and observations;
    - site selection when the number of sites changes;
    - value proposals, with their Jacobians on transformed scales;
    - regenerated choices, and reused choices rescored when their distribution changes.
 
    Every source of randomness needs an address that stays the same through loops, calls, recursion and moved draws. That covers `~`, but also probabilistic `if`, `chance`, bag draws and direct count draws. Detailed balance is checked exactly on tiny models whose runs make different numbers of choices.
-2. **Its state, with exact updates** (F2). Either MCMC doesn't use exact updates at first, or its target collapses them explicitly. The collapsed target must say how a delayed variable is drawn for output, including in models with no other choices and variables drawn on one branch only.
-3. **Reachability and initialization** (F3):
+2. **Its state, with exact updates**. Either MCMC doesn't use exact updates at first, or its target collapses them explicitly. The collapsed target must say how a delayed variable is drawn for output, including in models with no other choices and variables drawn on one branch only.
+3. **Reachability and initialization**:
    - Single-choice moves can't get from `(false, false)` to `(true, true)` under `observe a == b`, so hard constraints are either rejected or given moves that connect them, such as whole-run proposals.
    - Finding a first run with positive weight needs a budget, and a diagnostic that tells failing to start apart from impossible evidence.
    - R̂ isn't a substitute for reachability.
-4. **Report estimators and their errors** (F4):
+4. **Report estimators and their errors**:
    - **Estimators:** the ratio estimators Σaₜ / Σbₜ over retained runs, with a rejection repeating the previous run, and output buffered per run and committed when accepted.
    - **Standard errors:** a long-run variance estimator with minimum batch lengths, not a fixed 20 batches.
    - **Diagnostics tied to quantities:** rank-normalized split R̂, bulk and tail effective sample sizes. They're tested on slow-mixing, short, constant and multimodal cases.
 
 Particles (sequential Monte Carlo) would need the same kind of contract: where to resample when branches observe different things, and errors that account for shared ancestry.
 
-## The audit's checklist (D4), for what's built
+## Boundaries retained by exact updates
 
 1. **Merged samples need statistical bookkeeping.** Exact updates don't merge runs. Runs stay independent, so section 14's per-run standard errors apply.
-2. **Nested `simulate` in decisions.** Unchanged: `simulate` is computed exactly, by enumeration, in every mode. A delayed variable is drawn before a `simulate` block captures it.
-3. **Resampling and mode changes need boundaries.** Nothing resamples, and there's no `auto` mode. A delayed variable is updated at the observation itself.
+2. **Nested `simulate` in decisions.** Unchanged: `simulate` enumerates in every mode, with the usual rounding and unresolved-mass accounting. A delayed variable is drawn before a `simulate` block captures it.
+3. **Resampling and mode changes need boundaries.** Nothing resamples; `auto` currently selects enumeration rather than adapting the inference method. A delayed variable is updated at the observation itself.
 4. **An inference context.** The batch runner owns the randomness (a stream per batch), the budgets, and the results' metadata (the effective sample size, the evidence and its error). Exact updates add a second way for an observation to change a run: a weight and a posterior, instead of a weight alone. A general method will get its own context when it's specified.

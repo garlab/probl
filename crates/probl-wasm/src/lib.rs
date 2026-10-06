@@ -1,5 +1,5 @@
 //! Probl compiled to WebAssembly, for the playground in the browser
-//! (docs/playground-plan.md).
+//! (docs/playground.md).
 //!
 //! The functions take and give JSON text: [`check`] gives a program's
 //! diagnostics, [`run`] runs it with the playground's limits, and

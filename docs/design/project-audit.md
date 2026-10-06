@@ -1,4 +1,6 @@
-**Probl — language design and architecture audit**
+# Original language design and architecture audit
+
+> Historical review of the revision named below. Findings and reproductions describe that revision, not the current release. The [resolution map](../architecture.md#original-audit-resolution-map) records the resulting changes; consult the [current semantics](../semantics.md) for the language contract. This document preserves design rationale and prior art, and is not a fresh security assessment. Source links locate files in the current tree; inspect the reviewed implementation with `git show 6d0557a:<path>`.
 
 Reviewed on 26 September 2026 against commit `6d0557a` (workspace version `0.0.1`). The review covers the language proposal, implementation plan, examples, compiler pipeline, runtime, reporting, and tests. Design findings come first; implementation findings are restricted to semantic architecture, numerical reliability, and security boundaries.
 
@@ -21,7 +23,7 @@ Reviewed on 26 September 2026 against commit `6d0557a` (workspace version `0.0.1
 
 **D1 — Separate events, probability parameters, and distributions.**
 
-The [chances-and-facts design](language-overview.md#chances-and-facts) deliberately gives `and` and `or` the algebra of independent trials. This is internally understandable, but familiar logical syntax now accepts formulas with very unfamiliar meanings:
+The [chances-and-facts design](../semantics.md#2-events-and-identity) deliberately gives `and` and `or` the algebra of independent trials. This is internally understandable, but familiar logical syntax now accepts formulas with very unfamiliar meanings:
 
 ```probl
 let p = 30%
@@ -45,17 +47,17 @@ report q and q as "float rates"    # confirmed: 41.00%
 
 For a model that first chooses a 10% or 90% success rate and then performs two independent trials with that shared rate, the answer is `0.5 × 0.1² + 0.5 × 0.9² = 0.41`. In the first version, `simulate` collapses to 50%, and `~` then draws a Boolean fact. Merely writing percentages changes the model. Likewise, `let x ~ (30% * 1); report x and x` produces 9%, because arithmetic returns a float and drawing a float leaves it unchanged; drawing `30%` produces a fact and gives 30%.
 
-This ambiguity also escapes into pattern matching. A `match` over `let x = d6` with arms for all six faces fails with “no arm ... matches”. Adding a wildcard gives that impossible “other” outcome **33.49%**: each successive equality compares a fresh independent die. Pattern alternatives use probabilistic `or` as well. This is a missing semantic boundary, not just a missing exhaustiveness check. See [pattern lowering](../crates/probl-sema/src/lower.rs#L1255).
+This ambiguity also escapes into pattern matching. A `match` over `let x = d6` with arms for all six faces fails with “no arm ... matches”. Adding a wildcard gives that impossible “other” outcome **33.49%**: each successive equality compares a fresh independent die. Pattern alternatives use probabilistic `or` as well. This is a missing semantic boundary, not just a missing exhaustiveness check. See [pattern lowering](../../crates/probl-sema/src/lower.rs).
 
 **Suggested improvement:** introduce distinct `bool`, `prob`, and `dist[T]` meanings now. Make `simulate` preserve its result type, including `dist[prob]`; make Bernoulli conversion explicit, for example `bernoulli(p)`. Reserve logical operators and pattern tests for facts. Probl can retain convenient probabilistic branching through `chance` or explicitly specified `if prob` sugar. If independent-chance algebra remains, expose it through deliberately named operations and reject its accidental use in patterns. Require `match` subjects to be settled values, or define one explicit draw for the whole match.
 
-Move the minimal type/effect checks needed for those rules ahead of the full type-checker milestone. Currently even `let p: prob = "not a probability"` passes `probl check`; annotations are discarded during [binding lowering](../crates/probl-sema/src/lower.rs#L500). A complete type system can wait, but silently accepting contracts the language does not enforce makes these mistakes harder to detect.
+Move the minimal type/effect checks needed for those rules ahead of the full type-checker milestone. Currently even `let p: prob = "not a probability"` passes `probl check`; annotations are discarded during [binding lowering](../../crates/probl-sema/src/lower.rs). A complete type system can wait, but silently accepting contracts the language does not enforce makes these mistakes harder to detect.
 
 Relevant prior art: [ProbLog's coin model](https://dtai.cs.kuleuven.be/problog/tutorial/basic/01_coins.html) gives random facts explicit identities; [WebPPL conditioning](https://webppl.readthedocs.io/en/master/inference/conditioning.html) distinguishes sampled values, conditions, and likelihood factors. These offer useful semantic distinctions without requiring Probl to copy their syntax.
 
 **D2 — Define accuracy at the query, after conditioning.**
 
-The [execution-mode table](language-overview.md#8-execution-modes) promises exact answers with unresolved mass and bounds from beam pruning. A bound on discarded *prior* weight does not generally bound the error in a normalized posterior. Evidence can make a discarded rare world dominate the answer.
+The [execution-mode table](../language-overview.md#8-execution-modes) promises exact answers with unresolved mass and bounds from beam pruning. A bound on discarded *prior* weight does not generally bound the error in a normalized posterior. Evidence can make a discarded rare world dominate the answer.
 
 Confirmed example, with a deliberately visible tolerance:
 
@@ -74,7 +76,7 @@ P(win | evidence) = 0.005 / (0.005 + 0.995 × 0.00001)
                   ≈ 99.80%
 ```
 
-Thus the unresolved number must not be interpreted as ±1 percentage point on the result. The same issue exists at the default tolerance for sufficiently rare evidence. The engine checks absolute weight before executing a [loop body](../crates/probl-engine/src/interp.rs#L327), even for bounded loops. `observe 1e-13; repeat 0 { }; report true` reports “never reached”, whereas removing the empty loop reports 100%. A harmless structural edit can discard the entire posterior.
+Thus the unresolved number must not be interpreted as ±1 percentage point on the result. The same issue exists at the default tolerance for sufficiently rare evidence. The engine checks absolute weight before executing a [loop body](../../crates/probl-engine/src/interp.rs), even for bounded loops. `observe 1e-13; repeat 0 { }; report true` reports “never reached”, whereas removing the empty loop reports 100%. A harmless structural edit can discard the entire posterior.
 
 A small missing mass also cannot bound a mean or variance without bounds on the omitted values. A very rare, very large loss can dominate expected cost. Future continuous likelihoods make the issue harder: densities can exceed one, so a bound on prior mass need not bound discarded evidence weight at all.
 
@@ -93,7 +95,7 @@ Confirmed behaviors:
 - `let d = simulate { observe 10%; 1 }; report d` prints `evidence 100.00%`. The nested observation is locally normalized, but sets a global “observed” flag. The output does not identify which evidence it describes.
 - `observe false; report true` exits successfully with “never reached”. There is no posterior under impossible evidence; this needs a distinct result from ordinary unreachable control flow.
 
-The relevant architecture is the [global observation flag and observation execution](../crates/probl-engine/src/interp.rs#L370), [local normalization in `simulate`](../crates/probl-engine/src/interp.rs#L691), [header construction](../crates/probl-engine/src/lib.rs#L100), and [report accumulators](../crates/probl-engine/src/report.rs#L11).
+The relevant architecture is the [global observation flag and observation execution](../../crates/probl-engine/src/interp.rs), [local normalization in `simulate`](../../crates/probl-engine/src/interp.rs), [header construction](../../crates/probl-engine/src/lib.rs), and [report accumulators](../../crates/probl-engine/src/report.rs).
 
 **Suggested improvement:** define a model execution as an unnormalized measure plus an evidence normalizer, termination information, and diagnostics. Define exactly where normalization occurs. Ordinary calls should compose the unnormalized measure; an inference operation should explicitly return a normalized distribution and its own metadata. Scope observations and unresolved mass to that operation.
 
@@ -103,7 +105,7 @@ For forecasting, replace the universal phrase “probability of the evidence” 
 
 **D4 — Specify estimator semantics before adding sampling and particles.**
 
-This is a risk in the [planned policies and reporting architecture](implementation-plan.md#35-policies-one-interpreter-four-engines), not a claim that an existing sampler is wrong. Exact state merging preserves a weighted measure; preserving Monte Carlo error estimates needs additional information.
+This is a risk in the [planned policies and reporting architecture](../architecture.md#sampling-and-reproducibility), not a claim that an existing sampler is wrong. Exact state merging preserves a weighted measure; preserving Monte Carlo error estimates needs additional information.
 
 Three decisions need to precede implementation:
 
@@ -119,7 +121,7 @@ The planned `split/draw/after_join` interface does not yet expose enough context
 
 The README's suggestion that games stay small because worlds merge is too broad. Merging helps only when histories become observationally indistinguishable for the remaining computation. Keeping a hand, a trajectory, or many independent latent variables can preserve exponentially many states. Requesting a distribution of duration can make the relevant state unbounded even when the board itself is finite.
 
-The current [loop interpreter](../crates/probl-engine/src/interp.rs#L327) unrolls until an epsilon or iteration limit; it does not solve recurrent transition equations. [Function calls](../crates/probl-engine/src/interp.rs#L465) reject re-entry with identical arguments. Consequently, the almost-surely terminating function `fn f() { if 50% { 1 } else { f() } }` is unsupported even though a corresponding loop can be approximated. Rational arithmetic alone would not make an infinitely unrolled craps computation return a mathematically exact finite fraction.
+The current [loop interpreter](../../crates/probl-engine/src/interp.rs) unrolls until an epsilon or iteration limit; it does not solve recurrent transition equations. [Function calls](../../crates/probl-engine/src/interp.rs) reject re-entry with identical arguments. Consequently, the almost-surely terminating function `fn f() { if 50% { 1 } else { f() } }` is unsupported even though a corresponding loop can be approximated. Rational arithmetic alone would not make an infinitely unrolled craps computation return a mathematically exact finite fraction.
 
 **Suggested improvement:** describe performance in terms of live state, requested queries, and support size. Expose estimates of distribution support, merge ratios, and which values keep states apart. Keep enumeration as the initial backend. For a supported finite-state subset, consider solving strongly connected components as absorbing Markov chains, including reachability and expected rewards. Use a symbolic backend only where benchmark structure justifies it.
 
@@ -135,7 +137,7 @@ This is a modeling risk rather than an implementation defect: the constructors a
 
 **I1 — Replace the numerical “exactness” claim with an enforceable contract.**
 
-All current [world weights](../crates/probl-engine/src/world.rs#L11) and [distribution weights](../crates/probl-engine/src/dist.rs#L13) are `f64`. `--fractions` changes rendering only: [fraction reconstruction](../crates/probl-engine/src/report.rs#L318) searches for a nearby fraction with denominator at most one million. It is not the `BigRational` engine described in the plan.
+All current [world weights](../../crates/probl-engine/src/world.rs) and [distribution weights](../../crates/probl-engine/src/dist.rs) are `f64`. `--fractions` changes rendering only: [fraction reconstruction](../../crates/probl-engine/src/report.rs) searches for a nearby fraction with denominator at most one million. It is not the `BigRational` engine described in the plan.
 
 Confirmed example:
 
@@ -147,10 +149,10 @@ Running with `--fractions` prints `33.33% (1/3)`. That finite decimal is not exa
 
 Missing-mass bookkeeping also fails to compose consistently. Source findings:
 
-- [`ops::combine`](../crates/probl-engine/src/ops.rs#L28) discards its `missing` argument when results are probabilities. Thus comparing a truncated distribution can produce a plain probability with no associated uncertainty.
-- [`Dist::pool`](../crates/probl-engine/src/dist.rs#L156) returns the input die's missing mass for any roll count. For independent draws with missing mass `m`, the omitted pool mass is `1 - (1-m)^count`, not `m`.
-- [`Dist::mean` and `quantile`](../crates/probl-engine/src/dist.rs#L203) normalize retained support; [report accumulation](../crates/probl-engine/src/report.rs#L22) expands a distribution without recording its missing mass. Different query paths therefore hide or handle tails differently.
-- [`simulate`](../crates/probl-engine/src/interp.rs#L691) normalizes return weights and constructs the result with zero missing mass, while adding truncation to a global counter. This detaches the distribution value from the approximation that created it.
+- [`ops::combine`](../../crates/probl-engine/src/ops.rs) discards its `missing` argument when results are probabilities. Thus comparing a truncated distribution can produce a plain probability with no associated uncertainty.
+- [`Dist::pool`](../../crates/probl-engine/src/dist.rs) returns the input die's missing mass for any roll count. For independent draws with missing mass `m`, the omitted pool mass is `1 - (1-m)^count`, not `m`.
+- [`Dist::mean` and `quantile`](../../crates/probl-engine/src/dist.rs) normalize retained support; [report accumulation](../../crates/probl-engine/src/report.rs) expands a distribution without recording its missing mass. Different query paths therefore hide or handle tails differently.
+- [`simulate`](../../crates/probl-engine/src/interp.rs) normalizes return weights and constructs the result with zero missing mass, while adding truncation to a global counter. This detaches the distribution value from the approximation that created it.
 
 Repeated observations also multiply ordinary floating-point weights directly. Underflow can erase evidence even when no approximation was intended. Scheduling log-space weights only for future sampling leaves the present conditioned enumeration path vulnerable.
 
@@ -175,7 +177,7 @@ report read_x() + if true { x = 2; 0 } else { 0 }
 # confirmed: 1
 ```
 
-The first operand is delayed when it is a slot read but evaluated earlier when it is a call. Similarly, `[x, { x = 2; x }]` produces `[2, 2]`. The proposal does not specify a complete evaluation-order contract, so the immediate design obligation is to choose one; the current mixture is a compiler architecture problem regardless of whether left-to-right order is chosen. See [binary lowering](../crates/probl-sema/src/lower.rs#L1502) and [collection expression lowering](../crates/probl-sema/src/lower.rs#L1371).
+The first operand is delayed when it is a slot read but evaluated earlier when it is a call. Similarly, `[x, { x = 2; x }]` produces `[2, 2]`. The proposal does not specify a complete evaluation-order contract, so the immediate design obligation is to choose one; the current mixture is a compiler architecture problem regardless of whether left-to-right order is chosen. See [binary lowering](../../crates/probl-sema/src/lower.rs) and [collection expression lowering](../../crates/probl-sema/src/lower.rs).
 
 Memoization has the related assumption that every function is observationally pure. Yet `print` is allowed inside functions:
 
@@ -184,7 +186,7 @@ fn f() { print("called"); 1 }
 repeat 2 { let x = f() }
 ```
 
-This prints once normally and twice with `--no-memo`. Read-only captures prevent external variable mutation, but do not eliminate diagnostic, observation, or inference effects. The engine's [memoized call summaries](../crates/probl-engine/src/interp.rs#L465) contain return weights and unresolved mass, while [printing](../crates/probl-engine/src/interp.rs#L741) happens immediately.
+This prints once normally and twice with `--no-memo`. Read-only captures prevent external variable mutation, but do not eliminate diagnostic, observation, or inference effects. The engine's [memoized call summaries](../../crates/probl-engine/src/interp.rs) contain return weights and unresolved mass, while [printing](../../crates/probl-engine/src/interp.rs) happens immediately.
 
 **Suggested improvement:** specify operand order, then lower operands to stable temporaries whenever later evaluation can change what they read. Use effect information for state mutation, sampling, scoring, nested inference, and diagnostics. Memoize only the effects represented faithfully by the call summary; either replay debug events with caller weights or explicitly define debug output as cache-dependent. Do not infer “pure” from read-only captures or from a call happening to return one outcome. This also provides the foundation for the restrictions recommended in D1 and the inference scopes in D3.
 
@@ -192,7 +194,7 @@ This prints once normally and twice with `--no-memo`. Read-only captures prevent
 
 The current language exposes no general file/network/process operations, which limits the attack surface. The material security concern is availability when executing an untrusted model in a future playground, service, or embedded host. A local user can already accidentally exhaust the process.
 
-The [world limit](../crates/probl-engine/src/interp.rs#L147) is checked at statement entry. Expensive distributions, cross-products, and outgoing world vectors can be constructed before that check. [`Dist::dice` and `pool`](../crates/probl-engine/src/dist.rs#L51) have no shared allocation/work budget; Poisson construction walks upward from zero even for enormous rates; range helpers can eagerly materialize a large range. Memo tables, report sinks, and caches have no aggregate quota. Model pragmas can raise the available limits, so they are preferences rather than host protection.
+The [world limit](../../crates/probl-engine/src/interp.rs) is checked at statement entry. Expensive distributions, cross-products, and outgoing world vectors can be constructed before that check. [`Dist::dice` and `pool`](../../crates/probl-engine/src/dist.rs) have no shared allocation/work budget; Poisson construction walks upward from zero even for enormous rates; range helpers can eagerly materialize a large range. Memo tables, report sinks, and caches have no aggregate quota. Model pragmas can raise the available limits, so they are preferences rather than host protection.
 
 A bounded probe demonstrates the gap without exhausting memory:
 
@@ -203,9 +205,9 @@ report len(support(d100000))  # confirmed: 100,000
 
 This is valid under a world-only limit, but shows why that limit is not a total resource budget. Larger literals and combinatorial pools follow the same unchecked construction paths; destructive resource-exhaustion probes were not run.
 
-Error containment is also incomplete. `report roll(1, 1)` causes a Rust panic and exits with code 101. [`Dist::into_value`](../crates/probl-engine/src/dist.rs#L180) collapses a one-outcome distribution to a scalar, but [`roll`](../crates/probl-engine/src/interp.rs#L790) asserts that the result must be a distribution. A separate boundary-integer range probe also panicked in a debug build. These demonstrate an inconsistent runtime invariant and unchecked arithmetic reaching host failure, rather than ordinary language diagnostics.
+Error containment is also incomplete. `report roll(1, 1)` causes a Rust panic and exits with code 101. [`Dist::into_value`](../../crates/probl-engine/src/dist.rs) collapses a one-outcome distribution to a scalar, but [`roll`](../../crates/probl-engine/src/interp.rs) asserts that the result must be a distribution. A separate boundary-integer range probe also panicked in a debug build. These demonstrate an inconsistent runtime invariant and unchecked arithmetic reaching host failure, rather than ordinary language diagnostics.
 
-Every execution additionally requests a [512 MiB thread stack](../crates/probl-engine/src/lib.rs#L57). This is a large stack reservation, not necessarily 512 MiB of resident memory, but is a poor default for concurrent embedding and a sign that recursion needs an explicit execution strategy. Panics are propagated back to the caller, and the CLI terminates.
+Every execution additionally requests a [512 MiB thread stack](../../crates/probl-engine/src/lib.rs). This is a large stack reservation, not necessarily 512 MiB of resident memory, but is a poor default for concurrent embedding and a sign that recursion needs an explicit execution strategy. Panics are propagated back to the caller, and the CLI terminates.
 
 **Suggested improvement:** give the host immutable upper bounds for source size, syntax nesting, instructions/work, live and intermediate outcomes, bytes, recursion, caches, and output. Check budgets before allocations and inside distribution construction; support cancellation. Model pragmas may lower host limits, never raise them. Keep singleton distributions type-stable or normalize all consumers through a safe distribution interface. Make language errors return diagnostics, use checked size arithmetic, and replace deep Rust recursion with an explicit stack where needed. Run untrusted hosted models in a cancellable isolated worker/process as a second boundary. Catching panics alone cannot contain out-of-memory aborts or stack overflow.
 
@@ -213,7 +215,7 @@ This review did not establish a code-execution or data-exfiltration vulnerabilit
 
 **I4 — Add a genuinely independent semantic oracle.**
 
-The existing examples and known-answer tests are useful. However, the [differential test](../crates/probl-engine/tests/semantics.rs#L245) compares seven handwritten programs through the same compiler and interpreter with merging and memoization toggled. Even with merging disabled, [`world::merge`](../crates/probl-engine/src/world.rs#L57) still clears dead slots before its `enabled` check. Thus this comparison cannot independently validate lowering or dead-slot elimination, two central correctness assumptions.
+The existing examples and known-answer tests are useful. However, the [differential test](../../crates/probl-engine/tests/semantics.rs) compares seven handwritten programs through the same compiler and interpreter with merging and memoization toggled. Even with merging disabled, [`world::merge`](../../crates/probl-engine/src/world.rs) still clears dead slots before its `enabled` check. Thus this comparison cannot independently validate lowering or dead-slot elimination, two central correctness assumptions.
 
 The plan calls for an independent enumerator, generated programs, and fuzzing; those are not present in the reviewed implementation. The green suite did not catch the evaluation-order, rate-collapse, evidence/truncation, or runtime-panic examples above.
 
