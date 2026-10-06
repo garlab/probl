@@ -1,6 +1,6 @@
 # Browser playground
 
-The [playground](https://probl-playground.pages.dev) runs Probl locally in the browser through WebAssembly. It shares the Rust library and engine with the CLI. It provides an editor, output, a runnable language guide and a searchable built-in reference.
+The [playground](https://playground.probl.dev) runs Probl locally in the browser through WebAssembly. It shares the Rust library and engine with the CLI. It provides an editor, output, a runnable language guide and a searchable built-in reference.
 
 ## Develop locally
 
@@ -68,7 +68,7 @@ The current GitHub Actions workflow runs the Rust checks only. Adding WASM parit
 
 ## Hosting and deployment
 
-The build is static and can be served by a host that serves `.wasm` as `application/wasm`. The project's deployment script targets Cloudflare Pages using wrangler, a development dependency in `web/`.
+The build is static and can be served by a host that serves `.wasm` as `application/wasm`. The project's deployment script targets Cloudflare Pages using wrangler, a development dependency in `web/`. Production is served at [playground.probl.dev](https://playground.probl.dev), a custom domain of the `probl-playground` Pages project; `probl-playground.pages.dev` serves the same deployment.
 
 Credentials come from environment variables or the ignored `web/.env`:
 
@@ -88,7 +88,7 @@ The first command deploys the working tree to production. The second deploys a p
 To test an existing deployment:
 
 ```sh
-PROBL_URL=https://probl-playground.pages.dev bun test/page.mjs
+PROBL_URL=https://playground.probl.dev bun test/page.mjs
 ```
 
 Automatic deployment is not configured in the current CI workflow. Charts, user-supplied data files, structured JSON reports and parallel browser sampling remain future work. The Rust library's structured results provide a foundation, but are not yet exposed as a full browser result schema.

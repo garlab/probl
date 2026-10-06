@@ -4,7 +4,7 @@
 
 Write a model with ordinary variables, functions and loops. Probl follows its possible outcomes and reports their probabilities. Use it to explore game balance, compare decisions, forecast uncertain quantities or update a model with evidence.
 
-[Try the playground](https://probl-playground.pages.dev) · [Language guide](docs/language-overview.md) · [Examples](examples/) · [Documentation](docs/README.md)
+[Try the playground](https://playground.probl.dev) · [Language guide](docs/language-overview.md) · [Examples](examples/) · [Documentation](docs/README.md)
 
 ```probl
 let total ~ 2d6
@@ -40,7 +40,7 @@ Other building blocks include arbitrary-precision integers, complex numbers, imm
 
 ## Get started
 
-The [browser playground](https://probl-playground.pages.dev) runs locally in your browser; no installation is needed.
+The [browser playground](https://playground.probl.dev) runs locally in your browser; no installation is needed.
 
 To build the CLI from a checkout, install Rust 1.85 or later and run these commands from the repository root:
 

@@ -1,4 +1,4 @@
-//! Compile and run [Probl](https://probl.dev) programs from Rust.
+//! Compile and run [Probl](https://github.com/garlab/probl) programs from Rust.
 //!
 //! Probl is a small language for explicit random choices and weighted worlds:
 //! a draw explores its outcomes, each in a world of its own, weighted by how
