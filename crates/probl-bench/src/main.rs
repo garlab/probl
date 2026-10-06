@@ -47,6 +47,9 @@ unsafe impl GlobalAlloc for Counting {
         p
     }
 
+    // `fetch_update`'s new name, `try_update`, needs a newer Rust than the
+    // crates support (1.85).
+    #[allow(deprecated)]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { System.dealloc(ptr, layout) };
         if COUNTING.load(Ordering::Relaxed) {
@@ -58,6 +61,9 @@ unsafe impl GlobalAlloc for Counting {
         }
     }
 
+    // `fetch_update`'s new name, `try_update`, needs a newer Rust than the
+    // crates support (1.85).
+    #[allow(deprecated)]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         let p = unsafe { System.realloc(ptr, layout, new_size) };
         if !p.is_null() && COUNTING.load(Ordering::Relaxed) {
