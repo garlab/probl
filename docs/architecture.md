@@ -85,6 +85,8 @@ The engine has no ambient filesystem or network access. A host supplies data thr
 
 Hosts set budgets for worlds, work, outcomes, integers, collections, calls, input and output, plus cancellation. Program pragmas can lower host limits, never raise them. The native library executes on a configured thread and converts caught panics into internal errors. Out-of-memory failures, stack overflow and WASM traps are not all recoverable this way. The playground runs in replaceable workers; services running untrusted models should also use process isolation and host-enforced resource limits.
 
+Runtime model errors currently abort the invocation. The [error-handling proposal](design/error-handling.md) defines a near-term direction for specific local recovery and optional continuation of successful worlds. It keeps resource and engine failures fatal and requires explicit failure mass/counts and successful-only report semantics; none of those recovery mechanisms is implemented yet.
+
 ## Priorities
 
 1. **Maintainability.** 0.1.0 is published. Next: automate the existing WASM/browser tests, measure native coverage, and check the `probl` API against its published version. See [library packaging](library.md#packaging-and-publication) and [testing](testing.md).
