@@ -17,6 +17,7 @@ The [examples directory](../examples) contains runnable models with expected out
 
 ## Working on Probl
 
+- [Contributing](../CONTRIBUTING.md): bug reports, checks before a pull request, where tests go and commit messages.
 - [Architecture and priorities](architecture.md): crate responsibilities, execution model, host boundaries and next work.
 - [Testing](testing.md): commands, regression contracts, independent checks and remaining coverage gaps.
 - [Playground](playground.md): local development, browser tests and deployment.

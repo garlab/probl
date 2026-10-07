@@ -120,10 +120,12 @@ The [reference semantics](docs/semantics.md) documents these contracts. Verifica
 
 ## Development
 
+See [contributing](CONTRIBUTING.md) for bug reports, where tests go, updating examples and commit messages. The checks CI runs:
+
 ```sh
 cargo fmt --all --check
-cargo clippy --all-targets -- -D warnings
-cargo test --all
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --all --locked
 ```
 
 To work on the playground, install [Bun](https://bun.sh), then:
