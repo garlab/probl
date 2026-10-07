@@ -42,16 +42,21 @@ Other building blocks include arbitrary-precision integers, complex numbers, imm
 
 The [browser playground](https://playground.probl.dev) runs locally in your browser; no installation is needed.
 
-To build the CLI from a checkout, install Rust 1.85 or later and run these commands from the repository root:
+To install the CLI from crates.io, install Rust 1.85 or later, then run:
 
 ```sh
-cargo install --path crates/probl-cli --locked
+cargo install probl-cli --locked
+```
+
+The package is named **`probl-cli`** and the installed command is **`probl`**. The examples are in this repository; from the root of a clone, run:
+
+```sh
 probl run examples/01_tour.probl
 probl run examples/02_craps.probl --fractions
 probl run examples/07_launch_forecast.probl
 ```
 
-The package is named **`probl-cli`** and the installed command is **`probl`**. You can also run without installing:
+To build the CLI from the checkout instead, run `cargo install --path crates/probl-cli --locked`, or run it without installing:
 
 ```sh
 cargo run --release -p probl-cli -- run examples/02_craps.probl
@@ -86,7 +91,7 @@ Each example includes its assumptions and expected output. The [full list](docs/
 
 ## Embed in Rust
 
-The **`probl`** crate is the library used by the CLI and playground. Compile once, run repeatedly, and read structured results without parsing text:
+The **`probl`** crate is the library used by the CLI and playground; add it with `cargo add probl`. Compile once, run repeatedly, and read structured results without parsing text:
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -104,7 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Results retain unresolved bounds, sampling-error status and evidence metadata. An available point estimate is not necessarily a complete or exact answer. See the [library guide](docs/library.md) for setup, data loading and result interpretation, or run `cargo run -p probl --example craps` from this checkout.
+Results retain unresolved bounds, sampling-error status and evidence metadata. An available point estimate is not necessarily a complete or exact answer. See the [library guide](docs/library.md) for setup, data loading and result interpretation, and the [API reference](https://docs.rs/probl) on docs.rs, or run `cargo run -p probl --example craps` from this checkout.
 
 ## Status and limits
 

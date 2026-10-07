@@ -4,7 +4,7 @@
 
 ## Compile and run
 
-From this checkout, generate the complete API reference with `cargo doc -p probl --no-deps --open`. For a local application, depend on `probl` by path to `crates/probl`; registry installation should use a published version once available.
+Add the library to a project with `cargo add probl`. The complete API reference for each release is on [docs.rs](https://docs.rs/probl); from this checkout, `cargo doc -p probl --no-deps --open` generates it for the current source. To use unreleased changes, depend on `probl` by path to `crates/probl`.
 
 ```rust
 use probl::{Options, compile};
@@ -151,13 +151,17 @@ Typed outcome values, typed non-real summaries, density-query methods, report re
 
 ## Packaging and publication
 
-The intended registry layout is `probl` for embedders and `probl-cli` for installation of the `probl` command. Publishing one does not reserve the other name or the `probl-*` prefix. Once released, the corresponding commands are `cargo add probl` and `cargo install probl-cli --locked`.
+Two crates are meant to be used directly: `probl`, the library (`cargo add probl`), and `probl-cli`, which installs the `probl` command (`cargo install probl-cli --locked`). They depend on `probl-number`, `probl-syntax`, `probl-sema` and `probl-engine`, which are published too, but whose descriptions say they have no stable API. The benchmarks, the oracle and the WASM adapter are not published (`publish = false`).
 
-Before the first publication:
+Every published crate has the workspace's version. In the root `Cargo.toml`, each internal dependency is pinned exactly to that version (`version = "=0.1.0"`) next to its path, so a release of `probl` always uses the internal crates from the same commit. The packages leave out `tests/` and `examples/`, because those read the workspace's `examples/` and `benches/`.
 
-1. Complete license, repository, description and README metadata for each published package. Check that the packaged README and license files are present.
-2. Pin every internal workspace dependency and the CLI's `probl` dependency to the exact matching release, alongside its local path. They are pinned exactly (`version = "=0.1.0"`); move the pins with each release. Keep the release versions aligned.
-3. Inspect package contents and perform dry runs with the release toolchain. Publish dependencies in order: `probl-number`, `probl-syntax`, `probl-sema`, `probl-engine`, `probl`, then `probl-cli`. Keep benchmarks, oracle and WASM adapter unpublished.
-4. Verify installation of the actual published CLI and compilation of an external application depending only on `probl`. Once a baseline exists, add API compatibility checks alongside behavioral tests.
+To release:
 
-See [Cargo's publishing guidance](https://doc.rust-lang.org/cargo/reference/publishing.html) and [dependency requirements](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html). Package availability and release readiness must be checked at publication time.
+1. In the root `Cargo.toml`, set the new version in `[workspace.package]` and in each pin in `[workspace.dependencies]`. Then build once so that `Cargo.lock` follows, and add the release's section to the [changelog](../CHANGELOG.md). Commit these together.
+2. Check the packages with `cargo publish --workspace --dry-run --locked`. `cargo package --list -p <crate>` shows what a package contains.
+3. Tag the commit `vX.Y.Z` and push the tag. The [release workflow](../.github/workflows/release.yml) checks that the tag matches the version, then runs the tests and the same dry run. It waits for a maintainer to approve the `release` environment, then publishes every crate through crates.io's Trusted Publishing, so no token is stored.
+4. Check that docs.rs built each crate's documentation, and that `cargo install probl-cli --locked` installs the new version.
+
+Trusted Publishing can only be configured for a crate that already exists on crates.io. So a newly published crate's first release is done by hand, after which its crates.io settings name this repository, `release.yml` and the `release` environment as its trusted publisher.
+
+Before 1.0, Cargo treats `0.1.x` releases as compatible with each other, so a release that breaks the `probl` API must be `0.2.0`. [cargo-semver-checks](https://github.com/obi1kenobi/cargo-semver-checks) can compare `probl` against its last published version; CI doesn't run it yet. See [Cargo's publishing guidance](https://doc.rust-lang.org/cargo/reference/publishing.html) and [SemVer compatibility](https://doc.rust-lang.org/cargo/reference/semver.html).

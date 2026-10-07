@@ -7,8 +7,10 @@
 # publisher. The environment waits for a maintainer's approval, and only
 # accepts `v*` tags.
 #
-# To release: set the version in Cargo.toml, commit, then
+# To release: set the version and the internal pins in Cargo.toml, update
+# the changelog, commit, then
 #   git tag v0.1.0 && git push origin v0.1.0
+# docs/library.md ("Packaging and publication") has the full steps.
 name: Release
 
 on:
