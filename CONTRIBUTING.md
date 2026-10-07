@@ -6,11 +6,11 @@ Thank you for helping! Probl is early-stage; the language and the Rust API still
 
 Please include:
 
-- the smallest program that reproduce the problem, and any input it reads;
-- the command you ran, and the output of `probl --version` (or the commit you built)
+- the smallest program that reproduces the problem, and any input it reads;
+- the command you ran, and the output of `probl --version` (or the commit you built);
 - what Probl printed, and what you expected instead.
 
-A sampled run repeats exactly with the same `--seed`, and a model that uses `today` with the same `--today`. If a probability or math result is wrong, detail how you computed the correct answer (e.g by hand or another tool's output) so it's easier to act on.
+A sampled run repeats exactly with the same `--seed`, and a model that uses `today` with the same `--today`. If a probability or math result is wrong, detail how you computed the correct answer (e.g. by hand or another tool's output) so it's easier to act on.
 
 ## Set up
 
@@ -79,9 +79,9 @@ Measure with `probl-bench` before and after the change, using release builds on 
 
 ## Commits
 
-- All pull requests will be squash-merged to `main`, so the number and message of each commit is not very important, but if the scope is large consider splitting in multiple pull requests.
-- titles and descriptions of pull requests are much more important and much clearly indicate the nature and scope of the changes.
-- We encourage to follow [conventional commits](https://www.conventionalcommits.org/en/v1.0.0/) naming: `type(scope): summary`, with `feat`, `fix`, `perf`, `refactor`, `test`, `docs`, `ci` or `chore` as the type. The scope (`engine`, `repl`, `web`, …) for pull request titles
+- All pull requests will be squash-merged to `main`, so the number of commits and their messages matter less. If the scope is large, consider splitting it into several pull requests.
+- The title and description of a pull request matter much more: they should clearly indicate the nature and scope of the changes.
+- We encourage following [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) for pull request titles: `type(scope): summary`, with `feat`, `fix`, `perf`, `refactor`, `test`, `docs`, `ci` or `chore` as the type. The scope (`engine`, `repl`, `web`, …) is optional.
 
 ## Releases
 
