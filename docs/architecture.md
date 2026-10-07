@@ -77,6 +77,8 @@ Each report site accumulates values by its optional key, with reach and contribu
 
 The CLI and playground currently present text. The Rust library exposes structured report numbers, but typed outcome export, a versioned JSON result schema and charts remain future work.
 
+The deferred [portal proposal](design/portals-and-effects.md) explores explicit access to a joint population, with host effects confined to a pre-inference prologue or portal scopes. Portals could return shared values and permit midway data acquisition; their synchronization, evidence and sampled-feedback contracts remain open. Improve reporting and population queries before implementing this boundary.
+
 ## Host boundaries
 
 The engine has no ambient filesystem or network access. A host supplies data through a resolver, and loading validates the declared schemas before simulation. `LocalFiles` deliberately follows local CLI filesystem rules; it is not a directory sandbox. Hosted applications should grant only the inputs they intend to expose, for example through `MemoryFiles`.

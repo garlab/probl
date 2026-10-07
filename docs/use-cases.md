@@ -43,6 +43,8 @@ The [Rust library](library.md) now exposes structured probabilities, numeric sum
 
 Small scalar tables and explicit selection of reported statistics would improve decision and tracking models. A fitted-model interface should preserve parameter uncertainty when generating replicated datasets or predictions for new inputs. [PyMC's posterior-predictive API](https://www.pymc.io/projects/docs/en/stable/api/generated/pymc.sample_posterior_predictive.html) illustrates that distinction.
 
+A deferred [portal design](design/portals-and-effects.md) could expose read-only joint population views for custom reporting and host interaction, including returning newly acquired data to a continuing model. The immediate priority remains better reports and structured queries; the proposal does not add effects to today's language.
+
 Tail queries need definitions before convenient names. For a discrete expected-shortfall function, probability mass at the quantile must be split according to the desired tail fraction; simply averaging all losses at or above the quantile can select too much mass. Example 18 uses the already-defined expected excess `mean(max(loss - reserve, 0))` instead.
 
 ### Explain inference changes under refactoring

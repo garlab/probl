@@ -26,6 +26,7 @@ The [examples directory](../examples) contains runnable models with expected out
 
 ## Research and historical rationale
 
+- [Portals and external effects](design/portals-and-effects.md): a deferred proposal for an implicit prologue, read-only joint population views and midway host interaction; better reporting comes first.
 - [Symbolic inference](design/symbolic-inference.md): assessment of the Dice paper and an evaluation plan; no symbolic backend is implemented.
 - [Complex values and quantum simulation](design/quantum-and-complex.md): the implemented scalar foundation and an unimplemented quantum-engine proposal.
 - [Original project audit](design/project-audit.md): historical findings against a specific revision, with a [resolution map](architecture.md#original-audit-resolution-map). It is not a list of current vulnerabilities.
