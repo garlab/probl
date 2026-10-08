@@ -114,7 +114,7 @@ Results retain unresolved bounds, sampling-error status and evidence metadata. A
 
 ## Status and limits
 
-Probl is early-stage software at version `0.1.0`. The language and Rust API are evolving.
+Probl is early-stage software at version `0.2.0`. The language and Rust API are evolving.
 
 - Enumeration uses floating-point weights and can retain unresolved mass; displayed fractions are approximations. State spaces can still grow exponentially.
 - Sampling can be unreliable with rare events or concentrated evidence. Inspect effective sample size and uncertainty; zero empirical variation is not proof of certainty.

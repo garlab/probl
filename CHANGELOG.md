@@ -4,16 +4,19 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-09
+
 ### Added
 
 - Failure modes ([semantics](docs/semantics.md#failure-modes)). A fault that depends on a world's values, like a division by zero or an index past the end, always ends that world. In partial mode the other worlds finish, and the result says how much failed and where; in total mode the run stops, as before. Choose with `@on_error total` or `@on_error partial`, `probl run --on-error`, `Options::on_error` or the playground's "On error" option.
 - A partial result: `probl run` prints what the other worlds gave, with a `failed` section, and exits with status 3. `Program::run` still returns an error, with the result in `Error::partial`.
-- `try { … } catch DivisionByZero { … } catch { … }`: a world where the body faults goes on in the first catch that names its fault, or in a catch without a name, with what it did before the fault. Faults from called functions reach the caller's `try`. The faults a catch can name are `DivisionByZero`, `DomainError`, `IndexOutOfBounds`, `MissingKey`, `EmptyCollection`, `ConversionError` and `NumericOverflow`; other errors aren't caught. `try` and `catch` are now keywords. In the playground, completion offers the fault names after `catch`, and hovering one says what it is.
+- `try { … } catch DivisionByZero { … } catch { … }`: a world where the body faults goes on in the first catch that names its fault, or in a catch without a name, with what it did before the fault. Faults from called functions reach the caller's `try`. The faults a catch can name are `DivisionByZero`, `DomainError`, `IndexOutOfBounds`, `MissingKey`, `EmptyCollection`, `ConversionError` and `NumericOverflow`; other errors aren't caught. In the playground, completion offers the fault names after `catch`, and hovering one says what it is.
 - In the `probl` crate: `FailureMode`, `Options::on_error`, `Program::failure_mode`, `Error::partial`, `Failure`, and `Outcome::failure_mode`, `failures`, `failed_share` and `finished`.
 
 ### Changed
 
-- Sampling is partial by default: a run that faults no longer stops the whole sample, and the result is partial. Enumeration stays total by default. `--on-error total` or `@on_error total` keeps the old behavior.
+- `try` and `catch` are keywords: a program that uses either as a name no longer compiles.
+- Sampling is partial by default: a run that faults no longer stops the whole sample, and the result is partial, so `probl run` exits with status 3 instead of 1. Enumeration stays total by default. `--on-error total` or `@on_error total` keeps the old behavior.
 - Explicit conversions out of range, like `prob(1.5)`, are now faults; a declared type that a value fails, like `let p: prob = 1.5`, still always stops the run.
 
 ### Fixed
@@ -30,5 +33,6 @@ The first release.
 
 The [language overview](docs/language-overview.md) and the [reference semantics](docs/semantics.md) describe the language, and [status and limits](README.md#status-and-limits) lists what isn't implemented yet.
 
-[Unreleased]: https://github.com/garlab/probl/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/garlab/probl/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/garlab/probl/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/garlab/probl/tree/v0.1.0

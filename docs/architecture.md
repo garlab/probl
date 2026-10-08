@@ -89,7 +89,7 @@ Runtime faults, errors that depend on a world's values such as a division by zer
 
 ## Priorities
 
-1. **Maintainability.** 0.1.0 is published. Next: automate the existing WASM/browser tests, measure native coverage, and check the `probl` API against its published version. See [library packaging](library.md#packaging-and-publication) and [testing](testing.md).
+1. **Maintainability.** The crates are published from version tags. Next: automate the existing WASM/browser tests, measure native coverage, and check the `probl` API against its published version. See [library packaging](library.md#packaging-and-publication) and [testing](testing.md).
 2. **Static checking and explanations.** Catch distribution/value mistakes before execution, make effects visible, and explain lost conjugate updates and state growth. A formatter and standalone language server can build on the existing parser and editor symbols.
 3. **Reusable models and results.** Specify sampleable computations, joint transformations, optional data and modules; extend structured results to browser/JSON consumers. The [imports and tests proposal](design/imports-and-tests.md) defines a direction for reusable declarations and isolated model tests; neither feature is implemented. Keep inference uncertainty explicit. The [use cases](use-cases.md) motivate these gaps.
 4. **Inference guided by models.** Choose a difficult non-conjugate benchmark before specifying MCMC or particles. Evaluate a finite discrete symbolic backend separately, following the [research plan](design/symbolic-inference.md). Neither is implemented.
