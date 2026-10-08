@@ -252,7 +252,20 @@ fn the_reference_documents_every_built_in() {
     let keywords = docs["keywords"].as_array().unwrap();
     assert!(keywords.iter().any(|k| k["name"] == "observe"));
     assert!(keywords.iter().any(|k| k["name"] == "typeof"));
+    assert!(keywords.iter().any(|k| k["name"] == "catch"));
     assert!(docs["read"]["summary"].as_str().unwrap().contains("CSV"));
+    // What a `catch` can name, each with what it is.
+    let faults: Vec<&str> = docs["faults"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            assert!(!f["summary"].as_str().unwrap().is_empty(), "{f}");
+            f["name"].as_str().unwrap()
+        })
+        .collect();
+    let names: Vec<&str> = probl_sema::ir::Fault::ALL.iter().map(|f| f.name()).collect();
+    assert_eq!(faults, names);
 }
 
 #[test]

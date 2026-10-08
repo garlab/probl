@@ -449,6 +449,21 @@ try {
   offered = await completions('\nlet p = Plan.');
   expect(offered.join() === 'Free,Paid', 'after an enum’s name, completion offers its variants', offered.join(', '));
   await editor.keyboard.press('Escape');
+  offered = await completions('\nlet q = try { 1 } catch ');
+  expect(
+    offered.length === 7 && offered.includes('DivisionByZero') && offered.includes('NumericOverflow'),
+    'after `catch`, completion offers the faults it can name',
+    offered.join(', '),
+  );
+  offered = await completions('Mis');
+  await becomes(editor, () => document.querySelector('.cm-completionInfo .cm-probl-card'));
+  const fault = await texts('.cm-completionInfo .cm-probl-signature');
+  expect(
+    offered.join() === 'MissingKey' && fault[0] === 'catch MissingKey { … }',
+    'and narrows them as you type, with what each is',
+    `${offered.join(', ')}\n${fault.join()}`,
+  );
+  await editor.keyboard.press('Escape');
   await editor.keyboard.type('\n# the rate');
   await new Promise((resolve) => setTimeout(resolve, 400));
   offered = await texts('.cm-tooltip-autocomplete li');
@@ -472,6 +487,18 @@ try {
     JSON.stringify(constantEntry),
   );
   await editor.evaluate(() => document.querySelector('[data-pane="output"]').click());
+  // So is a fault that a `catch` names.
+  const caught = 'let q = try { 1 } catch MissingKey { 0 }\nreport q';
+  await editor.evaluate((src) => window.playground.setSource(src), caught);
+  card = await hover(caught.indexOf('MissingKey') + 1);
+  expect(card.code === 'catch MissingKey { … }', 'hovering a fault shows what it is', JSON.stringify(card));
+  await unhover();
+  await cursor(caught.indexOf('MissingKey') + 1);
+  await editor.keyboard.press('F12');
+  const faultEntry = await editor.evaluate(() => document.querySelector('#entries .entry.current')?.dataset.names);
+  expect(faultEntry === 'MissingKey', 'and F12 opens its reference entry', faultEntry);
+  await editor.evaluate(() => document.querySelector('[data-pane="output"]').click());
+  await editor.evaluate((src) => window.playground.setSource(src), math);
   await cursor(math.length);
   offered = await completions('\nreport euler_');
   details = await texts('.cm-tooltip-autocomplete li .cm-completionDetail');

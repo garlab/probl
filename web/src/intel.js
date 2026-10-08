@@ -246,7 +246,9 @@ export function intelligence(docs, names, showReference) {
   builtins.set('read', docs.read);
   const constants = new Map(docs.constants.map((c) => [c.name, c]));
   const keywords = new Map(docs.keywords.map((k) => [k.name, k]));
-  const referenced = (name) => builtins.has(name) || constants.has(name) || keywords.has(name);
+  // What a `catch` can name.
+  const faults = new Map(docs.faults.map((f) => [f.name, f]));
+  const referenced = (name) => builtins.has(name) || constants.has(name) || keywords.has(name) || faults.has(name);
 
   const documented = (entry) => ({ code: entry.signature, doc: entry.summary });
   // A built-in's signature without its name, which the completion list
@@ -261,6 +263,15 @@ export function intelligence(docs, names, showReference) {
     const line = context.state.doc.lineAt(from);
     const before = context.state.sliceDoc(line.from, from);
     const dotted = /([A-Za-z_]\w*)?\.$/.exec(before);
+    // After `catch`: only the faults it can name.
+    if (/\bcatch\s+$/.test(before)) {
+      const options = [...faults.values()].map((f) => ({
+        label: f.name,
+        type: 'type',
+        info: () => card(documented(f)),
+      }));
+      return { from, options, validFor: /^\w*$/ };
+    }
     if (!word && !context.explicit && !dotted) return null;
     // Not while naming something new: a variable, a function or its
     // parameters, a type, or a loop's variable.
@@ -334,6 +345,7 @@ export function intelligence(docs, names, showReference) {
     else if (builtins.has(word.text)) content = documented(builtins.get(word.text));
     else if (constants.has(word.text)) content = documented(constants.get(word.text));
     else if (keywords.has(word.text)) content = documented(keywords.get(word.text));
+    else if (faults.has(word.text)) content = documented(faults.get(word.text));
     if (!content) return null;
     return { pos: word.from, end: word.to, above: true, create: () => ({ dom: card(content) }) };
   });

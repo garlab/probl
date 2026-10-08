@@ -1,6 +1,7 @@
 //! Documentation of the built-in functions and the keywords: what an editor
 //! shows on hover and when completing, and the playground's reference.
 
+use crate::ir::Fault;
 use crate::{Builtin, Constant};
 
 /// How something is used, and what it does, in a sentence or two.
@@ -719,6 +720,41 @@ pub fn constant(c: Constant) -> Doc {
         Constant::Today => (
             "today = execution date (date)",
             "The immutable date captured once by the host for this execution, shared by every world, sample, function and simulate block. The CLI and playground use UTC by default; --today YYYY-MM-DD or a host-supplied date makes reruns reproducible. This is a value, not a function. A program's own bindings may hide it.",
+        ),
+    };
+    Doc { signature, summary }
+}
+
+/// A fault that a `catch` can name: when it happens.
+pub fn fault(f: Fault) -> Doc {
+    let (signature, summary) = match f {
+        Fault::DivisionByZero => (
+            "catch DivisionByZero { … }",
+            "Division or remainder by zero: `1 / 0`, `7 mod 0`.",
+        ),
+        Fault::DomainError => (
+            "catch DomainError { … }",
+            "A value outside what an operation is defined for: `sqrt(-1)`, `logit(0%)`, a negative count, chances that add up to more than 100%, or a distribution's parameter, like `normal(0, 0)` or `bernoulli(1.5)`.",
+        ),
+        Fault::IndexOutOfBounds => (
+            "catch IndexOutOfBounds { … }",
+            "An index past the end of a list, range or string, like `[1, 2][5]`, or a slice that doesn't fit.",
+        ),
+        Fault::MissingKey => (
+            "catch MissingKey { … }",
+            "A key that isn't in a map, like `[\"a\": 1][\"b\"]`, or an item that isn't in a bag. `get(m, key, default)` gives a default instead.",
+        ),
+        Fault::EmptyCollection => (
+            "catch EmptyCollection { … }",
+            "A collection or a bag with nothing in it, where an element is needed: `minimum([])`, or taking from an empty bag.",
+        ),
+        Fault::ConversionError => (
+            "catch ConversionError { … }",
+            "An explicit conversion that can't represent its value: `prob(1.5)`, `date(\"2026-02-30\")`.",
+        ),
+        Fault::NumericOverflow => (
+            "catch NumericOverflow { … }",
+            "A result too large to represent: a float that isn't finite, like `10.0 ^ 400`, or a date out of range.",
         ),
     };
     Doc { signature, summary }

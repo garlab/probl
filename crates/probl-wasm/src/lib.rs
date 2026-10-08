@@ -11,6 +11,7 @@
 
 use probl::{Date, FailureMode, Limits, MemoryFiles, Options};
 use probl_sema::Builtin;
+use probl_sema::ir::Fault;
 use probl_sema::symbols::{DefKind, Symbols};
 use probl_syntax::{Severity, SourceFile, Span};
 use serde_json::{Value as Json, json};
@@ -159,8 +160,9 @@ fn split_comment(line: &str) -> (&str, Option<&str>) {
 }
 
 /// The reference: `{"builtins": [...], "constants": [...], "keywords": [...],
-/// "read": {...}}`, each with its `signature` and `summary`, and the
-/// built-ins with their `category`.
+/// "faults": [...], "read": {...}}`, each with its `signature` and `summary`,
+/// and the built-ins with their `category`. The faults are what a `catch`
+/// can name.
 pub fn docs() -> String {
     let builtins: Vec<Json> = Builtin::ALL
         .iter()
@@ -189,11 +191,19 @@ pub fn docs() -> String {
             json!({ "name": c.name(), "signature": d.signature, "summary": d.summary })
         })
         .collect();
+    let faults: Vec<Json> = Fault::ALL
+        .iter()
+        .map(|&f| {
+            let d = probl_sema::docs::fault(f);
+            json!({ "name": f.name(), "signature": d.signature, "summary": d.summary })
+        })
+        .collect();
     let read = probl_sema::docs::READ;
     json!({
         "builtins": builtins,
         "constants": constants,
         "keywords": keywords,
+        "faults": faults,
         "read": { "name": "read", "signature": read.signature, "summary": read.summary },
     })
     .to_string()

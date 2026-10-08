@@ -22,7 +22,7 @@ Open `http://localhost:8000`. The development server rebuilds when page sources,
 - Run with Ctrl/⌘-Enter; stop with Escape or the Stop button. Options select mode, run count, seed, what a fault does to the other worlds (`--on-error`), exact conjugate updates and the time limit.
 - The examples menu includes games, forecasts, calendars, decisions, monitoring and analytic continuous calculations. Example data files are available to `read` from memory.
 - Compile diagnostics appear in the editor; runtime errors point to the failing source. Output uses the CLI's text format, with streamed `print` lines and sampled-run progress. A partial result, where some worlds failed and the others finished, shows the output with its `failed` section, says so in the status line, and marks where the worlds failed in the editor.
-- Hover shows declarations or built-in documentation. Ctrl/⌘-click or F12 goes to a definition; F2 selects references for renaming. Completion and signature help use compiler symbols.
+- Hover shows declarations or built-in documentation. Ctrl/⌘-click or F12 goes to a definition; F2 selects references for renaming. Completion and signature help use compiler symbols; after `catch`, completion offers the faults it can name, which the reference also lists.
 - Share encodes the program in the URL fragment. Running a model does not upload its source or inputs to an execution server; a share link itself contains the source and should be treated accordingly.
 - Local edits are saved in browser storage. Loading an example or guide snippet is undoable; editing it makes it the user's saved program.
 

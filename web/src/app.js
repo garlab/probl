@@ -540,7 +540,7 @@ async function main() {
     if (same) same.name += ` ${k.name}`;
     else keywords.push({ ...k });
   }
-  const groups = [['Keywords', keywords], ['Reading data', [docs.read]]];
+  const groups = [['Keywords', keywords], ['Faults a catch can name', docs.faults], ['Reading data', [docs.read]]];
   for (const category of ['Distributions', 'Statistics and probabilities', 'Collections', 'Math', 'Text', 'Dates']) {
     const builtins = docs.builtins.filter((b) => b.category === category);
     groups.push([category, category === 'Math' ? [...docs.constants, ...builtins] : builtins]);
