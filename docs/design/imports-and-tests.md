@@ -262,7 +262,7 @@ The cost of the concise syntax is a small query language inside `expect`, with d
 
 A green test needs actual coverage. Require at least one expectation and a nonempty, positive-weight final population. Reject a test with no expectations during checking. Impossible evidence is an error, not vacuous success; report its location and available evidence diagnostics. A runtime failure before the assertion section fails the test, even if some worlds could still complete.
 
-The proposed [error-handling policy](error-handling.md) must not let `@on_error continue` turn a partially faulty model into a passing test. If continuation is later supported by the test runner, it may collect more diagnostics, but any unhandled model fault still makes the test unsuccessful. Explicitly caught, modeled alternatives can be tested normally.
+The proposed [error-handling policy](error-handling.md) must not let `@on_error partial` turn a partially faulty model into a passing test. If partial execution is later supported by the test runner, it may collect more diagnostics, but any unhandled model fault still makes the test unsuccessful. Explicitly caught, modeled alternatives can be tested normally.
 
 Start conservatively with incomplete inference: any positive unresolved mass prevents a pass based only on resolved outcomes, even if it prints as `< 1e-12`. A known counterexample can establish failure; otherwise the result is **inconclusive**, which is non-success in CI. In particular, `expect mean(x) == target` must not silently use only the resolved part and pass. Enforce this at the test boundary and for incomplete distributions consumed by assertions; some current descriptive query functions intentionally summarize only resolved outcomes.
 
