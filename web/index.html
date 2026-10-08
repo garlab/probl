@@ -33,6 +33,13 @@
           <label>Runs <input id="runs" type="number" min="1" value="10000"></label>
           <label>Seed <input id="seed" type="number" min="0" value="0"></label>
         </span>
+        <label>On error
+          <select id="on-error" title="What a fault in one world, like a division by zero, does to the others">
+            <option value="program">as the program says</option>
+            <option value="total">stop the run</option>
+            <option value="partial">finish the other worlds</option>
+          </select>
+        </label>
         <label><input id="conjugate" type="checkbox" checked> Exact updates for conjugate priors</label>
         <label><input id="limited" type="checkbox" checked> Stop runs after 30 seconds</label>
       </div>

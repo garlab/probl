@@ -623,6 +623,7 @@ Choose a mode with a pragma at the top of a file, or override it on the command 
 probl run model.probl --mode sample --runs 100000 --seed 3   # sample, whatever the program says
 probl run model.probl --threads 2                            # sample on at most 2 cores
 probl run model.probl --no-conjugate                         # sample without exact updates, for comparing
+probl run model.probl --on-error total                       # stop at the first fault, even when sampling
 probl run model.probl --timeout 10                           # stop after 10 seconds
 probl check model.probl                                      # parse and check without running
 probl check --data model.probl                               # and check its data
@@ -642,6 +643,26 @@ When the program observes, the line gives the evidence: the probability of all t
 Sampling uses every core by default. The runs go in batches of 1,000 with random numbers of their own, combined in order, so the output is the same on any number of cores.
 
 Whoever runs a program sets limits on its worlds, work, loop iterations, call depth and output (`--max-worlds`, `--max-work`, `--timeout`). A program's `@max_worlds` and `@max_iterations` can lower these limits, never raise them.
+
+**When a world fails.** Some errors depend on the values a world computes with: dividing by zero, an index past the end, `sqrt` of a negative number. Such a *fault* always ends the world it happens in. What happens to the other worlds is the **failure mode**. When enumerating, the default is *total*: the run stops, as for any error. When sampling, the default is *partial*: the other runs finish, so a rare fault an hour into a simulation doesn't throw the hour away, and the result says how much failed and where:
+
+```probl
+@mode sample(runs: 10_000)
+
+let x ~ d6 - 1
+let y = 1 / x        # x is 0 in about one run in six
+report y
+```
+```
+sample · 10,000 runs · seed 0 · partial result · 1,679 runs failed
+
+y    mean 0.46 · sd 0.29 · 5% 0.20 · median 0.33 · 95% 1.00 (reached in 83.2% ± 0.4% of runs)
+
+failed
+  line 4: division by zero    1,679 runs (16.8% ± 0.4%)
+```
+
+The reports describe the runs that reached them, and `probl run` exits with status 3, so a script can't mistake a partial result for a complete one. `@on_error total` or `@on_error partial` chooses the mode for a program, and `--on-error` for a run. Other errors, such as a type error or a limit, always stop the run. A fault isn't evidence: to leave out the worlds where `x` is 0, say so with `observe x != 0`, or handle the case with `if x == 0 { … }`. The [reference semantics](semantics.md#failure-modes) has the rules: which errors are faults, and what counts when worlds fail.
 
 ## 9. Semantics in one table
 
@@ -721,7 +742,7 @@ EBNF. `NEWLINE` ends a statement unless the line clearly continues: inside `( )`
 
 ```ebnf
 program      = { pragma } { item } ;
-pragma       = "@" IDENT [ expr ] NEWLINE ;      (* @mode enumerate · @mode sample(runs: 1000) · @epsilon 1e-9 *)
+pragma       = "@" IDENT [ expr ] NEWLINE ;      (* @mode enumerate · @mode sample(runs: 1000) · @epsilon 1e-9 · @on_error partial *)
 item         = fn_decl | type_decl | enum_decl | import | stmt ;
 
 fn_decl      = "fn" IDENT "(" [ param { "," param } ] ")" [ "->" type ] block ;

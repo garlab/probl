@@ -1,0 +1,7 @@
+# A sampled run where some worlds fail: the others finish, and the result
+# says how many failed and where.
+@mode sample(runs: 1000, seed: 2)
+
+let x ~ d6 - 1
+let y = 1 / x
+report y

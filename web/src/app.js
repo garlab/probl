@@ -322,6 +322,8 @@ async function main() {
       if (runs > 0) r.runs = runs;
       if (seed >= 0) r.seed = seed;
     }
+    const onError = $('on-error').value;
+    if (onError !== 'program') r.on_error = onError;
     r.conjugate = $('conjugate').checked;
     return r;
   }
@@ -409,11 +411,20 @@ async function main() {
     if (result.output !== undefined) {
       showOutput(result.output);
       const s = result.stats;
-      const parts = [`Done in ${time}`];
+      // A partial result: the other worlds finished, and the editor marks
+      // where the failed ones failed.
+      const parts = [result.partial ? `Partial result in ${time}` : `Done in ${time}`];
+      if (result.partial) parts.push(`some ${s.runs === undefined ? 'worlds' : 'runs'} failed`);
       if (s.runs === undefined) parts.push(`${format.format(s.world_steps)} world-steps`);
       if (s.solved_loops) parts.push(`${s.solved_loops} ${s.solved_loops === 1 ? 'loop' : 'loops'} solved`);
       if (s.solved_calls) parts.push(`${s.solved_calls} recursive ${s.solved_calls === 1 ? 'call' : 'calls'} solved`);
       status(`${parts.join(' · ')}.`);
+      if (result.partial) {
+        const doc = view.state.doc;
+        const warnings = result.diagnostics.filter((d) => d.severity === 'warning').map((d) => toEditor(d, doc));
+        const failures = result.failures.filter((d) => d.from !== undefined).map((d) => toEditor(d, doc));
+        view.dispatch(setDiagnostics(view.state, [...warnings, ...failures]));
+      }
       return;
     }
     const error = result.error;

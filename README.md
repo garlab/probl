@@ -67,6 +67,7 @@ Useful commands:
 ```sh
 probl run model.probl --runs 100000 --seed 42  # select sampling
 probl run model.probl --stats                 # inspect execution and effective sample size
+probl run model.probl --on-error total        # stop at the first fault, even when sampling
 probl check model.probl                       # compile without running or opening data
 probl check --data model.probl                # also validate declared input files
 probl schema examples/data/pilot.csv          # suggest an input type

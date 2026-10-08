@@ -1,5 +1,6 @@
 //! What can go wrong: errors, and the diagnostics that describe them.
 
+use crate::Outcome;
 use probl_engine::RuntimeError;
 use probl_syntax::{SourceFile, Span};
 use std::fmt;
@@ -108,6 +109,7 @@ impl fmt::Display for Diagnostic {
 pub struct Error {
     kind: ErrorKind,
     diagnostics: Vec<Diagnostic>,
+    partial: Option<Arc<Outcome>>,
 }
 
 impl Error {
@@ -126,10 +128,37 @@ impl Error {
         self.diagnostics.iter().map(|d| d.render(color)).collect()
     }
 
+    /// When a run in partial mode had worlds that failed: what the others
+    /// gave, with its [`failures`](Outcome::failures). The error has a
+    /// diagnostic for each place they failed (the first ten). `None` for
+    /// every other error.
+    pub fn partial(&self) -> Option<&Outcome> {
+        self.partial.as_deref()
+    }
+
+    pub(crate) fn partial_mut(&mut self) -> Option<&mut Outcome> {
+        self.partial.as_mut().and_then(Arc::get_mut)
+    }
+
+    /// A partial result: some worlds failed.
+    pub(crate) fn failed(outcome: Outcome) -> Error {
+        Error {
+            kind: ErrorKind::Language,
+            diagnostics: outcome
+                .failures()
+                .iter()
+                .take(10)
+                .map(|f| f.diagnostic().clone())
+                .collect(),
+            partial: Some(Arc::new(outcome)),
+        }
+    }
+
     pub(crate) fn compile(diagnostics: Vec<probl_syntax::Diagnostic>, file: &Arc<SourceFile>) -> Error {
         Error {
             kind: ErrorKind::Compile,
             diagnostics: diagnostics.into_iter().map(|d| Diagnostic::new(d, file)).collect(),
+            partial: None,
         }
     }
 
@@ -143,6 +172,7 @@ impl Error {
         Error {
             kind,
             diagnostics: vec![Diagnostic::new(e.to_diagnostic(), file)],
+            partial: None,
         }
     }
 
@@ -153,6 +183,7 @@ impl Error {
                 probl_syntax::Diagnostic::error(span, message).with_help(help),
                 file,
             )],
+            partial: None,
         }
     }
 }

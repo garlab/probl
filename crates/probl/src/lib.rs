@@ -40,9 +40,9 @@ pub use error::{Diagnostic, Error, ErrorKind, Severity};
 #[cfg(not(target_arch = "wasm32"))]
 pub use files::LocalFiles;
 pub use files::{Data, DataSource, Files, MemoryFiles, Snapshots};
-pub use options::{Cancel, Date, Limits, Options, ParseDateError};
+pub use options::{Cancel, Date, FailureMode, Limits, Options, ParseDateError};
 pub use outcome::{
-    ConfidenceInterval, ConfidenceMethod, Estimate, Evidence, EvidenceKind, ExactUpdates, Group, Interval,
+    ConfidenceInterval, ConfidenceMethod, Estimate, Evidence, EvidenceKind, ExactUpdates, Failure, Group, Interval,
     NumericSummary, Outcome, Report, Sampling, SamplingStatus, SamplingUncertainty, Stats, SummaryError, Unresolved,
 };
 pub use program::{Mode, Program, compile};

@@ -5,7 +5,19 @@ use probl_engine::value::Value;
 use probl_engine::{Options, Outcome, RuntimeError, run};
 use probl_syntax::{SourceFile, render_all};
 
+/// Run a program. A run whose worlds failed in partial mode, as sampled runs
+/// are by default, gives the first failure's error, as a total run would:
+/// these tests are about what fails, not about what the other worlds do.
 pub fn exec_raw(src: &str, options: &Options) -> Result<Outcome, RuntimeError> {
+    let outcome = exec_partial(src, options)?;
+    match outcome.failures.groups.first() {
+        Some(failure) => Err(failure.error.clone()),
+        None => Ok(outcome),
+    }
+}
+
+/// Run a program, with its failures in the outcome when it's partial.
+pub fn exec_partial(src: &str, options: &Options) -> Result<Outcome, RuntimeError> {
     let (program, diags) = probl_sema::compile(src);
     let file = SourceFile::new("test.probl", src);
     let Some(program) = program else {

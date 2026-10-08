@@ -254,3 +254,30 @@ fn the_reference_documents_every_built_in() {
     assert!(keywords.iter().any(|k| k["name"] == "typeof"));
     assert!(docs["read"]["summary"].as_str().unwrap().contains("CSV"));
 }
+
+#[test]
+fn a_partial_result_has_the_output_and_the_failures() {
+    let source = "let x ~ d6 - 1\nlet y = 1 / x\nreport y";
+    // Sampling is partial by default.
+    let (out, _) = run(json!({ "source": source, "mode": "sample", "runs": 1000 }));
+    assert_eq!(out["partial"], true);
+    assert_eq!(out["finished"], true);
+    assert!(out["output"].as_str().unwrap().contains("runs failed"), "{out}");
+    assert_eq!(out["error"]["message"], "division by zero");
+    assert_eq!(out["failures"].as_array().unwrap().len(), 1);
+    assert_eq!(out["stats"]["runs"], 1000);
+    // Enumeration is total, unless the request asks otherwise.
+    let (out, _) = run(json!({ "source": source }));
+    assert!(out["output"].is_null() && out["partial"].is_null(), "{out}");
+    assert_eq!(out["error"]["message"], "division by zero");
+    let (out, _) = run(json!({ "source": source, "on_error": "partial" }));
+    assert!(
+        out["output"]
+            .as_str()
+            .unwrap()
+            .starts_with("enumerated · partial result · 16.67% failed"),
+        "{out}"
+    );
+    let (out, _) = run(json!({ "source": source, "mode": "sample", "on_error": "total" }));
+    assert!(out["output"].is_null(), "{out}");
+}

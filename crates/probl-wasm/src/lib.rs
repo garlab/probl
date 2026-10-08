@@ -9,7 +9,7 @@
 //! the module's memory. Natively, they're ordinary Rust functions, which
 //! the tests call.
 
-use probl::{Date, Limits, MemoryFiles, Options};
+use probl::{Date, FailureMode, Limits, MemoryFiles, Options};
 use probl_sema::Builtin;
 use probl_sema::symbols::{DefKind, Symbols};
 use probl_syntax::{Severity, SourceFile, Span};
@@ -204,6 +204,8 @@ pub fn docs() -> String {
 /// - `"mode"`: `"enumerate"` or `"sample"`, and `"runs"` and `"seed"`,
 ///   which override the program's `@mode` as on the command line;
 /// - `"conjugate"`: `false` to sample without exact updates;
+/// - `"on_error"`: `"total"` or `"partial"`, overriding the program's
+///   `@on_error` as `--on-error` does;
 /// - `"files"`: `{path: text}`, the files `read` may read.
 /// - `"today"`: `"YYYY-MM-DD"`, the date captured by the host for this execution.
 ///   Required when a program uses `today`; the JavaScript wrapper supplies UTC.
@@ -214,7 +216,10 @@ pub fn docs() -> String {
 /// `{"output": …, "stats": …, "diagnostics": [...]}`, or
 /// `{"error": …, "diagnostics": [...]}`, with the error described as a
 /// diagnostic, and its `"kind"`: `"language"`, `"unsupported"`, `"limit"`
-/// or `"internal"`.
+/// or `"internal"`. A partial result, where some worlds failed, has both:
+/// `{"output": …, "stats": …, "partial": true, "error": …, "failures":
+/// [...], "diagnostics": [...]}`, with a diagnostic for each place they
+/// failed.
 pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option<Progress>) -> String {
     let request: Json = match serde_json::from_str(request) {
         Ok(r) => r,
@@ -270,32 +275,52 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
             Err(e) => return failed(error(&e, source)),
         }
     }
+    let stats = |outcome: &probl::Outcome| {
+        let s = outcome.stats();
+        let mut stats = json!({
+            "peak_worlds": s.peak_worlds(),
+            "world_steps": s.world_steps(),
+            "calls": s.calls(),
+            "reused_calls": s.reused_calls(),
+            "solved_loops": s.solved_loops(),
+            "chain_states": s.chain_states(),
+            "solved_calls": s.solved_calls(),
+            "call_rounds": s.call_rounds(),
+        });
+        if let Some(sampled) = outcome.sampling() {
+            stats["runs"] = json!(sampled.runs());
+            stats["effective_runs"] = json!(sampled.effective_runs());
+        }
+        stats
+    };
     match program.run_with(&options, print) {
         Ok(outcome) => {
-            let s = outcome.stats();
-            let mut stats = json!({
-                "peak_worlds": s.peak_worlds(),
-                "world_steps": s.world_steps(),
-                "calls": s.calls(),
-                "reused_calls": s.reused_calls(),
-                "solved_loops": s.solved_loops(),
-                "chain_states": s.chain_states(),
-                "solved_calls": s.solved_calls(),
-                "call_rounds": s.call_rounds(),
-            });
-            if let Some(sampled) = outcome.sampling() {
-                stats["runs"] = json!(sampled.runs());
-                stats["effective_runs"] = json!(sampled.effective_runs());
-            }
             let today = outcome.today().map(|d| d.to_string());
-            json!({ "output": outcome.text(), "today": today, "stats": stats, "diagnostics": diagnostics }).to_string()
+            json!({ "output": outcome.text(), "today": today, "stats": stats(&outcome), "diagnostics": diagnostics })
+                .to_string()
+        }
+        Err(e) if e.partial().is_some() => {
+            let outcome = e.partial().expect("checked");
+            let today = outcome.today().map(|d| d.to_string());
+            let failures: Vec<Json> = e.diagnostics().iter().map(|d| diagnostic(d, source)).collect();
+            json!({
+                "output": outcome.text(),
+                "today": today,
+                "stats": stats(outcome),
+                "partial": true,
+                "finished": outcome.finished(),
+                "error": error(&e, source),
+                "failures": failures,
+                "diagnostics": diagnostics,
+            })
+            .to_string()
         }
         Err(e) => failed(error(&e, source)),
     }
 }
 
-/// The options a request asks for, as the command line's `--mode`, `--runs`
-/// and `--seed` would.
+/// The options a request asks for, as the command line's `--mode`, `--runs`,
+/// `--seed` and `--on-error` would.
 fn mode(request: &Json, options: Options) -> Options {
     let mut options = match request["mode"].as_str() {
         Some("enumerate") => options.enumerate(),
@@ -308,7 +333,11 @@ fn mode(request: &Json, options: Options) -> Options {
     if let Some(seed) = request["seed"].as_u64() {
         options = options.seed(seed);
     }
-    options
+    match request["on_error"].as_str() {
+        Some("total") => options.on_error(FailureMode::Total),
+        Some("partial") => options.on_error(FailureMode::Partial),
+        _ => options,
+    }
 }
 
 /// The files a program may read: only those given, by the path it's

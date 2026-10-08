@@ -1,7 +1,7 @@
 //! Public ordering, custom comparators, and finite order statistics.
 mod common;
 use common::*;
-use probl_engine::{ErrorKind, Limits, Options, value::Value};
+use probl_engine::{ErrorKind, FailureMode, Limits, Options, value::Value};
 use probl_sema::ir::Mode;
 
 fn options(mode: Mode) -> Options {
@@ -294,7 +294,11 @@ fn comparator_failure_stops_calls_immediately() {
         let (program, diagnostics) = probl_sema::compile(src);
         assert!(program.is_some(), "{diagnostics:?}");
         let mut prints = Vec::new();
-        let e = probl_engine::run(&program.unwrap(), &options(mode), &mut |s| prints.push(s.to_owned())).unwrap_err();
+        let total = Options {
+            on_error: Some(FailureMode::Total),
+            ..options(mode)
+        };
+        let e = probl_engine::run(&program.unwrap(), &total, &mut |s| prints.push(s.to_owned())).unwrap_err();
         assert_eq!(e.kind, ErrorKind::Language);
         assert_eq!(prints, vec!["compare"]);
     }

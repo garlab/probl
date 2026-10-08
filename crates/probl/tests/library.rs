@@ -2,8 +2,8 @@
 //! (docs/library.md).
 
 use probl::{
-    Data, Date, ErrorKind, Estimate, EvidenceKind, Files, MemoryFiles, Mode, Options, Outcome, SamplingStatus,
-    Snapshots, SummaryError,
+    Data, Date, ErrorKind, Estimate, EvidenceKind, FailureMode, Files, MemoryFiles, Mode, Options, Outcome,
+    SamplingStatus, Snapshots, SummaryError,
 };
 use std::io::Read;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -474,6 +474,124 @@ fn errors_say_what_kind_and_where() {
 
 fn run_err(source: &str, options: Options) -> probl::Error {
     probl::compile("e.probl", source).unwrap().run(&options).unwrap_err()
+}
+
+// ── Failure modes ────────────────────────────────────────────────────────
+
+const RECIPROCAL: &str = "let x ~ d6 - 1\nprint(x)\nlet y = 1 / x\nreport y";
+
+#[test]
+fn a_partial_result_comes_back_in_the_error() {
+    // Partial, as sampling is by default: the error carries what the other
+    // worlds gave, so `run(...)?` still stops at a fault.
+    let e = run_err(RECIPROCAL, Options::new().on_error(FailureMode::Partial));
+    assert_eq!(e.kind(), ErrorKind::Language);
+    assert_eq!(e.to_string(), "division by zero");
+    let outcome = e.partial().expect("a partial outcome");
+    assert_eq!(outcome.failure_mode(), FailureMode::Partial);
+    assert!(outcome.finished());
+    close(outcome.failed_share().unwrap(), 1.0 / 6.0, 1e-12);
+    let [failure] = outcome.failures() else {
+        panic!("{:?}", outcome.failures());
+    };
+    assert_eq!(failure.diagnostic().line_column(), (3, 9));
+    close(failure.share().unwrap(), 1.0 / 6.0, 1e-12);
+    assert_eq!(
+        (failure.runs(), failure.first_run(), failure.standard_error()),
+        (None, None, None)
+    );
+    assert!(
+        failure.diagnostic().notes()[0].contains("16.67% of the worlds"),
+        "{:?}",
+        failure.diagnostic()
+    );
+    // The other worlds' reports, as numbers and as text.
+    let mean = outcome.report("y").unwrap().groups()[0]
+        .numeric()
+        .unwrap()
+        .mean()
+        .unwrap();
+    close(mean.point().unwrap(), 137.0 / 300.0, 1e-12);
+    assert!(
+        outcome
+            .text()
+            .starts_with("enumerated · partial result · 16.67% failed"),
+        "{}",
+        outcome.text()
+    );
+    assert!(
+        outcome
+            .text()
+            .ends_with("failed\n  line 3: division by zero    16.67%\n"),
+        "{}",
+        outcome.text()
+    );
+    // `run` collects what was printed, failed worlds included.
+    assert_eq!(outcome.printed().len(), 6);
+    assert_eq!(e.diagnostics().len(), 1);
+}
+
+#[test]
+fn failure_modes_follow_the_mode_unless_chosen() {
+    let program = probl::compile("r.probl", RECIPROCAL).unwrap();
+    assert_eq!(program.failure_mode(), None);
+    // Enumeration stops at the first fault: no partial outcome.
+    assert!(program.run(&Options::new()).unwrap_err().partial().is_none());
+    // Sampling lets the other runs finish.
+    let e = program.run(&Options::new().runs(2000).seed(5)).unwrap_err();
+    let outcome = e.partial().unwrap();
+    assert_eq!(outcome.failure_mode(), FailureMode::Partial);
+    let failure = &outcome.failures()[0];
+    let runs = failure.runs().unwrap();
+    assert!(runs > 200 && runs < 470, "{runs}");
+    assert!(failure.first_run().unwrap() >= 1);
+    let share = failure.share().unwrap();
+    close(share, runs as f64 / 2000.0, 1e-12);
+    close(
+        failure.standard_error().unwrap(),
+        (share * (1.0 - share) / 2000.0).sqrt(),
+        1e-12,
+    );
+    // A host can ask for either, whatever the mode and the program say.
+    let total = Options::new().runs(2000).on_error(FailureMode::Total);
+    assert!(program.run(&total).unwrap_err().partial().is_none());
+    let pragma = probl::compile("p.probl", &format!("@on_error total\n{RECIPROCAL}")).unwrap();
+    assert_eq!(pragma.failure_mode(), Some(FailureMode::Total));
+    assert!(pragma.run(&Options::new().runs(100)).unwrap_err().partial().is_none());
+    let e = pragma.run(&Options::new().on_error(FailureMode::Partial)).unwrap_err();
+    assert!(e.partial().is_some());
+    // Without a fault, nothing changes but the mode reported.
+    let outcome = run("report d6 > 3", &Options::new().runs(100));
+    assert_eq!(outcome.failure_mode(), FailureMode::Partial);
+    assert!(outcome.failures().is_empty());
+    assert_eq!(outcome.failed_share(), Some(0.0));
+    assert_eq!(run("report d6 > 3", &Options::new()).failure_mode(), FailureMode::Total);
+}
+
+#[test]
+fn when_every_world_fails_nothing_finished() {
+    let e = run_err(
+        "let x ~ d6\nlet y = x / 0\nreport y",
+        Options::new().on_error(FailureMode::Partial),
+    );
+    let outcome = e.partial().unwrap();
+    assert!(!outcome.finished());
+    assert!(
+        e.diagnostics()[0]
+            .notes()
+            .iter()
+            .any(|n| n.contains("no world finished")),
+        "{e:?}"
+    );
+    // Failures before later evidence: their share isn't known.
+    let e = run_err(
+        "let x ~ d6 - 1\nlet y = 1 / x\nobserve x > 2\nreport y",
+        Options::new().on_error(FailureMode::Partial),
+    );
+    let outcome = e.partial().unwrap();
+    assert_eq!(outcome.failed_share(), None);
+    assert_eq!(outcome.failures()[0].share(), None);
+    assert!(outcome.text().contains("weight 0.1667"), "{}", outcome.text());
 }
 
 #[test]

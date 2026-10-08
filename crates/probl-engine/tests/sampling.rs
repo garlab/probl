@@ -254,6 +254,7 @@ fn the_first_error_in_run_order_is_reported() {
     // what the batches up to it printed.
     let src = r#"
 @mode sample(runs: 20_000, seed: 3)
+@on_error total
 let k ~ d100
 let m ~ d100
 if m == 1 { print("run with", k) }

@@ -7,7 +7,7 @@
 
 use crate::continuous::Family;
 use crate::dist::Budget;
-use crate::error::{OpError, OpResult};
+use crate::error::{Fault, OpError, OpResult};
 use crate::value::{Closure, Value, family_key, float_key};
 use probl_syntax::ast::BinOp;
 use std::collections::BTreeMap;
@@ -245,7 +245,7 @@ pub fn binary(op: BinOp, a: &Value, b: &Value) -> OpResult<Value> {
         }
         Div if !reverse && scale == 0.0 => {
             if offset == 0.0 {
-                return Err(OpError::new("division by zero"));
+                return Err(OpError::fault(Fault::DivisionByZero, "division by zero"));
             }
             x.scale /= offset;
             x.offset /= offset;

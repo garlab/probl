@@ -4,7 +4,7 @@
 //! Drawing uses its own generator and `libm` rather than the platform's math
 //! library, so that a seed gives the same numbers everywhere (section 14).
 
-use crate::error::{OpError, OpResult};
+use crate::error::{Fault, OpError, OpResult};
 use std::f64::consts::{PI, SQRT_2};
 use std::fmt;
 
@@ -52,7 +52,11 @@ pub enum Family {
 }
 
 fn check(ok: bool, message: impl FnOnce() -> String) -> OpResult<()> {
-    if ok { Ok(()) } else { Err(OpError::new(message())) }
+    if ok {
+        Ok(())
+    } else {
+        Err(OpError::fault(Fault::Domain, message()))
+    }
 }
 
 fn finite(values: &[f64], what: &str) -> OpResult<()> {
@@ -166,7 +170,7 @@ impl Family {
     pub fn estimate(a: f64, b: f64) -> OpResult<Family> {
         finite(&[a, b], "`to`")?;
         if a <= 0.0 || b <= 0.0 {
-            return Err(OpError::new("`a to b` needs two positive numbers")
+            return Err(OpError::fault(Fault::Domain, "`a to b` needs two positive numbers")
                 .help("for a quantity that can be zero or negative, use `normal_range(lo, hi)`"));
         }
         check(a < b, || "`a to b` needs a below b".into())?;

@@ -1,6 +1,6 @@
 # Error handling: local recovery and failed worlds
 
-> Draft proposal, updated 8 October 2026. Intended for near-term language work, independently of [portals and external effects](portals-and-effects.md). Nothing here is implemented yet. Proposed syntax, fault codes and output are illustrative; the [current semantics](../semantics.md) still stops execution on a runtime error.
+> Draft proposal, updated 8 October 2026. Intended for near-term language work, independently of [portals and external effects](portals-and-effects.md). The global [failure modes](#failure-modes-total-or-partial) are implemented, as the [reference semantics](../semantics.md#failure-modes) specifies them; see [as built](#as-built) for how they differ from this proposal. Local recovery (`try`/`catch`), public fault codes, stage 0 diagnostics and a failure cap are not. Proposed syntax, fault codes and output elsewhere are illustrative.
 
 ## Recommendation
 
@@ -211,6 +211,17 @@ If no positive-weight successful execution remains after the requested work, ret
 Earlier reports can still contain useful contributions when every world later fails. Preserve those as diagnostic partial reports attached to the error, rather than returning an ordinary completed outcome or discarding them. A fatal budget/cancellation after some batches likewise does not become a completed partial run: distinguish requested, started, completed and unrun attempts.
 
 Partial mode is for getting a usable result from a model with a fault, not a promise that any faulty program can finish: shared resource limits remain authoritative.
+
+### As built
+
+The failure modes are implemented as above, with these choices:
+
+- **Faults are classified internally.** Engine errors carry an internal fault kind (division by zero, domain, index or key, empty collection, explicit conversion, overflow), assigned at each value-dependent error site. Everything else stays fatal, including declared-type checks, which are contracts. Chances that add up to more than 100% are domain faults. No fault code is public yet.
+- **Comparable weights come from a static analysis.** For each statement, the compiler records whether evidence can be applied while it runs or after it in its function, including later rounds of a loop around it. A failure's weight counts with the finished worlds' only when no evidence can follow it, there or after any call it propagates through. This is conservative: evidence on a branch the failed world couldn't take still counts.
+- **Calls, solved loops and recursion carry failures** the way they carry unresolved weight: per call result (memoized with it), per chain state (scaled by its expected visits, and counted as a way out of the loop) and per round of a recursive call. `simulate` and collection callbacks are atomic, as proposed.
+- **Output.** The summary line says `partial result`, then the failed share (enumeration, when comparable) or the failed run count (sampling). A `failed` section after the reports lists up to ten places, with their share, or runs and share, or the raw weight when not comparable. When the weights can't be compared, the evidence is labelled as the finished worlds' contribution.
+- **Hosts.** The library returns a partial result in the error (`Error::partial`), with one diagnostic per place. `probl run` prints the result, then the diagnostics, and exits with 3, or 1 when nothing finished. The playground shows the output, marks the failures in the editor, and has an "On error" option.
+- **Not built:** failure counts in the sampling progress, per-report failure breakdowns, a failure cap, and stage 0's shares in total mode.
 
 ## Reporting and the meaning of a failed world
 

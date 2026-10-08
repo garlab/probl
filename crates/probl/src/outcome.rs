@@ -1,7 +1,7 @@
 //! What a run gives back: its text, its reports as numbers, with what's
 //! known about their uncertainty, the evidence, and statistics.
 
-use crate::{DataSource, Date};
+use crate::{DataSource, Date, Diagnostic, FailureMode};
 use probl_engine::report::{self, GroupResult, Status};
 use probl_engine::value::Value;
 use probl_sema::ir;
@@ -23,10 +23,18 @@ pub struct Outcome {
     stats: Stats,
     data: Vec<DataSource>,
     today: Option<Date>,
+    failure_mode: FailureMode,
+    failures: Vec<Failure>,
+    failed_share: Option<f64>,
+    finished: bool,
 }
 
 impl Outcome {
-    pub(crate) fn new(outcome: probl_engine::Outcome, program: &Arc<ir::Program>, file: &SourceFile) -> Outcome {
+    pub(crate) fn new(
+        mut outcome: probl_engine::Outcome,
+        program: &Arc<ir::Program>,
+        file: &Arc<SourceFile>,
+    ) -> Outcome {
         let reports = program
             .reports
             .iter()
@@ -41,6 +49,15 @@ impl Outcome {
             })
             .collect();
         let runs = outcome.sample.as_ref().map(|s| s.runs);
+        let (failures, failed_share) = failures(&outcome, file);
+        let mut text = std::mem::take(&mut outcome.output);
+        if !failures.is_empty() {
+            // After the reports, as a report would be.
+            text.truncate(text.trim_end_matches('\n').len());
+            text.push_str("\n\n");
+            text.push_str(&failure_text(&failures, outcome.format));
+            text.push('\n');
+        }
         let unresolved = match runs {
             // Per run, as enumeration counts it per unit of prior weight.
             Some(runs) => outcome.unresolved.scale(1.0 / runs as f64),
@@ -57,7 +74,11 @@ impl Outcome {
             stats: Stats::new(&outcome, file),
             data: outcome.data.iter().map(DataSource::new).collect(),
             today: outcome.today.map(Date::from_days),
-            text: outcome.output,
+            failure_mode: FailureMode::new(outcome.on_error),
+            failures,
+            failed_share,
+            finished: !outcome.finished.is_zero(),
+            text,
             printed: Vec::new(),
             reports,
             results: outcome.results,
@@ -131,6 +152,206 @@ impl Outcome {
     /// The date `today` stood for, if the run was given one.
     pub fn today(&self) -> Option<Date> {
         self.today
+    }
+
+    /// What a fault did to the other worlds in this run: the host's choice,
+    /// the program's `@on_error`, or the mode's default.
+    pub fn failure_mode(&self) -> FailureMode {
+        self.failure_mode
+    }
+
+    /// In partial mode: the worlds that failed, grouped by where and how,
+    /// in the order they first failed. Empty when none did. An outcome with
+    /// failures is a partial result: [`Program::run`](crate::Program::run)
+    /// returns it in its error, as [`Error::partial`](crate::Error::partial).
+    pub fn failures(&self) -> &[Failure] {
+        &self.failures
+    }
+
+    /// The share of the weight (or of the runs) that failed, when it can be
+    /// compared with the worlds that finished: `None` when worlds failed
+    /// before evidence they'd have met, and `Some(0.0)` when none failed.
+    pub fn failed_share(&self) -> Option<f64> {
+        self.failed_share
+    }
+
+    /// Whether any world (or run) finished the program.
+    pub fn finished(&self) -> bool {
+        self.finished
+    }
+}
+
+/// The worlds of a partial run that failed at one place, with one kind of
+/// fault (docs/semantics.md, section 11).
+#[derive(Clone, Debug)]
+pub struct Failure {
+    diagnostic: Diagnostic,
+    share: Option<f64>,
+    standard_error: Option<f64>,
+    weight: f64,
+    runs: Option<u64>,
+    first_run: Option<u64>,
+}
+
+impl Failure {
+    /// The first of them, as an error: the fault, where it happened, and
+    /// how much failed there.
+    pub fn diagnostic(&self) -> &Diagnostic {
+        &self.diagnostic
+    }
+
+    /// The share of the weight (or of the runs) that failed here. `None`
+    /// when the failed worlds could still have met evidence: their weight
+    /// stops short of the evidence the finished worlds' includes.
+    pub fn share(&self) -> Option<f64> {
+        self.share
+    }
+
+    /// When sampling, and the share is known: its standard error.
+    pub fn standard_error(&self) -> Option<f64> {
+        self.standard_error
+    }
+
+    /// The weight the worlds had when they failed. When sampling, it's
+    /// summed over the runs that failed here.
+    pub fn weight(&self) -> f64 {
+        self.weight
+    }
+
+    /// When sampling: how many runs failed here.
+    pub fn runs(&self) -> Option<u64> {
+        self.runs
+    }
+
+    /// When sampling: the first run that failed here, in the order runs are
+    /// combined, counting from 1.
+    pub fn first_run(&self) -> Option<u64> {
+        self.first_run
+    }
+}
+
+/// How many failures the text lists before saying how many more there are.
+const LISTED_FAILURES: usize = 10;
+
+/// The run's failures, each with a diagnostic that says how much failed,
+/// and the share that failed overall when it's known.
+fn failures(outcome: &probl_engine::Outcome, file: &Arc<SourceFile>) -> (Vec<Failure>, Option<f64>) {
+    let all = &outcome.failures;
+    let comparable = !all.before_evidence;
+    let total = outcome.finished + all.weight;
+    let total_squares = outcome.sample.as_ref().map(|s| s.squares + all.squares);
+    let share_of = |w: probl_engine::Weight| (comparable && !total.is_zero()).then(|| w.ratio(total));
+    let pct = |p: f64| report::pct(p, outcome.format);
+    let others = match (outcome.sample.is_some(), outcome.finished.is_zero()) {
+        (false, false) => "the other worlds finished",
+        (false, true) => "no world finished",
+        (true, false) => "the other runs finished",
+        (true, true) => "no run finished",
+    };
+    let failures = all
+        .groups
+        .iter()
+        .map(|g| {
+            let share = share_of(g.weight);
+            let standard_error = match (share, total_squares) {
+                (Some(p), Some(all_squares)) => {
+                    let spread =
+                        g.squares.scale((1.0 - p) * (1.0 - p)) + all_squares.saturating_sub(g.squares).scale(p * p);
+                    Some(spread.ratio(total * total).sqrt())
+                }
+                _ => None,
+            };
+            let note = match (&outcome.sample, share) {
+                (Some(s), _) => {
+                    let first = g
+                        .first_run
+                        .map_or(String::new(), |r| format!(", first in run {}", r + 1));
+                    format!(
+                        "it failed in {} of {} runs{first}; {others}",
+                        report::thousands(g.runs as i64),
+                        report::thousands(s.runs as i64)
+                    )
+                }
+                (None, Some(p)) => format!("it failed in {} of the worlds; {others}", pct(p)),
+                (None, None) => format!("it failed in worlds that hadn't met all the evidence yet; {others}"),
+            };
+            let error = g.error.clone().with_note(note);
+            Failure {
+                diagnostic: Diagnostic::new(error.to_diagnostic(), file),
+                share,
+                standard_error,
+                weight: g.weight.to_f64(),
+                runs: outcome.sample.is_some().then_some(g.runs),
+                first_run: g.first_run.map(|r| u64::from(r) + 1),
+            }
+        })
+        .collect();
+    let failed_share = if all.is_empty() {
+        Some(0.0)
+    } else {
+        share_of(all.weight)
+    };
+    (failures, failed_share)
+}
+
+/// The failures, as `probl run` lists them after the reports:
+///
+/// ```text
+/// failed
+///   line 4: division by zero    16.67%
+/// ```
+fn failure_text(failures: &[Failure], format: report::Format) -> String {
+    let rows: Vec<(String, String)> = failures
+        .iter()
+        .take(LISTED_FAILURES)
+        .map(|f| {
+            let (line, _) = f.diagnostic.line_column();
+            let label = format!("line {line}: {}", f.diagnostic.message());
+            let share = match (f.share, f.standard_error) {
+                (Some(p), Some(se)) => Some(report::estimate(p, se)),
+                (Some(p), None) => Some(report::pct(p, format)),
+                (None, _) => None,
+            };
+            let amount = match (f.runs, share) {
+                (Some(runs), share) => {
+                    let runs = match runs {
+                        1 => "1 run".to_string(),
+                        n => format!("{} runs", report::thousands(n as i64)),
+                    };
+                    match share {
+                        Some(share) => format!("{runs} ({share})"),
+                        None => runs,
+                    }
+                }
+                (None, Some(share)) => share,
+                (None, None) => format!("weight {}", plain_number(f.weight)),
+            };
+            (label, amount)
+        })
+        .collect();
+    let width = rows.iter().map(|(l, _)| l.chars().count()).max().unwrap_or(0);
+    let mut text = String::from("failed");
+    for (label, amount) in rows {
+        let pad = width - label.chars().count();
+        text.push_str(&format!("\n  {label}{}    {amount}", " ".repeat(pad)));
+    }
+    if failures.len() > LISTED_FAILURES {
+        text.push_str(&format!("\n  and {} more", failures.len() - LISTED_FAILURES));
+    }
+    text
+}
+
+/// A weight that isn't a probability, with four significant digits.
+fn plain_number(x: f64) -> String {
+    if x != 0.0 && !(1e-3..1e6).contains(&x.abs()) {
+        format!("{x:.3e}")
+    } else {
+        let digits = if x == 0.0 {
+            0
+        } else {
+            (3 - x.abs().log10().floor() as i32).max(0) as usize
+        };
+        format!("{x:.digits$}")
     }
 }
 

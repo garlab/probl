@@ -756,9 +756,18 @@ impl<'a> Lowerer<'a> {
                     self.error(pragma.span, format!("`@{name}` needs a positive whole number"));
                 }
             },
+            "on_error" => match arg.map(|a| &a.kind) {
+                Some(ast::ExprKind::Name(m)) if m == "total" => self.settings.on_error = Some(FailureMode::Total),
+                Some(ast::ExprKind::Name(m)) if m == "partial" => self.settings.on_error = Some(FailureMode::Partial),
+                _ => {
+                    self.error(pragma.span, "`@on_error` is `total` or `partial`").help(
+                        "`@on_error total` stops the run at the first fault; `@on_error partial` ends only the world that failed",
+                    );
+                }
+            },
             _ => {
                 self.error(pragma.name.span, format!("unknown pragma `@{name}`"))
-                    .help("the pragmas are @mode, @epsilon, @max_iterations and @max_worlds");
+                    .help("the pragmas are @mode, @epsilon, @max_iterations, @max_worlds and @on_error");
             }
         }
     }

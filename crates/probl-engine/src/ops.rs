@@ -1,7 +1,7 @@
 //! Operators, and applying operations to every outcome of a distribution.
 
 use crate::dist::{Budget, Dist};
-use crate::error::{OpError, OpResult};
+use crate::error::{Fault, OpError, OpResult};
 use crate::value::{EnumValue, Record, Value};
 use probl_number::Integer;
 use probl_syntax::ast::{BinOp, UnOp};
@@ -163,10 +163,13 @@ pub fn to_prob(v: &Value) -> OpResult<f64> {
         ));
     }
     match v {
-        Value::Prob(_) | Value::Float(_) | Value::Int(_) => match make_prob(v)? {
-            Value::Prob(p) => Ok(p),
-            _ => unreachable!("make_prob returns a probability"),
-        },
+        // A parameter out of range is outside what its function is defined for.
+        Value::Prob(_) | Value::Float(_) | Value::Int(_) => {
+            match make_prob(v).map_err(|e| e.as_fault(Fault::Domain))? {
+                Value::Prob(p) => Ok(p),
+                _ => unreachable!("make_prob returns a probability"),
+            }
+        }
         Value::Bool(_) => Err(OpError::new("expected a probability, found a fact (true or false)")
             .help("convert a boolean explicitly with `prob(fact)`")),
         Value::Dist(_) => Err(OpError::new(format!("expected a probability, found a {}", v.kind()))
@@ -191,7 +194,12 @@ pub fn make_prob(v: &Value) -> OpResult<Value> {
         Value::Prob(p) | Value::Float(p) => *p,
         Value::Int(n) if *n == 0 => 0.0,
         Value::Int(n) if *n == 1 => 1.0,
-        Value::Int(_) => return Err(OpError::new("prob needs a finite number between 0 and 1")),
+        Value::Int(_) => {
+            return Err(OpError::fault(
+                Fault::Conversion,
+                "prob needs a finite number between 0 and 1",
+            ));
+        }
         _ => {
             return Err(
                 OpError::new(format!("prob needs a number or bool, found {}", article(&v.kind())))
@@ -200,7 +208,10 @@ pub fn make_prob(v: &Value) -> OpResult<Value> {
         }
     };
     if !p.is_finite() || !(0.0..=1.0).contains(&p) {
-        return Err(OpError::new("prob needs a finite number between 0 and 1"));
+        return Err(OpError::fault(
+            Fault::Conversion,
+            "prob needs a finite number between 0 and 1",
+        ));
     }
     Ok(Value::Prob(p))
 }
@@ -518,7 +529,11 @@ fn add(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
         (Value::Date(d), n @ (Value::Int(_) | Value::Float(_)))
         | (n @ (Value::Int(_) | Value::Float(_)), Value::Date(d)) => {
             let n = integer(n, "date offset", budget)?;
-            date_plus(*d, n.to_i64().ok_or_else(|| OpError::new("date out of range"))?)
+            date_plus(
+                *d,
+                n.to_i64()
+                    .ok_or_else(|| OpError::fault(Fault::Overflow, "date out of range"))?,
+            )
         }
         (Value::Str(_), _) | (_, Value::Str(_)) => {
             Err(
@@ -536,7 +551,7 @@ fn sub(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
         (Value::Date(d), n @ (Value::Int(_) | Value::Float(_))) => {
             match integer(n, "date offset", budget)?.negated().to_i64() {
                 Some(m) => date_plus(*d, m),
-                None => Err(OpError::new("date out of range")),
+                None => Err(OpError::fault(Fault::Overflow, "date out of range")),
             }
         }
         _ => arith(BinOp::Sub, a, b, budget),
@@ -546,7 +561,7 @@ fn sub(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
 fn date_plus(d: i32, n: i64) -> OpResult<Value> {
     crate::dates::add_days(d, n)
         .map(Value::Date)
-        .ok_or_else(|| OpError::new("date out of range"))
+        .ok_or_else(|| OpError::fault(Fault::Overflow, "date out of range"))
 }
 
 /// Numbers for arithmetic: ints, floats and probabilities (not facts).
@@ -610,7 +625,7 @@ fn arith(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value
                 return x
                     .ratio(y)
                     .map(Value::Float)
-                    .ok_or_else(|| OpError::new("division result is too large for a finite float"));
+                    .ok_or_else(|| OpError::fault(Fault::Overflow, "division result is too large for a finite float"));
             }
             BinOp::IntDiv => x.div_mod(y)?.0,
             BinOp::Mod => x.div_mod(y)?.1,
@@ -638,7 +653,8 @@ fn arith(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value
                 return Err(division_by_zero());
             }
             let q = (x / y).floor();
-            let n = Integer::from_f64(q).ok_or_else(|| OpError::new("integer division result is not finite"))?;
+            let n = Integer::from_f64(q)
+                .ok_or_else(|| OpError::fault(Fault::Overflow, "integer division result is not finite"))?;
             budget.integer_allocation(n.bits(), 1)?;
             return Ok(Value::Int(n));
         }
@@ -652,10 +668,10 @@ fn arith(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value
         _ => return Err(bad()),
     };
     if !v.is_finite() {
-        return Err(OpError::new(format!(
-            "`{}` gave a result that isn't a finite number",
-            op.symbol()
-        )));
+        return Err(OpError::fault(
+            Fault::Overflow,
+            format!("`{}` gave a result that isn't a finite number", op.symbol()),
+        ));
     }
     Ok(Value::Float(v))
 }
@@ -694,7 +710,7 @@ fn continuous_binary(op: BinOp, a: &Value, b: &Value) -> OpResult<Option<Value>>
 }
 
 fn division_by_zero() -> OpError {
-    OpError::new("division by zero")
+    OpError::fault(Fault::DivisionByZero, "division by zero")
 }
 
 fn int_power(base: &Integer, exponent: &Integer, budget: &mut Budget) -> OpResult<Value> {
@@ -928,11 +944,11 @@ pub fn index_plain(coll: &Value, i: &Value, budget: &mut Budget) -> OpResult<Val
         Value::Range(lo, hi) => {
             let k = integer(i, "index", budget)?;
             if k.is_negative() {
-                return Err(OpError::new("index out of range"));
+                return Err(OpError::fault(Fault::Index, "index out of range"));
             }
             let n = lo.add(&k)?;
             if &n > hi {
-                return Err(OpError::new("index out of range"));
+                return Err(OpError::fault(Fault::Index, "index out of range"));
             }
             Ok(Value::Int(n))
         }
@@ -943,7 +959,7 @@ pub fn index_plain(coll: &Value, i: &Value, budget: &mut Budget) -> OpResult<Val
             crate::text::value(c.encode_utf8(&mut [0; 4]), budget)
         }
         Value::Map(m) => m.get(i).cloned().ok_or_else(|| {
-            OpError::new(format!("the key {i:?} isn't in the map"))
+            OpError::fault(Fault::Index, format!("the key {i:?} isn't in the map"))
                 .help("use `get(key, default)` for keys that may be missing")
         }),
         other => Err(OpError::new(format!("can't index {}", article(&other.kind())))),
@@ -953,7 +969,8 @@ pub fn index_plain(coll: &Value, i: &Value, budget: &mut Budget) -> OpResult<Val
 pub fn as_index(i: &Value, len: u128, budget: &mut Budget) -> OpResult<u128> {
     let k = integer(i, "index", budget)?.to_u128();
     k.filter(|k| *k < len).ok_or_else(|| {
-        OpError::new(format!("index {i} is out of range for a length of {len}")).help("indices start at 0")
+        OpError::fault(Fault::Index, format!("index {i} is out of range for a length of {len}"))
+            .help("indices start at 0")
     })
 }
 

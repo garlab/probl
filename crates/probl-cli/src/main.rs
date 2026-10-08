@@ -2,7 +2,7 @@
 
 use clap::{Parser, Subcommand, ValueEnum};
 use probl::__internal::{EngineChecks, engine_checks};
-use probl::{Cancel, Date, ErrorKind, Files, Limits, LocalFiles, Options, Program, Snapshots};
+use probl::{Cancel, Date, ErrorKind, FailureMode, Files, Limits, LocalFiles, Options, Program, Snapshots};
 use probl_cli::parse_size;
 use probl_engine::data::{self, InputLimits};
 use probl_engine::report::thousands;
@@ -27,6 +27,12 @@ struct Cli {
 enum ModeArg {
     Enumerate,
     Sample,
+}
+
+#[derive(Clone, Copy, PartialEq, ValueEnum)]
+enum OnErrorArg {
+    Total,
+    Partial,
 }
 
 #[derive(Clone, Copy, PartialEq, ValueEnum)]
@@ -78,6 +84,9 @@ enum Command {
         /// When sampling: draw every variable from its prior, without exact updates for conjugate priors (for comparing; the estimates mean the same).
         #[arg(long)]
         no_conjugate: bool,
+        /// What a fault in one world does to the others, whatever the program's `@on_error` says: `total` stops the run (the default when enumerating), `partial` lets the others finish (the default when sampling).
+        #[arg(long, value_enum, value_name = "MODE")]
+        on_error: Option<OnErrorArg>,
         /// Stop the run after this many seconds.
         #[arg(long)]
         timeout: Option<f64>,
@@ -147,6 +156,7 @@ fn main() -> ExitCode {
             seed,
             threads,
             no_conjugate,
+            on_error,
             timeout,
             max_worlds,
             max_work,
@@ -182,6 +192,11 @@ fn main() -> ExitCode {
             if let Some(s) = seed {
                 options = options.seed(s);
             }
+            options = match on_error {
+                Some(OnErrorArg::Total) => options.on_error(FailureMode::Total),
+                Some(OnErrorArg::Partial) => options.on_error(FailureMode::Partial),
+                None => options,
+            };
             let mut limits = Limits::default();
             if let Some(n) = max_worlds {
                 limits.max_worlds = n;
@@ -357,14 +372,24 @@ fn run_file(path: &Path, options: Options, cancel: Option<&Cancel>, stats: bool)
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprint!("{}", e.render(color()));
-            if e.kind() == ErrorKind::Internal {
-                return ExitCode::from(70);
+            // A partial result: what the other worlds gave, then where the
+            // failed ones failed.
+            if let Some(outcome) = e.partial() {
+                println!("{}", outcome.text());
             }
-            ExitCode::FAILURE
+            eprint!("{}", e.render(color()));
+            match e.partial() {
+                Some(outcome) if outcome.finished() => ExitCode::from(PARTIAL),
+                _ if e.kind() == ErrorKind::Internal => ExitCode::from(70),
+                _ => ExitCode::FAILURE,
+            }
         }
     }
 }
+
+/// The exit status of a partial result: some worlds failed, and the others
+/// finished.
+const PARTIAL: u8 = 3;
 
 /// Compile a program; with `data`, also read its data, with at most that many
 /// bytes if given.
@@ -514,7 +539,14 @@ fn repl() -> ExitCode {
                 reported = reports;
                 session = candidate;
             }
-            Err(e) => eprint!("{}", e.render(color())),
+            Err(e) => {
+                // A partial result shows what the other worlds gave, but the
+                // input isn't kept.
+                if let Some(outcome) = e.partial() {
+                    print!("{}", outcome.render(reported..outcome.reports().len()));
+                }
+                eprint!("{}", e.render(color()));
+            }
         }
     }
 }

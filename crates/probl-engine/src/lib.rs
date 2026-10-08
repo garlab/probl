@@ -11,6 +11,7 @@ pub mod data;
 pub mod dates;
 pub mod dist;
 pub mod error;
+pub mod failure;
 pub mod interp;
 mod math;
 pub mod ops;
@@ -23,8 +24,10 @@ pub mod value;
 pub mod weight;
 pub mod world;
 
-pub use error::{ErrorKind, RuntimeError};
+pub use error::{ErrorKind, Fault, RuntimeError};
+pub use failure::{Failure, Failures};
 pub use interp::{Stats, Updates};
+pub use probl_sema::ir::FailureMode;
 pub use weight::Weight;
 
 use continuous::Rng;
@@ -139,6 +142,10 @@ pub struct Options {
     /// When sampling, told after each batch how many runs are done, and how
     /// many there are.
     pub progress: Option<Progress>,
+    /// Overrides the program's `@on_error`. Without either, a run is total
+    /// when it enumerates and partial when it samples (docs/semantics.md,
+    /// section 11).
+    pub on_error: Option<FailureMode>,
 }
 
 /// A function told how many runs are done, and how many there are.
@@ -166,6 +173,7 @@ impl Default for Options {
             conjugate: true,
             solve: true,
             progress: None,
+            on_error: None,
         }
     }
 }
@@ -195,6 +203,15 @@ pub struct Outcome {
     /// The variables whose draws could be delayed for exact updates when
     /// sampling, and what happened to them.
     pub updates: Vec<(Variable, Updates)>,
+    /// What a fault did to the other worlds: the program's `@on_error`, the
+    /// host's choice, or the mode's default.
+    pub on_error: FailureMode,
+    /// In partial mode: the worlds that failed. A run with failures is a
+    /// partial result, which the reports describe only in part.
+    pub failures: Failures,
+    /// The total weight of the worlds that finished (when sampling, the
+    /// runs').
+    pub finished: Weight,
 }
 
 /// How a program was sampled (docs/semantics.md, section 14).
@@ -303,6 +320,12 @@ fn run_here(
             .at(settings.mode_span.unwrap_or_default()));
         }
     }
+    // Enumeration stops at the first fault by default, and sampling ends
+    // only the run that failed (section 11).
+    let on_error = options.on_error.or(settings.on_error).unwrap_or(match sample {
+        Some(_) => FailureMode::Partial,
+        None => FailureMode::Total,
+    });
     let limits = &options.limits;
     let config = interp::Config {
         today: options.today,
@@ -330,19 +353,21 @@ fn run_here(
         conjugate: options.conjugate,
         solving: options.solve,
         max_chain_states: limits.max_chain_states,
+        partial: on_error == FailureMode::Partial,
     };
     let epsilon = config.epsilon;
     let inputs = inputs(program, options)?;
     let live = probl_sema::analyze(program);
     let conj = probl_sema::conjugate::analyze(program);
     if let Some((runs, seed)) = sample {
-        return sampled(program, &live, &conj, config, options, print, runs, seed);
+        return sampled(program, &live, &conj, config, options, print, runs, seed, on_error);
     }
     let mut engine = interp::Engine::new(program, &live, &conj, config, inputs, print);
     let finished = engine.run_main()?;
     let unresolved = engine.unresolved;
+    let failures = std::mem::take(&mut engine.failures);
 
-    if engine.observed && finished.is_zero() {
+    if engine.observed && finished.is_zero() && failures.is_empty() {
         let span = engine.last_ruling_out.unwrap_or_default();
         return Err(if unresolved.is_zero() {
             RuntimeError::new(
@@ -357,31 +382,52 @@ fn run_here(
     }
 
     // Reach describes control flow; unresolved weight is shown separately.
+    // Failed worlds count in it when their weight can be compared with the
+    // finished worlds' (section 11).
+    let comparable = !failures.before_evidence;
+    let total = if comparable {
+        finished + failures.weight
+    } else {
+        finished
+    };
     let format = Format {
         fractions: options.fractions,
         weighted: program.main().effects.observes,
         unresolved,
-        program_total: finished,
+        program_total: total,
         run_squares: None,
+        reach_known: comparable,
     };
     let plain = Format {
         fractions: false,
         ..format
     };
     let mut header = String::from("enumerated");
-    let evidence = engine.observed.then_some(finished);
+    if !failures.is_empty() {
+        header.push_str(" · partial result");
+        if comparable && !total.is_zero() {
+            header.push_str(&format!(
+                " · {} failed",
+                report::pct(failures.weight.ratio(total), plain)
+            ));
+        }
+    }
+    // With failures before later evidence, only the finished worlds'
+    // contribution to the evidence is known.
+    let evidence = engine.observed.then_some(total);
+    let of = if comparable { "" } else { " of the finished worlds" };
     if let Some(z) = evidence {
-        let (lo, hi) = (finished.to_f64(), (finished + unresolved).to_f64());
+        let (lo, hi) = (total.to_f64(), (total + unresolved).to_f64());
         if hi - lo >= 0.00005 {
             header.push_str(&format!(
-                " · evidence {}–{}",
+                " · evidence{of} {}–{}",
                 report::pct(lo, plain),
                 report::pct(hi, plain)
             ));
         } else if z.to_f64() < 0.0001 {
-            header.push_str(&format!(" · evidence {}", scientific(z)));
+            header.push_str(&format!(" · evidence{of} {}", scientific(z)));
         } else {
-            header.push_str(&format!(" · evidence {}", report::pct(z.to_f64(), plain)));
+            header.push_str(&format!(" · evidence{of} {}", report::pct(z.to_f64(), plain)));
         }
     }
     if !unresolved.is_zero() {
@@ -410,6 +456,9 @@ fn run_here(
         sample: None,
         data: sources(options),
         updates: Vec::new(),
+        on_error,
+        failures,
+        finished,
     })
 }
 
@@ -506,6 +555,7 @@ struct Combined {
     unresolved: Weight,
     last_ruling_out: Option<Span>,
     stats: Stats,
+    failures: Failures,
 }
 
 impl Combined {
@@ -521,6 +571,7 @@ impl Combined {
             unresolved: Weight::ZERO,
             last_ruling_out: None,
             stats: Stats::default(),
+            failures: Failures::default(),
         }
     }
 
@@ -535,6 +586,7 @@ impl Combined {
         self.unresolved += batch.unresolved;
         self.last_ruling_out = batch.last_ruling_out.or(self.last_ruling_out);
         self.stats.absorb(&batch.stats);
+        self.failures.append(batch.failures);
     }
 }
 
@@ -726,10 +778,12 @@ fn sampled(
     print: &mut (dyn FnMut(&str) + Send),
     runs: u64,
     seed: u64,
+    on_error: FailureMode,
 ) -> Result<Outcome, RuntimeError> {
     let mut engine = run_batches(program, live, conj, &config, options, print, runs, seed)?;
     let totals = engine.totals;
-    if totals.weight.is_zero() {
+    let failures = std::mem::take(&mut engine.failures);
+    if totals.weight.is_zero() && failures.is_empty() {
         let span = engine.last_ruling_out.unwrap_or_default();
         return Err(RuntimeError::new(span, "every run was ruled out by `observe`")
             .with_note(format!("{} runs were tried", report::thousands(runs as i64)))
@@ -739,18 +793,34 @@ fn sampled(
     }
     let effective = (totals.weight * totals.weight).ratio(totals.squares);
     let mut header = format!("sample · {} runs · seed {seed}", report::thousands(runs as i64));
+    if !failures.is_empty() {
+        let failed = match failures.runs {
+            1 => "1 run".to_string(),
+            n => format!("{} runs", report::thousands(n as i64)),
+        };
+        header.push_str(&format!(" · partial result · {failed} failed"));
+    }
+    // Failed runs count in the evidence and reach when their weight can be
+    // compared with the finished runs' (section 11).
+    let comparable = !failures.before_evidence;
+    let (total, total_squares) = match comparable {
+        true => (totals.weight + failures.weight, totals.squares + failures.squares),
+        false => (totals.weight, totals.squares),
+    };
     // The evidence: the average final weight, and its standard error
     // relative to it (section 14).
-    let evidence = totals.weight.scale(1.0 / runs as f64);
+    let evidence = total.scale(1.0 / runs as f64);
     let n = runs as f64;
     let evidence_se = if runs > 1 {
+        let effective = (total * total).ratio(total_squares);
         ((n / effective - 1.0).max(0.0) / (n - 1.0)).sqrt()
     } else {
         f64::NAN
     };
     if engine.observed {
+        let of = if comparable { "" } else { " of the finished runs" };
         header.push_str(&format!(
-            " · {}",
+            " · {}{of}",
             evidence_estimate(evidence, evidence_se, engine.densities)
         ));
         header.push_str(&format!(
@@ -768,9 +838,10 @@ fn sampled(
     let format = Format {
         fractions: false,
         unresolved: Weight::ZERO,
-        program_total: totals.weight,
-        run_squares: Some(totals.squares),
+        program_total: total,
+        run_squares: Some(total_squares),
         weighted: program.main().effects.observes,
+        reach_known: comparable,
     };
     // The report lines don't show unresolved weight when sampling (the
     // summary line does), but the results still say what's incomplete.
@@ -806,5 +877,8 @@ fn sampled(
             .enumerate()
             .map(|(i, v)| (v.clone(), engine.stats.updates.get(i).copied().unwrap_or_default()))
             .collect(),
+        on_error,
+        failures,
+        finished: totals.weight,
     })
 }

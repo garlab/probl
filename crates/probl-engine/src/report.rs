@@ -557,6 +557,10 @@ pub struct Format {
     /// The model may condition outer worlds. Equal weights observed so far
     /// alone do not establish an ordinary binomial sampling scheme.
     pub weighted: bool,
+    /// Whether `program_total` is a denominator for each report's reach.
+    /// It isn't when worlds failed before evidence they'd have met
+    /// (docs/semantics.md, section 11): their weight doesn't count it.
+    pub reach_known: bool,
 }
 
 /// Render reports, each with what its sink collected, in source order.
@@ -1187,6 +1191,7 @@ mod tests {
             program_total: Weight::ONE,
             run_squares: None,
             weighted: false,
+            reach_known: true,
         }
     }
 

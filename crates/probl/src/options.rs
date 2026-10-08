@@ -27,7 +27,37 @@ pub struct Options {
     pub(crate) data: Option<Data>,
     pub(crate) cancel: Option<Cancel>,
     progress: Option<Arc<dyn Fn(u64, u64) + Send + Sync>>,
+    on_error: Option<FailureMode>,
     pub(crate) checks: EngineChecks,
+}
+
+/// What a fault in one world, like a division by zero, does to the others
+/// (docs/semantics.md, section 11). The world that fails always stops there.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FailureMode {
+    /// The whole run fails (`@on_error total`): the default when enumerating.
+    Total,
+    /// The other worlds finish (`@on_error partial`): the default when
+    /// sampling. A run where some failed is a partial result, which
+    /// [`Program::run`](crate::Program::run) returns in its error.
+    Partial,
+}
+
+impl FailureMode {
+    pub(crate) fn new(mode: ir::FailureMode) -> FailureMode {
+        match mode {
+            ir::FailureMode::Total => FailureMode::Total,
+            ir::FailureMode::Partial => FailureMode::Partial,
+        }
+    }
+
+    fn engine(self) -> ir::FailureMode {
+        match self {
+            FailureMode::Total => ir::FailureMode::Total,
+            FailureMode::Partial => ir::FailureMode::Partial,
+        }
+    }
 }
 
 /// What `enumerate` and `sample` asked for.
@@ -51,6 +81,7 @@ impl Default for Options {
             data: None,
             cancel: None,
             progress: None,
+            on_error: None,
             checks: EngineChecks::default(),
         }
     }
@@ -142,6 +173,15 @@ impl Options {
         self
     }
 
+    /// What a fault in one world does to the others (`--on-error`), whatever
+    /// the program's `@on_error` says. Without either, a run is total when it
+    /// enumerates and partial when it samples. A host that wants every fault
+    /// to stop the run asks for [`FailureMode::Total`].
+    pub fn on_error(mut self, mode: FailureMode) -> Options {
+        self.on_error = Some(mode);
+        self
+    }
+
     /// The mode for a program whose `@mode` is `program`, as the command
     /// line chooses it: `None` keeps the program's.
     fn mode(&self, program: &ir::Mode) -> Option<ir::Mode> {
@@ -177,6 +217,7 @@ impl Options {
             conjugate: self.conjugate,
             solve: self.checks.solve,
             progress: self.progress.clone().map(probl_engine::Progress),
+            on_error: self.on_error.map(FailureMode::engine),
         }
     }
 }
@@ -195,6 +236,7 @@ impl fmt::Debug for Options {
             .field("data", &self.data.is_some())
             .field("cancel", &self.cancel)
             .field("progress", &self.progress.is_some())
+            .field("on_error", &self.on_error)
             .finish()
     }
 }

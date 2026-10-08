@@ -3,7 +3,7 @@
 //! Keeping the numerical kernel independent of Value and the interpreter lets
 //! a future quantum register use dense arrays of the same scalars.
 
-use crate::error::{OpError, OpResult};
+use crate::error::{Fault, OpError, OpResult};
 use std::f64::consts::{FRAC_PI_2, LN_2, LN_10, SQRT_2};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -15,7 +15,10 @@ pub struct Complex {
 impl Complex {
     pub fn new(re: f64, im: f64) -> OpResult<Self> {
         if !re.is_finite() || !im.is_finite() {
-            return Err(OpError::new("complex components and results must be finite"));
+            return Err(OpError::fault(
+                Fault::Overflow,
+                "complex components and results must be finite",
+            ));
         }
         // Equality and world merging identify signed zeros. Branch cuts use
         // the side selected by positive zero in each input component.
@@ -63,7 +66,7 @@ impl Complex {
 
     pub fn divided_by(self, other: Self) -> OpResult<Self> {
         if other.re == 0.0 && other.im == 0.0 {
-            return Err(OpError::new("division by zero"));
+            return Err(OpError::fault(Fault::DivisionByZero, "division by zero"));
         }
         let (den, ed) = products(other.re, other.re, other.im, other.im);
         let (re, er) = products(self.re, other.re, self.im, other.im);
@@ -153,7 +156,7 @@ impl Complex {
 
     pub fn ln(self) -> OpResult<Self> {
         if self.re == 0.0 && self.im == 0.0 {
-            return Err(OpError::new("`ln` isn't defined for complex zero"));
+            return Err(OpError::fault(Fault::Domain, "`ln` isn't defined for complex zero"));
         }
         Self::new(log_hypot(self.re, self.im), self.arg())
     }
@@ -323,7 +326,10 @@ impl Complex {
         let x = self.re.abs();
         let y = self.im;
         if x == 1.0 && y == 0.0 {
-            return Err(OpError::new("`atanh` isn't defined at complex +1 or -1"));
+            return Err(OpError::fault(
+                Fault::Domain,
+                "`atanh` isn't defined at complex +1 or -1",
+            ));
         }
         let m = x.max(y.abs());
         if m > 1e150 {

@@ -75,6 +75,9 @@ pub struct Settings {
     pub epsilon: f64,
     pub max_iterations: u64,
     pub max_worlds: usize,
+    /// `@on_error`: what a fault in one world does to the others. `None`
+    /// leaves it to the mode (docs/semantics.md, section 11).
+    pub on_error: Option<FailureMode>,
 }
 
 impl Default for Settings {
@@ -85,6 +88,26 @@ impl Default for Settings {
             epsilon: 1e-12,
             max_iterations: 10_000_000,
             max_worlds: 10_000_000,
+            on_error: None,
+        }
+    }
+}
+
+/// What a fault in one world does to the others (docs/semantics.md,
+/// section 11). The world that fails always stops there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailureMode {
+    /// The whole run fails, as it does for any other error.
+    Total,
+    /// The other worlds finish, and the result says what failed.
+    Partial,
+}
+
+impl FailureMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            FailureMode::Total => "total",
+            FailureMode::Partial => "partial",
         }
     }
 }

@@ -11,7 +11,7 @@
 // It tests web/dist, served here, or the page at PROBL_URL, such as a
 // deployment.
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer-core';
@@ -116,6 +116,28 @@ try {
   await page.evaluate(() => window.playground.setSource('report d6 > 4'));
   let answer = await run(page);
   expect(answer.result.includes('33.33%'), 'the next run works', answer.result);
+
+  // A sampled run where some worlds fail finishes, as `probl run` does
+  // (with exit status 3), and the editor marks where they failed. Asked to,
+  // it stops at the first fault instead.
+  const faulty = readFileSync(`${root}web/test/failures.probl`, 'utf8');
+  await page.evaluate((src) => window.playground.setSource(src), faulty);
+  answer = await run(page);
+  const native = spawnSync(`${root}target/release/probl`, ['run', 'web/test/failures.probl'], { cwd: root, encoding: 'utf8' });
+  expect(
+    native.status === 3 && `${answer.result}\n` === native.stdout && answer.status.startsWith('Partial result in'),
+    'a partial result shows what the other runs gave, as `probl run` prints it',
+    `${native.status}\n${answer.status}\n${answer.result}`,
+  );
+  const failedMark = await page
+    .waitForSelector('.cm-lintRange-error', { timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
+  expect(failedMark, 'and the editor marks where they failed');
+  await page.select('#on-error', 'total');
+  answer = await run(page);
+  expect(answer.error && answer.result.includes('division by zero'), 'asked to, the run stops at the first fault', answer.result);
+  await page.select('#on-error', 'program');
 
   // Calls nested as deep as the playground allows, and deeper.
   const deep = (n) =>

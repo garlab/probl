@@ -4,7 +4,7 @@ use crate::complex::Complex;
 use crate::continuous::{Family, Mixture, Part};
 use crate::dates;
 use crate::dist::{Budget, Counts, Dist};
-use crate::error::{OpError, OpResult};
+use crate::error::{Fault, OpError, OpResult};
 use crate::ops::{self, article, as_index, integer, range_count, range_len, to_prob};
 use crate::value::{Value, fmt_float};
 use probl_number::Integer;
@@ -103,7 +103,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::ILog2 => {
             let n = integer(a(0), "ilog2", budget)?;
             if n.is_zero() || n.is_negative() {
-                return Err(OpError::new("`ilog2` needs a positive integer"));
+                return Err(OpError::fault(Fault::Domain, "`ilog2` needs a positive integer"));
             }
             Ok(Value::Int((n.bits() - 1).into()))
         }
@@ -154,7 +154,10 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::Clamp => {
             let (lo, hi) = (a(1), a(2));
             if ops::compare(lo, hi)?.is_gt() {
-                return Err(OpError::new("clamp's lower bound is above its upper bound"));
+                return Err(OpError::fault(
+                    Fault::Domain,
+                    "clamp's lower bound is above its upper bound",
+                ));
             }
             if ops::compare(a(0), lo)?.is_lt() {
                 Ok(lo.clone())
@@ -292,7 +295,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             items
                 .last()
                 .cloned()
-                .ok_or_else(|| OpError::new("can't pop from an empty list"))
+                .ok_or_else(|| OpError::fault(Fault::Empty, "can't pop from an empty list"))
         }
         B::DropLast => {
             let items = list(a(0), "pop")?;
@@ -338,14 +341,20 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::Odds => {
             let p = to_prob(a(0))?;
             if p >= 1.0 {
-                return Err(OpError::new("the odds of a certain event are infinite"));
+                return Err(OpError::fault(
+                    Fault::Domain,
+                    "the odds of a certain event are infinite",
+                ));
             }
             Ok(Value::Float(p / (1.0 - p)))
         }
         B::Logit => {
             let p = to_prob(a(0))?;
             if p <= 0.0 || p >= 1.0 {
-                return Err(OpError::new("logit needs a probability strictly between 0% and 100%"));
+                return Err(OpError::fault(
+                    Fault::Domain,
+                    "logit needs a probability strictly between 0% and 100%",
+                ));
             }
             Ok(Value::Float(libm::log(p / (1.0 - p))))
         }
@@ -364,8 +373,12 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
                     ));
                 }
             };
-            date.map(Value::Date)
-                .ok_or_else(|| OpError::new("invalid date; use YYYY-MM-DD within 0001-01-01..9999-12-31"))
+            date.map(Value::Date).ok_or_else(|| {
+                OpError::fault(
+                    Fault::Conversion,
+                    "invalid date; use YYYY-MM-DD within 0001-01-01..9999-12-31",
+                )
+            })
         }
         B::Days => to_int(a(0), f64::round),
         B::Weeks if matches!(a(0), Value::Int(_)) => {
@@ -492,7 +505,10 @@ pub fn check_query_input(b: Builtin, args: &[Value]) -> OpResult<()> {
         .help(help));
     }
     if !matches!(b, B::Minimum | B::Maximum) && matches!(v, Value::List(xs) if xs.is_empty()) {
-        return Err(OpError::new(format!("`{}` needs a nonempty list", b.name())));
+        return Err(OpError::fault(
+            Fault::Empty,
+            format!("`{}` needs a nonempty list", b.name()),
+        ));
     }
     Ok(())
 }
@@ -613,7 +629,7 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
             }
             let n = integer(v, "repeat count", budget)?;
             if n.is_negative() {
-                return Err(OpError::new("`repeat` needs a count of 0 or more"));
+                return Err(OpError::fault(Fault::Domain, "`repeat` needs a count of 0 or more"));
             }
             Ok(Value::Int(n.into_owned()))
         }
@@ -652,7 +668,10 @@ pub fn counts(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Optio
         B::Binomial => {
             let n = whole(&args[0], "binomial's number of trials", budget)?;
             if n < 0 {
-                return Err(OpError::new("binomial needs a number of trials of 0 or more"));
+                return Err(OpError::fault(
+                    Fault::Domain,
+                    "binomial needs a number of trials of 0 or more",
+                ));
             }
             Counts::Binomial {
                 n: n as u64,
@@ -662,7 +681,7 @@ pub fn counts(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Optio
         B::Poisson => {
             let rate = number(&args[0], "poisson")?;
             if rate < 0.0 || !rate.is_finite() {
-                return Err(OpError::new("poisson needs a rate of 0 or more"));
+                return Err(OpError::fault(Fault::Domain, "poisson needs a rate of 0 or more"));
             }
             if rate > 1e15 {
                 return Err(OpError::new("poisson's rate is too large to count exactly")
@@ -673,7 +692,10 @@ pub fn counts(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Optio
         B::Geometric => {
             let p = to_prob(&args[0])?;
             if p <= 0.0 {
-                return Err(OpError::new("geometric needs a chance of success above 0%"));
+                return Err(OpError::fault(
+                    Fault::Domain,
+                    "geometric needs a chance of success above 0%",
+                ));
             }
             Counts::Geometric { p }
         }
@@ -776,7 +798,10 @@ fn continuous_query(b: Builtin, args: &[Value]) -> OpResult<Value> {
 fn range_query(b: Builtin, lo: &Integer, hi: &Integer, arg: Option<&Value>, budget: &mut Budget) -> OpResult<Value> {
     use Builtin as B;
     if hi < lo {
-        return Err(OpError::new(format!("`{}` needs a nonempty range", b.name())));
+        return Err(OpError::fault(
+            Fault::Empty,
+            format!("`{}` needs a nonempty range", b.name()),
+        ));
     }
     budget.integer_work(lo, hi, false)?;
     let n = range_len(lo, hi)?;
@@ -788,7 +813,7 @@ fn range_query(b: Builtin, lo: &Integer, hi: &Integer, arg: Option<&Value>, budg
             .add(hi)?
             .ratio(&two)
             .map(Value::Float)
-            .ok_or_else(|| OpError::new("`mean` gave a result that isn't a finite number")),
+            .ok_or_else(|| OpError::fault(Fault::Overflow, "`mean` gave a result that isn't a finite number")),
         B::Median | B::MedianLow | B::MedianHigh => {
             budget.integer_work(&n, &two, true)?;
             let (half, odd) = n.div_mod(&two)?;
@@ -1040,10 +1065,12 @@ pub(crate) fn midpoint(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Va
         if remainder.is_zero() {
             return Ok(Value::Int(whole));
         }
-        return sum
-            .ratio(&two)
-            .map(Value::Float)
-            .ok_or_else(|| OpError::new("median's fractional midpoint is too large for a finite float"));
+        return sum.ratio(&two).map(Value::Float).ok_or_else(|| {
+            OpError::fault(
+                Fault::Overflow,
+                "median's fractional midpoint is too large for a finite float",
+            )
+        });
     }
     let (a, b) = (number(a, "median")?, number(b, "median")?);
     // Same-sign subtraction and opposite-sign addition avoid overflow; this
@@ -1076,20 +1103,20 @@ fn iter_items(v: &Value, budget: &mut Budget) -> OpResult<Value> {
 fn date_count(v: &Value, func: &str, budget: &mut Budget) -> OpResult<i64> {
     integer(v, func, budget)?
         .to_i64()
-        .ok_or_else(|| OpError::new("date out of range"))
+        .ok_or_else(|| OpError::fault(Fault::Overflow, "date out of range"))
 }
 
 fn date_value(v: &Value, func: &str) -> OpResult<i32> {
     match v {
         Value::Date(d) if dates::valid(*d) => Ok(*d),
-        Value::Date(_) => Err(OpError::new("date out of range")),
+        Value::Date(_) => Err(OpError::fault(Fault::Overflow, "date out of range")),
         _ => Err(expected("a date", v, func)),
     }
 }
 
 fn date_result(date: Option<i32>) -> OpResult<Value> {
     date.map(Value::Date)
-        .ok_or_else(|| OpError::new("date out of range (0001-01-01..9999-12-31)"))
+        .ok_or_else(|| OpError::fault(Fault::Overflow, "date out of range (0001-01-01..9999-12-31)"))
 }
 
 fn holiday_calendar(v: Option<&Value>, func: &str, budget: &mut Budget) -> OpResult<Vec<i32>> {
@@ -1122,9 +1149,12 @@ fn number(v: &Value, func: &str) -> OpResult<f64> {
         Value::Continuous(_) => {
             Err(expected("a number", v, func).help("draw a value first, like `let x ~ normal(0, 1)`"))
         }
-        Value::Int(n) => n
-            .to_f64()
-            .ok_or_else(|| OpError::new(format!("`{func}` needs an integer that fits in a finite float"))),
+        Value::Int(n) => n.to_f64().ok_or_else(|| {
+            OpError::fault(
+                Fault::Overflow,
+                format!("`{func}` needs an integer that fits in a finite float"),
+            )
+        }),
         _ => v.as_f64().ok_or_else(|| expected("a number", v, func)),
     }
 }
@@ -1153,7 +1183,10 @@ fn whole(v: &Value, what: &str, budget: &mut Budget) -> OpResult<i64> {
 fn nonnegative_int<'a>(v: &'a Value, func: &str, budget: &mut Budget) -> OpResult<Cow<'a, Integer>> {
     let n = integer(v, func, budget)?;
     if n.is_negative() {
-        Err(OpError::new(format!("`{func}` needs nonnegative integers")))
+        Err(OpError::fault(
+            Fault::Domain,
+            format!("`{func}` needs nonnegative integers"),
+        ))
     } else {
         Ok(n)
     }
@@ -1218,7 +1251,7 @@ fn gcd(mut a: Integer, mut b: Integer, budget: &mut Budget) -> OpResult<Integer>
 
 fn euler_phi(n: &Integer, budget: &mut Budget) -> OpResult<Value> {
     if n.is_zero() {
-        return Err(OpError::new("`euler_phi` needs a positive integer"));
+        return Err(OpError::fault(Fault::Domain, "`euler_phi` needs a positive integer"));
     }
     let mut n = n.clone();
     let mut result = n.clone();
@@ -1314,9 +1347,12 @@ fn elementary1(
     real: impl Fn(f64) -> Option<f64>,
 ) -> OpResult<Value> {
     match v {
-        Value::Complex(z) => complex(*z)
-            .map(Value::Complex)
-            .map_err(|_| OpError::new(format!("`{func}` isn't defined for {v} or its result isn't finite"))),
+        Value::Complex(z) => complex(*z).map(Value::Complex).map_err(|_| {
+            OpError::fault(
+                Fault::Domain,
+                format!("`{func}` isn't defined for {v} or its result isn't finite"),
+            )
+        }),
         _ => float1(v, func, real),
     }
 }
@@ -1325,7 +1361,7 @@ fn float1(v: &Value, func: &str, f: impl Fn(f64) -> Option<f64>) -> OpResult<Val
     let x = number(v, func)?;
     f(x).filter(|y| x.is_finite() && y.is_finite())
         .map(Value::Float)
-        .ok_or_else(|| OpError::new(format!("`{func}` isn't defined for {}", fmt_float(x))))
+        .ok_or_else(|| OpError::fault(Fault::Domain, format!("`{func}` isn't defined for {}", fmt_float(x))))
 }
 
 fn float2(a: &Value, b: &Value, func: &str, f: fn(f64, f64) -> f64) -> OpResult<Value> {
@@ -1352,9 +1388,12 @@ fn to_int(v: &Value, f: fn(f64) -> f64) -> OpResult<Value> {
         other => {
             let x = number(other, "rounding")?;
             let r = f(x);
-            Integer::from_f64(r)
-                .map(Value::Int)
-                .ok_or_else(|| OpError::new(format!("{} cannot be rounded to a finite int", fmt_float(x))))
+            Integer::from_f64(r).map(Value::Int).ok_or_else(|| {
+                OpError::fault(
+                    Fault::Overflow,
+                    format!("{} cannot be rounded to a finite int", fmt_float(x)),
+                )
+            })
         }
     }
 }
@@ -1439,7 +1478,7 @@ fn min_max(args: &[Value], want_max: bool, budget: &mut Budget) -> OpResult<Valu
             })?,
         });
     }
-    best.ok_or_else(|| OpError::new(format!("`{name}` of an empty list")))
+    best.ok_or_else(|| OpError::fault(Fault::Empty, format!("`{name}` of an empty list")))
 }
 
 fn slice(v: &Value, start: &Value, end: Option<&Value>, budget: &mut Budget) -> OpResult<Value> {
@@ -1457,7 +1496,10 @@ fn slice(v: &Value, start: &Value, end: Option<&Value>, budget: &mut Budget) -> 
     let end = end.as_deref().unwrap_or(&length);
     let start = start.as_ref();
     if start.is_negative() || start > end || end > &length {
-        return Err(OpError::new("`slice` needs 0 <= start <= end <= length"));
+        return Err(OpError::fault(
+            Fault::Index,
+            "`slice` needs 0 <= start <= end <= length",
+        ));
     }
     Ok(match v {
         Value::Range(lo, _) => {
@@ -1542,9 +1584,8 @@ fn get(coll: &Value, key: &Value, default: Option<&Value>, budget: &mut Budget) 
     match (found, default) {
         (Some(v), _) => Ok(v),
         (None, Some(d)) => Ok(d.clone()),
-        (None, None) => {
-            Err(OpError::new(format!("the key {key:?} isn't there")).help("give a default: `get(key, default)`"))
-        }
+        (None, None) => Err(OpError::fault(Fault::Index, format!("the key {key:?} isn't there"))
+            .help("give a default: `get(key, default)`")),
     }
 }
 
@@ -1599,8 +1640,11 @@ pub fn population_extreme(v: &Value, want_max: bool, default: Option<&Value>, bu
 
 pub fn empty_extreme(name: &str, default: Option<&Value>) -> OpResult<Value> {
     default.cloned().ok_or_else(|| {
-        OpError::new(format!("`{name}` needs a nonempty collection or a default"))
-            .help(format!("use `{name}(xs, default: value)` to handle empty collections"))
+        OpError::fault(
+            Fault::Empty,
+            format!("`{name}` needs a nonempty collection or a default"),
+        )
+        .help(format!("use `{name}(xs, default: value)` to handle empty collections"))
     })
 }
 
@@ -1630,7 +1674,7 @@ fn select_extreme(best: &mut Option<Value>, x: Value, want_max: bool, budget: &m
 pub fn extreme_count(n: &Value, budget: &mut Budget) -> OpResult<usize> {
     let n = integer(n, "the count", budget)?;
     if n.is_negative() {
-        return Err(OpError::new("the count must be nonnegative"));
+        return Err(OpError::fault(Fault::Domain, "the count must be nonnegative"));
     }
     Ok(n.to_u64().and_then(|n| usize::try_from(n).ok()).unwrap_or(usize::MAX))
 }
@@ -1677,7 +1721,7 @@ fn remove(coll: &Value, key: &Value, budget: &mut Budget) -> OpResult<Value> {
         }
         Value::Bag(b) => match b.without(key) {
             Some(rest) => Ok(Value::multiset(rest)),
-            None => Err(OpError::new(format!("{key:?} isn't in the bag"))),
+            None => Err(OpError::fault(Fault::Index, format!("{key:?} isn't in the bag"))),
         },
         other => Err(expected("a list, map or bag", other, "remove")),
     }
@@ -1740,12 +1784,14 @@ fn one_of(v: &Value, budget: &mut Budget) -> OpResult<Value> {
         Value::Bag(b) => {
             let total: u128 = b.values().map(|n| *n as u128).sum();
             if total == 0 {
-                return Err(OpError::new("the bag is empty"));
+                return Err(OpError::fault(Fault::Empty, "the bag is empty"));
             }
             let pairs = b.iter().map(|(k, n)| (k.clone(), *n as f64 / total as f64)).collect();
             ops::combine(pairs, 0.0, budget)
         }
-        Value::List(_) | Value::Range(..) | Value::Map(_) => Err(OpError::new("one_of needs at least one option")),
+        Value::List(_) | Value::Range(..) | Value::Map(_) => {
+            Err(OpError::fault(Fault::Empty, "one_of needs at least one option"))
+        }
         other => Err(expected("a list, range, map or bag", other, "one_of")),
     }
 }

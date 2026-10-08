@@ -60,3 +60,66 @@ fn the_repl_shows_each_input_s_reports_whole() {
         assert!(out.contains(line), "{line:?} in\n{out}");
     }
 }
+
+/// Run `probl run` on `source`, written to a file of its own: the exit
+/// status, the output and what it wrote to standard error.
+fn run_source(name: &str, source: &str, args: &[&str]) -> (Option<i32>, String, String) {
+    let dir = std::env::temp_dir().join(format!("probl-cli-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    std::fs::write(&path, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_probl"))
+        .arg("run")
+        .arg(&path)
+        .args(args)
+        .output()
+        .unwrap();
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn a_partial_result_prints_the_other_worlds_and_exits_with_3() {
+    let source = "let x ~ d6 - 1\nlet y = 1 / x\nreport y\n";
+    // Enumeration stops at the first fault.
+    let (code, out, err) = run_source("total.probl", source, &[]);
+    assert_eq!(code, Some(1), "{out}{err}");
+    assert!(out.is_empty() && err.contains("division by zero"), "{out}{err}");
+    // Partial: the other worlds' reports, then where the others failed.
+    let (code, out, err) = run_source("partial.probl", source, &["--on-error", "partial"]);
+    assert_eq!(code, Some(3), "{out}{err}");
+    assert_eq!(
+        out,
+        "enumerated · partial result · 16.67% failed\n\n\
+         y    mean 0.46 · sd 0.29 · 5% 0.20 · median 0.33 · 95% 1.00 (reached in 83.33% of worlds)\n\n\
+         failed\n  line 2: division by zero    16.67%\n\n"
+    );
+    assert!(
+        err.contains("it failed in 16.67% of the worlds; the other worlds finished"),
+        "{err}"
+    );
+    // Sampling is partial by default, unless asked otherwise.
+    let (code, out, _) = run_source("sampled.probl", source, &["--runs", "1000"]);
+    assert_eq!(code, Some(3));
+    assert!(
+        out.contains("· partial result · ") && out.contains(" runs failed"),
+        "{out}"
+    );
+    let (code, out, _) = run_source("sampled.probl", source, &["--runs", "1000", "--on-error", "total"]);
+    assert_eq!(code, Some(1));
+    assert!(out.is_empty(), "{out}");
+    // Every world failed: an error, with what was reported before.
+    let (code, out, err) = run_source(
+        "all.probl",
+        "@on_error partial\nlet x ~ d6\nreport x\nlet y = x / 0\n",
+        &[],
+    );
+    assert_eq!(code, Some(1), "{out}{err}");
+    assert!(
+        out.contains("100.00% failed") && err.contains("no world finished"),
+        "{out}{err}"
+    );
+}

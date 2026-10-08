@@ -1,7 +1,7 @@
 //! Compiling a program, loading its data and running it.
 
 use crate::files::{Data, Files, Resolve};
-use crate::{Diagnostic, Error, Options, Outcome};
+use crate::{Diagnostic, Error, FailureMode, Options, Outcome};
 use probl_sema::ir;
 use probl_syntax::SourceFile;
 use std::sync::Arc;
@@ -70,6 +70,11 @@ impl Program {
         }
     }
 
+    /// Its `@on_error`, if it has one. [`Options::on_error`] overrides it.
+    pub fn failure_mode(&self) -> Option<FailureMode> {
+        self.ir.settings.on_error.map(FailureMode::new)
+    }
+
     /// Whether it uses `read`, and so needs [`load`](Program::load) before
     /// it runs.
     pub fn reads_data(&self) -> bool {
@@ -94,14 +99,27 @@ impl Program {
     }
 
     /// Run it. What it `print`s is collected in the outcome.
+    ///
+    /// In partial mode, when some worlds fail, the run is an error whose
+    /// [`partial`](Error::partial) has what the other worlds gave.
     pub fn run(&self, options: &Options) -> Result<Outcome, Error> {
         let mut printed = Vec::new();
-        let mut outcome = {
+        let result = {
             let mut print = |line: &str| printed.push(line.to_string());
-            self.run_with(options, &mut print)?
+            self.run_with(options, &mut print)
         };
-        outcome.printed = printed;
-        Ok(outcome)
+        match result {
+            Ok(mut outcome) => {
+                outcome.printed = printed;
+                Ok(outcome)
+            }
+            Err(mut e) => {
+                if let Some(outcome) = e.partial_mut() {
+                    outcome.printed = printed;
+                }
+                Err(e)
+            }
+        }
     }
 
     /// Run it, giving each line it `print`s to `print` as it's printed.
@@ -113,7 +131,11 @@ impl Program {
         #[cfg(not(target_arch = "wasm32"))]
         let result = probl_engine::run(&self.ir, &engine, print);
         let outcome = result.map_err(|e| Error::runtime(e, &self.file))?;
-        Ok(Outcome::new(outcome, &self.ir, &self.file))
+        let outcome = Outcome::new(outcome, &self.ir, &self.file);
+        match outcome.failures().is_empty() {
+            true => Ok(outcome),
+            false => Err(Error::failed(outcome)),
+        }
     }
 
     /// The data `options` give the run, which must be this program's.

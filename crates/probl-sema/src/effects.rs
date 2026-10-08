@@ -146,6 +146,91 @@ pub fn solvable_loops(program: &Program) -> Vec<bool> {
     solvable
 }
 
+/// Where evidence can still be applied, for each statement: `at` while it
+/// runs (itself, what it contains, or what it calls), and `after` once it's
+/// done, in the same function (later in its block, after the statements
+/// around it, or in a later round of a loop around it).
+///
+/// A world that fails at a statement never meets that evidence, so its
+/// weight can be compared with the finished worlds' only when evidence can't
+/// follow its fault, there or up its calls (docs/semantics.md, section 11).
+#[derive(Clone, Debug, Default)]
+pub struct EvidenceOrder {
+    pub at: Vec<bool>,
+    pub after: Vec<bool>,
+}
+
+/// Where evidence can still be applied. Needs the functions' effects, which
+/// `analyze` fills in.
+pub fn evidence_order(program: &Program) -> EvidenceOrder {
+    struct Walk<'a> {
+        functions: &'a [Function],
+        callable_observes: bool,
+        order: EvidenceOrder,
+    }
+    impl Walk<'_> {
+        fn may_observe(&self, s: &Stmt) -> bool {
+            let mut d = Direct::default();
+            d.stmt(s);
+            d.observes
+                || d.calls.iter().any(|&g| self.functions[g as usize].effects.observes)
+                || (d.calls_closures && self.callable_observes)
+        }
+
+        /// `follows`: whether evidence can come after the block.
+        fn block(&mut self, b: &Block, follows: bool) {
+            let mut later = follows;
+            for s in b.stmts.iter().rev() {
+                let here = self.may_observe(s);
+                self.order.at[s.id as usize] = here;
+                self.order.after[s.id as usize] = later;
+                match &s.kind {
+                    StmtKind::If { then, otherwise, .. } => {
+                        self.block(then, later);
+                        self.block(otherwise, later);
+                    }
+                    StmtKind::Chance { arms, otherwise, .. } => {
+                        for (_, body) in arms {
+                            self.block(body, later);
+                        }
+                        if let Some(body) = otherwise {
+                            self.block(body, later);
+                        }
+                    }
+                    // Another round can run any of the body again.
+                    StmtKind::Loop { body, .. } => self.block(body, later || here),
+                    _ => {}
+                }
+                later |= here;
+            }
+        }
+    }
+
+    // A function value could be any lambda, or any function used as a value.
+    let mut refs = Direct::default();
+    for f in &program.functions {
+        refs.block(&f.body);
+    }
+    let callable_observes = program
+        .functions
+        .iter()
+        .enumerate()
+        .any(|(i, f)| (f.kind == FnKind::Lambda || refs.references.contains(&(i as FnId))) && f.effects.observes);
+    let n = program.stmt_count as usize;
+    let mut walk = Walk {
+        functions: &program.functions,
+        callable_observes,
+        order: EvidenceOrder {
+            at: vec![false; n],
+            after: vec![false; n],
+        },
+    };
+    for f in &program.functions {
+        walk.block(&f.body, false);
+    }
+    walk.order
+}
+
 /// What a function body does itself.
 #[derive(Default)]
 struct Direct {

@@ -49,6 +49,7 @@ let options = probl::Options::new().runs(50_000).seed(7);
 - `Mode::Beam` and `Mode::Particles` exist for parsed programs, but execution returns `Unsupported`.
 - `today(date)` supplies the immutable date snapshot when a model uses `today`. The native host can obtain it with `Date::today_utc()`; WASM hosts supply it themselves. Pin the date for reproducibility.
 - `epsilon`, `fractions` and `conjugate` control approximation/display settings and exact conjugate updates.
+- `on_error(FailureMode::Total)` or `on_error(FailureMode::Partial)` chooses what a fault in one world does to the others, whatever the program's `@on_error` says. Without either, a run is total when it enumerates and partial when it samples ([partial results](#partial-results)).
 - `limits`, `cancel` and `progress` give the host control over resources and execution.
 
 Native execution uses a thread with the configured stack size. WASM runs on the calling thread; the playground supplies its own worker isolation.
@@ -92,6 +93,31 @@ The host grants read authority. Use a restricted provider for untrusted models, 
 One `Error` type covers compilation, loading and execution. `kind()` distinguishes `Compile`, `Usage`, `Language`, `Unsupported`, `Limit` and `Internal`. `render(color)` formats source diagnostics. Individual diagnostics expose messages, notes, help, byte spans and one-based line/column positions. Frontends using UTF-16 positions must convert byte spans.
 
 Resource budgets and caught native panics improve containment; they do not replace process isolation for a service executing untrusted models. See [host boundaries](architecture.md#host-boundaries).
+
+### Partial results
+
+In partial mode, a fault such as a division by zero ends only the world it happens in, and the others finish ([failure modes](semantics.md#failure-modes)). When some worlds failed, `run` and `run_with` still return an error, so `program.run(&options)?` doesn't accept a partial answer as a complete one. The error's `partial()` has what the other worlds gave:
+
+```rust
+match program.run(&options) {
+    Ok(outcome) => print!("{}", outcome.text()),
+    Err(e) => match e.partial() {
+        Some(outcome) => {
+            for failure in outcome.failures() {
+                eprintln!("{}: {:?} failed", failure.diagnostic(), failure.share());
+            }
+            print!("{}", outcome.text());
+        }
+        None => return Err(e.into()),
+    },
+}
+```
+
+- The error is a `Language` error, with a diagnostic for each place worlds failed (the first ten), noting how much failed there.
+- `failures()` groups them by place and kind of fault, in the order they first failed. Each `Failure` has its `diagnostic()`, the `weight()` the worlds had when they failed and, when sampling, the `runs()` that failed and the `first_run()`.
+- `share()` and `failed_share()` are the share of the weight, or of the runs, that failed, with a `standard_error()` when sampling. They're `None` when the failed worlds could still have met evidence: their weight then stops short of the finished worlds', and the two can't be compared. Reach is unavailable then too, and `evidence()` is only the finished worlds' contribution, as the summary line says.
+- The reports describe the worlds that reached them, failed worlds included when they reported before failing. `finished()` says whether any world finished at all.
+- `failure_mode()` says which mode the run used, and `Program::failure_mode()` gives the program's `@on_error`, if any. An outcome without failures is an ordinary result, whatever its mode.
 
 ## Read reports without parsing text
 
@@ -147,7 +173,7 @@ For sampled evidence, `relative_standard_error()` is relative error on the evide
 
 The library owns its public types. `probl-number`, `probl-syntax`, `probl-sema` and `probl-engine` remain internal APIs. The hidden `probl::__internal` adapter lets workspace tools configure merge/memoization/solver checks; it is explicitly outside the supported API and can change each release.
 
-Typed outcome values, typed non-real summaries, density-query methods, report reach accessors, and a public editor API remain deferred. Shared report calculations already know reach, but the public library does not expose it yet. See [library tests](../crates/probl/tests/library.rs) and [testing](testing.md) for behavioral coverage.
+Typed outcome values, typed non-real summaries, density-query methods, report reach accessors, public fault codes, local recovery from faults and a public editor API remain deferred. Shared report calculations already know reach, but the public library does not expose it yet. See [library tests](../crates/probl/tests/library.rs) and [testing](testing.md) for behavioral coverage.
 
 ## Packaging and publication
 

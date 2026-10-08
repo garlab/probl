@@ -30,7 +30,7 @@ Probabilities widen to floats in numeric contexts. Ordinary arithmetic (`p + q`,
 
 **Checked integer conversion.** Wherever an `int` is expected, an existing integer is preserved and a finite, exactly integral `float` is converted to the integer it represents. Thus `let n: int = 1.0` succeeds, while `let n: int = 1.4` fails. Conversion never rounds, truncates, or uses a tolerance: `1.0000000000000002` is rejected too. This applies to declared bindings, parameters, returns, record fields, recursively typed containers, integer built-in arguments, sequence positions, range bounds, repeat/roll/bag counts, and date components and offsets. Booleans, strings, probabilities and complex values do not implicitly convert to ints. Percentage notation is a float, so `100%` can convert to 1; `prob(1)` cannot.
 
-Conversion is requested by the receiving context, not inferred from a value's magnitude. `let x = 1.0; let n: int = x` leaves `x` a float and makes `n` an int. Ordinary mixed numeric arithmetic retains its existing float behavior. Invalid literals in declared integer contexts are diagnosed during compilation where possible; computed values and built-in arguments are checked at runtime. A failed conversion stops execution with an error, including when it occurs in one probabilistic world or a lifted distribution outcome; it does not condition the model by discarding that outcome. Integer size, memory, work and operation-specific bounds still apply. Exactness refers to the stored binary64 value, which may already have rounded during parsing or earlier arithmetic. Input-file schemas retain their format-specific parsing rules (section 15).
+Conversion is requested by the receiving context, not inferred from a value's magnitude. `let x = 1.0; let n: int = x` leaves `x` a float and makes `n` an int. Ordinary mixed numeric arithmetic retains its existing float behavior. Invalid literals in declared integer contexts are diagnosed during compilation where possible; computed values and built-in arguments are checked at runtime. A failed conversion stops execution with an error, including when it occurs in one probabilistic world or a lifted distribution outcome, and in either failure mode (section 11): a declared type is a contract, not a fault of the values. It does not condition the model by discarding that outcome. Integer size, memory, work and operation-specific bounds still apply. Exactness refers to the stored binary64 value, which may already have rounded during parsing or earlier arithmetic. Input-file schemas retain their format-specific parsing rules (section 15).
 
 **Public identity.** Map keys and bag elements use exact typed identity for membership, indexing, lookup, insertion and removal. Thus `[1: "a"].contains(1.0)` is false and `get([1: "a"], 1.0, "absent")` returns "absent". Scalar numeric equality remains numeric (`1 == 1.0`), as does list membership (`[1].contains(1.0)`). Container equality remains structural and typed: `[1] != [1.0]` and `{x: 1} != {x: 1.0}`. Internal storage, hashing, memoization and world merging keep that same typed identity.
 
@@ -389,7 +389,46 @@ Text limits count UTF-8 bytes, independently of the scalar positions used by the
 
 String scans charge work in proportion to UTF-8 length. Literal construction, concatenation, interpolation, formatting with `str`/`join`, case conversion, trimming, slicing, reversal and character extraction check result sizes and charge payloads before allocation or incremental buffer growth. `chars`, `split` and string iteration also check collection sizes. Large integer ranges can be sliced without allocating their elements. Limit failures produce resource-limit diagnostics.
 
-The host running a program sets upper limits on: worlds per statement (when enumerating; sampled runs don't multiply), outcomes per distribution, total work, loop iterations, call depth, cached results, length of materialized collections, and output. A program's `@max_worlds` and `@max_iterations` can lower these limits, never raise them. Exceeding a limit, or cancelling a run, stops it with an error; so do all language errors. The engine never crashes on a program: a crash is a bug in Probl, and it is reported as an internal error.
+The host running a program sets upper limits on: worlds per statement (when enumerating; sampled runs don't multiply), outcomes per distribution, total work, loop iterations, call depth, cached results, length of materialized collections, and output. A program's `@max_worlds` and `@max_iterations` can lower these limits, never raise them. Exceeding a limit, or cancelling a run, stops it with an error; so do language errors, except a fault in partial mode (below). The engine never crashes on a program: a crash is a bug in Probl, and it is reported as an internal error.
+
+### Failure modes
+
+A **fault** is a language error that depends on the values a world computes with, not on the program being wrong:
+
+- division or remainder by zero;
+- a value outside what an operation is defined for: `sqrt(-1)`, `logit(0%)`, a negative count, chances that add up to more than 100%, a distribution's parameter (`normal(0, 0)`, `bernoulli(1.5)`);
+- an index past the end, or a key or bag item that isn't there;
+- a collection or a bag with nothing in it, where an element is needed;
+- an explicit conversion that can't represent its value: `prob(1.5)`, an invalid `date`;
+- a result too large to represent: a float that isn't finite, a date out of range.
+
+Other errors are not faults, and always stop the run: wrong types or arities, a declared type that a value fails, effects a callback isn't allowed, impossible evidence, unsupported features, limits, cancellation and internal errors.
+
+A world always stops at its first fault. The **failure mode** decides what happens to the others:
+
+- **total**: the fault stops the run, with its diagnostic, as any other error does.
+- **partial**: the world that failed ends there, and the other worlds finish; when sampling, so do the other runs. Nothing takes the failed world's place: no placeholder value, and no run drawn again to replace it.
+
+The default follows the mode the run uses, whatever the program's `@mode` says: total when enumerating, partial when sampling. `@on_error total` or `@on_error partial` chooses for a program, and a host's choice (`--on-error`, `Options::on_error`) wins over the program's.
+
+**What fails together.** A fault fails the world that ran the operation. A call fails in the caller's worlds that took its failing paths: a function that branches can fail in some of them only. An operation on a recipe that can't be built, like `1 / (d6 - 1)`, fails its whole world, and so do a `simulate` block one of whose local paths fails and a collection callback that fails on any element: their results are built whole or not at all.
+
+**Reports.** A report describes the worlds that reached it, as it does without failures. A world that fails after a report keeps its contribution there, and it doesn't reach later reports, like a world that took another branch. Since no evidence can follow a report (section 7), a failure never changes a report already made.
+
+**How much failed.** A failed world's weight is the weight it had when it failed. When no evidence can be applied after its fault (later on its path, in a later round of a loop around the fault, or after the call it failed in), that weight is final and adds to the finished worlds': the result gives the share that failed, reach counts the failed worlds in its denominator, and the evidence includes them. Otherwise, the failed worlds never met evidence that the finished ones did, and the two can't be added up: the failed share and reach are unavailable, and the summary gives only the finished worlds' contribution to the evidence, saying so. When sampling, the result also counts the runs that failed, and names the first in batch order.
+
+**Partial results.** A run where some worlds failed is a partial result. Its summary line says `partial result`, with the share that failed (when enumerating) or the number of runs that failed (when sampling). After the reports, a `failed` section lists each place and kind of fault, with how much failed there:
+
+```text
+enumerated · partial result · 16.67% failed
+
+y    mean 0.46 · sd 0.29 · 5% 0.20 · median 0.33 · 95% 1.00 (reached in 83.33% of worlds)
+
+failed
+  line 2: division by zero    16.67%
+```
+
+`probl run` prints it, then a diagnostic for each place, and exits with status 3 (status 1 when no world finished). The library returns it in the run's error, as `Error::partial`, so a caller that only handles success doesn't mistake it for a complete answer. A partial result is reproducible as any other: the same program, data, date, seed and engine version give the same output and the same failures on any number of threads.
 
 ## 12. How this document is checked
 
@@ -507,3 +546,4 @@ When few runs carry the weight (a small effective sample size), this estimate is
 - **Nested estimates** (D4): `simulate` blocks that must be sampled, and how their error affects decisions.
 - **General continuous composition**, beyond the supported affine single-draw arithmetic and threshold conditioning in §13; nonlinear transforms and combinations of independent continuous draws need further representation and inference contracts.
 - **Reports that update with later evidence** (filtering and smoothing).
+- **Recovering from a fault locally**, with `try` and `catch`, and public names for faults: see the [error-handling proposal](design/error-handling.md).

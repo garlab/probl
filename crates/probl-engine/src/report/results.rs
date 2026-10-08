@@ -12,8 +12,9 @@ use probl_sema::ir::{ReportKind, ReportSite};
 #[derive(Clone, Debug)]
 pub struct ReportResult {
     /// The share of the worlds' weight (or of the runs) that reached the
-    /// report. `None` when every visit counts, when nothing reached it, or
-    /// when no world finished.
+    /// report. `None` when every visit counts, when nothing reached it, when
+    /// no world finished, or when worlds failed before evidence they'd have
+    /// met, so their weight can't be compared.
     pub reach: Option<Reach>,
     /// One group per `by` key, in key order; one keyed `()` without `by`.
     pub groups: Vec<GroupResult>,
@@ -201,7 +202,7 @@ pub fn results(sites: &[ReportSite], sinks: &[Sink], format: Format, unresolved:
 }
 
 fn reach(kind: ReportKind, sink: &Sink, format: Format) -> Option<Reach> {
-    if kind == ReportKind::PerVisit || sink.groups.is_empty() || format.program_total.is_zero() {
+    if kind == ReportKind::PerVisit || sink.groups.is_empty() || format.program_total.is_zero() || !format.reach_known {
         return None;
     }
     if let Some(all_squares) = format.run_squares {
