@@ -4,10 +4,10 @@
 
 ## Recommendation
 
-Introduce two complementary mechanisms:
+First, make the existing stop-on-error behavior more informative: say how likely the failure is and which values cause it ([stage 0](#stage-0-say-how-likely-the-failure-is)). That needs no language change. Then introduce two complementary mechanisms:
 
 1. **Explicit local recovery:** an expression-valued `try` block with catches for named recoverable faults. A handler supplies an ordinary value or executes ordinary code; no nullable value, mandatory result wrapper or monadic API is introduced.
-2. **A global unhandled-fault policy:** stop by default, with an explicit option to terminate failed worlds and finish the remaining ones. Continued results must expose their successful-only population and retained failure diagnostics.
+2. **A global unhandled-fault policy:** stop by default, with an explicit option to terminate failed worlds and finish the remaining ones. A failed world stops reaching later reports, like a world that takes another branch. Each report keeps its current meaning, the worlds that reached it, and continued results must expose the failed mass and retained failure diagnostics.
 
 A failed world does not skip the offending instruction and continue with a missing value. Either a local handler gives it a defined continuation, or that execution path ends. Resource exhaustion, cancellation, unsupported features and implementation bugs remain fatal to the invocation.
 
@@ -34,9 +34,35 @@ When zero is an expected modeled outcome, three different intentions should be e
 |---|---|
 | Zero is evidence-excluded | `observe x != 0` explicitly changes the model's conditioning |
 | Zero has a defined alternative result | Catch division by zero, or use `if x == 0 { fallback } else { 1 / x }` |
-| Inspect the valid part of a faulty model | Continue other worlds, retain the failure mass, and label summaries as conditional on successful completion |
+| Inspect the valid part of a faulty model | Continue other worlds, retain the failure mass, and show each report's reach |
 
 These must not be interchangeable spellings for silently discarding data.
+
+## Stage 0: say how likely the failure is
+
+Before any new syntax, the error that stops a run can answer the questions its author has next: how often does this fail, and for which values? Today the reciprocal example stops with only `division by zero` and the source location, in both modes.
+
+When enumerating (`--mode enumerate` for this example), the interpreter executes a statement for all its worlds together. On a value-dependent fault, it could finish that statement for the other worlds, then stop with what it found:
+
+```text
+Error: division by zero
+   ╭─[ model.probl:4:7 ]
+   │
+ 4 │ print(1 / x)
+   │       ──┬──
+   │         ╰──── here
+   │
+   │ Note: fails in 16.67% of the worlds reaching this statement, for example when x = 0
+───╯
+```
+
+- **The share is justified.** The failing weight and the weight of the worlds reaching the statement are measured at the same point, after the same evidence. Their ratio is the probability of failing there, given the evidence so far. Later evidence doesn't matter, because the run stops. Unlike a failed mass gathered over a whole continued run, it needs no caveat about evidence applied afterwards (see [failure is not unresolved mass or evidence](#failure-is-not-unresolved-mass-or-evidence)).
+- **The example comes from one failing world:** the values of the variables that the failing expression reads, rather than its operands alone. `x = 0` says more than `1 / 0`.
+- **Finishing the statement stays bounded.** It runs under the same limits. Another kind of fault in another world is grouped by source location and message, and only the first one is shown in full. A resource limit, a cancellation or an internal error stops at once, as today.
+
+When sampling, a single failure says nothing about its probability, so don't estimate one. Name the failing run and the values instead: `in run 37 of 1,000 (seed 0), when x = 0`. As today, the reported error is the first in batch order, so the same seed always reports the same run.
+
+The run still fails, with the same exit status, so no program's behavior changes. The library's `Error` can expose the share and the example values through new accessors, without breaking the published API. This stage doesn't need the fault codes of stage 1: it can group by source location and message. It also makes the case for continue mode weaker in the common case, where the author only wants to know how much of the model is affected.
 
 ## Local recovery
 
@@ -169,42 +195,52 @@ Enumeration merges histories, and one represented world can carry most of the pr
 
 Terminate a path at its first unhandled fault, so it is not counted repeatedly. Different failing paths from a shared ancestor contribute their own weights. Diagnostic storage needs bounded grouping by code/source, with a bounded number of representative messages or traces; a million failures must not produce a million log lines or prevent other runs from completing.
 
-### Successful results must say what they describe
+### Reports describe the worlds that reached them
 
-Recommended contract: ordinary reports under continue mode describe **successful completions that reached each report**, with normal reach/per-visit distinctions retained. All numeric summaries and probability tables must identify that successful-only population. Failure metadata remains attached in both text and structured results, not just in an optional warning on stderr.
+Recommended contract: under continue mode, a report means what it means today, the worlds that reached it, with the existing reach and per-visit distinctions. A world that fails ends there, so it doesn't reach later reports, exactly like a world that takes a branch containing no report. Nothing is removed from a report that a world reached before it failed. Failure metadata remains attached in both text and structured results, not just in an optional warning on stderr.
 
-For the complete enumerated reciprocal example without observations, a possible header is:
+For the complete enumerated reciprocal example without observations:
+
+```probl
+@on_error continue
+
+let x ~ d6 - 1
+let y = 1 / x
+report y
+```
+
+a possible output is:
 
 ```text
-enumerated · partial result · failed mass 16.67% · successful mass 83.33%
-reports conditional on successful completion
+enumerated · partial result · failed mass 16.67%
+
+y    mean 0.46 · sd 0.29 · 5% 0.20 · median 0.33 · 95% 1.00 (reached in 83.33% of worlds)
 
 DivisionByZero at model.probl:4 — failed mass 16.67%
 ```
 
-The successful mean is about 0.456667; the missing zero case has no reciprocal. Do not invent a mean for the whole population or describe this result as equivalent to explicitly observing `x != 0`.
+The report line is exactly what Probl prints today for `if x != 0 { let y = 1 / x; report y }`: continue mode adds the failure lines, not a new way of reading reports. The mean, 137/300 ≈ 0.456667, describes the worlds that reached the report; the reach says they are 83.33% of the whole, and the failure line says why the rest are missing. Do not invent a mean for the whole population, and do not describe this result as equivalent to explicitly observing `x != 0`: it is equivalent to a branch, not to evidence.
 
-The user-facing distinction between “complete” and “incomplete” also needs to include failures. A report with no unresolved tail must not imply full requested-model coverage when known faults excluded paths. Keep a separate population/basis qualifier and failure coverage in estimates. A handled fallback can be a complete model result; an unhandled failure is not repaired merely by conditioning on success.
+Reports keep their existing completeness meaning, which concerns unresolved weight among the worlds that reached them, and a report that every world reaches before any failure is unaffected. What a reader needs in addition is that part of a report's missing reach failed rather than took another branch: the header and the structured results say so, and the run's status is partial. A handled fallback can be a complete model result; an unhandled failure is not repaired by continuing.
 
 ### Reports reached before a later failure
 
-This choice needs to be explicit:
-
 ```probl
-# Proposed global policy.
 @on_error continue
 let x ~ d6 - 1
 report x == 0
 let y = 1 / x
 ```
 
-Under the recommended successful-completion contract, the report is 0% among successful completions, with 1/6 failure mass shown separately. Its already-recorded contribution from the zero world must be excluded when that world later fails. Catching the later division instead would keep the recovered world and its earlier report contribution.
+Every world reaches the report before any fails, so it shows 16.67%, as it would without the division. The header's failed mass, also 16.67%, says that those worlds failed afterwards, and the failure line names the division. Catching the division instead gives the same report.
 
-An alternative is to retain reports as snapshots of the worlds that reached them, including paths that later fail. That can be useful, but needs per-report failure/cohort labels and is a different contract. Prefer one consistent successful-completion meaning initially; explicit snapshot reporting belongs with the [portal design](portals-and-effects.md#midway-portals-evidence-and-sampled-feedback).
+This follows from an existing rule. No `observe` or `score` may follow a `report`, so that every report sees all the evidence its worlds will ever get. A failure isn't evidence, so it doesn't revise a report already made either.
 
-This has an implementation cost: reports currently write directly into shared sinks. Simply dropping a world from the active vector cannot undo its earlier contributions, particularly after splitting and merging. Correct continuation needs report provenance or deferred contributions with bounded storage. A contribution made before a later split must retain only its successful descendants' share, not be retained or removed wholesale with an ancestor.
+To condition on success, say so with evidence: catch the fault and `observe false` in the handler, as in `let y = try { 1 / x } catch DivisionByZero { observe false; 0 }`. That removes the world as any observation does, and the existing rule then applies: the compiler rejects the program if a report can run before that handler.
 
-`print` remains diagnostic output at execution time. Its earlier lines can include values from paths that later fail, just as today. Do not promise to retract them or treat them as successful-only report data. The run summary must still show failures even when the program contains only `print` and no reports.
+**The alternative: successful completions only.** Reports could instead describe only the worlds that complete. In the example above, `x == 0` would then show 0%, with the zero world's contribution removed when it later fails. That is an implicit observation of success at the end of the program: the evidence-after-report pattern the language rejects, and a contradiction of this proposal's rule that failures aren't evidence. It would also be the costliest part of continue mode. Reports write into their sinks as worlds reach them, so removing a contribution afterwards needs report provenance or deferred contributions with bounded storage, and a contribution made before a later split must keep only its successful descendants' share. Under the recommended contract, the sinks don't change. If a successful-only view proves useful, it can come later as an explicit option with that machinery. Reports that change as later evidence or failures arrive belong with the [portal design](portals-and-effects.md#midway-portals-evidence-and-sampled-feedback).
+
+`print` remains diagnostic output at execution time. Its earlier lines can include values from paths that later fail, just as today; do not promise to retract them. The run summary must still show failures even when the program contains only `print` and no reports.
 
 ### Failure is not unresolved mass or evidence
 
@@ -218,7 +254,7 @@ Therefore:
 - Report a normalized failure probability only under a proven common measure, for example no evidence, or all relevant evidence having been applied before failure is possible. Otherwise show counts and clearly labelled prefix-weight diagnostics, with posterior failure probability unavailable.
 - With unhandled failures, the accumulated successful evidence contribution is not an unqualified evidence value for the original model. The evidence API/header must expose the limitation and retain probability-versus-density units.
 - Never insert failures into the existing unresolved bucket. A failed calculation is known to be invalid; an unresolved path has not been resolved. Existing probability bounds cannot simply be reused, especially with later density observations.
-- Sampling summaries use the appropriate successful contributions and denominators, keep the original attempted-run count, and estimate uncertainty per run. Failed/rejected contributions do not disappear from estimator bookkeeping through a silent reduction of the sample size.
+- Sampling summaries keep the original attempted-run count. Each report's estimate uses the runs that reached it, as reach does today, with uncertainty estimated per run. Failed and rejected runs stay in the bookkeeping rather than silently reducing the sample size.
 
 ## Scope boundaries: functions, recipes and simulate
 
@@ -243,7 +279,7 @@ Suggested execution statuses distinguish an ordinary completion, completion with
 
 For the CLI, recommend exit status 0 for completion without unhandled failures, a distinct nonzero status for a partial result (candidate: 3), and the existing fatal-error statuses otherwise. Opting into continuation asks for partial output; it need not make shell automation mistake that output for an ordinary success. Caught faults do not force a nonzero status.
 
-The library can return a partial `Outcome` under continue mode, with mandatory status/failure accessors and population qualifiers on reports. Stop mode and all-failed invocations still return an error; errors should carry useful aggregate failure diagnostics where available. Audit the existing completion/evidence accessors rather than adding a failure list beside otherwise misleading numbers.
+The library can return a partial `Outcome` under continue mode, with mandatory status/failure accessors. A report's qualifier is its reach; the [library guide](../library.md#compatibility-and-remaining-work) lists reach accessors as deferred, and continue mode needs them. Stop mode and all-failed invocations still return an error; errors should carry useful aggregate failure diagnostics where available. Audit the existing completion/evidence accessors rather than adding a failure list beside otherwise misleading numbers.
 
 The playground should show “partial result,” failure counts or justified mass, source locations and the affected reporting basis prominently. Running more samples and discovering an error should be presented as finding an invalid outcome, not as a suggestion to reduce runs until the error disappears.
 
@@ -253,21 +289,24 @@ Future prologue/portal operations run once outside the world population. Their f
 
 This work is relevant now. Implement it separately from side effects, in stages that retain fail-fast behavior until each contract is ready:
 
+0. **Informative stop-mode diagnostics.** When enumerating, finish the failing statement and report the failing share and an example; when sampling, name the run and the values ([stage 0](#stage-0-say-how-likely-the-failure-is)). No language change, and independently useful.
 1. **Fault taxonomy and diagnostics.** Add stable codes and explicit recoverability to operation/runtime errors. Classify built-ins and boundary checks. Keep unknown kinds fatal.
 2. **Local recovery.** Add `try`/specific catches to parsing, lowering and effect/liveness analysis. Represent successful and failed exits with their state, weight and unwind destination; preserve left-to-right evaluation and current mutation semantics.
 3. **Failure propagation through inference.** Extend call summaries, memoization, recursion and chain solving. A recoverable unhandled fault is a terminal outcome for the relevant execution scope; caught faults follow their handler. Solver discovery/iterations must not double-count failure diagnostics. Disable only optimizations that cannot yet preserve the contract, with bounded fallback behavior.
-4. **Global continuation and report accounting.** Finish successful-completion reporting, failure/evidence metadata, per-run accumulation and bounded diagnostic aggregation before exposing continue mode to users. A new `try/catch` around the engine's current `Result` is insufficient.
+4. **Global continuation and failure accounting.** A failed world leaves the population like a world that ends; the report sinks don't change. Finish the failed mass, failure/evidence metadata, per-run accumulation and bounded diagnostic aggregation before exposing continue mode to users. A new `try/catch` around the engine's current `Result` is insufficient.
 5. **Hosts and documentation.** Add CLI/API options, partial-result status, playground display and normative semantics together. Preserve the current default behavior for programs that do not opt in or add handlers.
 
 Acceptance cases should cover:
 
-- The reciprocal model: 1/6 failed mass; successful mean `137/300`; zero-fallback mean `137/360`; no sampled retries to replace failures.
+- The reciprocal model: 1/6 failed mass; the report after the failure reached by 5/6 with mean `137/300`, and printed as `if x != 0 { let y = 1 / x; report y }` prints today; zero-fallback mean `137/360`; no sampled retries to replace failures.
+- Stop-mode diagnostics: the failing share at the statement (1/6 for the reciprocal model), with evidence applied before it; an example world's values; grouping of different faults in one statement; immediate stops on limits and cancellation; the first failing run in batch order when sampling, for any thread count.
 - Specific/multiple/nested catches, helper calls, handler failures, lazy fallback execution and errors in later operands.
 - State and weight preservation through a caught error, including earlier mutations, draws, observations and printed output.
 - Rejected evidence versus faults, all-failed versus impossible/rare evidence, and failure before later observations or densities.
-- Reports before and after a failure, branching after an earlier report, grouped/per-visit reports and recovered worlds that complete successfully.
+- Reports before and after a failure, including a report before the failure keeping the failing worlds' contribution (`x == 0` at 1/6), branching after an earlier report, grouped/per-visit reports and recovered worlds that complete successfully.
+- Conditioning on success only through explicit evidence: `observe false` in a handler, rejected by the compiler when a report can run before it.
 - Enumeration with merging/memoization/solvers on and off: matching result and failure weights, even when represented-world counts differ.
-- Sampling across run counts, batch boundaries and thread counts; fixed attempted-run counts, successful-subset estimators, and uncertainty calibration against independent answers.
+- Sampling across run counts, batch boundaries and thread counts; fixed attempted-run counts, estimators over the runs reaching each report, and uncertainty calibration against independent answers.
 - Recipe/`simulate` atomicity, local catches inside `simulate`, and no silent normalization of failed outcomes.
 - Fatal budgets/cancellation/unsupported/internal/type errors remaining fatal even inside `try` and under continue mode.
 - Native/WASM parity, bounded error logs, host API status and text/result agreement.
