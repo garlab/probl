@@ -55,7 +55,7 @@ fn check(ok: bool, message: impl FnOnce() -> String) -> OpResult<()> {
     if ok {
         Ok(())
     } else {
-        Err(OpError::fault(Fault::Domain, message()))
+        Err(OpError::fault(Fault::DomainError, message()))
     }
 }
 
@@ -170,8 +170,10 @@ impl Family {
     pub fn estimate(a: f64, b: f64) -> OpResult<Family> {
         finite(&[a, b], "`to`")?;
         if a <= 0.0 || b <= 0.0 {
-            return Err(OpError::fault(Fault::Domain, "`a to b` needs two positive numbers")
-                .help("for a quantity that can be zero or negative, use `normal_range(lo, hi)`"));
+            return Err(
+                OpError::fault(Fault::DomainError, "`a to b` needs two positive numbers")
+                    .help("for a quantity that can be zero or negative, use `normal_range(lo, hi)`"),
+            );
         }
         check(a < b, || "`a to b` needs a below b".into())?;
         let (la, lb) = (libm::log(a), libm::log(b));

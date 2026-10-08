@@ -20,6 +20,7 @@ pub enum Tok {
     // Keywords
     And,
     Break,
+    Catch,
     Chance,
     Continue,
     Div,
@@ -44,6 +45,7 @@ pub enum Tok {
     Return,
     Simulate,
     True,
+    Try,
     Type,
     Typeof,
     Var,
@@ -125,6 +127,7 @@ pub fn keyword(word: &str) -> Option<Tok> {
     Some(match word {
         "and" => Tok::And,
         "break" => Tok::Break,
+        "catch" => Tok::Catch,
         "chance" => Tok::Chance,
         "continue" => Tok::Continue,
         "div" => Tok::Div,
@@ -149,6 +152,7 @@ pub fn keyword(word: &str) -> Option<Tok> {
         "return" => Tok::Return,
         "simulate" => Tok::Simulate,
         "true" => Tok::True,
+        "try" => Tok::Try,
         "type" => Tok::Type,
         "typeof" => Tok::Typeof,
         "var" => Tok::Var,
@@ -179,6 +183,7 @@ impl Tok {
         match self {
             Tok::And => "and",
             Tok::Break => "break",
+            Tok::Catch => "catch",
             Tok::Chance => "chance",
             Tok::Continue => "continue",
             Tok::Div => "div",
@@ -203,6 +208,7 @@ impl Tok {
             Tok::Return => "return",
             Tok::Simulate => "simulate",
             Tok::True => "true",
+            Tok::Try => "try",
             Tok::Type => "type",
             Tok::Typeof => "typeof",
             Tok::Var => "var",

@@ -15,27 +15,7 @@ pub enum ErrorKind {
     Internal,
 }
 
-/// A language error that depends on the values a world computes with, not
-/// on the program being wrong: dividing by zero, an index past the end. In
-/// partial mode it ends only the world it happens in (docs/semantics.md,
-/// section 11). Errors without one always stop the run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Fault {
-    /// Division or remainder by zero.
-    DivisionByZero,
-    /// A value outside what an operation is defined for: `sqrt(-1)`,
-    /// `logit(0%)`, a distribution's parameter.
-    Domain,
-    /// An index past the end, or a key that isn't there.
-    Index,
-    /// A collection or a bag with nothing in it, where something is needed.
-    Empty,
-    /// An explicit conversion that can't represent the value.
-    Conversion,
-    /// A result too large to represent: a float that isn't finite, a date
-    /// out of range.
-    Overflow,
-}
+pub use probl_sema::ir::Fault;
 
 /// An error from an operation that doesn't know where in the source it is;
 /// the interpreter attaches the span.

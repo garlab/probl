@@ -1,6 +1,7 @@
 //! Worlds, and merging the ones that have become identical.
 
 use crate::analytic::Constraints;
+use crate::error::RuntimeError;
 use crate::value::Value;
 use crate::weight::Weight;
 use probl_sema::SlotSet;
@@ -49,6 +50,10 @@ pub struct Flow {
     pub continued: Vec<World>,
     /// Left the function: the returned value and the world's weight.
     pub returned: Vec<Returned>,
+    /// Faulted inside a `try` that may catch the fault: each world as it
+    /// was when its statement began, with its fault, on its way to the
+    /// `catch`.
+    pub faulted: Vec<(World, RuntimeError)>,
 }
 
 impl Flow {
@@ -64,6 +69,7 @@ impl Flow {
         self.broke.extend(other.broke);
         self.continued.extend(other.continued);
         self.returned.extend(other.returned);
+        self.faulted.extend(other.faulted);
     }
 }
 

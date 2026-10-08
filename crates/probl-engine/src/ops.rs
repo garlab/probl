@@ -165,7 +165,7 @@ pub fn to_prob(v: &Value) -> OpResult<f64> {
     match v {
         // A parameter out of range is outside what its function is defined for.
         Value::Prob(_) | Value::Float(_) | Value::Int(_) => {
-            match make_prob(v).map_err(|e| e.as_fault(Fault::Domain))? {
+            match make_prob(v).map_err(|e| e.as_fault(Fault::DomainError))? {
                 Value::Prob(p) => Ok(p),
                 _ => unreachable!("make_prob returns a probability"),
             }
@@ -196,7 +196,7 @@ pub fn make_prob(v: &Value) -> OpResult<Value> {
         Value::Int(n) if *n == 1 => 1.0,
         Value::Int(_) => {
             return Err(OpError::fault(
-                Fault::Conversion,
+                Fault::ConversionError,
                 "prob needs a finite number between 0 and 1",
             ));
         }
@@ -209,7 +209,7 @@ pub fn make_prob(v: &Value) -> OpResult<Value> {
     };
     if !p.is_finite() || !(0.0..=1.0).contains(&p) {
         return Err(OpError::fault(
-            Fault::Conversion,
+            Fault::ConversionError,
             "prob needs a finite number between 0 and 1",
         ));
     }
@@ -532,7 +532,7 @@ fn add(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
             date_plus(
                 *d,
                 n.to_i64()
-                    .ok_or_else(|| OpError::fault(Fault::Overflow, "date out of range"))?,
+                    .ok_or_else(|| OpError::fault(Fault::NumericOverflow, "date out of range"))?,
             )
         }
         (Value::Str(_), _) | (_, Value::Str(_)) => {
@@ -551,7 +551,7 @@ fn sub(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
         (Value::Date(d), n @ (Value::Int(_) | Value::Float(_))) => {
             match integer(n, "date offset", budget)?.negated().to_i64() {
                 Some(m) => date_plus(*d, m),
-                None => Err(OpError::fault(Fault::Overflow, "date out of range")),
+                None => Err(OpError::fault(Fault::NumericOverflow, "date out of range")),
             }
         }
         _ => arith(BinOp::Sub, a, b, budget),
@@ -561,7 +561,7 @@ fn sub(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
 fn date_plus(d: i32, n: i64) -> OpResult<Value> {
     crate::dates::add_days(d, n)
         .map(Value::Date)
-        .ok_or_else(|| OpError::fault(Fault::Overflow, "date out of range"))
+        .ok_or_else(|| OpError::fault(Fault::NumericOverflow, "date out of range"))
 }
 
 /// Numbers for arithmetic: ints, floats and probabilities (not facts).
@@ -622,10 +622,12 @@ fn arith(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value
                 if y.is_zero() {
                     return Err(division_by_zero());
                 }
-                return x
-                    .ratio(y)
-                    .map(Value::Float)
-                    .ok_or_else(|| OpError::fault(Fault::Overflow, "division result is too large for a finite float"));
+                return x.ratio(y).map(Value::Float).ok_or_else(|| {
+                    OpError::fault(
+                        Fault::NumericOverflow,
+                        "division result is too large for a finite float",
+                    )
+                });
             }
             BinOp::IntDiv => x.div_mod(y)?.0,
             BinOp::Mod => x.div_mod(y)?.1,
@@ -654,7 +656,7 @@ fn arith(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value
             }
             let q = (x / y).floor();
             let n = Integer::from_f64(q)
-                .ok_or_else(|| OpError::fault(Fault::Overflow, "integer division result is not finite"))?;
+                .ok_or_else(|| OpError::fault(Fault::NumericOverflow, "integer division result is not finite"))?;
             budget.integer_allocation(n.bits(), 1)?;
             return Ok(Value::Int(n));
         }
@@ -669,7 +671,7 @@ fn arith(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value
     };
     if !v.is_finite() {
         return Err(OpError::fault(
-            Fault::Overflow,
+            Fault::NumericOverflow,
             format!("`{}` gave a result that isn't a finite number", op.symbol()),
         ));
     }
@@ -944,11 +946,11 @@ pub fn index_plain(coll: &Value, i: &Value, budget: &mut Budget) -> OpResult<Val
         Value::Range(lo, hi) => {
             let k = integer(i, "index", budget)?;
             if k.is_negative() {
-                return Err(OpError::fault(Fault::Index, "index out of range"));
+                return Err(OpError::fault(Fault::IndexOutOfBounds, "index out of range"));
             }
             let n = lo.add(&k)?;
             if &n > hi {
-                return Err(OpError::fault(Fault::Index, "index out of range"));
+                return Err(OpError::fault(Fault::IndexOutOfBounds, "index out of range"));
             }
             Ok(Value::Int(n))
         }
@@ -959,7 +961,7 @@ pub fn index_plain(coll: &Value, i: &Value, budget: &mut Budget) -> OpResult<Val
             crate::text::value(c.encode_utf8(&mut [0; 4]), budget)
         }
         Value::Map(m) => m.get(i).cloned().ok_or_else(|| {
-            OpError::fault(Fault::Index, format!("the key {i:?} isn't in the map"))
+            OpError::fault(Fault::MissingKey, format!("the key {i:?} isn't in the map"))
                 .help("use `get(key, default)` for keys that may be missing")
         }),
         other => Err(OpError::new(format!("can't index {}", article(&other.kind())))),
@@ -969,8 +971,11 @@ pub fn index_plain(coll: &Value, i: &Value, budget: &mut Budget) -> OpResult<Val
 pub fn as_index(i: &Value, len: u128, budget: &mut Budget) -> OpResult<u128> {
     let k = integer(i, "index", budget)?.to_u128();
     k.filter(|k| *k < len).ok_or_else(|| {
-        OpError::fault(Fault::Index, format!("index {i} is out of range for a length of {len}"))
-            .help("indices start at 0")
+        OpError::fault(
+            Fault::IndexOutOfBounds,
+            format!("index {i} is out of range for a length of {len}"),
+        )
+        .help("indices start at 0")
     })
 }
 

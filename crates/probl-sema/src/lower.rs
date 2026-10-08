@@ -1748,6 +1748,7 @@ impl<'a> Lowerer<'a> {
             }
             ast::ExprKind::Chance { arms } => self.chance_into(arms, None, e.span, out),
             ast::ExprKind::Match { scrutinee, arms } => self.match_into(scrutinee, arms, None, e.span, out),
+            ast::ExprKind::Try { body, catches } => self.try_into(body, catches, None, e.span, out),
             ast::ExprKind::Block(block) => {
                 let b = self.scoped_block(block);
                 out.extend(b.stmts);
@@ -1826,6 +1827,53 @@ impl<'a> Lowerer<'a> {
         }
         self.pop_scope(block.span.hi);
         Block { stmts }
+    }
+
+    /// `try { body } catch F { … } catch { … }`; with `dest`, the body's
+    /// value, or the catch's, is stored there.
+    fn try_into(
+        &mut self,
+        body: &ast::Block,
+        catches: &[ast::Catch],
+        dest: Option<SlotId>,
+        span: Span,
+        out: &mut Vec<Stmt>,
+    ) {
+        let body = self.block_into(body, dest);
+        let mut caught: Vec<Option<Fault>> = Vec::new();
+        let mut lowered = Vec::with_capacity(catches.len());
+        for c in catches {
+            let fault = match &c.fault {
+                None => None,
+                Some(name) => match Fault::from_name(&name.name) {
+                    Some(fault) => Some(fault),
+                    None => {
+                        let names: Vec<String> = Fault::ALL.iter().map(|f| f.name().to_string()).collect();
+                        let diag = self.error(name.span, format!("`{}` isn't a fault a `catch` can name", name.name));
+                        match closest(&name.name, &names) {
+                            Some(s) => diag.help(format!("did you mean `{s}`?")),
+                            None => diag.help(format!("the faults are {}", names.join(", "))),
+                        };
+                        None
+                    }
+                },
+            };
+            if c.fault.is_some() && fault.is_none() {
+                continue;
+            }
+            if caught.contains(&fault) {
+                let what = fault.map_or("every fault".to_string(), |f| format!("`{}`", f.name()));
+                self.warning(c.span, "this `catch` never runs")
+                    .note(format!("an earlier `catch` already catches {what}"));
+            }
+            caught.push(fault);
+            lowered.push(Catch {
+                fault,
+                body: self.block_into(&c.body, dest),
+            });
+        }
+        let st = self.stmt(span, StmtKind::Try { body, catches: lowered });
+        out.push(st);
     }
 
     fn if_into(
@@ -2132,7 +2180,13 @@ impl<'a> Lowerer<'a> {
     fn expr_expected(&mut self, e: &ast::Expr, ty: Option<&TypeSpec>, out: &mut Vec<Stmt>) -> Expr {
         let Some(ty) = ty else { return self.expr(e, out) };
         let kind = match (&e.kind, ty) {
-            (ast::ExprKind::If { .. } | ast::ExprKind::Chance { .. } | ast::ExprKind::Match { .. }, _) => {
+            (
+                ast::ExprKind::If { .. }
+                | ast::ExprKind::Chance { .. }
+                | ast::ExprKind::Match { .. }
+                | ast::ExprKind::Try { .. },
+                _,
+            ) => {
                 let dest = self.temp(e.span);
                 let func = self.cur_func() as usize;
                 self.funcs[func].result_types.insert(dest, ty.clone());
@@ -2205,6 +2259,9 @@ impl<'a> Lowerer<'a> {
                         || otherwise.as_ref().is_some_and(|b| any(&b.stmts, is_temp))
                 }
                 StmtKind::Loop { body, .. } => any(&body.stmts, is_temp),
+                StmtKind::Try { body, catches } => {
+                    any(&body.stmts, is_temp) || catches.iter().any(|c| any(&c.body.stmts, is_temp))
+                }
                 _ => false,
             })
         }
@@ -2245,6 +2302,7 @@ impl<'a> Lowerer<'a> {
             }
             ast::ExprKind::Chance { arms } => self.chance_into(arms, Some(dest), e.span, out),
             ast::ExprKind::Match { scrutinee, arms } => self.match_into(scrutinee, arms, Some(dest), e.span, out),
+            ast::ExprKind::Try { body, catches } => self.try_into(body, catches, Some(dest), e.span, out),
             _ => {
                 let ty = self.funcs[self.cur_func() as usize].result_types.get(&dest).cloned();
                 let v = self.expr_expected(e, ty.as_ref(), out);
@@ -2389,7 +2447,10 @@ impl<'a> Lowerer<'a> {
             }
             ast::ExprKind::Lambda { params, body } => return self.lambda(params, body, span),
             ast::ExprKind::Simulate(block) => return self.simulate(block, span),
-            ast::ExprKind::If { .. } | ast::ExprKind::Chance { .. } | ast::ExprKind::Match { .. } => {
+            ast::ExprKind::If { .. }
+            | ast::ExprKind::Chance { .. }
+            | ast::ExprKind::Match { .. }
+            | ast::ExprKind::Try { .. } => {
                 let t = self.temp(span);
                 self.expr_into(e, t, out);
                 ExprKind::Slot(t)
@@ -3141,6 +3202,12 @@ fn visit_stmt(stmt: &mut Stmt, f: &mut impl FnMut(&mut CallSite)) {
             }
         }
         StmtKind::Loop { body, .. } => visit_block(body, f),
+        StmtKind::Try { body, catches } => {
+            visit_block(body, f);
+            for c in catches {
+                visit_block(&mut c.body, f);
+            }
+        }
         StmtKind::Return(e) => visit_expr(e, f),
         StmtKind::Observe { value, from } => {
             visit_expr(value, f);

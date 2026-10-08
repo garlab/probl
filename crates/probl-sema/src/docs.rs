@@ -735,7 +735,7 @@ pub const READ: Doc = Doc {
 pub const KEYWORDS: &[&str] = &[
     "let", "var", "fn", "return", "if", "else", "for", "in", "while", "loop", "repeat", "break", "continue", "match",
     "chance", "observe", "score", "from", "report", "by", "as", "simulate", "type", "enum", "with", "and", "or", "not",
-    "div", "mod", "to", "true", "false", "import", "typeof",
+    "div", "mod", "to", "true", "false", "import", "typeof", "try", "catch",
 ];
 
 pub fn keyword(word: &str) -> Option<Doc> {
@@ -795,6 +795,10 @@ pub fn keyword(word: &str) -> Option<Doc> {
         "report" | "by" | "as" => doc(
             "report e by key as \"label\"",
             "Adds `e` to the output: the chance of a fact, the distribution of a value, or one row per `key`. Only at the top level, after the observations.",
+        ),
+        "try" | "catch" => doc(
+            "try { … } catch Fault { … } catch { … }",
+            "Runs its body; a world where it faults goes on in the first `catch` that names the fault, or in a `catch` without one, which takes every fault. The world keeps what it did before the fault, and its value is the catch's. The faults are DivisionByZero, DomainError, IndexOutOfBounds, MissingKey, EmptyCollection, ConversionError and NumericOverflow; other errors, such as a wrong type or a limit, aren't caught.",
         ),
         "simulate" => doc(
             "simulate { … }",

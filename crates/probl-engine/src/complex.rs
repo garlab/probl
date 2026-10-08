@@ -16,7 +16,7 @@ impl Complex {
     pub fn new(re: f64, im: f64) -> OpResult<Self> {
         if !re.is_finite() || !im.is_finite() {
             return Err(OpError::fault(
-                Fault::Overflow,
+                Fault::NumericOverflow,
                 "complex components and results must be finite",
             ));
         }
@@ -156,7 +156,10 @@ impl Complex {
 
     pub fn ln(self) -> OpResult<Self> {
         if self.re == 0.0 && self.im == 0.0 {
-            return Err(OpError::fault(Fault::Domain, "`ln` isn't defined for complex zero"));
+            return Err(OpError::fault(
+                Fault::DomainError,
+                "`ln` isn't defined for complex zero",
+            ));
         }
         Self::new(log_hypot(self.re, self.im), self.arg())
     }
@@ -327,7 +330,7 @@ impl Complex {
         let y = self.im;
         if x == 1.0 && y == 0.0 {
             return Err(OpError::fault(
-                Fault::Domain,
+                Fault::DomainError,
                 "`atanh` isn't defined at complex +1 or -1",
             ));
         }

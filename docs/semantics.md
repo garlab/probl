@@ -395,16 +395,17 @@ The host running a program sets upper limits on: worlds per statement (when enum
 
 A **fault** is a language error that depends on the values a world computes with, not on the program being wrong:
 
-- division or remainder by zero;
-- a value outside what an operation is defined for: `sqrt(-1)`, `logit(0%)`, a negative count, chances that add up to more than 100%, a distribution's parameter (`normal(0, 0)`, `bernoulli(1.5)`);
-- an index past the end, or a key or bag item that isn't there;
-- a collection or a bag with nothing in it, where an element is needed;
-- an explicit conversion that can't represent its value: `prob(1.5)`, an invalid `date`;
-- a result too large to represent: a float that isn't finite, a date out of range.
+- `DivisionByZero`: division or remainder by zero;
+- `DomainError`: a value outside what an operation is defined for: `sqrt(-1)`, `logit(0%)`, a negative count, chances that add up to more than 100%, a distribution's parameter (`normal(0, 0)`, `bernoulli(1.5)`);
+- `IndexOutOfBounds`: an index past the end, or a slice that doesn't fit;
+- `MissingKey`: a key that isn't in a map, or an item that isn't in a bag;
+- `EmptyCollection`: a collection or a bag with nothing in it, where an element is needed;
+- `ConversionError`: an explicit conversion that can't represent its value: `prob(1.5)`, an invalid `date`;
+- `NumericOverflow`: a result too large to represent: a float that isn't finite, a date out of range.
 
 Other errors are not faults, and always stop the run: wrong types or arities, a declared type that a value fails, effects a callback isn't allowed, impossible evidence, unsupported features, limits, cancellation and internal errors.
 
-A world always stops at its first fault. The **failure mode** decides what happens to the others:
+A world stops at its first fault that no `catch` takes (below). The **failure mode** decides what happens to the others:
 
 - **total**: the fault stops the run, with its diagnostic, as any other error does.
 - **partial**: the world that failed ends there, and the other worlds finish; when sampling, so do the other runs. Nothing takes the failed world's place: no placeholder value, and no run drawn again to replace it.
@@ -429,6 +430,23 @@ failed
 ```
 
 `probl run` prints it, then a diagnostic for each place, and exits with status 3 (status 1 when no world finished). The library returns it in the run's error, as `Error::partial`, so a caller that only handles success doesn't mistake it for a complete answer. A partial result is reproducible as any other: the same program, data, date, seed and engine version give the same output and the same failures on any number of threads.
+
+### Catching faults
+
+`try { body } catch F { … } catch { … }` is an expression. In each world it runs the body, and its value is the body's. A world where the body faults goes on in the first `catch`, in source order, that names the fault, or that names none: a `catch` without a name takes every fault. The `try`'s value is then the catch's.
+
+```probl
+let x ~ d6 - 1
+let y = try { 1 / x } catch DivisionByZero { 0 }
+report y        # mean 137/360: the worlds where x is 0 give 0
+```
+
+- **What the caught world keeps.** It goes on from its fault: the statements before it stay done, draws made before it aren't made again, and its weight includes the evidence applied before it. The statement that faulted has no effect: an assignment whose value faulted doesn't happen. Variables declared in the body aren't visible in the catch; the variables around the `try` are, with the values the body gave them.
+- **Where faults come from.** Anywhere in the body, including the functions it calls, at any depth. A call's paths that fault reach the caller's `try`, which catches them in the caller's world as it was at the call, with those paths' weight; its other paths go on as usual. `simulate` blocks and collection callbacks fault whole, as in partial mode, and a `try` inside them catches locally.
+- **What isn't caught.** Only faults: a `catch` without a name takes every fault, not other errors. A fault that none of a `try`'s catches takes goes on to the `try` around it, then up the calls, then to the failure mode. A fault in a catch is for the `try`s around this one, not for its other catches.
+- **Caught faults aren't failures.** A caught world finishes as any other world: it counts in no failed share, and doesn't make a result partial, in either failure mode.
+- **Evidence.** A catch can observe as any code can: `catch DivisionByZero { observe false; 0 }` leaves out, as evidence, the worlds where the body divided by zero. A catch can run after anything in its body, so the rule that no evidence follows a report (section 7) treats it as coming after the body.
+- **Names.** Naming a fault that doesn't exist is a compile error, and a catch that an earlier one already covers is a warning. A catch can't read the fault's message, and there's no `finally`.
 
 ## 12. How this document is checked
 
@@ -546,4 +564,4 @@ When few runs carry the weight (a small effective sample size), this estimate is
 - **Nested estimates** (D4): `simulate` blocks that must be sampled, and how their error affects decisions.
 - **General continuous composition**, beyond the supported affine single-draw arithmetic and threshold conditioning in §13; nonlinear transforms and combinations of independent continuous draws need further representation and inference contracts.
 - **Reports that update with later evidence** (filtering and smoothing).
-- **Recovering from a fault locally**, with `try` and `catch`, and public names for faults: see the [error-handling proposal](design/error-handling.md).
+- **A fault's details in a catch**, such as its message, and a `finally` block: see the [error-handling proposal](design/error-handling.md).

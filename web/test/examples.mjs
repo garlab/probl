@@ -27,6 +27,7 @@ cases.push({ name: 'text', path: 'web/test/text.probl', source: await readFile(`
 cases.push({ name: 'dates', path: 'web/test/dates.probl', source: await readFile(`${root}/web/test/dates.probl`, 'utf8') });
 cases.push({ name: 'reporting', path: 'web/test/reporting.probl', source: await readFile(`${root}/web/test/reporting.probl`, 'utf8') });
 cases.push({ name: 'types', path: 'web/test/types.probl', source: await readFile(`${root}/web/test/types.probl`, 'utf8') });
+cases.push({ name: 'catching', path: 'web/test/catching.probl', source: await readFile(`${root}/web/test/catching.probl`, 'utf8') });
 cases.push({
   name: 'integers', path: 'web/test/integers.probl',
   source: await readFile(`${root}/web/test/integers.probl`, 'utf8'),

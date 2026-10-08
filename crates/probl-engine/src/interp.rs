@@ -278,6 +278,12 @@ pub struct Engine<'p> {
     callback: Option<&'static str>,
     /// In partial mode: the worlds that failed, in the current call.
     pub failures: Failures,
+    /// The `try`s running, innermost last, each with the depth of the call
+    /// it's in, and its catches.
+    handlers: Vec<(usize, &'p [Catch])>,
+    /// Worlds of the statement running that faulted inside a `try` of this
+    /// call that catches the fault, on their way to it.
+    faulted: Vec<(World, RuntimeError)>,
     /// Where evidence can still be applied, to tell whether a failed
     /// world's weight can be added to the finished worlds'.
     evidence: EvidenceOrder,
@@ -303,15 +309,28 @@ impl At {
     }
 }
 
-/// The value of `$e` in one world. If it fails with a fault in partial mode,
-/// the world ends there: the failure is recorded, `$undo` runs, and the
-/// statement goes on with the next world (see `Engine::fail`).
+/// The value of `$e` in one world. If it fails with a fault that a `catch`
+/// or partial mode takes, the world leaves the statement: `$undo` runs, and
+/// the statement goes on with the next world (see `Engine::fail`). A catch
+/// gets the world as its statement began: `world w` when `$e` leaves `w` as
+/// it was, or `saved s` with a copy `s` taken before `$e` changed it.
 macro_rules! each {
-    ($self:ident, $at:expr, $e:expr $(, $undo:block)?) => {
+    ($self:ident, $at:expr, world $w:expr, $e:expr $(, $undo:block)?) => {
         match $e {
             Ok(v) => v,
             Err(e) => {
-                $self.fail(e, $at)?;
+                let saved = $self.snapshot(&$w);
+                $self.fail(e, $at, saved)?;
+                $($undo)?
+                continue;
+            }
+        }
+    };
+    ($self:ident, $at:expr, saved $saved:ident, $e:expr $(, $undo:block)?) => {
+        match $e {
+            Ok(v) => v,
+            Err(e) => {
+                $self.fail(e, $at, $saved.take())?;
                 $($undo)?
                 continue;
             }
@@ -377,6 +396,8 @@ impl<'p> Engine<'p> {
             callback: None,
             failures: Failures::default(),
             evidence: probl_sema::effects::evidence_order(prog),
+            handlers: Vec::new(),
+            faulted: Vec::new(),
         }
     }
 
@@ -392,6 +413,7 @@ impl<'p> Engine<'p> {
             run: 0,
         };
         let flow = self.exec_block(MAIN, &main.body, vec![world])?;
+        uncaught(&flow)?;
         Ok(total_weight(&flow.next))
     }
 
@@ -429,6 +451,7 @@ impl<'p> Engine<'p> {
             })
             .collect();
         let flow = self.exec_block(MAIN, &main.body, worlds)?;
+        uncaught(&flow)?;
         let mut totals = SampleTotals {
             weight: Weight::ZERO,
             squares: Weight::ZERO,
@@ -651,18 +674,56 @@ impl<'p> Engine<'p> {
         self.config.partial && self.nested == 0 && self.callback.is_none()
     }
 
-    /// A world at `at` failed with `e`. A fault in partial mode ends that
-    /// world only: it's recorded, and the statement goes on with the other
-    /// worlds. Anything else stops the run.
-    fn fail(&mut self, e: RuntimeError, at: At) -> Result<()> {
-        if e.fault.is_none() || !self.partial() {
+    /// Whether a `try` running in this call catches `fault`.
+    fn catches_here(&self, fault: Option<Fault>) -> bool {
+        self.handlers
+            .iter()
+            .any(|(depth, catches)| *depth == self.depth && catches.iter().any(|c| c.catches(fault)))
+    }
+
+    /// Whether a `try` running in a call further up catches `fault`.
+    fn catches_above(&self, fault: Option<Fault>) -> bool {
+        self.handlers
+            .iter()
+            .any(|(depth, catches)| *depth < self.depth && catches.iter().any(|c| c.catches(fault)))
+    }
+
+    /// Inside a `try` of this call: a copy of `w`, for the catch it may
+    /// fault to. Elsewhere nothing is copied.
+    #[inline]
+    fn snapshot(&self, w: &World) -> Option<World> {
+        if self.handlers.is_empty() {
+            return None;
+        }
+        self.handlers
+            .iter()
+            .any(|(depth, _)| *depth == self.depth)
+            .then(|| w.clone())
+    }
+
+    /// A world at `at` failed with `e`. A fault that a `try` of this call
+    /// catches sends `saved`, the world as its statement began, on to the
+    /// catch. One that a `try` further up catches, or any fault in partial
+    /// mode, ends the world here: it's recorded, for the call's caller to
+    /// catch, or as a failure. Either way the statement goes on with the
+    /// other worlds. Anything else stops the run.
+    fn fail(&mut self, e: RuntimeError, at: At, saved: Option<World>) -> Result<()> {
+        if e.fault.is_none() {
+            return Err(e);
+        }
+        if let Some(w) = saved.filter(|_| self.catches_here(e.fault)) {
+            self.faulted.push((w, e));
+            return Ok(());
+        }
+        if !self.partial() && !self.catches_above(e.fault) {
             return Err(e);
         }
         let fun = &self.prog.functions[at.f as usize];
         let e = match fun.kind {
             FnKind::Named => e.with_note(format!("in a call to `{}`", fun.name)),
             FnKind::Lambda => e.with_note("inside a lambda"),
-            FnKind::Simulate | FnKind::Main => e,
+            FnKind::Simulate => e.with_note("inside a `simulate` block"),
+            FnKind::Main => e,
         };
         let stmt = at.stmt as usize;
         let before_evidence = self.evidence.at[stmt] || self.evidence.after[stmt];
@@ -709,6 +770,7 @@ impl<'p> Engine<'p> {
             flow.broke.extend(out.broke);
             flow.continued.extend(out.continued);
             flow.returned.extend(out.returned);
+            flow.faulted.extend(out.faulted);
         }
         Ok(flow)
     }
@@ -724,6 +786,21 @@ impl<'p> Engine<'p> {
     }
 
     fn exec_stmt(&mut self, f: FnId, stmt: &'p Stmt, worlds: Vec<World>) -> Result<Flow> {
+        // Outside every `try`, no world can fault to a catch.
+        if self.handlers.is_empty() {
+            return self.exec_stmt_kind(f, stmt, worlds);
+        }
+        // The worlds that fault in this statement, on their way to a catch,
+        // leave with its flow.
+        let outer = std::mem::take(&mut self.faulted);
+        let flow = self.exec_stmt_kind(f, stmt, worlds);
+        let faulted = std::mem::replace(&mut self.faulted, outer);
+        let mut flow = flow?;
+        flow.faulted.extend(faulted);
+        Ok(flow)
+    }
+
+    fn exec_stmt_kind(&mut self, f: FnId, stmt: &'p Stmt, worlds: Vec<World>) -> Result<Flow> {
         let span = stmt.span;
         if matches!(
             stmt.kind,
@@ -754,12 +831,13 @@ impl<'p> Engine<'p> {
                 let mut worlds = worlds;
                 let mut failed = Vec::new();
                 for (i, w) in worlds.iter_mut().enumerate() {
+                    let mut saved = self.snapshot(w);
                     let v = match self.record_place_type(place, w) {
                         Some(ty) => self.eval_expected(f, value, w, &ty),
                         None => self.eval(f, value, w),
                     };
-                    let v = each!(self, At::new(f, stmt, w), v, { failed.push(i) });
-                    each!(self, At::new(f, stmt, w), self.assign(f, place, v, w, span), {
+                    let v = each!(self, At::new(f, stmt, w), saved saved, v, { failed.push(i) });
+                    each!(self, At::new(f, stmt, w), saved saved, self.assign(f, place, v, w, span), {
                         failed.push(i)
                     });
                 }
@@ -783,16 +861,17 @@ impl<'p> Engine<'p> {
                 let mut out = Vec::with_capacity(worlds.len());
                 for w in worlds {
                     let at = At::new(f, stmt, &w);
+                    let mut saved = self.snapshot(&w);
                     if self.sampler.is_some() {
-                        if let Some(counts) = each!(self, at, self.direct_counts(f, dist, &w)) {
+                        if let Some(counts) = each!(self, at, saved saved, self.direct_counts(f, dist, &w)) {
                             let k = counts.sample(self.sampler.as_mut().expect("sampling"));
                             let mut w = w;
-                            each!(self, at, self.assign(f, place, Value::Int(k.into()), &mut w, dist.span));
+                            each!(self, at, saved saved, self.assign(f, place, Value::Int(k.into()), &mut w, dist.span));
                             out.push(w);
                             continue;
                         }
                     }
-                    let d = each!(self, at, self.eval(f, dist, &w));
+                    let d = each!(self, at, saved saved, self.eval(f, dist, &w));
                     if let (Some(variable), Value::Continuous(family)) = (delay, &d) {
                         if conjugate::is_prior(family) {
                             let mut w = w;
@@ -806,7 +885,7 @@ impl<'p> Engine<'p> {
                         }
                     }
                     let mark = out.len();
-                    each!(self, at, self.split_by(f, place, d, w, dist.span, &mut out), {
+                    each!(self, at, saved saved, self.split_by(f, place, d, w, dist.span, &mut out), {
                         out.truncate(mark)
                     });
                     self.check_worlds(out.len(), span)?;
@@ -817,7 +896,7 @@ impl<'p> Engine<'p> {
                 let mut out = Vec::new();
                 for w in worlds {
                     let at = At::new(f, stmt, &w);
-                    let current = each!(self, at, self.read_place(f, bag, &w, span));
+                    let current = each!(self, at, world w, self.read_place(f, bag, &w, span));
                     let Value::Bag(cards) = &current else {
                         return Err(RuntimeError::new(
                             span,
@@ -827,9 +906,9 @@ impl<'p> Engine<'p> {
                     };
                     let total: u128 = cards.values().map(|n| *n as u128).sum();
                     if total == 0 {
-                        let empty =
-                            RuntimeError::new(span, "can't take a card from an empty bag").as_fault(Fault::Empty);
-                        each!(self, at, Err::<(), _>(empty));
+                        let empty = RuntimeError::new(span, "can't take a card from an empty bag")
+                            .as_fault(Fault::EmptyCollection);
+                        each!(self, at, world w, Err::<(), _>(empty));
                     }
                     let chosen = match &mut self.sampler {
                         Some(rng) => rng.choose(cards.values().map(|n| *n as f64)),
@@ -862,7 +941,7 @@ impl<'p> Engine<'p> {
                         key.push(self.eval(f, a, &w)?);
                         Ok(())
                     });
-                    each!(self, at, evaluated);
+                    each!(self, at, world w, evaluated);
                     let func = match callee {
                         Callee::Fn { func, capture_args } => {
                             for &s in capture_args {
@@ -870,11 +949,13 @@ impl<'p> Engine<'p> {
                             }
                             *func
                         }
-                        Callee::Value(e, named) => match each!(self, at, self.eval(f, e, &w)) {
+                        Callee::Value(e, named) => match each!(self, at, world w, self.eval(f, e, &w)) {
                             Value::Builtin(b) => {
-                                let value = each!(self, at, self.builtin_values(b, &key, named, w.weight, span));
+                                let value =
+                                    each!(self, at, world w, self.builtin_values(b, &key, named, w.weight, span));
+                                let mut saved = self.snapshot(&w);
                                 let mut nw = w;
-                                each!(self, at, self.assign(f, dest, value, &mut nw, span));
+                                each!(self, at, saved saved, self.assign(f, dest, value, &mut nw, span));
                                 out.push(nw);
                                 continue;
                             }
@@ -897,14 +978,26 @@ impl<'p> Engine<'p> {
                             }
                         },
                     };
-                    let result = each!(self, at, self.call(func, key, span));
+                    let result = each!(self, at, world w, self.call(func, key, span));
                     self.unresolved += w.weight * result.unresolved;
                     self.lost += w.weight * result.lost;
-                    // What failed in the call failed in this world, which
-                    // may still meet evidence after the call.
+                    // What faulted in the call faulted in this world: a catch
+                    // here takes it with the world as it was, and otherwise
+                    // the world fails, for a `try` further up or as a
+                    // failure, and may still meet evidence after the call.
                     let run = self.sampler.is_some().then_some(w.run);
                     let after = self.evidence.after[stmt.id as usize];
-                    self.failures.absorb(&result.failures, w.weight, run, after);
+                    for g in &result.failures.groups {
+                        if self.catches_here(g.error.fault) {
+                            let mut caught = w.clone();
+                            caught.weight = caught.weight * g.weight;
+                            self.faulted.push((caught, g.error.clone()));
+                        } else if self.partial() || self.catches_above(g.error.fault) {
+                            self.failures.absorb_group(g, w.weight, run, after);
+                        } else {
+                            return Err(g.error.clone());
+                        }
+                    }
                     add_pending(&mut self.pending, &result.pending, w.weight);
                     let last = result.outcomes.len().saturating_sub(1);
                     let mut w = Some(w);
@@ -931,7 +1024,7 @@ impl<'p> Engine<'p> {
             StmtKind::If { cond, then, otherwise } => {
                 let (mut yes, mut no) = (Vec::new(), Vec::new());
                 for w in worlds {
-                    let condition = each!(self, At::new(f, stmt, &w), self.eval(f, cond, &w));
+                    let condition = each!(self, At::new(f, stmt, &w), world w, self.eval(f, cond, &w));
                     if let Value::Event(event) = condition {
                         self.check_callback_effect(cond.span)?;
                         let mut y = w.clone();
@@ -1000,7 +1093,7 @@ impl<'p> Engine<'p> {
                             ops::to_prob(&value).map_err(|e| e.at(weight.span))
                         })
                         .collect();
-                    let chances = each!(self, at, chances);
+                    let chances = each!(self, at, world w, chances);
                     let sum: f64 = chances.iter().sum();
                     if sum > 1.0 + 1e-9 {
                         let over = RuntimeError::new(
@@ -1010,7 +1103,7 @@ impl<'p> Engine<'p> {
                                 fmt_prob(sum)
                             ),
                         );
-                        each!(self, at, Err::<(), _>(over.as_fault(Fault::Domain)));
+                        each!(self, at, world w, Err::<(), _>(over.as_fault(Fault::DomainError)));
                     }
                     let remainder = (1.0 - sum).max(0.0);
                     if remainder > 1e-9 && *exhaustive && otherwise.is_none() {
@@ -1019,7 +1112,7 @@ impl<'p> Engine<'p> {
                             format!("the chances add up to {} and there's no `else` arm", fmt_prob(sum)),
                         )
                         .with_help("a `chance` used as a value needs its chances to add up to 100%, or an `else`");
-                        each!(self, at, Err::<(), _>(short.as_fault(Fault::Domain)));
+                        each!(self, at, world w, Err::<(), _>(short.as_fault(Fault::DomainError)));
                     }
                     if let Some(rng) = &mut self.sampler {
                         // One arm, chosen with its probability.
@@ -1069,7 +1162,7 @@ impl<'p> Engine<'p> {
             StmtKind::Return(value) => {
                 let mut flow = Flow::default();
                 for w in worlds {
-                    let v = each!(self, At::new(f, stmt, &w), self.eval(f, value, &w));
+                    let v = each!(self, At::new(f, stmt, &w), world w, self.eval(f, value, &w));
                     let mut constraints = w.constraints;
                     if constraints.keys().any(|id| !w.inherited.contains(id)) {
                         Arc::make_mut(&mut constraints).retain(|id, _| w.inherited.contains(id));
@@ -1088,9 +1181,10 @@ impl<'p> Engine<'p> {
                 let mut out = Vec::with_capacity(worlds.len());
                 for mut w in worlds {
                     let here = At::new(f, stmt, &w);
+                    let mut saved = self.snapshot(&w);
                     if let Some(u) = &exact {
                         let at = from.as_ref().map_or(span, |d| d.span);
-                        if let Some(ln) = each!(self, here, self.observe_exactly(f, u, &mut w, at)) {
+                        if let Some(ln) = each!(self, here, saved saved, self.observe_exactly(f, u, &mut w, at)) {
                             w.weight = w.weight * Weight::from_ln(ln);
                             if w.weight.is_zero() {
                                 self.last_ruling_out = Some(span);
@@ -1102,7 +1196,7 @@ impl<'p> Engine<'p> {
                     }
                     let (factor, missing, ruled_out) = match from {
                         None => {
-                            let v = each!(self, here, self.eval(f, value, &w));
+                            let v = each!(self, here, saved saved, self.eval(f, value, &w));
                             if let Value::Event(event) = v {
                                 let p = self.restrict_event(&event, true, &mut w, value.span)?;
                                 (p, 0.0, 1.0 - p)
@@ -1112,8 +1206,8 @@ impl<'p> Engine<'p> {
                             }
                         }
                         Some(d) => {
-                            let v = each!(self, here, self.eval(f, value, &w));
-                            match each!(self, here, self.direct_counts(f, d, &w)) {
+                            let v = each!(self, here, saved saved, self.eval(f, value, &w));
+                            match each!(self, here, saved saved, self.direct_counts(f, d, &w)) {
                                 Some(counts) if self.sampler.is_some() => {
                                     let x = match v {
                                         Value::Bool(_) => None,
@@ -1122,7 +1216,7 @@ impl<'p> Engine<'p> {
                                     (x.map_or(0.0, |x| counts.pmf(x)), 0.0, 0.0)
                                 }
                                 _ => {
-                                    let dist = each!(self, here, self.eval(f, d, &w));
+                                    let dist = each!(self, here, saved saved, self.eval(f, d, &w));
                                     if let (Value::Bool(b), Value::Event(event)) = (&v, &dist) {
                                         let p = self.restrict_event(event, *b, &mut w, span)?;
                                         (p, 0.0, 1.0 - p)
@@ -1134,6 +1228,7 @@ impl<'p> Engine<'p> {
                                         each!(
                                             self,
                                             here,
+                                            saved saved,
                                             likelihood(&dist, &v, self.sampler.is_some()).map_err(|e| e.at(span))
                                         )
                                     }
@@ -1159,10 +1254,11 @@ impl<'p> Engine<'p> {
             StmtKind::Report { site, value, key } => {
                 let mut failed = Vec::new();
                 for (i, w) in worlds.iter().enumerate() {
-                    let v = each!(self, At::new(f, stmt, w), self.eval(f, value, w), { failed.push(i) });
+                    let v = each!(self, At::new(f, stmt, w), world w, self.eval(f, value, w), { failed.push(i) });
                     let k = match key {
                         Some(k) => {
-                            let k_value = each!(self, At::new(f, stmt, w), self.eval(f, k, w), { failed.push(i) });
+                            let k_value =
+                                each!(self, At::new(f, stmt, w), world w, self.eval(f, k, w), { failed.push(i) });
                             if analytic::contains(&k_value) {
                                 return Err(analytic::unsupported("grouping by a continuous outcome").at(k.span));
                             }
@@ -1198,6 +1294,28 @@ impl<'p> Engine<'p> {
                 Ok(Flow::next(worlds))
             }
             StmtKind::Fail { message } => Err(RuntimeError::new(span, message.clone())),
+            StmtKind::Try { body, catches } => {
+                self.handlers.push((self.depth, catches.as_slice()));
+                let flow = self.exec_block(f, body, worlds);
+                self.handlers.pop();
+                let mut flow = flow?;
+                // Each faulted world goes on in the first catch that takes
+                // its fault; the others are for a `try` around this one.
+                let mut caught: Vec<Vec<World>> = vec![Vec::new(); catches.len()];
+                for (w, e) in std::mem::take(&mut flow.faulted) {
+                    match catches.iter().position(|c| c.catches(e.fault)) {
+                        Some(i) => caught[i].push(w),
+                        None => flow.faulted.push((w, e)),
+                    }
+                }
+                for (c, worlds) in catches.iter().zip(caught) {
+                    if !worlds.is_empty() {
+                        flow.join(self.exec_block(f, &c.body, worlds)?);
+                    }
+                }
+                flow.next = self.merge(flow.next, stmt.id);
+                Ok(flow)
+            }
             StmtKind::Check { slot, ty } => {
                 for w in &mut worlds {
                     // A delayed variable is drawn only if some of its values
@@ -1292,6 +1410,7 @@ impl<'p> Engine<'p> {
             clear_dead(&mut flow.continued, &live.loop_head[stmt.id as usize]);
             out.next.extend(flow.broke);
             out.returned.extend(flow.returned);
+            out.faulted.extend(flow.faulted);
             let mut again = flow.next;
             again.extend(flow.continued);
             inside = merge(again, &live.loop_head[stmt.id as usize], self.merging());
@@ -1359,6 +1478,7 @@ impl<'p> Engine<'p> {
         let mut returns: Vec<Vec<Returned>> = Vec::new();
         let mut unresolved: Vec<Weight> = Vec::new();
         let mut failed: Vec<Failures> = Vec::new();
+        let mut faulted: Vec<Vec<(World, RuntimeError)>> = Vec::new();
         // A body that uses a call's result so far can't be solved as a chain:
         // that result changes from round to round.
         let saved_pending = std::mem::take(&mut self.pending);
@@ -1404,9 +1524,13 @@ impl<'p> Engine<'p> {
                 return Ok(None);
             }
             clear_dead(&mut flow.broke, after);
-            // Leaving: by `break` or `return`, unresolved, ruled out, or
-            // failed.
+            // Leaving: by `break` or `return`, unresolved, ruled out,
+            // failed, or faulted to a catch outside the loop.
             let mut leave = left + lost + failures.weight;
+            let faults = std::mem::take(&mut flow.faulted);
+            for (w, _) in &faults {
+                leave += w.weight;
+            }
             for w in &flow.broke {
                 leave += w.weight;
             }
@@ -1433,6 +1557,7 @@ impl<'p> Engine<'p> {
             returns.push(flow.returned);
             unresolved.push(left);
             failed.push(failures);
+            faulted.push(faults);
             k += 1;
         }
         let waiting = !self.pending.is_empty();
@@ -1470,6 +1595,10 @@ impl<'p> Engine<'p> {
             }
             left += unresolved[k] * times;
             self.failures.absorb(&failed[k], times, None, false);
+            for (mut w, e) in std::mem::take(&mut faulted[k]) {
+                w.weight = w.weight * times;
+                flow.faulted.push((w, e));
+            }
         }
         self.unresolved += left;
         Ok(Some(flow))
@@ -1872,6 +2001,7 @@ impl<'p> Engine<'p> {
                 FnKind::Lambda => e.with_note("inside a lambda"),
                 FnKind::Main => e,
             })?;
+            uncaught(&flow)?;
             let mut result = CallResult {
                 outcomes: merge_values(flow.returned),
                 unresolved,
@@ -2005,6 +2135,11 @@ impl<'p> Engine<'p> {
             )
             .at(span));
         }
+        // It's built whole or not at all: a fault on one of its paths, not
+        // caught inside it, fails the world that runs it.
+        if let Some(g) = result.failures.groups.first() {
+            return Err(g.error.clone());
+        }
         let resolved = Weight::sum(result.outcomes.iter().map(|(_, w, _)| *w));
         if resolved.is_zero() {
             let message = if result.unresolved.is_zero() {
@@ -2049,6 +2184,11 @@ impl<'p> Engine<'p> {
                 "a function given to `{what}` that comes back to a call still running isn't supported yet"
             ))
             .at(span));
+        }
+        // A callback that faults fails the whole operation, in the world
+        // that runs it.
+        if let Some(g) = result.failures.groups.first() {
+            return Err(g.error.clone());
         }
         match result.outcomes.as_slice() {
             [(v, p, c)] if c.is_empty() && (p.to_f64() - 1.0).abs() < 1e-12 && result.unresolved.is_zero() => {
@@ -2843,6 +2983,15 @@ fn describe_call(fun: &Function, key: &[Value]) -> String {
 }
 
 /// The error when `print` at `span` goes over the output limit.
+/// A world faults to a catch only inside a `try` of its own call, which takes
+/// it: none can leave the call that way.
+fn uncaught(flow: &Flow) -> Result<()> {
+    match flow.faulted.first() {
+        Some((_, e)) => Err(OpError::internal("a fault went past the `try` meant to catch it").at(e.span)),
+        None => Ok(()),
+    }
+}
+
 /// Remove the worlds at the indices `failed`, which are in increasing order.
 fn drop_failed(worlds: &mut Vec<World>, failed: &[usize]) {
     if failed.is_empty() {

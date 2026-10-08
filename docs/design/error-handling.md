@@ -1,6 +1,6 @@
 # Error handling: local recovery and failed worlds
 
-> Draft proposal, updated 8 October 2026. Intended for near-term language work, independently of [portals and external effects](portals-and-effects.md). The global [failure modes](#failure-modes-total-or-partial) are implemented, as the [reference semantics](../semantics.md#failure-modes) specifies them; see [as built](#as-built) for how they differ from this proposal. Local recovery (`try`/`catch`), public fault codes, stage 0 diagnostics and a failure cap are not. Proposed syntax, fault codes and output elsewhere are illustrative.
+> Draft proposal, updated 8 October 2026. Intended for near-term language work, independently of [portals and external effects](portals-and-effects.md). The global [failure modes](#failure-modes-total-or-partial) and local recovery with `try`/`catch` are implemented, as the reference semantics specifies them ([failure modes](../semantics.md#failure-modes), [catching faults](../semantics.md#catching-faults)); see [as built](#as-built) for how they differ from this proposal. Binding a fault in a catch (`catch F as err`), `finally`, stage 0 diagnostics and a failure cap are not. Proposed syntax and output elsewhere are illustrative.
 
 ## Recommendation
 
@@ -103,7 +103,7 @@ let y = try {
 
 Fault codes are stable language patterns, not English message strings to compare. Their exact qualification/namespacing is to be settled before parsing is implemented; the examples use short names. A bound diagnostic can expose a code, message and source information without making failures ordinary model values everywhere.
 
-Initially omit bare `catch { ... }`, wildcard catches, an ignore-errors operator, implicit default values, exception inheritance, user-defined exception classes and `finally`. Specific catches make the fallback's scope reviewable. A value-producing `try` needs an explicit result from the handler. A statement-context handler may intentionally perform no further action, but still names the fault it handles.
+Initially omit bare `catch { ... }` (implemented after all: see [as built](#as-built)), wildcard catches, an ignore-errors operator, implicit default values, exception inheritance, user-defined exception classes and `finally`. Specific catches make the fallback's scope reviewable. A value-producing `try` needs an explicit result from the handler. A statement-context handler may intentionally perform no further action, but still names the fault it handles.
 
 Unmatched faults propagate to the nearest matching enclosing handler, including through ordinary function calls. A fault in a handler propagates outward; it is not caught again by the same handler. No automatic retry occurs. Existing narrow APIs such as `get(..., default)` and `maximum(default: ...)` remain useful and need not be rewritten using exceptions.
 
@@ -221,7 +221,9 @@ The failure modes are implemented as above, with these choices:
 - **Calls, solved loops and recursion carry failures** the way they carry unresolved weight: per call result (memoized with it), per chain state (scaled by its expected visits, and counted as a way out of the loop) and per round of a recursive call. `simulate` and collection callbacks are atomic, as proposed.
 - **Output.** The summary line says `partial result`, then the failed share (enumeration, when comparable) or the failed run count (sampling). A `failed` section after the reports lists up to ten places, with their share, or runs and share, or the raw weight when not comparable. When the weights can't be compared, the evidence is labelled as the finished worlds' contribution.
 - **Hosts.** The library returns a partial result in the error (`Error::partial`), with one diagnostic per place. `probl run` prints the result, then the diagnostics, and exits with 3, or 1 when nothing finished. The playground shows the output, marks the failures in the editor, and has an "On error" option.
-- **Not built:** failure counts in the sampling progress, per-report failure breakdowns, a failure cap, and stage 0's shares in total mode.
+- **`try` and `catch`.** The syntax is `try { … } catch F { … } catch { … }`, an expression in any position. A bare `catch` is provided, as a decision against this proposal's caution: it takes every fault, but never other errors, and nothing can follow it. `catch F as err` and `finally` are not provided. The fault names are this proposal's: `DivisionByZero`, `DomainError`, `IndexOutOfBounds`, `MissingKey`, `EmptyCollection`, `ConversionError` and `NumericOverflow`.
+- **How catching works.** A fault inside a `try` of its own call sends a copy of the world, as its statement began, to the try with the fault; copies are made only inside `try` bodies. A fault for a `try` further up the calls is recorded in the call's result, as in partial mode, and the call site turns it into a caught world with the caller's state and the path's weight. Liveness keeps everything a catch reads alive throughout the body, draws don't move inside a `try` body, and the observe-after-report rule treats catches as coming after their body.
+- **Not built:** failure counts in the sampling progress, per-report failure breakdowns, a failure cap, stage 0's shares in total mode, and reading a fault's message in a catch.
 
 ## Reporting and the meaning of a failed world
 

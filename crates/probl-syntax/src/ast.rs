@@ -229,6 +229,19 @@ pub enum ExprKind {
     },
     Simulate(Block),
     Block(Block),
+    /// `try { … } catch Fault { … } catch { … }`.
+    Try {
+        body: Block,
+        catches: Vec<Catch>,
+    },
+}
+
+/// `catch Fault { … }`, or `catch { … }` for every fault.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Catch {
+    pub fault: Option<Ident>,
+    pub body: Block,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -1,0 +1,33 @@
+# `try` and `catch`: faults caught in the body, in a called function, in a
+# loop, and in sampled runs, compared between native and WebAssembly.
+
+let x ~ d6 - 1
+let y = try { 1 / x } catch DivisionByZero { 0 }
+report y
+
+let i ~ d3 - 1
+let xs = [10, 20]
+let v = try { 100 / xs[i] } catch DivisionByZero { -1 } catch IndexOutOfBounds { -2 } catch { -3 }
+report v
+
+fn inv(z) { return 1 / z }
+let k ~ d2 - 1
+report try { inv(k) } catch { 99 } as "from a call"
+
+var marker = 0
+let kept = try {
+  marker = 1
+  let d ~ d4 - 1
+  10 / d
+} catch DivisionByZero { marker * 100 }
+report kept
+
+let caught = try {
+  loop {
+    let r ~ d6
+    if r == 1 { let z = 1 / 0 }
+    if r == 6 { break }
+  }
+  1
+} catch DivisionByZero { 0 }
+report caught

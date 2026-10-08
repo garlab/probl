@@ -126,6 +126,7 @@ pub fn analyze(program: &Program) -> Liveness {
         let mut pass = Pass {
             live: &mut liveness,
             size,
+            caught: SlotSet::with_capacity(size),
         };
         let no_loop = LoopCtx {
             after: exit.clone(),
@@ -146,12 +147,17 @@ struct LoopCtx {
 struct Pass<'a> {
     live: &'a mut Liveness,
     size: usize,
+    /// Inside a `try` body: what its catches read. A fault can leave for a
+    /// catch at any statement, so these stay live throughout the body.
+    caught: SlotSet,
 }
 
 impl Pass<'_> {
     fn block(&mut self, block: &Block, mut live: SlotSet, lc: &LoopCtx) -> SlotSet {
+        live.union_with(&self.caught);
         for (i, stmt) in block.stmts.iter().enumerate().rev() {
-            let before = self.stmt(stmt, live.clone(), lc);
+            let mut before = self.stmt(stmt, live.clone(), lc);
+            before.union_with(&self.caught);
             let mut touched = before.clone();
             if let Some(slot) = written(stmt) {
                 touched.insert(slot);
@@ -276,6 +282,18 @@ impl Pass<'_> {
             StmtKind::Check { slot, .. } => {
                 let mut live = out;
                 live.insert(*slot);
+                live
+            }
+            StmtKind::Try { body, catches } => {
+                let mut caught = SlotSet::with_capacity(self.size);
+                for c in catches {
+                    caught.union_with(&self.block(&c.body, out.clone(), lc));
+                }
+                let outer = std::mem::replace(&mut self.caught, caught.clone());
+                self.caught.union_with(&outer);
+                let mut live = self.block(body, out, lc);
+                self.caught = outer;
+                live.union_with(&caught);
                 live
             }
         }

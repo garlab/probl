@@ -34,6 +34,8 @@ pub struct Failure {
     /// order.
     pub runs: u64,
     pub first_run: Option<u32>,
+    /// Whether evidence could still have been applied to them.
+    pub before_evidence: bool,
 }
 
 impl Failures {
@@ -56,6 +58,7 @@ impl Failures {
                 g.weight += weight;
                 g.squares += squares;
                 g.runs += runs;
+                g.before_evidence |= before_evidence;
             }
             None => self.groups.push(Failure {
                 error,
@@ -63,38 +66,45 @@ impl Failures {
                 squares,
                 runs,
                 first_run: run,
+                before_evidence,
             }),
         }
     }
 
     /// Add what failed inside a call, or in a loop's state, `times` as
     /// often. When sampling, a call follows one path: whatever failed in it
-    /// failed in the caller's run `run`.
+    /// failed in the caller's run `run`. `before_evidence`: whether evidence
+    /// can follow where it's added.
     pub fn absorb(&mut self, other: &Failures, times: Weight, run: Option<u32>, before_evidence: bool) {
-        if other.is_empty() {
-            return;
-        }
-        self.weight += other.weight * times;
-        self.squares += other.squares * times * times;
-        self.runs += other.runs;
-        self.before_evidence |= other.before_evidence || before_evidence;
         for theirs in &other.groups {
-            let weight = theirs.weight * times;
-            let squares = theirs.squares * times * times;
-            match self.group(theirs.error.span, theirs.error.fault) {
-                Some(g) => {
-                    g.weight += weight;
-                    g.squares += squares;
-                    g.runs += theirs.runs;
-                }
-                None => self.groups.push(Failure {
-                    error: theirs.error.clone(),
-                    weight,
-                    squares,
-                    runs: theirs.runs,
-                    first_run: run.or(theirs.first_run),
-                }),
+            self.absorb_group(theirs, times, run, before_evidence);
+        }
+    }
+
+    /// Add one group of what failed inside a call, as [`absorb`](Self::absorb) does.
+    pub fn absorb_group(&mut self, theirs: &Failure, times: Weight, run: Option<u32>, before_evidence: bool) {
+        let weight = theirs.weight * times;
+        let squares = theirs.squares * times * times;
+        let before_evidence = theirs.before_evidence || before_evidence;
+        self.weight += weight;
+        self.squares += squares;
+        self.runs += theirs.runs;
+        self.before_evidence |= before_evidence;
+        match self.group(theirs.error.span, theirs.error.fault) {
+            Some(g) => {
+                g.weight += weight;
+                g.squares += squares;
+                g.runs += theirs.runs;
+                g.before_evidence |= before_evidence;
             }
+            None => self.groups.push(Failure {
+                error: theirs.error.clone(),
+                weight,
+                squares,
+                runs: theirs.runs,
+                first_run: run.or(theirs.first_run),
+                before_evidence,
+            }),
         }
     }
 
@@ -110,6 +120,7 @@ impl Failures {
                     g.weight += theirs.weight;
                     g.squares += theirs.squares;
                     g.runs += theirs.runs;
+                    g.before_evidence |= theirs.before_evidence;
                 }
                 None => self.groups.push(theirs),
             }

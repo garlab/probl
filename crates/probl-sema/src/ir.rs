@@ -309,6 +309,81 @@ pub enum StmtKind {
         slot: SlotId,
         ty: TypeSpec,
     },
+    /// `try { body } catch F { … } catch { … }`: a world whose body faults
+    /// goes on in the first catch that names its fault, or that names none
+    /// (docs/semantics.md, section 11).
+    Try {
+        body: Block,
+        catches: Vec<Catch>,
+    },
+}
+
+/// One `catch` of a `try`.
+#[derive(Clone, Debug)]
+pub struct Catch {
+    /// The fault it catches; `None` catches every fault.
+    pub fault: Option<Fault>,
+    pub body: Block,
+}
+
+impl Catch {
+    pub fn catches(&self, fault: Option<Fault>) -> bool {
+        fault.is_some() && (self.fault.is_none() || self.fault == fault)
+    }
+}
+
+/// A language error that depends on the values a world computes with, not
+/// on the program being wrong: dividing by zero, an index past the end. A
+/// `catch` can name one; in partial mode, one that isn't caught ends only
+/// its world (docs/semantics.md, section 11). Errors that aren't faults
+/// always stop the run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Fault {
+    /// Division or remainder by zero.
+    DivisionByZero,
+    /// A value outside what an operation is defined for: `sqrt(-1)`,
+    /// `logit(0%)`, a distribution's parameter.
+    DomainError,
+    /// An index past the end.
+    IndexOutOfBounds,
+    /// A key that isn't in a map, or an item that isn't in a bag.
+    MissingKey,
+    /// A collection or a bag with nothing in it, where an element is needed.
+    EmptyCollection,
+    /// An explicit conversion that can't represent the value: `prob(1.5)`.
+    ConversionError,
+    /// A result too large to represent: a float that isn't finite, a date
+    /// out of range.
+    NumericOverflow,
+}
+
+impl Fault {
+    pub const ALL: [Fault; 7] = [
+        Fault::DivisionByZero,
+        Fault::DomainError,
+        Fault::IndexOutOfBounds,
+        Fault::MissingKey,
+        Fault::EmptyCollection,
+        Fault::ConversionError,
+        Fault::NumericOverflow,
+    ];
+
+    /// As a `catch` names it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Fault::DivisionByZero => "DivisionByZero",
+            Fault::DomainError => "DomainError",
+            Fault::IndexOutOfBounds => "IndexOutOfBounds",
+            Fault::MissingKey => "MissingKey",
+            Fault::EmptyCollection => "EmptyCollection",
+            Fault::ConversionError => "ConversionError",
+            Fault::NumericOverflow => "NumericOverflow",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Fault> {
+        Fault::ALL.into_iter().find(|f| f.name() == name)
+    }
 }
 
 /// A declared type, checked when a value is stored.

@@ -193,6 +193,12 @@ fn each_stmt(b: &Block, f: &mut impl FnMut(&Stmt)) {
                 }
             }
             StmtKind::Loop { body, .. } => each_stmt(body, f),
+            StmtKind::Try { body, catches } => {
+                each_stmt(body, f);
+                for c in catches {
+                    each_stmt(&c.body, f);
+                }
+            }
             _ => {}
         }
     }
@@ -243,7 +249,8 @@ fn own_reads(s: &Stmt, f: &mut impl FnMut(SlotId)) {
                 draws::value_reads(k, f);
             }
         }
-        StmtKind::Loop { .. } | StmtKind::Break | StmtKind::Continue | StmtKind::Fail { .. } => {}
+        StmtKind::Loop { .. } | StmtKind::Try { .. } | StmtKind::Break | StmtKind::Continue | StmtKind::Fail { .. } => {
+        }
         StmtKind::Check { .. } => {}
     }
 }

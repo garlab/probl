@@ -256,5 +256,15 @@ pub fn expr(e: &Expr) -> String {
         }
         ExprKind::Simulate(b) => format!("(simulate {})", block(b)),
         ExprKind::Block(b) => block(b),
+        ExprKind::Try { body, catches } => {
+            let catches: Vec<String> = catches
+                .iter()
+                .map(|c| match &c.fault {
+                    Some(f) => format!("(catch {} {})", f.name, block(&c.body)),
+                    None => format!("(catch {})", block(&c.body)),
+                })
+                .collect();
+            format!("(try {} {})", block(body), catches.join(" "))
+        }
     }
 }

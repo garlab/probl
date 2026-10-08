@@ -134,6 +134,12 @@ pub fn solvable_loops(program: &Program) -> Vec<bool> {
                         !bounded && !d.reports && !body.stmts.iter().any(|s| may_print(s, functions, callable_prints));
                     visit(body, functions, solvable, callable_prints);
                 }
+                StmtKind::Try { body, catches } => {
+                    visit(body, functions, solvable, callable_prints);
+                    for c in catches {
+                        visit(&c.body, functions, solvable, callable_prints);
+                    }
+                }
                 _ => {}
             }
         }
@@ -199,6 +205,14 @@ pub fn evidence_order(program: &Program) -> EvidenceOrder {
                     }
                     // Another round can run any of the body again.
                     StmtKind::Loop { body, .. } => self.block(body, later || here),
+                    // A fault anywhere in the body can lead to a catch.
+                    StmtKind::Try { body, catches } => {
+                        let caught = catches.iter().any(|c| c.body.stmts.iter().any(|s| self.may_observe(s)));
+                        self.block(body, later || caught);
+                        for c in catches {
+                            self.block(&c.body, later);
+                        }
+                    }
                     _ => {}
                 }
                 later |= here;
@@ -291,6 +305,10 @@ impl Direct {
                 }
             }
             StmtKind::Loop { body, .. } => self.block(body),
+            StmtKind::Try { body, catches } => {
+                self.block(body);
+                catches.iter().for_each(|c| self.block(&c.body));
+            }
             StmtKind::Return(e) => self.expr(e),
             StmtKind::Observe { value, from } => {
                 self.observes = true;
@@ -425,6 +443,16 @@ impl Checker<'_> {
                     self.block(body, first);
                 }
                 reported.or(first)
+            }
+            StmtKind::Try { body, catches } => {
+                let tried = self.block(body, reported);
+                // A catch can run after any report in the body.
+                let before = reported.or(tried);
+                let mut result = before;
+                for c in catches {
+                    result = result.or(self.block(&c.body, before));
+                }
+                result
             }
             _ => reported,
         }

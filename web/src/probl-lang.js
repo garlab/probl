@@ -6,9 +6,9 @@ import { StreamLanguage } from '@codemirror/language';
 import { highlightCode, tagHighlighter, tags } from '@lezer/highlight';
 
 const keywords = new Set([
-  'and', 'break', 'chance', 'continue', 'div', 'else', 'enum', 'fn', 'for', 'if', 'import', 'in',
+  'and', 'break', 'catch', 'chance', 'continue', 'div', 'else', 'enum', 'fn', 'for', 'if', 'import', 'in',
   'let', 'loop', 'match', 'mod', 'not', 'observe', 'or', 'repeat', 'report', 'return', 'score', 'simulate',
-  'type', 'typeof', 'var', 'while', 'with',
+  'try', 'type', 'typeof', 'var', 'while', 'with',
   // Only keywords in their places, but always highlighted.
   'as', 'by', 'from', 'to',
 ]);

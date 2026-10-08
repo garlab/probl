@@ -59,7 +59,7 @@ impl Printer<'_> {
         if let Some(l) = self.liveness {
             if !matches!(
                 s.kind,
-                StmtKind::If { .. } | StmtKind::Chance { .. } | StmtKind::Loop { .. }
+                StmtKind::If { .. } | StmtKind::Chance { .. } | StmtKind::Loop { .. } | StmtKind::Try { .. }
             ) {
                 let live: Vec<String> = l.after[s.id as usize].iter().map(|s| self.slot(s)).collect();
                 write!(out, "    [live: {}]", live.join(" ")).unwrap();
@@ -149,6 +149,18 @@ impl Printer<'_> {
                 let kind = if *bounded { "loop (bounded)" } else { "loop" };
                 writeln!(out, "{indent}{kind} {{{head}").unwrap();
                 self.block(body, depth + 1, out);
+                writeln!(out, "{indent}}}").unwrap();
+            }
+            StmtKind::Try { body, catches } => {
+                writeln!(out, "{indent}try {{").unwrap();
+                self.block(body, depth + 1, out);
+                for c in catches {
+                    match c.fault {
+                        Some(fault) => writeln!(out, "{indent}}} catch {} {{", fault.name()).unwrap(),
+                        None => writeln!(out, "{indent}}} catch {{").unwrap(),
+                    }
+                    self.block(&c.body, depth + 1, out);
+                }
                 writeln!(out, "{indent}}}").unwrap();
             }
             StmtKind::Break => self.line(s, depth, "break".into(), out),

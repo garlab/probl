@@ -854,6 +854,7 @@ impl<'a> Interp<'a> {
             | ExprKind::Field { .. }
             | ExprKind::With { .. }
             | ExprKind::Lambda { .. } => unsupported("maps, records, methods and lambdas"),
+            ExprKind::Try { .. } => unsupported("`try`"),
         }?;
         if probability {
             self.each(outs, |_, w, v| Ok(vec![(w, Ok(contextual_prob(&v)?))]))

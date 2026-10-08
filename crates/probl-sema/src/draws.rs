@@ -84,6 +84,14 @@ fn nested(s: &mut Stmt, functions: &[Function], callable_prints: bool) {
             }
         }
         StmtKind::Loop { body, .. } => *body = block(std::mem::take(body), functions, callable_prints),
+        // Draws don't move inside a `try`: a fault can leave its body for a
+        // `catch` at any statement, and the catch sees what was drawn by
+        // then.
+        StmtKind::Try { catches, .. } => {
+            for c in catches.iter_mut() {
+                c.body = block(std::mem::take(&mut c.body), functions, callable_prints);
+            }
+        }
         _ => {}
     }
 }
@@ -199,6 +207,12 @@ fn visit(s: &Stmt, f: &mut impl FnMut(SlotId), leaves: &mut bool) {
             }
         }
         StmtKind::Check { slot, .. } => f(*slot),
+        StmtKind::Try { body, catches } => {
+            body.stmts
+                .iter()
+                .chain(catches.iter().flat_map(|c| &c.body.stmts))
+                .for_each(|s| visit(s, f, leaves));
+        }
     }
 }
 
@@ -211,6 +225,7 @@ fn returns(b: &Block) -> bool {
             arms.iter().any(|(_, b)| returns(b)) || otherwise.as_ref().is_some_and(returns)
         }
         StmtKind::Loop { body, .. } => returns(body),
+        StmtKind::Try { body, catches } => returns(body) || catches.iter().any(|c| returns(&c.body)),
         _ => false,
     })
 }

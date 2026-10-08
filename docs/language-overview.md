@@ -664,6 +664,24 @@ failed
 
 The reports describe the runs that reached them, and `probl run` exits with status 3, so a script can't mistake a partial result for a complete one. `@on_error total` or `@on_error partial` chooses the mode for a program, and `--on-error` for a run. Other errors, such as a type error or a limit, always stop the run. A fault isn't evidence: to leave out the worlds where `x` is 0, say so with `observe x != 0`, or handle the case with `if x == 0 { … }`. The [reference semantics](semantics.md#failure-modes) has the rules: which errors are faults, and what counts when worlds fail.
 
+**Catching a fault.** `try` gives the worlds where something faults a value of their own, in either mode:
+
+```probl
+let x ~ d6 - 1
+let y = try { 1 / x } catch DivisionByZero { 0 }
+report y                                     # mean 0.38: the sixth where x is 0 gives 0
+```
+
+A world whose body faults goes on in the first `catch` that names the fault, or in a `catch` without a name, which takes every fault; the other worlds keep the body's value. The caught world keeps what it did before the fault, and the fault can come from a function the body calls. The faults a `catch` can name are `DivisionByZero`, `DomainError` (like `sqrt(-1)` or `normal(0, 0)`), `IndexOutOfBounds`, `MissingKey`, `EmptyCollection`, `ConversionError` (like `prob(1.5)`) and `NumericOverflow`. Other errors, such as a wrong type or a limit, aren't caught. A fault no catch takes goes on outward, to a `try` around this one, and then to the failure mode.
+
+```probl
+let prices = ["apple": 3, "pear": 4]
+let item ~ one_of(["apple", "pear", "plum"])
+let units ~ one_of([1, 2, 0])
+let each = try { prices[item] / units } catch MissingKey { 0 } catch { -1 }
+report each                                  # a plum costs 0; dividing by 0 units gives -1
+```
+
 ## 9. Semantics in one table
 
 For a single world with state σ and weight w (the full rules, including evaluation order, calls and reports, are in the [reference semantics](semantics.md)):
@@ -785,8 +803,10 @@ arg          = [ IDENT ":" ] expr ;
 primary      = INT | FLOAT | PERCENT | DICE | STRING | "true" | "false"
              | IDENT [ record ]                              (* a variable, or Fighter { … } *)
              | "(" expr ")" | list | map | record | block
-             | if_expr | chance_expr | match_expr | "simulate" block ;
+             | if_expr | chance_expr | match_expr | try_expr | "simulate" block ;
 if_expr      = "if" expr block [ "else" ( if_expr | block ) ] ;
+try_expr     = "try" block catch { catch } ;
+catch        = "catch" [ IDENT ] block ;                     (* catch DivisionByZero { … } · catch { … } *)
 chance_expr  = "chance" "{" arm { sep arm } [ sep ] "}" ;
 arm          = ( expr | "else" ) "=>" ( block | stmt ) ;
 match_expr   = "match" expr "{" match_arm { sep match_arm } [ sep ] "}" ;
@@ -832,7 +852,7 @@ From loosest to tightest binding:
 
 ## Appendix C: Keywords
 
-`and` `break` `chance` `continue` `div` `else` `enum` `false` `fn` `for` `if` `import` `in` `let` `loop` `match` `mod` `not` `observe` `or` `repeat` `report` `return` `score` `simulate` `true` `type` `typeof` `var` `while` `with`
+`and` `break` `catch` `chance` `continue` `div` `else` `enum` `false` `fn` `for` `if` `import` `in` `let` `loop` `match` `mod` `not` `observe` `or` `repeat` `report` `return` `score` `simulate` `true` `try` `type` `typeof` `var` `while` `with`
 
 `as`, `by`, `from` and `to` are keywords only where the grammar uses them, so they remain usable as variable names.
 

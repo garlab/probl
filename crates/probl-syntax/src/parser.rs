@@ -1083,6 +1083,7 @@ impl Parser {
                 }
             }
             Tok::If => return self.if_expr(),
+            Tok::Try => return self.try_expr(),
             Tok::Chance => return self.chance_expr(),
             Tok::Match => return self.match_expr(),
             Tok::Simulate => {
@@ -1206,6 +1207,45 @@ impl Parser {
                 then,
                 otherwise,
             },
+            span: lo.to(self.prev_span()),
+        })
+    }
+
+    fn try_expr(&mut self) -> PResult<Expr> {
+        let lo = self.bump().span; // try
+        let body = self.block()?;
+        let mut catches: Vec<Catch> = Vec::new();
+        loop {
+            // Like `else`, a `catch` can start the line after the `}`.
+            let mut ahead = 0;
+            while *self.peek_at(ahead) == Tok::Newline {
+                ahead += 1;
+            }
+            if *self.peek_at(ahead) != Tok::Catch {
+                break;
+            }
+            self.skip_newlines();
+            let start = self.bump().span; // catch
+            let fault = match self.peek() {
+                Tok::Ident(_) => Some(self.ident("a fault")?),
+                _ => None,
+            };
+            let body = self.block()?;
+            let span = start.to(self.prev_span());
+            if catches.last().is_some_and(|c| c.fault.is_none()) {
+                self.error(span, "a `catch` after one that catches every fault never runs");
+            }
+            catches.push(Catch { fault, body, span });
+        }
+        if catches.is_empty() {
+            self.error(
+                lo,
+                "`try` needs a `catch`, like `try { 1 / x } catch DivisionByZero { 0 }`",
+            );
+            return Err(Failed);
+        }
+        Ok(Expr {
+            kind: ExprKind::Try { body, catches },
             span: lo.to(self.prev_span()),
         })
     }
