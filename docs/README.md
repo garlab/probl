@@ -27,7 +27,7 @@ The [examples directory](../examples) contains runnable models with expected out
 ## Research and historical rationale
 
 - [Imports and model tests](design/imports-and-tests.md): static reusable definitions, acyclic dependencies, isolated `.test.probl` files and explicit assertions over weighted populations.
-- [Error handling](design/error-handling.md): a near-term proposal for specific local catches and an opt-in continue mode, with explicit failure accounting and partial-result reporting.
+- [Error handling](design/error-handling.md): a near-term proposal for specific local catches and total/partial failure modes (partial by default when sampling), with explicit failure accounting and partial-result reporting.
 - [Portals and external effects](design/portals-and-effects.md): a deferred proposal for an implicit prologue, read-only joint population views and midway host interaction; better reporting comes first.
 - [Symbolic inference](design/symbolic-inference.md): assessment of the Dice paper and an evaluation plan; no symbolic backend is implemented.
 - [Complex values and quantum simulation](design/quantum-and-complex.md): the implemented scalar foundation and an unimplemented quantum-engine proposal.

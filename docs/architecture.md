@@ -85,7 +85,7 @@ The engine has no ambient filesystem or network access. A host supplies data thr
 
 Hosts set budgets for worlds, work, outcomes, integers, collections, calls, input and output, plus cancellation. Program pragmas can lower host limits, never raise them. The native library executes on a configured thread and converts caught panics into internal errors. Out-of-memory failures, stack overflow and WASM traps are not all recoverable this way. The playground runs in replaceable workers; services running untrusted models should also use process isolation and host-enforced resource limits.
 
-Runtime model errors currently abort the invocation. The [error-handling proposal](design/error-handling.md) defines a near-term direction for specific local recovery and optional continuation of successful worlds. It starts with stop-mode diagnostics that say how likely a failure is, keeps resource and engine failures fatal, and requires explicit failure mass/counts, with reports still describing the worlds that reached them; none of this is implemented yet.
+Runtime model errors currently abort the invocation. The [error-handling proposal](design/error-handling.md) defines a near-term direction for specific local recovery and a partial failure mode, where the other worlds finish when one fails; partial would be the default when sampling, total when enumerating. It starts with stop-mode diagnostics that say how likely a failure is, keeps resource and engine failures fatal, and requires explicit failure mass/counts, with reports still describing the worlds that reached them; none of this is implemented yet.
 
 ## Priorities
 

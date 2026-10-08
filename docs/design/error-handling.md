@@ -4,10 +4,10 @@
 
 ## Recommendation
 
-First, make the existing stop-on-error behavior more informative: say how likely the failure is and which values cause it ([stage 0](#stage-0-say-how-likely-the-failure-is)). That needs no language change. Then introduce two complementary mechanisms:
+First, make today's behavior, where any fault stops the run, more informative: say how likely the failure is and which values cause it ([stage 0](#stage-0-say-how-likely-the-failure-is)). That needs no language change. Then introduce two complementary mechanisms:
 
 1. **Explicit local recovery:** an expression-valued `try` block with catches for named recoverable faults. A handler supplies an ordinary value or executes ordinary code; no nullable value, mandatory result wrapper or monadic API is introduced.
-2. **A global unhandled-fault policy:** stop by default, with an explicit option to terminate failed worlds and finish the remaining ones. A failed world stops reaching later reports, like a world that takes another branch. Each report keeps its current meaning, the worlds that reached it, and continued results must expose the failed mass and retained failure diagnostics.
+2. **A failure mode for unhandled faults:** *total*, where one world's fault fails the run as today, or *partial*, where the failed world ends and the others finish. Total is the default when enumerating, partial when sampling. A failed world stops reaching later reports, like a world that takes another branch. Each report keeps its current meaning, the worlds that reached it, and continued results must expose the failed mass and retained failure diagnostics.
 
 A failed world does not skip the offending instruction and continue with a missing value. Either a local handler gives it a defined continuation, or that execution path ends. Resource exhaustion, cancellation, unsupported features and implementation bugs remain fatal to the invocation.
 
@@ -34,7 +34,7 @@ When zero is an expected modeled outcome, three different intentions should be e
 |---|---|
 | Zero is evidence-excluded | `observe x != 0` explicitly changes the model's conditioning |
 | Zero has a defined alternative result | Catch division by zero, or use `if x == 0 { fallback } else { 1 / x }` |
-| Inspect the valid part of a faulty model | Continue other worlds, retain the failure mass, and show each report's reach |
+| Inspect the valid part of a faulty model | Use partial mode: finish the other worlds, retain the failure mass, and show each report's reach |
 
 These must not be interchangeable spellings for silently discarding data.
 
@@ -60,9 +60,9 @@ Error: division by zero
 - **The example comes from one failing world:** the values of the variables that the failing expression reads, rather than its operands alone. `x = 0` says more than `1 / 0`.
 - **Finishing the statement stays bounded.** It runs under the same limits. Another kind of fault in another world is grouped by source location and message, and only the first one is shown in full. A resource limit, a cancellation or an internal error stops at once, as today.
 
-When sampling, a single failure says nothing about its probability, so don't estimate one. Name the failing run and the values instead: `in run 37 of 1,000 (seed 0), when x = 0`. As today, the reported error is the first in batch order, so the same seed always reports the same run.
+This is the diagnostic every enumerated run gets by default. When sampling in total mode, a single failure says nothing about its probability, so don't estimate one. Name the failing run and the values instead: `in run 37 of 1,000 (seed 0), when x = 0`. As today, the reported error is the first in batch order, so the same seed always reports the same run.
 
-The run still fails, with the same exit status, so no program's behavior changes. The library's `Error` can expose the share and the example values through new accessors, without breaking the published API. This stage doesn't need the fault codes of stage 1: it can group by source location and message. It also makes the case for continue mode weaker in the common case, where the author only wants to know how much of the model is affected.
+The run still fails, with the same exit status, so no program's behavior changes. The library's `Error` can expose the share and the example values through new accessors, without breaking the published API. This stage doesn't need the fault codes of stage 1: it can group by source location and message.
 
 ## Local recovery
 
@@ -145,7 +145,7 @@ Start with a documented allowlist of value-dependent faults, rather than catchin
 
 | Candidate category | Examples | Proposed treatment |
 |---|---|---|
-| `DivisionByZero` | Real/complex division or remainder by zero | Catchable; may terminate only the affected world under continue mode |
+| `DivisionByZero` | Real/complex division or remainder by zero | Catchable; terminates only the affected world in partial mode |
 | `DomainError` | Real square root of a negative value; invalid value for a probability/distribution parameter | Catchable when the operation's argument types are otherwise valid |
 | `IndexOutOfBounds`, `MissingKey` | A validly typed index/key that is absent | Catchable; invalid index types are a separate error |
 | `EmptyCollection` | A minimum, reduction or bag draw requiring an element | Catchable; existing explicit defaults retain their own contract |
@@ -159,30 +159,50 @@ This taxonomy needs an operation-by-operation audit. The current engine's `Error
 
 Optimization must preserve recoverability. Folding a well-typed constant expression such as `1 / 0` should retain a catchable fault at that expression, not turn a handled case into an unconditional compile error. Conversely, moving a type error between compile time and runtime must not suddenly make it recoverable. Checks involving contextual numeric conversion need explicit classification.
 
-## Global policy: stop or continue
+## Failure modes: total or partial
 
-Suggested spelling:
+A world always stops at its first unhandled fault. The failure mode decides what happens to the other worlds:
+
+- **Total:** one world's fault fails the whole invocation, with its source diagnostic, as today.
+- **Partial:** the failed world ends there, its fault and weight are recorded, and the other active or scheduled worlds finish. No placeholder value is inserted.
+
+The names describe the scope of a failure. A name like "continue" would suggest that the failing world carries on, which it never does.
+
+Local handlers always get the first opportunity to recover; the failure mode applies only to an unhandled recoverable fault. Fatal infrastructure and contract errors stop the invocation in either mode.
+
+### The default depends on the mode
+
+| Mode | Default | Why |
+|---|---|---|
+| Enumerate | Total | Enumeration is exact and deterministic, so the default favors correctness: a fault on any outcome means the answer isn't the model's. The fault is found as soon as its statement runs, and [stage 0](#stage-0-say-how-likely-the-failure-is) says how much of the model it affects. |
+| Sample | Partial | A sampled run finds a fault only when it draws a failing path, possibly late in a long run. A division by zero after an hour of sampling shouldn't discard the hour: the run finishes, and its breakdown shows that, say, 2% of runs failed and where. |
+
+The default follows the mode the run actually uses, including a CLI `--mode` or `--runs` override, not the mode the source declares. Either mode can be chosen explicitly:
 
 ```probl
-@on_error continue
+@on_error partial
 
 let x ~ d6 - 1
 let y = 1 / x
 report y
 ```
 
-`@on_error stop` is the default. The CLI could override with `--on-error stop|continue`, and the embedding API should expose the same policy. The host may force the stricter policy. Exact spelling is a proposal, not a newly supported pragma.
+`@on_error total` and `@on_error partial` override the default, as could a CLI `--on-error total|partial` and the same option in the embedding API. A host may force total. Exact spelling is a proposal, not a newly supported pragma.
 
-Local handlers always get the first opportunity to recover. The global policy applies only to an unhandled recoverable fault:
+The sampling default needs care in four places:
 
-- **Stop:** abort the invocation with its source diagnostic, as today.
-- **Continue:** terminate that world, record its fault and weight, and continue other active or scheduled worlds. No placeholder value is inserted.
+- **It changes current behavior.** Today a sampled run that faults fails. With partial as its default, it prints a partial result and exits with the partial-result status rather than 0 (see [CLI, library and playground](#cli-library-and-playground)), so scripts and CI still notice. A test still fails on any unhandled fault, whatever the mode.
+- **Switching modes changes the default, not the model.** Like the run count, the failure mode belongs to the run, and the result header says which one applied.
+- **A rare fault can go unseen.** No failures in n runs is not proof that none can occur, just as zero empirical variation is not proof of certainty. The breakdown can say that no run failed, not that no run can.
+- **A model that fails in most runs still uses the whole hour.** Partial mode trades a crash at the end for an hour of mostly failed runs. An open question is a cap, such as `@on_error partial(max_failed: 5%)`, that makes the run total once the failed share of attempted runs exceeds it. Checked when batches are combined in order, it wouldn't depend on the thread count. Meanwhile, the playground's progress display should show failures as they accumulate, so a user can stop early.
 
-Sampling still attempts the requested number of runs. It does not keep drawing replacements until it has that many successful runs: that would hide failures, change the estimator and make work unbounded. A failure in the first batch must not prevent later scheduled batches from running under continue mode. Fatal infrastructure/contract errors still stop the invocation.
+### Partial mode when sampling
+
+Sampling still attempts the requested number of runs. It does not keep drawing replacements until it has that many successful runs: that would hide failures, change the estimator and make work unbounded. A failure in the first batch must not prevent later scheduled batches from running.
 
 If no positive-weight successful execution remains after the requested work, return an explicit no-successful-outcome error with failure/rejection/unresolved diagnostics. Distinguish “all attempted runs failed” from “the model is proven to fail everywhere”; sampling cannot establish the latter. If all surviving worlds were rejected by evidence but other worlds failed before that evidence, do not misdiagnose the result as simply impossible evidence.
 
-Continuation is for inspecting a partial result, not a promise that any faulty program can finish: shared resource limits remain authoritative.
+Partial mode is for getting a usable result from a model with a fault, not a promise that any faulty program can finish: shared resource limits remain authoritative.
 
 ## Reporting and the meaning of a failed world
 
@@ -197,12 +217,12 @@ Terminate a path at its first unhandled fault, so it is not counted repeatedly. 
 
 ### Reports describe the worlds that reached them
 
-Recommended contract: under continue mode, a report means what it means today, the worlds that reached it, with the existing reach and per-visit distinctions. A world that fails ends there, so it doesn't reach later reports, exactly like a world that takes a branch containing no report. Nothing is removed from a report that a world reached before it failed. Failure metadata remains attached in both text and structured results, not just in an optional warning on stderr.
+Recommended contract: in partial mode, a report means what it means today, the worlds that reached it, with the existing reach and per-visit distinctions. A world that fails ends there, so it doesn't reach later reports, exactly like a world that takes a branch containing no report. Nothing is removed from a report that a world reached before it failed. Failure metadata remains attached in both text and structured results, not just in an optional warning on stderr.
 
 For the complete enumerated reciprocal example without observations:
 
 ```probl
-@on_error continue
+@on_error partial
 
 let x ~ d6 - 1
 let y = 1 / x
@@ -219,14 +239,14 @@ y    mean 0.46 · sd 0.29 · 5% 0.20 · median 0.33 · 95% 1.00 (reached in 83.3
 DivisionByZero at model.probl:4 — failed mass 16.67%
 ```
 
-The report line is exactly what Probl prints today for `if x != 0 { let y = 1 / x; report y }`: continue mode adds the failure lines, not a new way of reading reports. The mean, 137/300 ≈ 0.456667, describes the worlds that reached the report; the reach says they are 83.33% of the whole, and the failure line says why the rest are missing. Do not invent a mean for the whole population, and do not describe this result as equivalent to explicitly observing `x != 0`: it is equivalent to a branch, not to evidence.
+The report line is exactly what Probl prints today for `if x != 0 { let y = 1 / x; report y }`: partial mode adds the failure lines, not a new way of reading reports. The mean, 137/300 ≈ 0.456667, describes the worlds that reached the report; the reach says they are 83.33% of the whole, and the failure line says why the rest are missing. Do not invent a mean for the whole population, and do not describe this result as equivalent to explicitly observing `x != 0`: it is equivalent to a branch, not to evidence.
 
 Reports keep their existing completeness meaning, which concerns unresolved weight among the worlds that reached them, and a report that every world reaches before any failure is unaffected. What a reader needs in addition is that part of a report's missing reach failed rather than took another branch: the header and the structured results say so, and the run's status is partial. A handled fallback can be a complete model result; an unhandled failure is not repaired by continuing.
 
 ### Reports reached before a later failure
 
 ```probl
-@on_error continue
+@on_error partial
 let x ~ d6 - 1
 report x == 0
 let y = 1 / x
@@ -238,7 +258,7 @@ This follows from an existing rule. No `observe` or `score` may follow a `report
 
 To condition on success, say so with evidence: catch the fault and `observe false` in the handler, as in `let y = try { 1 / x } catch DivisionByZero { observe false; 0 }`. That removes the world as any observation does, and the existing rule then applies: the compiler rejects the program if a report can run before that handler.
 
-**The alternative: successful completions only.** Reports could instead describe only the worlds that complete. In the example above, `x == 0` would then show 0%, with the zero world's contribution removed when it later fails. That is an implicit observation of success at the end of the program: the evidence-after-report pattern the language rejects, and a contradiction of this proposal's rule that failures aren't evidence. It would also be the costliest part of continue mode. Reports write into their sinks as worlds reach them, so removing a contribution afterwards needs report provenance or deferred contributions with bounded storage, and a contribution made before a later split must keep only its successful descendants' share. Under the recommended contract, the sinks don't change. If a successful-only view proves useful, it can come later as an explicit option with that machinery. Reports that change as later evidence or failures arrive belong with the [portal design](portals-and-effects.md#midway-portals-evidence-and-sampled-feedback).
+**The alternative: successful completions only.** Reports could instead describe only the worlds that complete. In the example above, `x == 0` would then show 0%, with the zero world's contribution removed when it later fails. That is an implicit observation of success at the end of the program: the evidence-after-report pattern the language rejects, and a contradiction of this proposal's rule that failures aren't evidence. It would also be the costliest part of partial mode. Reports write into their sinks as worlds reach them, so removing a contribution afterwards needs report provenance or deferred contributions with bounded storage, and a contribution made before a later split must keep only its successful descendants' share. Under the recommended contract, the sinks don't change. If a successful-only view proves useful, it can come later as an explicit option with that machinery. Reports that change as later evidence or failures arrive belong with the [portal design](portals-and-effects.md#midway-portals-evidence-and-sampled-feedback).
 
 `print` remains diagnostic output at execution time. Its earlier lines can include values from paths that later fail, just as today; do not promise to retract them. The run summary must still show failures even when the program contains only `print` and no reports.
 
@@ -267,7 +287,7 @@ let recipe = d6 - 1
 report 1 / recipe         # constructing this transformed recipe encounters zero
 ```
 
-Do not silently remove the invalid outcome from that recipe and renormalize it. If recipe algebra cannot construct a valid result, the operation faults in the enclosing world. To handle failure separately for realized outcomes, draw explicitly and use `try` or continue mode. Extending `dist[T]` to carry failed outcomes would be a separate representational change.
+Do not silently remove the invalid outcome from that recipe and renormalize it. If recipe algebra cannot construct a valid result, the operation faults in the enclosing world. To handle failure separately for realized outcomes, draw explicitly and use `try` or partial mode. Extending `dist[T]` to carry failed outcomes would be a separate representational change.
 
 For the same reason, the first design should keep `simulate` atomic with respect to **unhandled** local faults. A catch inside its model can define an alternative outcome. Otherwise an invalid local path makes construction of the local distribution fail, propagating to a catch around `simulate` or failing its enclosing world. The global continue option must not silently normalize only the successful local outcomes into an apparently complete distribution. This conservative boundary should be confirmed before implementation; supporting partial local inference requires explicit failure-bearing results.
 
@@ -277,29 +297,29 @@ Empty posteriors and unsupported local continuous inference remain inference/cap
 
 Suggested execution statuses distinguish an ordinary completion, completion with unhandled world failures, and an invocation that failed. These are separate from whether numerical estimates have unresolved mass or sampling uncertainty.
 
-For the CLI, recommend exit status 0 for completion without unhandled failures, a distinct nonzero status for a partial result (candidate: 3), and the existing fatal-error statuses otherwise. Opting into continuation asks for partial output; it need not make shell automation mistake that output for an ordinary success. Caught faults do not force a nonzero status.
+For the CLI, recommend exit status 0 for completion without unhandled failures, a distinct nonzero status for a partial result (candidate: 3), and the existing fatal-error statuses otherwise. Partial output, whether chosen or the sampling default, must not look like an ordinary success to shell automation. Caught faults do not force a nonzero status.
 
-The library can return a partial `Outcome` under continue mode, with mandatory status/failure accessors. A report's qualifier is its reach; the [library guide](../library.md#compatibility-and-remaining-work) lists reach accessors as deferred, and continue mode needs them. Stop mode and all-failed invocations still return an error; errors should carry useful aggregate failure diagnostics where available. Audit the existing completion/evidence accessors rather than adding a failure list beside otherwise misleading numbers.
+The library can return a partial `Outcome` in partial mode, with mandatory status/failure accessors. A report's qualifier is its reach; the [library guide](../library.md#compatibility-and-remaining-work) lists reach accessors as deferred, and partial mode needs them. Total mode and all-failed invocations still return an error; errors should carry useful aggregate failure diagnostics where available. Audit the existing completion/evidence accessors rather than adding a failure list beside otherwise misleading numbers.
 
 The playground should show “partial result,” failure counts or justified mass, source locations and the affected reporting basis prominently. Running more samples and discovering an error should be presented as finding an invalid outcome, not as a suggestion to reduce runs until the error disappears.
 
-Future prologue/portal operations run once outside the world population. Their failures should use explicit host-operation handling, not the world-continuation policy. No new I/O, tasks or portal implementation is needed for this proposal.
+Future prologue/portal operations run once outside the world population. Their failures should use explicit host-operation handling, not the failure mode. No new I/O, tasks or portal implementation is needed for this proposal.
 
 ## Implementation order and validation
 
-This work is relevant now. Implement it separately from side effects, in stages that retain fail-fast behavior until each contract is ready:
+This work is relevant now. Implement it separately from side effects, in stages that keep today's total behavior until each contract is ready:
 
-0. **Informative stop-mode diagnostics.** When enumerating, finish the failing statement and report the failing share and an example; when sampling, name the run and the values ([stage 0](#stage-0-say-how-likely-the-failure-is)). No language change, and independently useful.
+0. **Informative total-mode diagnostics.** When enumerating, finish the failing statement and report the failing share and an example; when sampling, name the run and the values ([stage 0](#stage-0-say-how-likely-the-failure-is)). No language change, and independently useful.
 1. **Fault taxonomy and diagnostics.** Add stable codes and explicit recoverability to operation/runtime errors. Classify built-ins and boundary checks. Keep unknown kinds fatal.
 2. **Local recovery.** Add `try`/specific catches to parsing, lowering and effect/liveness analysis. Represent successful and failed exits with their state, weight and unwind destination; preserve left-to-right evaluation and current mutation semantics.
 3. **Failure propagation through inference.** Extend call summaries, memoization, recursion and chain solving. A recoverable unhandled fault is a terminal outcome for the relevant execution scope; caught faults follow their handler. Solver discovery/iterations must not double-count failure diagnostics. Disable only optimizations that cannot yet preserve the contract, with bounded fallback behavior.
-4. **Global continuation and failure accounting.** A failed world leaves the population like a world that ends; the report sinks don't change. Finish the failed mass, failure/evidence metadata, per-run accumulation and bounded diagnostic aggregation before exposing continue mode to users. A new `try/catch` around the engine's current `Result` is insufficient.
-5. **Hosts and documentation.** Add CLI/API options, partial-result status, playground display and normative semantics together. Preserve the current default behavior for programs that do not opt in or add handlers.
+4. **Partial mode and failure accounting.** A failed world leaves the population like a world that ends; the report sinks don't change. Finish the failed mass, failure/evidence metadata, per-run accumulation and bounded diagnostic aggregation before exposing partial mode to users. A new `try/catch` around the engine's current `Result` is insufficient.
+5. **Hosts and documentation.** Add CLI/API options, partial-result status, playground display and normative semantics together. Make partial the sampling default only at this stage, once the breakdown is complete; enumeration keeps total as its default.
 
 Acceptance cases should cover:
 
 - The reciprocal model: 1/6 failed mass; the report after the failure reached by 5/6 with mean `137/300`, and printed as `if x != 0 { let y = 1 / x; report y }` prints today; zero-fallback mean `137/360`; no sampled retries to replace failures.
-- Stop-mode diagnostics: the failing share at the statement (1/6 for the reciprocal model), with evidence applied before it; an example world's values; grouping of different faults in one statement; immediate stops on limits and cancellation; the first failing run in batch order when sampling, for any thread count.
+- Total-mode diagnostics: the failing share at the statement (1/6 for the reciprocal model), with evidence applied before it; an example world's values; grouping of different faults in one statement; immediate stops on limits and cancellation; the first failing run in batch order when sampling, for any thread count.
 - Specific/multiple/nested catches, helper calls, handler failures, lazy fallback execution and errors in later operands.
 - State and weight preservation through a caught error, including earlier mutations, draws, observations and printed output.
 - Rejected evidence versus faults, all-failed versus impossible/rare evidence, and failure before later observations or densities.
@@ -308,9 +328,10 @@ Acceptance cases should cover:
 - Enumeration with merging/memoization/solvers on and off: matching result and failure weights, even when represented-world counts differ.
 - Sampling across run counts, batch boundaries and thread counts; fixed attempted-run counts, estimators over the runs reaching each report, and uncertainty calibration against independent answers.
 - Recipe/`simulate` atomicity, local catches inside `simulate`, and no silent normalization of failed outcomes.
-- Fatal budgets/cancellation/unsupported/internal/type errors remaining fatal even inside `try` and under continue mode.
+- Fatal budgets/cancellation/unsupported/internal/type errors remaining fatal even inside `try` and in partial mode.
+- Defaults: total when enumerating and partial when sampling, following the mode actually used, including CLI overrides; explicit overrides either way; a host forcing total; the partial-result exit status for a sampled run with failures.
 - Native/WASM parity, bounded error logs, host API status and text/result agreement.
 
-The [rational oracle](../../crates/probl-oracle/src/lib.rs) should independently model the supported discrete fault paths. Tiny exact models are especially useful for checking that recovery preserves mass and that continuation neither hides nor double-counts it.
+The [rational oracle](../../crates/probl-oracle/src/lib.rs) should independently model the supported discrete fault paths. Tiny exact models are especially useful for checking that recovery preserves mass and that partial mode neither hides nor double-counts it.
 
 Implementation references: [runtime errors](../../crates/probl-engine/src/error.rs), [interpreter](../../crates/probl-engine/src/interp.rs), [world flow](../../crates/probl-engine/src/world.rs), [execution and batching](../../crates/probl-engine/src/lib.rs), [report calculations](../../crates/probl-engine/src/report/results.rs), and [public errors](../../crates/probl/src/error.rs).
