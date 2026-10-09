@@ -3,9 +3,12 @@
 //! A draw is a function of one latent variable: affine on each of a few
 //! pieces of the latent's CDF coordinates, which keeps `abs`, `min`, `max`
 //! and `clamp` exact. Evidence is a set of intervals in those coordinates.
-//! Worlds own their restrictions; values and closures remain immutable, and
-//! calls return restrictions alongside their results. Independent latent
-//! combinations require sampling for now.
+//! Worlds own their restrictions, and the latent's distribution there: a
+//! posterior after an exact update. A value carries the coordinates of the
+//! distribution it was made under, and moves to the world's when it's read.
+//! Values and closures remain immutable, and calls return restrictions
+//! alongside their results. Independent latent combinations require
+//! sampling for now.
 
 use crate::continuous::Family;
 use crate::dist::Budget;
@@ -15,7 +18,27 @@ use probl_syntax::ast::BinOp;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-pub type Constraints = Arc<BTreeMap<u64, Domain>>;
+pub type Constraints = Arc<BTreeMap<u64, Latent>>;
+
+/// What a world knows about a latent: its distribution, and where it can
+/// be, in that distribution's CDF coordinates.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Latent {
+    pub family: Family,
+    pub domain: Domain,
+}
+impl Eq for Latent {}
+impl std::hash::Hash for Latent {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        family_key(&self.family).hash(h);
+        self.domain.key().hash(h);
+    }
+}
+
+/// The CDF coordinate under `to` of the value at `c` under `from`.
+fn moved(c: f64, from: &Family, to: &Family) -> f64 {
+    to.cdf(from.quantile(c)).clamp(0.0, 1.0)
+}
 
 /// Sorted, disjoint CDF intervals. Endpoints have zero probability.
 #[derive(Clone, Debug, PartialEq)]
@@ -63,6 +86,15 @@ impl Domain {
     }
     fn key(&self) -> Vec<(u64, u64)> {
         self.0.iter().map(|(a, b)| (float_key(*a), float_key(*b))).collect()
+    }
+    /// The same values of a latent, in `to`'s coordinates instead of
+    /// `from`'s.
+    pub fn moved(&self, from: &Family, to: &Family) -> Self {
+        let mut out = Vec::with_capacity(self.0.len());
+        for &(a, b) in &self.0 {
+            push(&mut out, moved(a, from, to), moved(b, from, to));
+        }
+        Self(out)
     }
     /// The domain as a tiling of the CDF coordinates: whether each part is
     /// in it.
@@ -221,6 +253,32 @@ impl Analytic {
     /// The draw itself.
     fn latent(&self) -> Self {
         self.with(vec![(1.0, Affine::IDENTITY)])
+    }
+    /// The same function of the same values of the draw, in the coordinates
+    /// of `to`, a distribution of the draw with the same support or less.
+    pub fn moved(&self, to: &Family) -> Self {
+        if self.family == *to {
+            return self.clone();
+        }
+        let last = self.pieces.len() - 1;
+        let mut pieces: Pieces = Vec::with_capacity(self.pieces.len());
+        for (i, &(end, f)) in self.pieces.iter().enumerate() {
+            let end = if i == last { 1.0 } else { moved(end, &self.family, to) };
+            // A piece that rounds to nothing has no probability either way.
+            if end > pieces.last().map_or(0.0, |p| p.0) {
+                pieces.push((end, f));
+            }
+        }
+        match pieces.last_mut() {
+            Some(p) => p.0 = 1.0,
+            None => pieces.push((1.0, self.pieces[last].1)),
+        }
+        Self {
+            id: self.id,
+            family: *to,
+            domain: self.domain.moved(&self.family, to),
+            pieces,
+        }
     }
     /// Another function of the same draw.
     fn with(&self, pieces: Pieces) -> Self {
@@ -494,7 +552,13 @@ impl Event {
         let prior = &self.draw.domain;
         let domain = prior.intersect(&if yes { self.yes.clone() } else { self.yes.complement() });
         let p = domain.mass() / prior.mass();
-        Arc::make_mut(context).insert(self.draw.id, domain);
+        Arc::make_mut(context).insert(
+            self.draw.id,
+            Latent {
+                family: self.draw.family,
+                domain,
+            },
+        );
         p.clamp(0.0, 1.0)
     }
 }
@@ -787,21 +851,26 @@ fn resolve_at(v: &Value, c: &Constraints, b: &mut Budget, depth: usize) -> OpRes
     if depth > 64 {
         return Err(OpError::limit("analytic value nesting exceeds the limit of 64"));
     }
-    let draw = |x: &Analytic| {
-        let mut x = x.clone();
-        if let Some(d) = c.get(&x.id) {
-            x.domain = x.domain.intersect(d);
+    let draw = |x: &Analytic| match c.get(&x.id) {
+        Some(l) => {
+            let mut x = x.moved(&l.family);
+            x.domain = x.domain.intersect(&l.domain);
+            x
         }
-        x
+        None => x.clone(),
     };
     let mut child = |v: &Value| resolve_at(v, c, b, depth + 1);
     Ok(match v {
         Value::Analytic(x) => draw(x).value()?,
-        Value::Event(e) => Event {
-            draw: draw(&e.draw),
-            yes: e.yes.clone(),
+        Value::Event(e) => {
+            let draw = draw(&e.draw);
+            let yes = if draw.family == e.draw.family {
+                e.yes.clone()
+            } else {
+                e.yes.moved(&e.draw.family, &draw.family)
+            };
+            Event { draw, yes }.value()
         }
-        .value(),
         Value::List(xs) => Value::list(xs.iter().map(&mut child).collect::<OpResult<_>>()?),
         Value::Record(r) => crate::ops::make_record(
             r.ty.clone(),
