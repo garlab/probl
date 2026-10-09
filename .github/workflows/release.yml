@@ -1,33 +1,40 @@
-# Publish the crates to crates.io when a version tag is pushed, through
-# Trusted Publishing: no token is stored, and the one crates.io gives this
-# run lasts for the job.
+# Releases come from GitHub's releases page, with a vX.Y.Z tag:
 #
-# Each published crate's settings on crates.io name this repository, this
-# workflow (release.yml) and the `release` environment as its trusted
-# publisher. The environment waits for a maintainer's approval, and only
-# accepts `v*` tags.
+# - Publishing a pre-release is a dry run: the tests, the crates' packages
+#   and each platform's container image are built and checked, and nothing
+#   is published.
+# - Turning it into a release, or publishing a release directly, runs the
+#   same checks, then publishes the crates to crates.io and the image to
+#   ghcr.io/garlab/probl.
 #
-# To release: set the version and the internal pins in Cargo.toml, update
-# the changelog, commit, then
-#   git tag vX.Y.Z && git push origin vX.Y.Z
-# docs/library.md ("Packaging and publication") has the full steps.
+# The crates go through Trusted Publishing: their crates.io settings name
+# this repository, this workflow and the `release` environment. Crates
+# already on crates.io at this version are skipped, so a failed publish can
+# be re-run. The image is pushed with the workflow's own token; with the
+# DOCKERHUB_IMAGE and DOCKERHUB_USERNAME variables and the DOCKERHUB_TOKEN
+# secret, it's copied to Docker Hub too.
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  release:
+    # Publishing a release directly fires both; its `published` run does
+    # nothing.
+    types: [published, released]
 
-# Nothing by default: each job asks for what it needs.
 permissions: {}
 
 concurrency:
-  group: release
+  group: release-${{ github.event.release.tag_name }}
   cancel-in-progress: false
 
+env:
+  IMAGE: ghcr.io/garlab/probl
+  TAG: ${{ github.event.release.tag_name }}
+  PUBLISH: ${{ github.event.action == 'released' }}
+
 jobs:
-  # Without any publishing permission: the tests, and the packages built
-  # from what crates.io would receive.
   verify:
+    if: github.event.action == 'released' || (github.event.action == 'published' && github.event.release.prerelease)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -41,17 +48,93 @@ jobs:
       - name: The tag is the version
         run: |
           version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "probl") | .version')
-          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "::error::the tag is $GITHUB_REF_NAME, but the version in Cargo.toml is $version"
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::the tag is $TAG, but the version in Cargo.toml is $version"
             exit 1
           fi
       - run: cargo test --all --locked
       - run: cargo publish --workspace --dry-run --locked
 
-  # The only job that can get a crates.io token, once a maintainer approves
-  # the `release` environment.
-  publish:
+  # On a runner of each architecture: no emulation.
+  image:
     needs: verify
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          labels: |
+            org.opencontainers.image.title=probl
+            org.opencontainers.image.description=The probl command: a programming language for probabilities, simulations and forecasts
+            org.opencontainers.image.licenses=MIT OR Apache-2.0
+      # Built once to test, then pushed from the cache.
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          load: true
+          tags: probl:test
+          # A loaded image can't carry attestations.
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+      - name: Test
+        run: |
+          test "$(docker run --rm probl:test --version)" = "probl ${TAG#v}"
+          docker run --rm -v "$PWD":/work probl:test run examples/02_craps.probl --fractions
+          docker run --rm -v "$PWD":/work probl:test run examples/08_signup_forecast.probl --today 2026-09-29
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: env.PUBLISH == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # By digest only: the `container` job tags the platforms together.
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        id: push
+        if: env.PUBLISH == 'true'
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          provenance: mode=max
+          sbom: true
+      - if: env.PUBLISH == 'true'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: env.PUBLISH == 'true'
+        with:
+          name: digests-${{ matrix.runner }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  crates:
+    if: github.event.action == 'released'
+    needs: [verify, image]
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -66,9 +149,106 @@ jobs:
           toolchain: stable
       - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
         id: auth
-      # `verify` built these packages from this commit. Building them again
-      # here would run the dependencies' build scripts and macros while the
-      # token is in the environment.
-      - run: cargo publish --workspace --locked --no-verify
+      # `--no-verify`: `verify` built these packages from this commit, and
+      # building them again here would run the dependencies' build scripts
+      # and macros while the token is in the environment.
+      - name: Publish the crates not on crates.io yet
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          metadata=$(cargo metadata --no-deps --format-version 1)
+          version=$(jq -r '.packages[] | select(.name == "probl") | .version' <<< "$metadata")
+          published=()
+          remaining=0
+          for name in $(jq -r '.packages[] | select(.publish != []) | .name' <<< "$metadata"); do
+            if curl -sfo /dev/null -A "probl release (github.com/garlab/probl)" "https://crates.io/api/v1/crates/$name/$version"; then
+              echo "$name $version is on crates.io already"
+              published+=(--exclude "$name")
+            else
+              remaining=$((remaining + 1))
+            fi
+          done
+          if [ "$remaining" -gt 0 ]; then
+            cargo publish --workspace --locked --no-verify "${published[@]}"
+          fi
+
+  container:
+    if: github.event.action == 'released'
+    needs: [verify, image]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digests-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digests
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # `latest` moves only to the repository's latest release, not to a
+      # fix for an older version.
+      - name: Whether it's the latest release
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          echo "latest=$([ "$latest" = "$TAG" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }}
+            type=raw,value=latest,enable=${{ steps.latest.outputs.latest }}
+      - name: Tag the platforms together
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          TAGS: ${{ join(fromJSON(steps.meta.outputs.json).tags, ' ') }}
+        run: |
+          args=()
+          for tag in $TAGS; do args+=(--tag "$tag"); done
+          sources=()
+          for digest in *; do sources+=("$IMAGE@sha256:$digest"); done
+          docker buildx imagetools create "${args[@]}" \
+            --annotation "index:org.opencontainers.image.title=probl" \
+            --annotation "index:org.opencontainers.image.description=The probl command: a programming language for probabilities, simulations and forecasts" \
+            --annotation "index:org.opencontainers.image.source=https://github.com/garlab/probl" \
+            --annotation "index:org.opencontainers.image.licenses=MIT OR Apache-2.0" \
+            --annotation "index:org.opencontainers.image.version=${TAG#v}" \
+            "${sources[@]}"
+      - id: index
+        run: |
+          digest=$(docker buildx imagetools inspect "$IMAGE:${TAG#v}" --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.index.outputs.digest }}
+          push-to-registry: true
+      - run: docker run --rm "$IMAGE:${TAG#v}" --version
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: vars.DOCKERHUB_IMAGE != ''
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Copy to Docker Hub
+        if: vars.DOCKERHUB_IMAGE != ''
+        env:
+          TAGS: ${{ join(fromJSON(steps.meta.outputs.json).tags, ' ') }}
+          HUB: docker.io/${{ vars.DOCKERHUB_IMAGE }}
+          DIGEST: ${{ steps.index.outputs.digest }}
+        run: |
+          args=()
+          for tag in $TAGS; do args+=(--tag "$HUB:${tag##*:}"); done
+          docker buildx imagetools create "${args[@]}" "$IMAGE@$DIGEST"
