@@ -181,6 +181,8 @@ Two crates are meant to be used directly: `probl`, the library (`cargo add probl
 
 Every published crate has the workspace's version. In the root `Cargo.toml`, each internal dependency is pinned exactly to that version (`version = "=0.2.0"`) next to its path, so a release of `probl` always uses the internal crates from the same commit. The packages leave out `tests/` and `examples/`, because those read the workspace's `examples/` and `benches/`.
 
+Each published crate has its own `README.md`, selected by its package manifest and displayed on crates.io. The library and CLI READMEs explain how to use those packages; internal crate READMEs describe their role and direct users to `probl`. The repository's root README remains the language overview. Use absolute links in crate READMEs so they work on both GitHub and crates.io.
+
 To release:
 
 1. In the root `Cargo.toml`, set the new version in `[workspace.package]` and in each pin in `[workspace.dependencies]`. Then build once so that `Cargo.lock` follows, and add the release's section to the [changelog](../CHANGELOG.md). Commit these together.

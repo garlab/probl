@@ -6,7 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-readme.workspace = true
+readme = "README.md"
 # The tests and examples read the workspace's examples/ and benches/, which
 # packages don't include: they run in the repository, not from crates.io.
 exclude = ["tests/", "examples/"]
