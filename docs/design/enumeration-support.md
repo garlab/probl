@@ -1,6 +1,8 @@
 # Extending enumeration beyond explicit worlds
 
 > Surveyed October 9, 2026 against revision `f12e583` (`0.2.0`). This document describes current restrictions and proposes implementation directions; it does not change the language contract. Effort estimates are engineering judgments, not measured implementation times. The [high-level plan](#high-level-implementation-plan) separates near-term work from research.
+>
+> Phases 0 and 1 are built since: see [phase 0](#phase-0-as-built) and [phase 1](#phase-1-as-built). The survey's sections still describe the revision it surveyed.
 
 ## Recommendation
 
@@ -392,12 +394,37 @@ Keep new acceptance programs in the relevant engine and library suites. Add smal
 
 **Reclassified errors.** Two capability gaps were reported as language errors, as if the program were invalid. They are now `Unsupported`: observing a value from a continuous distribution when enumerating (A), whose help no longer claims that a density makes enumeration impossible, and arithmetic on an undrawn continuous distribution such as `normal(0, 1) * 2`. Two messages were fixed as well: `score` on an analytic outcome named an internal built-in, and the aggregate-report message mixed its advice into the sentence.
 
-**Contracts for what follows** (proposed, to agree before phase 1):
+**Contracts for what follows** (agreed before phase 1):
 
 - **A capability that isn't built is an `Unsupported` error.** It is never a fault: no `catch` takes it, and partial mode doesn't end only its world, so the run stops. Its help suggests sampling only where sampling runs the program, and enumeration never falls back to sampling by itself.
 - **Faults on part of a domain fault that part.** An analytic operation whose input has a region of positive probability where it faults, like `sqrt` over a draw that can be negative, fails that region as a world would fail: the run stops in total mode, the region's probability is failed weight in partial mode, and a matching `catch` continues the region, restricted to it. An operation that doesn't separate its fault region yet stays `Unsupported` for inputs that reach it. A region of probability zero doesn't fault, by the equality-to-a-point convention.
 - **Analytic results are exact up to floating point.** Formulas and numerical CDF inversion are reported as complete, without Monte Carlo error. A method that approximates beyond rounding, such as quadrature, grids or bins, reports its own error status in the results and is opt-in. It's never shown as an exact answer, and a grid never silently replaces a continuous draw.
 - **Densities keep their units.** Evidence that includes a density is labelled as a density and kept as its logarithm. Unresolved-weight bounds hold only for probability likelihoods, at most 1: a capability that applies densities where weight is unresolved must bound the missing likelihood, or reject the program.
+
+## Phase 1, as built
+
+The corpus's A, B, C and finite-key N programs now work in both modes: 11 of them.
+
+**B and C share one representation.** An analytic outcome is a function of one draw, affine on each piece of the draw's CDF coordinates ([analytic.rs](../../crates/probl-engine/src/analytic.rs)). `abs`, `min`, `max`, `clamp` with settled bounds, and `minimum`/`maximum` of a list go through one partition, `select`: one function where an event holds and another elsewhere. Comparisons give events of the draw itself, and arithmetic on the same draw refines both operands' pieces, so `abs(x) - x` is 0 above zero and `-2x` below. The world doesn't split: what an `if` would make two worlds is one value, which pieces outside the draw's restriction leave, so after `observe x > 0`, `abs(x)` is `x`. A constant piece is an atom. CDFs, quantiles, moments and median bounds include it, `max(x, 0) == 0` is an event with its probability, and `pdf` of a mixture with an atom is an error, as for a number. An outcome with one piece keeps its formulas, so results that phase 0 could compute haven't changed. With several pieces, a quantile inverts the CDF by bisection, then takes one piece's own formula where only one piece has values around the answer: bisection alone printed a median of 0 as `-5.55e-17`.
+
+A rule per built-in replaces the blanket rejection of analytic arguments. Built-ins that move values without looking at them keep outcomes; `get`, `insert` and `remove` need a settled key, and an outcome as an index is a type error, as a float is when sampling. `sum` and `mean` take a list of numbers and outcomes of one draw. Sorting, membership, text, `count` with a predicate and outcomes as keys stay unsupported (M, N). A distribution of outcomes, such as `max(x, d6)` lifted over the die, reports as their mixture. Pieces count against the work limit, and an outcome has at most 100,000 of them: a fold like `y = abs(2 * y - 1)` doubles them each time.
+
+Left out: `clamp` with analytic bounds, whose order could fault on part of the domain (R); division by a value that is zero on part of its domain (R); and int-valued pieces. `max(x, 0)` is a float where sampling gives the int 0, but `typeof` and conversions of outcomes are unsupported anyway.
+
+**N: an event key splits its report.** `report x by x > 1` restricts the reported value to each side, with that side's probability of the world, as `let g = if x > 1 { true } else { false }` did. A key that is a list or record of events stays unsupported, as does a continuous key (`report true by x`), which would need infinitely many groups.
+
+**A: densities over finite worlds.** `observe v from D` with a continuous `D`, or a mixture of continuous distributions, multiplies a world's weight by `exp(ln_pdf)`, so a density far into a tail stays representable (the acceptance test observes two values whose densities are each about e^-800). The summary prints `log evidence -1.1380`, and the library's `Evidence::kind` is `Density`. Each world counts the densities in its weight. Worlds only merge with worlds that have as many, and the reports and finished worlds must all have as many, or the program is rejected: a density observed in one branch and not the other, or in a loop that runs a varying number of times, would add weights in different units. Also rejected, as the contracts require: any unresolved weight with densities, and a density observation inside a function, whose frames don't carry the count back to the caller. The Markov-chain loop solver stands down for a loop whose body observes a density, since its transitions must be probabilities, and the loop is unrolled. In partial mode a failure records its world's count (the calling world's, inside a call), and failed weight is added to the finished worlds' only with as many densities.
+
+Left out: densities inside functions and `simulate`, which need the count in call results; a likelihood envelope that would bound unresolved weight instead of rejecting it; and analytic values or parameters in the observation, which are G and H.
+
+**Measurements.** Phase 0 against the commit before it, and phase 1 against phase 0, with `probl-bench --json` twice for each build, alternating, compared by `probl-bench compare` (the minimum of each), at a 5% threshold above noise floors of 2 ms and 64 KB:
+
+| | Outputs and world steps | Time, total | Slower or more memory |
+|---|---|---|---|
+| Phase 0 | identical for all 31 models | 66.93 s → 66.97 s (+0.1%) | none |
+| Phase 1 | identical for all 31 models | 67.01 s → 67.01 s (−0.0%) | none: see below |
+
+Phase 1's comparison flagged two sampled models, and both were noise. `08_signup_forecast` was 5.9% slower; in six more runs of each build, alternating, the new build's fastest was 0.353 s and the old one's 0.359 s. `epidemic`'s peak heap was 7.5% higher: across threads it varies from run to run of the same build (7.28–7.80 MB), and on one thread both builds peak at exactly 4,062,497 bytes after the same number of world steps. The measurements are of commit `fa4affa`; the fix after it changes only analytic outcomes, which no model in the benchmark besides `19_analytic_continuous` has, and that one has no atoms.
 
 ## Relevant prior art
 
