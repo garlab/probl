@@ -2,7 +2,7 @@
 
 > Surveyed October 9, 2026 against revision `f12e583` (`0.2.0`). This document describes current restrictions and proposes implementation directions; it does not change the language contract. Effort estimates are engineering judgments, not measured implementation times. The [high-level plan](#high-level-implementation-plan) separates near-term work from research.
 >
-> Phases 0 to 3 are built since: see [phase 0](#phase-0-as-built), [phase 1](#phase-1-as-built), [phase 2](#phase-2-as-built) and [phase 3](#phase-3-as-built). The survey's sections still describe the revision it surveyed.
+> Phases 0 to 4 are built since: see [phase 0](#phase-0-as-built), [phase 1](#phase-1-as-built), [phase 2](#phase-2-as-built), [phase 3](#phase-3-as-built) and [phase 4](#phase-4-as-built). The survey's sections still describe the revision it surveyed.
 
 ## Recommendation
 
@@ -452,6 +452,20 @@ Left out:
 - Using a rounded outcome as an index, or in other arithmetic, before assigning it: `[a, b, c][floor(x)]` or `floor(x) mod 2`. Assigned, both work.
 - `pmf`, `cdf`, quantiles and medians of a Poisson or binomial too broad to list, which need accurate incomplete gamma and beta functions for large parameters.
 
+## Phase 4, as built
+
+The corpus's square, exponential and square root programs work in both modes; `sin(x)` and a cube are new rows of what's next.
+
+**One function per piece, monotone.** Phase 1's pieces were affine functions of the draw. A piece is now `outer(kernel(inner(x)))`, two affine functions around one of six kernels: identity, square, square root, exponential, logarithm or reciprocal ([analytic.rs](../../crates/probl-engine/src/analytic.rs), `Fun`). A piece is monotone: a square splits at its vertex and a reciprocal at its pole (`split_turns`), and simplification no longer stretches a function that turns over a neighbouring piece. Everything that phases 1 to 3 built on comparing a piece with a number, so events, observations, `abs`, `min`, `max`, `clamp`, rounding and quantiles, now inverts the kernel instead of the affine function. An affine piece keeps exactly the arithmetic it had, so earlier results are unchanged.
+
+What arithmetic makes stays in this form, or is unsupported: affine functions multiply into polynomials of degree 2, any polynomial of degree 2 is a square about its vertex, a constant divided by an affine function is a reciprocal, and two pieces with the same kernel and inner function add. `sqrt`, `exp` and `ln` of an affine piece are kernels; of a kernel, only the identities `sqrt(s y²) = √s |y|`, `ln(s eʸ) = ln s + y` and `e^(ln y + c) = eᶜ y`. `exp2`, `expm1`, `log10`, `log2`, `log1p`, `c ^ x` and `x ^ 2`, `^ 0.5` and `^ −1` go through these.
+
+**Moments from formulas, or none.** By the contract, a mean computed by quadrature would have to say it's approximate, so a piece's moments come from closed forms, through E[(sX + o)ᵖ], E[e^(c(sX + o))] and E[ln(sX + o)] on an interval of the draw: uniform for every kernel; normal for whole powers (a recurrence for truncated moments) and exponentials; lognormal, gamma, exponential and beta for powers, through shifted normal, incomplete gamma and incomplete beta functions; gamma and exponential for exponentials below the scale's inverse; lognormal for logarithms. Where none applies, or the moment diverges, the mean and sd are unavailable, and a report says so beside its quantiles, which inverse images always give. A test checks the formulas against integrating the family's density on a fine grid, for 19 pairs of a family and a function and three on part of a range.
+
+**Faults.** `sqrt`, `ln` and `exp` check where their input is outside their domain, or where `exp` would overflow: nowhere is fine, everywhere is the fault a number makes, and part of the range is unsupported, as the phase 0 contract says until R is built.
+
+Left out: trigonometry, which turns infinitely often on an unbounded range; powers other than 2, 1/2 and −1; compositions such as `exp(x * x)`; and moments without closed forms, such as `exp` of a beta, which need opt-in quadrature with an error status (J).
+
 ## Measurements of each phase
 
 Phase 0 against the commit before it, and each phase against the one before, with `probl-bench --json` twice for each build, alternating, compared by `probl-bench compare` (the minimum of each), at a 5% threshold above noise floors of 2 ms and 64 KB:
@@ -462,6 +476,7 @@ Phase 0 against the commit before it, and each phase against the one before, wit
 | Phase 1 | identical for all 31 models | 67.01 s → 67.01 s (−0.0%) | none: see below |
 | Phase 2 | identical for all 31 models | 67.41 s → 66.85 s (−0.8%), with one codegen unit | none: see below |
 | Phase 3 | identical for all 31 models | 66.90 s → 66.93 s (+0.0%), with one codegen unit | none, after two fixes: see below |
+| Phase 4 | identical for all 31 models | 66.96 s → 67.06 s (+0.1%), with one codegen unit | none: `inventory`'s +4.9% was noise, 469.5 ms against 470.2 ms in five more runs each |
 
 Phase 1's comparison flagged two sampled models, and both were noise. `08_signup_forecast` was 5.9% slower; in six more runs of each build, alternating, the new build's fastest was 0.353 s and the old one's 0.359 s. `epidemic`'s peak heap was 7.5% higher: across threads it varies from run to run of the same build (7.28–7.80 MB), and on one thread both builds peak at exactly 4,062,497 bytes after the same number of world steps. The measurements are of commit `ac8f0d5`; the fix after it changes only analytic outcomes, which no model in the benchmark besides `19_analytic_continuous` has, and that one has no atoms.
 
