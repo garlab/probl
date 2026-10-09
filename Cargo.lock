@@ -398,6 +398,7 @@ name = "probl-bench"
 version = "0.2.1"
 dependencies = [
  "probl",
+ "serde_json",
 ]
 
 [[package]]

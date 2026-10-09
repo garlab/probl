@@ -8,6 +8,8 @@
 //! cargo run --release -p probl-bench -- --threads=1 # sampling on one thread
 //! cargo run --release -p probl-bench -- --no-conjugate # no exact updates for conjugate priors
 //! cargo run --release -p probl-bench -- --no-solve   # unroll loops that cycle instead of solving them
+//! cargo run --release -p probl-bench -- --json > after.jsonl    # one JSON record per model
+//! cargo run --release -p probl-bench -- compare before.jsonl after.jsonl
 //! ```
 //!
 //! For each model: the median time of a few runs, the engine's statistics,
@@ -15,10 +17,17 @@
 //! enumerated models, how much work the same run does without merging
 //! worlds. Runs stop after a time limit, so models that explode say so
 //! instead of hanging.
+//!
+//! `compare` checks one build against another, from `--json` records: a
+//! model whose output or work changed, or that got slower or used more
+//! memory than the threshold allows (`--threshold=5`, in percent). A file
+//! can hold several runs of the suite; each model's fastest time and
+//! smallest heap count.
 
 use probl::__internal::{EngineChecks, engine_checks};
-use probl::{Cancel, Data, Limits, LocalFiles, Mode, Options, Outcome, Program};
+use probl::{Cancel, Data, Date, Limits, LocalFiles, Mode, Options, Outcome, Program};
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -112,10 +121,14 @@ fn run_once(program: &Program, settings: &Settings, merge: bool, limit: Duration
     if let Some(n) = settings.threads {
         limits.max_threads = n;
     }
+    // The examples' date, so that calendar models give the same output on
+    // any day.
+    let today = Date::from_ymd(2026, 9, 29).expect("a valid date");
     let mut options = Options::new()
         .cancel(&cancel)
         .limits(limits)
-        .conjugate(settings.conjugate);
+        .conjugate(settings.conjugate)
+        .today(today);
     if let Some(data) = &settings.data {
         options = options.data(data.clone());
     }
@@ -320,8 +333,143 @@ fn row(m: &Measured) -> String {
     )
 }
 
-fn main() {
+/// One model's measurement, as `--json` writes it.
+fn record(m: &Measured) -> String {
+    let (output, world_steps, peak_worlds) = match &m.outcome {
+        Ok(o) => (
+            o.text().to_string(),
+            o.stats().world_steps(),
+            o.stats().peak_worlds() as u64,
+        ),
+        Err(e) => (format!("error: {e}"), 0, 0),
+    };
+    serde_json::json!({
+        "name": m.name,
+        "mode": m.mode,
+        "seconds": m.time.as_secs_f64(),
+        "peak_heap": m.peak_heap,
+        "world_steps": world_steps,
+        "peak_worlds": peak_worlds,
+        "output": output,
+    })
+    .to_string()
+}
+
+/// What one build did for one model, over the runs in its file.
+struct Seen {
+    seconds: f64,
+    peak_heap: u64,
+    world_steps: Vec<u64>,
+    outputs: Vec<String>,
+}
+
+fn read_records(path: &str) -> BTreeMap<String, Seen> {
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("can't read {path}: {e}"));
+    let mut seen: BTreeMap<String, Seen> = BTreeMap::new();
+    for line in text.lines().filter(|l| l.starts_with('{')) {
+        let r: serde_json::Value = serde_json::from_str(line).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let name = r["name"].as_str().unwrap_or_default().to_string();
+        let seconds = r["seconds"].as_f64().unwrap_or(f64::NAN);
+        let peak_heap = r["peak_heap"].as_u64().unwrap_or(0);
+        let steps = r["world_steps"].as_u64().unwrap_or(0);
+        let output = r["output"].as_str().unwrap_or_default().to_string();
+        let s = seen.entry(name).or_insert(Seen {
+            seconds,
+            peak_heap,
+            world_steps: Vec::new(),
+            outputs: Vec::new(),
+        });
+        s.seconds = s.seconds.min(seconds);
+        s.peak_heap = s.peak_heap.min(peak_heap);
+        if !s.world_steps.contains(&steps) {
+            s.world_steps.push(steps);
+        }
+        if !s.outputs.contains(&output) {
+            s.outputs.push(output);
+        }
+    }
+    seen
+}
+
+fn change(before: f64, after: f64) -> String {
+    format!("{:+.1}%", (after / before - 1.0) * 100.0)
+}
+
+/// Compare two builds' records: exit with failure if a model's output or
+/// work changed, or it got slower or bigger than `threshold` percent.
+fn compare(before: &str, after: &str, threshold: f64) -> std::process::ExitCode {
+    let (before, after) = (read_records(before), read_records(after));
+    let limit = 1.0 + threshold / 100.0;
+    println!("| model | time before | after | change | peak heap before | after | change | |");
+    println!("|---|--:|--:|--:|--:|--:|--:|---|");
+    let mut problems = 0;
+    let (mut total_before, mut total_after) = (0.0, 0.0);
+    for (name, b) in &before {
+        let Some(a) = after.get(name) else {
+            println!("| {name} | | | | | | | **missing after** |");
+            problems += 1;
+            continue;
+        };
+        let mut flags = Vec::new();
+        if b.outputs.len() > 1 || a.outputs.len() > 1 {
+            flags.push("output varies between runs");
+        } else if b.outputs != a.outputs {
+            flags.push("**output differs**");
+        }
+        if b.world_steps != a.world_steps {
+            flags.push("**work differs**");
+        }
+        // Small differences are noise, whatever their share.
+        if a.seconds > b.seconds * limit && a.seconds - b.seconds > 0.002 {
+            flags.push("**slower**");
+        }
+        if a.peak_heap as f64 > b.peak_heap as f64 * limit && a.peak_heap - b.peak_heap > 64 * 1024 {
+            flags.push("**more memory**");
+        }
+        problems += flags.iter().filter(|f| f.starts_with("**")).count();
+        total_before += b.seconds;
+        total_after += a.seconds;
+        println!(
+            "| {name} | {} | {} | {} | {} | {} | {} | {} |",
+            seconds(Duration::from_secs_f64(b.seconds)),
+            seconds(Duration::from_secs_f64(a.seconds)),
+            change(b.seconds, a.seconds),
+            bytes(b.peak_heap as usize),
+            bytes(a.peak_heap as usize),
+            change(b.peak_heap.max(1) as f64, a.peak_heap.max(1) as f64),
+            flags.join(", ")
+        );
+    }
+    for name in after.keys().filter(|n| !before.contains_key(*n)) {
+        println!("| {name} | | | | | | | new |");
+    }
+    println!(
+        "\nTotal time {} → {} ({}); {problems} problem(s) at a {threshold}% threshold.",
+        seconds(Duration::from_secs_f64(total_before)),
+        seconds(Duration::from_secs_f64(total_after)),
+        change(total_before, total_after)
+    );
+    if problems == 0 {
+        std::process::ExitCode::SUCCESS
+    } else {
+        std::process::ExitCode::FAILURE
+    }
+}
+
+fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("compare") {
+        let files: Vec<&String> = args[1..].iter().filter(|a| !a.starts_with("--")).collect();
+        let threshold = args
+            .iter()
+            .find_map(|a| a.strip_prefix("--threshold="))
+            .map_or(5.0, |t| t.parse().expect("--threshold= needs a number"));
+        let [before, after] = files[..] else {
+            panic!("compare needs two files: before.jsonl after.jsonl");
+        };
+        return compare(before, after, threshold);
+    }
+    let json = args.iter().any(|a| a == "--json");
     let mut settings = Settings {
         quick: args.iter().any(|a| a == "--quick"),
         threads: args.iter().find_map(|a| a.strip_prefix("--threads=")).map(|n| {
@@ -333,10 +481,12 @@ fn main() {
         data: None,
     };
     let filter: Vec<String> = args.into_iter().filter(|a| !a.starts_with("--")).collect();
-    println!(
-        "| model | mode | time | peak worlds | world-steps | per step | calls | peak heap | without merging | notes |"
-    );
-    println!("|---|---|--:|--:|--:|--:|--:|--:|---|---|");
+    if !json {
+        println!(
+            "| model | mode | time | peak worlds | world-steps | per step | calls | peak heap | without merging | notes |"
+        );
+        println!("|---|---|--:|--:|--:|--:|--:|--:|---|---|");
+    }
     for (name, path) in models(&filter) {
         let src = std::fs::read_to_string(&path).unwrap();
         let Ok(program) = probl::compile(&name, &src) else {
@@ -354,8 +504,9 @@ fn main() {
             }
         }
         let m = measure(&name, &program, &settings);
-        println!("{}", row(&m));
+        println!("{}", if json { record(&m) } else { row(&m) });
     }
+    std::process::ExitCode::SUCCESS
 }
 
 #[cfg(test)]

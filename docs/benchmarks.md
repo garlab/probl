@@ -21,7 +21,19 @@ cargo run --release -p probl-bench -- --threads=1   # sample on one thread
 cargo run --release -p probl-bench -- --no-conjugate   # sample without exact updates for conjugate priors
 ```
 
-For each model, the runner reports the median time of up to five runs, the engine's statistics, the peak heap (from a separate run that counts allocations, and isn't timed), and for enumerated models the same run without merging worlds. Sampling uses every core unless `--threads=` says otherwise. A run that takes more than 60 seconds is cancelled and reported as such. `cargo test` checks that every model still compiles.
+For each model, the runner reports the median time of up to five runs, the engine's statistics, the peak heap (from a separate run that counts allocations, and isn't timed), and for enumerated models the same run without merging worlds. Sampling uses every core unless `--threads=` says otherwise. A run that takes more than 60 seconds is cancelled and reported as such. Models that use `today` see 2026-09-29, as the example tests do. `cargo test` checks that every model still compiles.
+
+### Comparing two builds
+
+Each change to the engine is checked against the build before it, for correctness and for time and memory:
+
+```sh
+cargo run --release -p probl-bench -- --json >> before.jsonl   # on the build before, twice or more
+cargo run --release -p probl-bench -- --json >> after.jsonl    # on the build after, alternating with it
+cargo run --release -p probl-bench -- compare before.jsonl after.jsonl
+```
+
+`compare` takes each model's fastest time and smallest peak heap over the runs in a file, and fails if any model's output or world-steps changed, or if it got more than 5% slower or bigger (`--threshold=`). Differences under 2 ms or 64 KB are noise. Running the two builds alternately keeps background load from favoring one.
 
 ## The models
 
