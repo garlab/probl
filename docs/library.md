@@ -1,6 +1,6 @@
 # Running Probl from Rust
 
-`probl` is the embedding library. `probl-cli` depends on it and installs the executable named `probl`. The browser adapter and benchmarks use the same library for loading, execution and results. The workspace is at version `0.2.0`; the API is young and may change.
+`probl` is the embedding library. `probl-cli` depends on it and installs the executable named `probl`. The browser adapter and benchmarks use the same library for loading, execution and results. The workspace is at version `0.2.1`; the API is young and may change.
 
 ## Compile and run
 
@@ -179,7 +179,7 @@ Typed outcome values, typed non-real summaries, density-query methods, report re
 
 Two crates are meant to be used directly: `probl`, the library (`cargo add probl`), and `probl-cli`, which installs the `probl` command (`cargo install probl-cli --locked`). They depend on `probl-number`, `probl-syntax`, `probl-sema` and `probl-engine`, which are published too, but whose descriptions say they have no stable API. The benchmarks, the oracle and the WASM adapter are not published (`publish = false`).
 
-Every published crate has the workspace's version. In the root `Cargo.toml`, each internal dependency is pinned exactly to that version (`version = "=0.2.0"`) next to its path, so a release of `probl` always uses the internal crates from the same commit. The packages leave out `tests/` and `examples/`, because those read the workspace's `examples/` and `benches/`.
+Every published crate has the workspace's version. In the root `Cargo.toml`, each internal dependency is pinned exactly to that version (`version = "=0.2.1"`) next to its path, so a release of `probl` always uses the internal crates from the same commit. The packages leave out `tests/` and `examples/`, because those read the workspace's `examples/` and `benches/`.
 
 Each published crate has its own `README.md`, selected by its package manifest and displayed on crates.io. The library and CLI READMEs explain how to use those packages; internal crate READMEs describe their role and direct users to `probl`. The repository's root README remains the language overview. Use absolute links in crate READMEs so they work on both GitHub and crates.io.
 

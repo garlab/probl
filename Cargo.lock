@@ -386,7 +386,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "probl"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "probl-engine",
  "probl-sema",
@@ -395,14 +395,14 @@ dependencies = [
 
 [[package]]
 name = "probl-bench"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "probl",
 ]
 
 [[package]]
 name = "probl-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "libtest-mimic",
@@ -414,7 +414,7 @@ dependencies = [
 
 [[package]]
 name = "probl-engine"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "csv",
  "libm",
@@ -429,7 +429,7 @@ dependencies = [
 
 [[package]]
 name = "probl-number"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "num-bigint",
  "num-rational",
@@ -439,7 +439,7 @@ dependencies = [
 
 [[package]]
 name = "probl-oracle"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "num-bigint",
  "num-rational",
@@ -451,7 +451,7 @@ dependencies = [
 
 [[package]]
 name = "probl-sema"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "insta",
  "probl-number",
@@ -461,7 +461,7 @@ dependencies = [
 
 [[package]]
 name = "probl-syntax"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ariadne",
  "insta",
@@ -470,7 +470,7 @@ dependencies = [
 
 [[package]]
 name = "probl-wasm"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "probl",
  "probl-sema",

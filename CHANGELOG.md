@@ -4,9 +4,12 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-09
+
 ### Added
 
 - A container image of the `probl` command, `ghcr.io/garlab/probl`, for linux/amd64 and linux/arm64, published with each release with a provenance attestation.
+- Each crate has a README of its own on crates.io: the library's and the command's show how to use them, and the internal crates' say to use `probl` instead.
 
 ## [0.2.0] - 2026-10-09
 
@@ -37,6 +40,7 @@ The first release.
 
 The [language overview](docs/language-overview.md) and the [reference semantics](docs/semantics.md) describe the language, and [status and limits](README.md#status-and-limits) lists what isn't implemented yet.
 
-[Unreleased]: https://github.com/garlab/probl/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/garlab/probl/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/garlab/probl/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/garlab/probl/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/garlab/probl/tree/v0.1.0
