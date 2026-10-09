@@ -838,14 +838,19 @@ fn mixture_quantile(numeric: &Numeric, q: f64, decimals: usize) -> String {
 }
 
 fn analytic_stats(numeric: &Numeric) -> String {
-    let mean = numeric.mean.point.unwrap_or(f64::NAN);
-    let sd = numeric.sd.point.unwrap_or(f64::NAN);
-    let decimals = if mean.abs().max(sd) < 100.0 { 2 } else { 0 };
+    let (mean, sd) = (numeric.mean.point, numeric.sd.point);
+    let scale = match (mean, sd) {
+        (Some(m), Some(s)) => m.abs().max(s),
+        _ => numeric.quantile(0.95).and_then(|x| x.point).unwrap_or(0.0).abs(),
+    };
+    let decimals = if scale < 100.0 { 2 } else { 0 };
     let [a, b, c] = [0.05, 0.5, 0.95].map(|q| mixture_quantile(numeric, q, decimals));
+    // Some outcomes' moments have no formula yet: their quantiles do.
+    let shown = |x: Option<f64>| x.map_or("unavailable".to_string(), |x| fixed(x, decimals));
     format!(
         "mean {} · sd {} · 5% {a} · median {b} · 95% {c}",
-        fixed(mean, decimals),
-        fixed(sd, decimals)
+        shown(mean),
+        shown(sd)
     )
 }
 

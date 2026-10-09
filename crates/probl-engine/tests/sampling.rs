@@ -65,7 +65,7 @@ fn questions_use_the_formulas() {
 
 #[test]
 fn unsupported_continuous_operations_need_sampling() {
-    let e = error("let x ~ normal(0, 1)\nreport x*x");
+    let e = error("let x ~ normal(0, 1)\nreport x*x*x");
     assert!(e.contains("nonlinear arithmetic"), "{e}");
     assert!(e.contains("@mode sample"), "{e}");
     let e = error("fn see() { observe 1 from normal(0, 1) }\nsee()\nreport true");

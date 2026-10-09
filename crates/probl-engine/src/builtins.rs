@@ -68,6 +68,11 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             };
             crate::analytic::rounded(x, how, budget)
         }
+        B::Sqrt | B::Exp | B::Ln | B::Exp2 | B::Log10 | B::Log2 | B::Log1p | B::Expm1
+            if matches!(a(0), Value::Analytic(_)) =>
+        {
+            transform(b, a(0), budget)
+        }
         B::Floor => to_int(a(0), f64::floor),
         B::Ceil => to_int(a(0), f64::ceil),
         B::Trunc => to_int(a(0), libm::trunc),
@@ -926,7 +931,10 @@ fn continuous_query(b: Builtin, args: &[Value]) -> OpResult<Value> {
             for (part, p) in &m.parts {
                 match part {
                     Part::Continuous(f) => density += p * f.pdf(x),
-                    Part::Analytic(a) if !a.has_atoms() => density += p * a.pdf(x),
+                    Part::Analytic(a) if !a.has_atoms() && a.piecewise_affine() => density += p * a.pdf(x),
+                    Part::Analytic(a) if !a.has_atoms() => {
+                        return Err(crate::analytic::unsupported("the density of this outcome"));
+                    }
                     Part::Analytic(_) | Part::Point(_) => {
                         return Err(OpError::new(
                             "pdf needs a continuous distribution, without single values mixed in",
@@ -1539,6 +1547,43 @@ fn float2(a: &Value, b: &Value, func: &str, f: fn(f64, f64) -> f64) -> OpResult<
         )));
     }
     Ok(Value::Float(value))
+}
+
+/// `sqrt`, `exp`, `ln` and their kin of an outcome of a draw, through the
+/// three transforms: `exp2(x)` is `exp(x ln 2)`, `log10(x)` is
+/// `ln(x) / ln 10`, and so on.
+fn transform(b: Builtin, v: &Value, budget: &mut Budget) -> OpResult<Value> {
+    use crate::analytic::Kernel;
+    use probl_syntax::ast::BinOp;
+    use std::f64::consts::{LN_2, LN_10};
+    let of = |k: Kernel, v: Value, concrete: Builtin, budget: &mut Budget| match &v {
+        Value::Analytic(x) => crate::analytic::transformed(x, k, budget),
+        _ => call_plain(concrete, &[v], budget),
+    };
+    let times = |v: &Value, c: f64, budget: &mut Budget| ops::binary(BinOp::Mul, v, &Value::Float(c), budget);
+    match b {
+        Builtin::Sqrt => of(Kernel::Sqrt, v.clone(), b, budget),
+        Builtin::Exp => of(Kernel::Exp, v.clone(), b, budget),
+        Builtin::Ln => of(Kernel::Ln, v.clone(), b, budget),
+        Builtin::Exp2 => {
+            let y = times(v, LN_2, budget)?;
+            of(Kernel::Exp, y, Builtin::Exp, budget)
+        }
+        Builtin::Expm1 => {
+            let y = of(Kernel::Exp, v.clone(), Builtin::Exp, budget)?;
+            ops::binary(BinOp::Sub, &y, &Value::Float(1.0), budget)
+        }
+        Builtin::Log10 | Builtin::Log2 => {
+            let y = of(Kernel::Ln, v.clone(), Builtin::Ln, budget)?;
+            let base = if b == Builtin::Log10 { LN_10 } else { LN_2 };
+            ops::binary(BinOp::Div, &y, &Value::Float(base), budget)
+        }
+        Builtin::Log1p => {
+            let y = ops::binary(BinOp::Add, v, &Value::Float(1.0), budget)?;
+            of(Kernel::Ln, y, Builtin::Ln, budget)
+        }
+        _ => unreachable!("a transform"),
+    }
 }
 
 fn to_int(v: &Value, f: fn(f64) -> f64) -> OpResult<Value> {

@@ -124,10 +124,12 @@ const CASES: &[Case] = &[
     case("D", "let x ~ normal(0, 1)\nreport floor(x)", Unsupported, Works),
     case("D", "let x ~ uniform(0, 3)\nreport round(x, 1)", Unsupported, Works),
     // E: nonlinear transforms of one latent.
-    case("E", "let x ~ uniform(-1, 1)\nreport x * x", Unsupported, Works),
-    case("E", "let x ~ normal(0, 1)\nreport exp(x)", Unsupported, Works),
-    case("E", "let x ~ uniform(1, 2)\nreport sqrt(x)", Unsupported, Works),
+    case("E", "let x ~ uniform(-1, 1)\nreport x * x", Works, Works),
+    case("E", "let x ~ normal(0, 1)\nreport exp(x)", Works, Works),
+    case("E", "let x ~ uniform(1, 2)\nreport sqrt(x)", Works, Works),
+    // Not yet: trigonometry, and a cube.
     case("E", "let x ~ uniform(0, 1)\nreport sin(x)", Unsupported, Works),
+    case("E", "let x ~ uniform(0, 1)\nreport x * x * x", Unsupported, Works),
     // F: Boolean combinations of independent analytic events.
     case(
         "F",

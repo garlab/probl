@@ -3509,6 +3509,9 @@ fn handles_analytic(b: Builtin, values: &[Value]) -> bool {
         // Affine in one draw, piecewise affine.
         B::Sum | B::Mean => numbers(&values[0]),
         B::Floor | B::Ceil | B::Trunc => matches!(values[0], Value::Analytic(_)),
+        B::Sqrt | B::Exp | B::Ln | B::Exp2 | B::Log10 | B::Log2 | B::Log1p | B::Expm1 => {
+            matches!(values[0], Value::Analytic(_))
+        }
         B::Round => matches!(values[0], Value::Analytic(_)) && values[1..].iter().all(plain),
         B::Abs | B::Min | B::Max | B::Clamp => values
             .iter()

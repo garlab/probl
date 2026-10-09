@@ -961,7 +961,8 @@ impl Mixture {
                 match part {
                     Part::Point(x) => *x,
                     Part::Continuous(f) => f.mean(),
-                    Part::Analytic(a) => a.moments().0,
+                    // NaN where an outcome has no mean from formulas.
+                    Part::Analytic(a) => a.moments().map_or(f64::NAN, |m| m.0),
                 },
                 *p,
             )
@@ -978,7 +979,7 @@ impl Mixture {
             let (m, sd) = match part {
                 Part::Point(x) => (*x, 0.0),
                 Part::Continuous(f) => (f.mean(), f.sd()),
-                Part::Analytic(a) => (a.moments().0, a.sd()),
+                Part::Analytic(a) => (a.moments().map_or(f64::NAN, |m| m.0), a.sd().unwrap_or(f64::NAN)),
             };
             (m, sd, *p)
         }))
@@ -1019,8 +1020,7 @@ impl Mixture {
                 Part::Analytic(a) => {
                     let total = a.domain.mass();
                     for (lo, hi, f) in a.segments() {
-                        let x = f.at(a.family.quantile(lo));
-                        let y = f.at(a.family.quantile(hi));
+                        let (x, y) = f.ends(&a.family, lo, hi);
                         intervals.push((x.min(y), x.max(y), weight * (hi - lo) / total));
                     }
                 }

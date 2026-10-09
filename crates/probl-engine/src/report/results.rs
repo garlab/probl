@@ -347,8 +347,9 @@ fn values(
 /// marginal mixed with point masses, as the renderer prints them.
 fn numeric(acc: &Acc, distribution: &[(Value, f64)], complete: bool, support: Option<Support>) -> Option<Numeric> {
     let summary = |mean: f64, sd: f64, mean_sampling: Option<Uncertainty>, percent: bool, shape: Shape| {
+        // NaN: a continuous outcome whose moments have no formula.
         let quantity = |x: f64, sampling| Quantity {
-            point: Some(x),
+            point: (!x.is_nan()).then_some(x),
             complete,
             bounds: None,
             sampling,

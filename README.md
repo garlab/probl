@@ -127,7 +127,7 @@ Probl is early-stage software at version `0.2.1`. The language and Rust API are 
 
 - Enumeration uses floating-point weights and can retain unresolved mass; displayed fractions are approximations. State spaces can still grow exponentially.
 - Sampling can be unreliable with rare events or concentrated evidence. Inspect effective sample size and uncertainty; zero empirical variation is not proof of certainty.
-- Analytic continuous enumeration supports affine calculations, `abs`, `min`, `max`, `clamp` and threshold conditions on a shared draw. General nonlinear combinations need sampling, and `simulate` always enumerates.
+- Analytic continuous enumeration supports affine calculations, `abs`, `min`, `max`, `clamp`, rounding, squares, `sqrt`, `exp`, `ln`, reciprocals and threshold conditions on a shared draw. Other nonlinear combinations need sampling, and `simulate` always enumerates.
 - Some type errors are detected only at runtime. Modules, optional/null values, general MCMC, particles and beam search are not implemented.
 - Complex scalar arithmetic is available; quantum-amplitude simulation is not.
 

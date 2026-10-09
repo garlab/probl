@@ -152,7 +152,7 @@ fn recipes_mixtures_and_grouped_reports_have_numeric_summaries() {
 #[test]
 fn unsupported_uses_request_sampling_instead_of_losing_correlations() {
     for tail in [
-        "report x*x",
+        "report x*x*x",
         "report sin(x)",
         "report [x]==[x+1]",
         "report x in [x]",
@@ -344,7 +344,7 @@ fn piecewise_faults_and_limits_stay_as_they_were() {
     assert_eq!(o.reports[0].distribution(), vec![(Value::Int((-1).into()), 1.0)]);
     for (tail, what) in [
         ("report min(x, y)", "independent continuous draws"),
-        ("report abs(x) * x", "nonlinear arithmetic"),
+        ("report abs(x) * x * x", "nonlinear arithmetic"),
         ("report clamp(x, 0, y)", "continuous bounds"),
         ("report x / max(x, 1)", "nonlinear arithmetic"),
     ] {
