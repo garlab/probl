@@ -253,6 +253,11 @@ pub struct Engine<'p> {
     pub densities: bool,
     /// The last observation that ruled out a world, for impossible evidence.
     pub last_ruling_out: Option<Span>,
+    /// When enumerating, the first observation of a density.
+    pub density_at: Option<Span>,
+    /// How many densities the weights of the worlds that reported or
+    /// finished include. It must be as many for each.
+    pub reported_densities: Option<u32>,
     pub sinks: Vec<Sink>,
     dice: FxHashMap<(u32, u32), Value>,
     pools: FxHashMap<(u32, Value), Value>,
@@ -296,6 +301,7 @@ struct At {
     stmt: StmtId,
     weight: Weight,
     run: u32,
+    densities: u32,
 }
 
 impl At {
@@ -305,6 +311,7 @@ impl At {
             stmt: stmt.id,
             weight: w.weight,
             run: w.run,
+            densities: w.densities,
         }
     }
 }
@@ -369,6 +376,8 @@ impl<'p> Engine<'p> {
             observed: false,
             densities: false,
             last_ruling_out: None,
+            density_at: None,
+            reported_densities: None,
             sinks: vec![Sink::default(); prog.reports.len()],
             dice: FxHashMap::default(),
             pools: FxHashMap::default(),
@@ -411,10 +420,30 @@ impl<'p> Engine<'p> {
             inherited: Default::default(),
             weight: Weight::ONE,
             run: 0,
+            densities: 0,
         };
         let flow = self.exec_block(MAIN, &main.body, vec![world])?;
         uncaught(&flow)?;
+        for w in &flow.next {
+            self.same_units(w, main.span)?;
+        }
         Ok(total_weight(&flow.next))
+    }
+
+    /// Weights with different numbers of densities aren't in the same
+    /// units, so they can't be added up or compared.
+    fn same_units(&mut self, w: &World, span: Span) -> Result<()> {
+        match self.reported_densities {
+            Some(n) if n != w.densities => Err(OpError::unsupported(
+                "worlds that observe different numbers of continuous values aren't supported when enumerating",
+            )
+            .help("a density is per unit of what it observes, so worlds with more of them can't be weighed against the others; observe the same values in every world")
+            .at(self.density_at.unwrap_or(span))),
+            _ => {
+                self.reported_densities = Some(w.densities);
+                Ok(())
+            }
+        }
     }
 
     /// Sample the runs `first..first + n` with the random numbers `rng`
@@ -448,6 +477,7 @@ impl<'p> Engine<'p> {
                 inherited: Default::default(),
                 weight: Weight::ONE,
                 run: run as u32,
+                densities: 0,
             })
             .collect();
         let flow = self.exec_block(MAIN, &main.body, worlds)?;
@@ -728,7 +758,7 @@ impl<'p> Engine<'p> {
         let stmt = at.stmt as usize;
         let before_evidence = self.evidence.at[stmt] || self.evidence.after[stmt];
         let run = self.sampler.is_some().then_some(at.run);
-        self.failures.record(e, at.weight, run, before_evidence);
+        self.failures.record(e, at.weight, run, before_evidence, at.densities);
         Ok(())
     }
 
@@ -773,6 +803,31 @@ impl<'p> Engine<'p> {
             flow.faulted.extend(out.faulted);
         }
         Ok(flow)
+    }
+
+    /// Weighs an enumerated world by the density `exp(ln)` of what an
+    /// observation at `span` saw.
+    fn observe_density(&mut self, ln: f64, w: &mut World, span: Span) -> Result<()> {
+        if self.depth > 0 {
+            return Err(OpError::unsupported(
+                "observing a value from a continuous distribution inside a function isn't supported when enumerating yet",
+            )
+            .help("observe it in the main program, or sample the model with `@mode sample(runs: 10_000)`")
+            .at(span));
+        }
+        if ln == f64::INFINITY {
+            return Err(RuntimeError::new(span, "the density at the observed value is infinite"));
+        }
+        self.density_at.get_or_insert(span);
+        if ln == f64::NEG_INFINITY {
+            self.lost += w.weight;
+            w.weight = Weight::ZERO;
+            self.last_ruling_out = Some(span);
+        } else {
+            w.weight = w.weight * Weight::from_ln(ln);
+            w.densities += 1;
+        }
+        Ok(())
     }
 
     fn restrict_event(
@@ -999,7 +1054,7 @@ impl<'p> Engine<'p> {
                             caught.weight = caught.weight * g.weight;
                             self.faulted.push((caught, g.error.clone()));
                         } else if self.partial() || self.catches_above(g.error.fault) {
-                            self.failures.absorb_group(g, w.weight, run, after);
+                            self.failures.absorb_group(g, w.weight, run, after, w.densities);
                         } else {
                             return Err(g.error.clone());
                         }
@@ -1231,12 +1286,21 @@ impl<'p> Engine<'p> {
                                             return Err(analytic::unsupported("this likelihood observation").at(span));
                                         }
                                         self.densities |= is_density(&dist);
-                                        each!(
+                                        match each!(
                                             self,
                                             here,
                                             saved saved,
                                             likelihood(&dist, &v, self.sampler.is_some()).map_err(|e| e.at(span))
-                                        )
+                                        ) {
+                                            Weighs::Probability(p, missing, other) => (p, missing, other),
+                                            Weighs::LogDensity(ln) => {
+                                                self.observe_density(ln, &mut w, span)?;
+                                                if !w.weight.is_zero() {
+                                                    out.push(w);
+                                                }
+                                                continue;
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1311,6 +1375,7 @@ impl<'p> Engine<'p> {
                                 let v = analytic::resolve(&v, &constraints, &mut self.budget)
                                     .map_err(|e| e.at(value.span))?;
                                 let k = Value::Bool(yes);
+                                self.same_units(w, value.span)?;
                                 self.sinks[*site as usize]
                                     .validate_analytic(&k, &v)
                                     .map_err(|e| e.at(value.span))?;
@@ -1318,6 +1383,9 @@ impl<'p> Engine<'p> {
                             }
                         }
                         continue;
+                    }
+                    if run.is_none() {
+                        self.same_units(w, value.span)?;
                     }
                     self.sinks[*site as usize]
                         .validate_analytic(&k, &v)
@@ -1473,9 +1541,10 @@ impl<'p> Engine<'p> {
     /// to each state then says how much of each leaves. `None` if the chain
     /// is too large, and the loop should be unrolled instead.
     fn solve_loop(&mut self, f: FnId, stmt: &'p Stmt, body: &'p Block, inside: &[World]) -> Result<Option<Flow>> {
+        // The chain's transitions are probabilities: a density isn't one.
         if inside
             .iter()
-            .any(|w| !w.constraints.is_empty() || w.slots.iter().any(analytic::contains))
+            .any(|w| w.densities > 0 || !w.constraints.is_empty() || w.slots.iter().any(analytic::contains))
         {
             self.too_large.insert(stmt.id);
             return Ok(None);
@@ -1534,6 +1603,7 @@ impl<'p> Engine<'p> {
                 inherited: Default::default(),
                 weight: Weight::ONE,
                 run: 0,
+                densities: 0,
             };
             let saved_unresolved = std::mem::replace(&mut self.unresolved, Weight::ZERO);
             let saved_lost = std::mem::replace(&mut self.lost, Weight::ZERO);
@@ -1548,7 +1618,8 @@ impl<'p> Engine<'p> {
                 .iter()
                 .chain(&flow.continued)
                 .chain(&flow.broke)
-                .any(|w| !w.constraints.is_empty() || w.slots.iter().any(analytic::contains))
+                .chain(flow.faulted.iter().map(|(w, _)| w))
+                .any(|w| w.densities > 0 || !w.constraints.is_empty() || w.slots.iter().any(analytic::contains))
                 || flow
                     .returned
                     .iter()
@@ -2021,6 +2092,7 @@ impl<'p> Engine<'p> {
                     inherited: inherited.clone(),
                     weight: Weight::ONE,
                     run: 0,
+                    densities: 0,
                 }],
             );
             self.depth -= 1;
@@ -3139,11 +3211,18 @@ fn handles_analytic(b: Builtin, values: &[Value]) -> bool {
     }
 }
 
-/// The probability of observing `v` from `d`, the probability that is
-/// missing from `d` (so the true value may be up to that much higher), and
-/// the probability of the other outcomes, which the observation rules out.
-/// When sampling, a continuous `d` gives its density instead (section 13).
-fn likelihood(d: &Value, v: &Value, sampling: bool) -> OpResult<(f64, f64, f64)> {
+/// What observing `v` from `d` weighs.
+enum Weighs {
+    /// The probability of `v`, the probability that is missing from `d` (so
+    /// the true value may be up to that much higher), and the probability
+    /// of the other outcomes, which the observation rules out. When
+    /// sampling, a continuous `d` gives its density here (section 13).
+    Probability(f64, f64, f64),
+    /// When enumerating, the logarithm of a continuous `d`'s density at `v`.
+    LogDensity(f64),
+}
+
+fn likelihood(d: &Value, v: &Value, sampling: bool) -> OpResult<Weighs> {
     let continuous = match d {
         Value::Continuous(f) => Some(vec![(**f, 1.0)]),
         Value::Dist(dist) if dist.outcomes.iter().any(|(x, _)| matches!(x, Value::Continuous(_))) => {
@@ -3163,11 +3242,13 @@ fn likelihood(d: &Value, v: &Value, sampling: bool) -> OpResult<(f64, f64, f64)>
         _ => None,
     };
     if let Some(parts) = continuous {
-        if !sampling {
-            return Err(OpError::unsupported(
-                "observing a value from a continuous distribution isn't supported when enumerating yet",
-            )
-            .help("sample the model with `@mode sample(runs: 10_000)`"));
+        if let Value::Dist(dist) = d {
+            if dist.missing > 0.0 && !sampling {
+                return Err(OpError::unsupported(
+                    "observing a value from a mixture with unresolved probability isn't supported when enumerating",
+                )
+                .help("the unresolved part could have any density at the value; sample the model with `@mode sample(runs: 10_000)`"));
+            }
         }
         let x = match v {
             Value::Bool(_) => None,
@@ -3179,7 +3260,16 @@ fn likelihood(d: &Value, v: &Value, sampling: bool) -> OpResult<(f64, f64, f64)>
                 ops::article(&v.kind())
             ))
         })?;
-        return Ok((parts.iter().map(|(f, p)| p * f.pdf(x)).sum(), 0.0, 0.0));
+        if !sampling {
+            return Ok(Weighs::LogDensity(crate::stats::log_sum_exp(
+                parts.iter().map(|(f, p)| libm::log(*p) + f.ln_pdf(x)),
+            )));
+        }
+        return Ok(Weighs::Probability(
+            parts.iter().map(|(f, p)| p * f.pdf(x)).sum(),
+            0.0,
+            0.0,
+        ));
     }
     match d {
         Value::Dist(dist) => {
@@ -3191,14 +3281,14 @@ fn likelihood(d: &Value, v: &Value, sampling: bool) -> OpResult<(f64, f64, f64)>
                     other += p;
                 }
             }
-            Ok((seen, dist.missing, other))
+            Ok(Weighs::Probability(seen, dist.missing, other))
         }
         Value::Prob(_) => Err(OpError::new("`observe … from` needs a distribution, not a probability")
             .help("to observe that a fact with probability p is true, write `observe true from bernoulli(p)`")),
         other => Ok(if ops::equals(other, v) {
-            (1.0, 0.0, 0.0)
+            Weighs::Probability(1.0, 0.0, 0.0)
         } else {
-            (0.0, 0.0, 1.0)
+            Weighs::Probability(0.0, 0.0, 1.0)
         }),
     }
 }

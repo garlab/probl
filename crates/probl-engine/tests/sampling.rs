@@ -68,7 +68,11 @@ fn unsupported_continuous_operations_need_sampling() {
     let e = error("let x ~ normal(0, 1)\nreport x*x");
     assert!(e.contains("nonlinear arithmetic"), "{e}");
     assert!(e.contains("@mode sample"), "{e}");
-    assert!(error("observe 1 from normal(0, 1)\nreport true").contains("isn't supported when enumerating yet"));
+    let e = error("fn see() { observe 1 from normal(0, 1) }\nsee()\nreport true");
+    assert!(
+        e.contains("inside a function isn't supported when enumerating yet"),
+        "{e}"
+    );
     // Anything but comparing with a number needs a value.
     let e = error("report normal(0, 1) * 2 > 1");
     assert!(

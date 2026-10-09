@@ -103,10 +103,10 @@ const CASES: &[Case] = &[
     case(
         "A",
         "let mu ~ one_of([0, 1])\nobserve 0 from normal(mu, 1)\nreport mu == 0",
-        Unsupported,
+        Works,
         Works,
     ),
-    case("A", "observe 0 from normal(0, 0.1)\nreport true", Unsupported, Works),
+    case("A", "observe 0 from normal(0, 0.1)\nreport true", Works, Works),
     // B: collection built-ins on analytic values.
     case("B", "let x ~ uniform(0, 2)\nreport [x].get(0)", Works, Works),
     case("B", "let x ~ uniform(0, 2)\nreport sum([x, x + 1])", Works, Works),

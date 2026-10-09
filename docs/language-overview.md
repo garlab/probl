@@ -532,7 +532,7 @@ report sick                                   # 10.71%
 - `observe c` requires a boolean and removes worlds where it is false. An observed event then reports true with probability 100%.
 - `score p` multiplies the world's weight by a probability likelihood. It accepts numeric literals, variables and calculations after checking `[0, 1]`.
 - `observe ~p` observes an anonymous boolean draw. It has the same likelihood as `score p` for a probability, without naming an outcome. Reporting `p` still reports the original recipe; bind `let event = ~p` if the outcome must be reused.
-- `observe v from D` multiplies by the probability of seeing the value `v` under `D`. For example: `observe 11 from binomial(250, rate)`. When sampling, a continuous `D` contributes its density at `v`.
+- `observe v from D` multiplies by the probability of seeing the value `v` under `D`. For example: `observe 11 from binomial(250, rate)`. A continuous `D` contributes its density at `v`: `let mu ~ one_of([0, 1]); observe 0 from normal(mu, 1)` makes `mu == 0` 62.25% likely. Enumerating, each world must observe as many continuous values, outside functions.
 - The **evidence** is the weight that survives: the probability of all the observations. Reports are normalized over it, and the run summary shows it (8.87% above). Observations inside a function count; those inside `simulate` don't (section 7).
 - If the observations rule out every world, the evidence is impossible, and the run stops with an error rather than printing reports that mean nothing.
 
@@ -638,7 +638,7 @@ enumerated · evidence 8.87% · unresolved < 1e-12
 sample · 200,000 runs · seed 7 · evidence 3.60e-15 (± 0.00%) · effective sample size 200,000
 ```
 
-When the program observes, the line gives the evidence: the probability of all the observations. Sampling estimates it, with its standard error, which is 0 when every observation is an exact update. When an observation uses a density (`observe 1.5 from normal(mu, 1)`), it gives the evidence's logarithm (`log evidence -1.825 ± 0.003`), which compares models: the difference of two models' log evidence on the same data is the logarithm of their Bayes factor.
+When the program observes, the line gives the evidence: the probability of all the observations. Sampling estimates it, with its standard error, which is 0 when every observation is an exact update. When an observation uses a density (`observe 1.5 from normal(mu, 1)`), it gives the evidence's logarithm (`log evidence -1.825 ± 0.003`; enumerating gives it exactly, to four decimals), which compares models: the difference of two models' log evidence on the same data is the logarithm of their Bayes factor.
 
 Sampling uses every core by default. The runs go in batches of 1,000 with random numbers of their own, combined in order, so the output is the same on any number of cores.
 

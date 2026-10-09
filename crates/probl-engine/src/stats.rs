@@ -30,6 +30,15 @@ pub(crate) fn sum(xs: impl Iterator<Item = f64>) -> f64 {
     total.value()
 }
 
+/// ln Σ exp(x), without overflowing or underflowing: −∞ for none.
+pub(crate) fn log_sum_exp(xs: impl Iterator<Item = f64> + Clone) -> f64 {
+    let top = xs.clone().fold(f64::NEG_INFINITY, f64::max);
+    if !top.is_finite() {
+        return top;
+    }
+    top + libm::log(sum(xs.map(|x| crate::math::exp(x - top))))
+}
+
 /// A convex combination without overflowing the endpoint sum or difference.
 pub(crate) fn lerp(a: f64, b: f64, p: f64) -> f64 {
     if a.is_sign_negative() == b.is_sign_negative() {

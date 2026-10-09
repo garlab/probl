@@ -264,6 +264,14 @@ fn densities_are_not_probabilities() {
     assert_eq!(evidence.sampling_status(), Some(SamplingStatus::Estimated));
     assert_eq!(evidence.relative_standard_error(), Some(0.0));
 
+    // Enumerated, the same evidence is exact.
+    let exact = run("observe 0.1 from normal(0.1, 0.01)\nreport true", &Options::new());
+    let evidence = exact.evidence().unwrap();
+    assert_eq!(evidence.kind(), EvidenceKind::Density);
+    close(evidence.log_value().unwrap(), density.ln(), 1e-12);
+    assert!(evidence.is_complete());
+    assert_eq!(evidence.sampling_status(), None);
+
     let once = run(
         "@mode sample(runs: 1, seed: 1)\nobserve true from bernoulli(50%)\nreport true",
         &Options::new(),

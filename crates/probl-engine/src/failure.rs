@@ -20,6 +20,15 @@ pub struct Failures {
     /// failed, had it gone on. Its weight then stops short of what the
     /// finished worlds' includes, and the two can't be added up.
     pub before_evidence: bool,
+    /// When enumerating: how many densities the failed weight includes, as
+    /// the main program's worlds count them, and whether that's as many in
+    /// each.
+    pub densities: Option<u32>,
+    pub mixed_densities: bool,
+    /// Whether the failed weight includes another number of densities than
+    /// the finished worlds', which puts it in other units: it can't be added
+    /// to theirs either.
+    pub other_units: bool,
 }
 
 /// The worlds that failed at one place, with one kind of fault.
@@ -43,9 +52,29 @@ impl Failures {
         self.groups.is_empty()
     }
 
-    /// A world of this weight failed with `error`. `run` is its run, when
-    /// sampling.
-    pub fn record(&mut self, error: RuntimeError, weight: Weight, run: Option<u32>, before_evidence: bool) {
+    /// Whether the failed weight can be added to the finished worlds'.
+    pub fn comparable(&self) -> bool {
+        !self.before_evidence && !self.other_units
+    }
+
+    fn note_densities(&mut self, n: u32) {
+        match self.densities {
+            Some(m) if m != n => self.mixed_densities = true,
+            _ => self.densities = Some(n),
+        }
+    }
+
+    /// A world of this weight, with `densities` in it, failed with `error`.
+    /// `run` is its run, when sampling.
+    pub fn record(
+        &mut self,
+        error: RuntimeError,
+        weight: Weight,
+        run: Option<u32>,
+        before_evidence: bool,
+        densities: u32,
+    ) {
+        self.note_densities(densities);
         let runs = run.is_some() as u64;
         let squares = if run.is_some() { weight * weight } else { Weight::ZERO };
         self.weight += weight;
@@ -77,12 +106,22 @@ impl Failures {
     /// can follow where it's added.
     pub fn absorb(&mut self, other: &Failures, times: Weight, run: Option<u32>, before_evidence: bool) {
         for theirs in &other.groups {
-            self.absorb_group(theirs, times, run, before_evidence);
+            self.absorb_group(theirs, times, run, before_evidence, other.densities.unwrap_or(0));
         }
+        self.mixed_densities |= other.mixed_densities;
     }
 
-    /// Add one group of what failed inside a call, as [`absorb`](Self::absorb) does.
-    pub fn absorb_group(&mut self, theirs: &Failure, times: Weight, run: Option<u32>, before_evidence: bool) {
+    /// Add one group of what failed inside a call, as [`absorb`](Self::absorb)
+    /// does, from a world with `densities` in it.
+    pub fn absorb_group(
+        &mut self,
+        theirs: &Failure,
+        times: Weight,
+        run: Option<u32>,
+        before_evidence: bool,
+        densities: u32,
+    ) {
+        self.note_densities(densities);
         let weight = theirs.weight * times;
         let squares = theirs.squares * times * times;
         let before_evidence = theirs.before_evidence || before_evidence;
@@ -114,6 +153,11 @@ impl Failures {
         self.squares += later.squares;
         self.runs += later.runs;
         self.before_evidence |= later.before_evidence;
+        if let Some(n) = later.densities {
+            self.note_densities(n);
+        }
+        self.mixed_densities |= later.mixed_densities;
+        self.other_units |= later.other_units;
         for theirs in later.groups {
             match self.group(theirs.error.span, theirs.error.fault) {
                 Some(g) => {

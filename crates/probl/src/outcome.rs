@@ -237,7 +237,7 @@ const LISTED_FAILURES: usize = 10;
 /// and the share that failed overall when it's known.
 fn failures(outcome: &probl_engine::Outcome, file: &Arc<SourceFile>) -> (Vec<Failure>, Option<f64>) {
     let all = &outcome.failures;
-    let comparable = !all.before_evidence;
+    let comparable = all.comparable();
     let total = outcome.finished + all.weight;
     let total_squares = outcome.sample.as_ref().map(|s| s.squares + all.squares);
     let share_of = |w: probl_engine::Weight| (comparable && !total.is_zero()).then(|| w.ratio(total));
@@ -273,6 +273,9 @@ fn failures(outcome: &probl_engine::Outcome, file: &Arc<SourceFile>) -> (Vec<Fai
                     )
                 }
                 (None, Some(p)) => format!("it failed in {} of the worlds; {others}", pct(p)),
+                (None, None) if all.other_units => {
+                    format!("it failed in worlds that observed another number of continuous values; {others}")
+                }
                 (None, None) => format!("it failed in worlds that hadn't met all the evidence yet; {others}"),
             };
             let error = g.error.clone().with_note(note);
@@ -719,7 +722,11 @@ fn evidence(outcome: &probl_engine::Outcome) -> Option<Evidence> {
     let complete = outcome.unresolved.is_zero();
     Some(match &outcome.sample {
         None => Evidence {
-            kind: EvidenceKind::Probability,
+            kind: if outcome.densities {
+                EvidenceKind::Density
+            } else {
+                EvidenceKind::Probability
+            },
             log_value: Some(z.ln()),
             complete,
             log_bounds: (!complete).then(|| Interval {

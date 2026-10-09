@@ -212,6 +212,9 @@ pub struct Outcome {
     /// The total weight of the worlds that finished (when sampling, the
     /// runs').
     pub finished: Weight,
+    /// Whether an observation used a density, which makes the evidence a
+    /// density too.
+    pub densities: bool,
 }
 
 /// How a program was sampled (docs/semantics.md, section 14).
@@ -365,7 +368,16 @@ fn run_here(
     let mut engine = interp::Engine::new(program, &live, &conj, config, inputs, print);
     let finished = engine.run_main()?;
     let unresolved = engine.unresolved;
-    let failures = std::mem::take(&mut engine.failures);
+    let mut failures = std::mem::take(&mut engine.failures);
+    failures.other_units = failures.mixed_densities
+        || matches!((failures.densities, engine.reported_densities), (Some(a), Some(b)) if a != b);
+    if let Some(span) = engine.density_at.filter(|_| !unresolved.is_zero()) {
+        return Err(OpError::unsupported(
+            "observing a value from a continuous distribution while some probability is unresolved isn't supported when enumerating",
+        )
+        .help("the unresolved worlds could have any density at the value, so nothing would bound the evidence; sample the model with `@mode sample(runs: 10_000)`")
+        .at(span));
+    }
 
     if engine.observed && finished.is_zero() && failures.is_empty() {
         let span = engine.last_ruling_out.unwrap_or_default();
@@ -384,7 +396,7 @@ fn run_here(
     // Reach describes control flow; unresolved weight is shown separately.
     // Failed worlds count in it when their weight can be compared with the
     // finished worlds' (section 11).
-    let comparable = !failures.before_evidence;
+    let comparable = failures.comparable();
     let total = if comparable {
         finished + failures.weight
     } else {
@@ -418,7 +430,9 @@ fn run_here(
     let of = if comparable { "" } else { " of the finished worlds" };
     if let Some(z) = evidence {
         let (lo, hi) = (total.to_f64(), (total + unresolved).to_f64());
-        if hi - lo >= 0.00005 {
+        if engine.densities {
+            header.push_str(&format!(" · log evidence{of} {:.4}", z.ln()));
+        } else if hi - lo >= 0.00005 {
             header.push_str(&format!(
                 " · evidence{of} {}–{}",
                 report::pct(lo, plain),
@@ -459,6 +473,7 @@ fn run_here(
         on_error,
         failures,
         finished,
+        densities: engine.densities,
     })
 }
 
@@ -802,7 +817,7 @@ fn sampled(
     }
     // Failed runs count in the evidence and reach when their weight can be
     // compared with the finished runs' (section 11).
-    let comparable = !failures.before_evidence;
+    let comparable = failures.comparable();
     let (total, total_squares) = match comparable {
         true => (totals.weight + failures.weight, totals.squares + failures.squares),
         false => (totals.weight, totals.squares),
@@ -858,6 +873,7 @@ fn sampled(
         stats: engine.stats.clone(),
         unresolved,
         evidence: engine.observed.then_some(evidence),
+        densities: engine.densities,
         reports: std::mem::take(&mut engine.sinks),
         results,
         format,

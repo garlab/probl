@@ -28,6 +28,9 @@ pub struct World {
     pub weight: Weight,
     /// When sampling, the run this world is (docs/semantics.md, section 14).
     pub run: u32,
+    /// When enumerating, how many densities the weight includes: weights
+    /// with different numbers are in different units, so they don't add up.
+    pub densities: u32,
 }
 
 impl World {
@@ -136,8 +139,11 @@ pub fn merge(mut worlds: Vec<World>, live: &SlotSet, enabled: bool) -> Vec<World
     let mut next: Vec<usize> = Vec::with_capacity(worlds.len());
     const NONE: usize = usize::MAX;
     for w in worlds {
-        let same =
-            |kept: &World| kept.constraints == w.constraints && live.iter().all(|&i| kept.slots[i] == w.slots[i]);
+        let same = |kept: &World| {
+            kept.densities == w.densities
+                && kept.constraints == w.constraints
+                && live.iter().all(|&i| kept.slots[i] == w.slots[i])
+        };
         let found = match first.entry(state_hash(&w, &live)) {
             Entry::Vacant(entry) => {
                 entry.insert(out.len());
@@ -195,6 +201,7 @@ mod tests {
             inherited: Default::default(),
             weight: Weight::ONE,
             run: 0,
+            densities: 0,
         }
     }
 

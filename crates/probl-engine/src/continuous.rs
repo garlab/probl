@@ -404,6 +404,35 @@ impl Family {
         }
     }
 
+    /// ln f(x), which doesn't underflow far into a tail: −∞ outside the
+    /// support.
+    pub fn ln_pdf(&self, x: f64) -> f64 {
+        match *self {
+            Family::Normal { mean, sd } => {
+                let z = standardized(x, mean, sd);
+                -0.5 * z * z - libm::log(sd) - LN_SQRT_2PI
+            }
+            Family::Lognormal { mu, sigma } if x > 0.0 => {
+                let z = (libm::log(x) - mu) / sigma;
+                -0.5 * z * z - libm::log(sigma) - libm::log(x) - LN_SQRT_2PI
+            }
+            Family::Beta { a, b } if x > 0.0 && x < 1.0 => {
+                (a - 1.0) * libm::log(x) + (b - 1.0) * libm::log1p(-x) - ln_beta(a, b)
+            }
+            Family::Gamma { shape, scale } if x > 0.0 => {
+                let y = x / scale;
+                (shape - 1.0) * libm::log(y) - y - libm::lgamma(shape) - libm::log(scale)
+            }
+            Family::Exponential { rate } if x >= 0.0 => libm::log(rate) - rate * x,
+            Family::Pert { lo, mode, hi } if x > lo && x < hi => {
+                let (a, b) = Family::pert_shape(lo, mode, hi);
+                Family::Beta { a, b }.ln_pdf(interval_fraction(lo, hi, x)) + libm::log(inverse_width(lo, hi))
+            }
+            // Ends, bounded densities and outside the support.
+            _ => libm::log(self.pdf(x)),
+        }
+    }
+
     /// P(X ≤ x).
     pub fn cdf(&self, x: f64) -> f64 {
         if x.is_nan() {
@@ -1114,6 +1143,35 @@ mod tests {
             close(integral, 0.7, 1e-6);
             close(f.cdf(b) - f.cdf(a), 0.7, 1e-9);
         }
+    }
+
+    #[test]
+    fn log_densities_agree_and_reach_far_tails() {
+        let families = [
+            Family::normal(1.0, 2.0).unwrap(),
+            Family::lognormal(0.5, 0.3).unwrap(),
+            Family::uniform(-1.0, 3.0).unwrap(),
+            Family::beta(2.5, 4.0).unwrap(),
+            Family::gamma(2.0, 1.5).unwrap(),
+            Family::exponential(0.7).unwrap(),
+            Family::triangular(0.0, 1.0, 4.0).unwrap(),
+            Family::pert(1.0, 2.0, 6.0).unwrap(),
+        ];
+        for f in families {
+            for q in [0.01, 0.3, 0.5, 0.9, 0.999] {
+                let x = f.quantile(q);
+                close(f.ln_pdf(x), libm::log(f.pdf(x)), 1e-12);
+            }
+            if f.support().0 > -10.0 {
+                assert_eq!(f.ln_pdf(-10.0), f64::NEG_INFINITY, "{f}");
+            }
+        }
+        // Where the density underflows, its logarithm doesn't.
+        let n = Family::normal(0.0, 1.0).unwrap();
+        assert_eq!(n.pdf(50.0), 0.0);
+        close(n.ln_pdf(50.0), -1250.0 - LN_SQRT_2PI, 1e-15);
+        let b = Family::beta(2000.0, 2000.0).unwrap();
+        assert!(b.ln_pdf(0.01).is_finite());
     }
 
     /// Kolmogorov–Smirnov: the draws follow each distribution's CDF.
