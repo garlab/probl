@@ -189,6 +189,7 @@ To release:
 2. Check the packages with `cargo publish --workspace --dry-run --locked`. `cargo package --list -p <crate>` shows what a package contains.
 3. Tag the commit `vX.Y.Z` and push the tag. The [release workflow](../.github/workflows/release.yml) checks that the tag matches the version, then runs the tests and the same dry run. It waits for a maintainer to approve the `release` environment, then publishes every crate through crates.io's Trusted Publishing, so no token is stored.
 4. Check that docs.rs built each crate's documentation, and that `cargo install probl-cli --locked` installs the new version.
+5. The same tag runs the [container workflow](../.github/workflows/container.yml), which builds the `probl` command's image for linux/amd64 and linux/arm64 on runners of each architecture, tests both, and publishes them together as `ghcr.io/garlab/probl:X.Y.Z`, `:X.Y` and `:latest`, with a provenance attestation. It pushes with the workflow's own token, so no password is stored. To publish a tag that was pushed before the workflow existed, or to rebuild one after a base image update, run the workflow by hand with the tag.
 
 Trusted Publishing can only be configured for a crate that already exists on crates.io. So a newly published crate's first release is done by hand, after which its crates.io settings name this repository, `release.yml` and the `release` environment as its trusted publisher.
 

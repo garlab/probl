@@ -1,0 +1,8 @@
+# The image builds the command from the workspace's manifests and crates:
+# nothing else is sent to the builder, so local files such as `.env` never
+# reach it.
+*
+!Cargo.toml
+!Cargo.lock
+!crates/
+crates/*/target

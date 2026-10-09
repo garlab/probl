@@ -62,6 +62,15 @@ To build the CLI from the checkout instead, run `cargo install --path crates/pro
 cargo run --release -p probl-cli -- run examples/02_craps.probl
 ```
 
+Or run it from its container image, for linux/amd64 and linux/arm64, with the current folder mounted where it reads models and data:
+
+```sh
+docker run --rm -v "$PWD":/work ghcr.io/garlab/probl run examples/02_craps.probl
+docker run --rm -it ghcr.io/garlab/probl repl
+```
+
+Tags follow the releases: `ghcr.io/garlab/probl:0.2.0`, `:0.2` and `:latest`. The command is the image's entrypoint; in CI systems that run scripts in the image, such as GitLab CI, override it with `entrypoint: [""]`.
+
 Useful commands:
 
 ```sh

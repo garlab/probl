@@ -4,6 +4,10 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+### Added
+
+- A container image of the `probl` command, `ghcr.io/garlab/probl`, for linux/amd64 and linux/arm64, published from each version tag with a provenance attestation.
+
 ## [0.2.0] - 2026-10-09
 
 ### Added

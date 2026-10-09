@@ -85,7 +85,7 @@ Measure with `probl-bench` before and after the change, using release builds on 
 
 ## Releases
 
-A maintainer releases by setting the version in `Cargo.toml` and pushing a `vX.Y.Z` tag. [release.yml](.github/workflows/release.yml) then tests the crates and publishes them to crates.io. Every published crate shares the workspace version, and the internal dependencies are pinned to it exactly; see [packaging](docs/library.md#packaging-and-publication).
+A maintainer releases by setting the version in `Cargo.toml` and pushing a `vX.Y.Z` tag. [release.yml](.github/workflows/release.yml) then tests the crates and publishes them to crates.io, and [container.yml](.github/workflows/container.yml) publishes the command's container image to `ghcr.io/garlab/probl`. Every published crate shares the workspace version, and the internal dependencies are pinned to it exactly; see [packaging](docs/library.md#packaging-and-publication).
 
 ## License
 
