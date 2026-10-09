@@ -741,7 +741,10 @@ fn write_value(v: &Value, f: &mut fmt::Formatter<'_>, nested: bool) -> fmt::Resu
         Value::Closure(_) | Value::Builtin(_) => write!(f, "<function>"),
         Value::Date(d) => write!(f, "{}", crate::dates::format(*d)),
         Value::Continuous(family) => write!(f, "{family}"),
-        Value::Analytic(a) => write!(f, "<analytic float: {} * {} + {}>", a.scale, a.family, a.offset),
+        Value::Analytic(a) => match a.affine() {
+            Some(g) => write!(f, "<analytic float: {} * {} + {}>", g.scale, a.family, g.offset),
+            None => write!(f, "<analytic float: piecewise in {}>", a.family),
+        },
         Value::Event(_) => write!(f, "<analytic bool>"),
         Value::Delayed(d) => write!(f, "<not drawn yet: {}>", d.family),
     }

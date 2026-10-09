@@ -4,6 +4,10 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+### Added
+
+- More continuous calculations work when enumerating ([semantics](docs/semantics.md#analytic-outcomes-in-enumeration)). `abs`, `min`, `max`, `clamp`, and `minimum` and `maximum` of a list, are exact on a draw, including the probability at a bound: `max(x, 0) == 0` is the probability that `x` is negative. `sum` and `mean` of a list of outcomes of one draw, and the built-ins that move values without looking at them, such as `get`, `slice`, `reverse` and `pop`, keep the draw.
+
 ### Changed
 
 - Two capabilities that aren't built yet are reported as `Unsupported` errors rather than language errors: observing a value from a continuous distribution when enumerating, and arithmetic on an undrawn continuous distribution, like `normal(0, 1) * 2`.

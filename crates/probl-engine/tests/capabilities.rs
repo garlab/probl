@@ -108,25 +108,15 @@ const CASES: &[Case] = &[
     ),
     case("A", "observe 0 from normal(0, 0.1)\nreport true", Unsupported, Works),
     // B: collection built-ins on analytic values.
-    case("B", "let x ~ uniform(0, 2)\nreport [x].get(0)", Unsupported, Works),
-    case("B", "let x ~ uniform(0, 2)\nreport sum([x, x + 1])", Unsupported, Works),
-    case(
-        "B",
-        "let x ~ uniform(0, 2)\nreport mean([x, x + 1])",
-        Unsupported,
-        Works,
-    ),
-    case(
-        "B",
-        "let x ~ uniform(0, 2)\nreport reverse([x, 1])[0]",
-        Unsupported,
-        Works,
-    ),
+    case("B", "let x ~ uniform(0, 2)\nreport [x].get(0)", Works, Works),
+    case("B", "let x ~ uniform(0, 2)\nreport sum([x, x + 1])", Works, Works),
+    case("B", "let x ~ uniform(0, 2)\nreport mean([x, x + 1])", Works, Works),
+    case("B", "let x ~ uniform(0, 2)\nreport reverse([x, 1])[0]", Works, Works),
     // C: piecewise affine math.
-    case("C", "let x ~ uniform(-1, 1)\nreport abs(x)", Unsupported, Works),
-    case("C", "let x ~ uniform(0, 2)\nreport max(x, 0.5)", Unsupported, Works),
-    case("C", "let x ~ uniform(0, 2)\nreport min(x, 1)", Unsupported, Works),
-    case("C", "let x ~ uniform(-1, 2)\nreport clamp(x, 0, 1)", Unsupported, Works),
+    case("C", "let x ~ uniform(-1, 1)\nreport abs(x)", Works, Works),
+    case("C", "let x ~ uniform(0, 2)\nreport max(x, 0.5)", Works, Works),
+    case("C", "let x ~ uniform(0, 2)\nreport min(x, 1)", Works, Works),
+    case("C", "let x ~ uniform(-1, 2)\nreport clamp(x, 0, 1)", Works, Works),
     // D: rounding into finite bins.
     case("D", "let x ~ uniform(0, 3)\nreport floor(x)", Unsupported, Works),
     case("D", "let x ~ uniform(0, 3)\nreport round(x)", Unsupported, Works),

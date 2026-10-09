@@ -989,9 +989,9 @@ impl Mixture {
                 }
                 Part::Analytic(a) => {
                     let total = a.domain.mass();
-                    for &(lo, hi) in &a.domain.0 {
-                        let x = a.scale * a.family.quantile(lo) + a.offset;
-                        let y = a.scale * a.family.quantile(hi) + a.offset;
+                    for (lo, hi, f) in a.segments() {
+                        let x = f.at(a.family.quantile(lo));
+                        let y = f.at(a.family.quantile(hi));
                         intervals.push((x.min(y), x.max(y), weight * (hi - lo) / total));
                     }
                 }

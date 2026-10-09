@@ -410,12 +410,7 @@ pub fn unary(op: UnOp, v: &Value, budget: &mut Budget) -> OpResult<Value> {
             }
             Value::Float(f) | Value::Prob(f) => Ok(Value::Float(-f)),
             Value::Complex(z) => Ok(Value::Complex(z.negated())),
-            Value::Analytic(a) => {
-                let mut a = (**a).clone();
-                a.scale = -a.scale;
-                a.offset = -a.offset;
-                a.value()
-            }
+            Value::Analytic(a) => crate::analytic::negate(a),
             other => Err(OpError::new(format!("can't negate {}", article(&other.kind())))),
         }),
         UnOp::Not => not(v, budget),
@@ -440,7 +435,7 @@ pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<
 
 fn binary_plain(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
     if matches!(a, Value::Analytic(_)) || matches!(b, Value::Analytic(_)) {
-        return crate::analytic::binary(op, a, b);
+        return crate::analytic::binary(op, a, b, budget);
     }
     if matches!(
         op,

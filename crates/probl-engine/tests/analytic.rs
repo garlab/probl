@@ -279,3 +279,106 @@ fn conditioning_does_not_rebuild_unrelated_collections() {
     assert_eq!(o.reports[0].distribution(), vec![(Value::Int(1.into()), 1.0)]);
     stats(&o, 1, 1.5, 1.0 / 12.0, 1.0, 2.0);
 }
+
+#[test]
+fn piecewise_math_is_exact() {
+    let o = outcome(
+        "let x ~ uniform(-1,1)\nreport abs(x)\nreport max(x,0)\nreport min(x,0.5)\nreport clamp(x,-0.5,0.5)\nreport abs(x)-x\nreport max(x,0)==0",
+    );
+    stats(&o, 0, 0.5, 1.0 / 12.0, 0.0, 1.0);
+    close(marginal(&o, 0).quantile(0.05), 0.05);
+    // Half the probability is at 0.
+    stats(&o, 1, 0.25, 1.0 / 6.0 - 1.0 / 16.0, 0.0, 1.0);
+    close(marginal(&o, 1).cdf(0.0), 0.5);
+    stats(&o, 2, -0.0625, 0.25 - 0.0625 * 0.0625, -1.0, 0.5);
+    assert_eq!(marginal(&o, 2).quantile(0.5), 0.0);
+    stats(&o, 3, 0.0, 1.0 / 6.0, -0.5, 0.5);
+    // The same draw: 0 above zero, and -2x below.
+    stats(&o, 4, 0.5, 2.0 / 3.0 - 0.25, 0.0, 2.0);
+    close(o.reports[5].chance().unwrap(), 0.5);
+    assert!(
+        o.output
+            .contains("mean 0.25 · sd 0.32 · 5% 0.00 · median 0.00 · 95% 0.90"),
+        "{}",
+        o.output
+    );
+
+    // A half-normal, and the positive part of a normal.
+    let o = outcome("let z ~ normal(0,1)\nreport abs(z)\nreport max(z,0)\nreport -min(-z,0)");
+    let pi = std::f64::consts::PI;
+    close(marginal(&o, 0).mean(), (2.0 / pi).sqrt());
+    close(marginal(&o, 0).variance(), 1.0 - 2.0 / pi);
+    close(marginal(&o, 1).mean(), 1.0 / (2.0 * pi).sqrt());
+    close(marginal(&o, 1).variance(), 0.5 - 1.0 / (2.0 * pi));
+    close(marginal(&o, 2).mean(), 1.0 / (2.0 * pi).sqrt());
+}
+
+#[test]
+fn piecewise_outcomes_condition_their_draw() {
+    // An event about |x| is an event about x.
+    let o = outcome("let x ~ uniform(-1,1)\nlet y = abs(x)\nobserve y < 0.5\nreport x\nreport y");
+    close(o.evidence.unwrap().to_f64(), 0.5);
+    stats(&o, 0, 0.0, 1.0 / 12.0, -0.5, 0.5);
+    stats(&o, 1, 0.25, 1.0 / 48.0, 0.0, 0.5);
+    // An atom is evidence with its probability.
+    let o = outcome("let x ~ uniform(-1,1)\nobserve max(x,0) == 0\nreport x");
+    close(o.evidence.unwrap().to_f64(), 0.5);
+    stats(&o, 0, -0.5, 1.0 / 12.0, -1.0, 0.0);
+    // Once x > 0, |x| is x itself.
+    let o = outcome("let x ~ uniform(-1,1)\nobserve x > 0\nreport abs(x) - x\nreport min(x, -1)");
+    assert_eq!(o.reports[0].distribution(), vec![(Value::Float(0.0), 1.0)]);
+    assert_eq!(o.reports[1].distribution(), vec![(Value::Float(-1.0), 1.0)]);
+    // Branches agree with the piecewise form.
+    let a = output("let x ~ normal(1,2)\nlet y = if x < 0 { -x } else { x }\nreport y");
+    let b = output("let x ~ normal(1,2)\nlet y = abs(x)\nreport y");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn piecewise_faults_and_limits_stay_as_they_were() {
+    // Bounds out of order fault whatever the value is.
+    let e = exec_raw("let x ~ uniform(0,2)\nreport clamp(x, 1, 0)", &Options::default()).unwrap_err();
+    assert!(e.message.contains("lower bound is above"), "{}", e.message);
+    assert!(e.fault.is_some());
+    let o = outcome("let x ~ uniform(0,2)\nlet y = try { clamp(x, 1, 0) } catch DomainError { -1 }\nreport y");
+    assert_eq!(o.reports[0].distribution(), vec![(Value::Int((-1).into()), 1.0)]);
+    for (tail, what) in [
+        ("report min(x, y)", "independent continuous draws"),
+        ("report abs(x) * x", "nonlinear arithmetic"),
+        ("report clamp(x, 0, y)", "continuous bounds"),
+        ("report x / max(x, 1)", "nonlinear arithmetic"),
+    ] {
+        let e = error(&format!("let x ~ uniform(0,2)\nlet y ~ uniform(0,2)\n{tail}"));
+        assert!(e.contains(what) && e.contains("@mode sample"), "{tail}: {e}");
+    }
+}
+
+#[test]
+fn collections_carry_outcomes_of_a_draw() {
+    let o = outcome(
+        "let x ~ uniform(0,2)\nreport [x, 1].get(0)\nreport sum([x, x, 1])\nreport mean([x, x + 1])\nreport sum([x, -x])\nreport reverse([x, 1])[1]\nreport [\"a\": x].get(\"a\")\nreport minimum([x, 1])\nreport zip([x], [2])[0][0]",
+    );
+    stats(&o, 0, 1.0, 1.0 / 3.0, 0.0, 2.0);
+    stats(&o, 1, 3.0, 4.0 / 3.0, 1.0, 5.0);
+    stats(&o, 2, 1.5, 1.0 / 3.0, 0.5, 2.5);
+    assert_eq!(o.reports[3].distribution(), vec![(Value::Float(0.0), 1.0)]);
+    stats(&o, 4, 1.0, 1.0 / 3.0, 0.0, 2.0);
+    stats(&o, 5, 1.0, 1.0 / 3.0, 0.0, 2.0);
+    stats(&o, 6, 0.75, 2.0 / 3.0 - 0.75 * 0.75, 0.0, 1.0);
+    stats(&o, 7, 1.0, 1.0 / 3.0, 0.0, 2.0);
+    // A popped outcome is still the draw.
+    let o = outcome("let x ~ uniform(0,2)\nvar xs = [1, x]\nlet top = xs.pop()\nobserve top > 1\nreport x");
+    stats(&o, 0, 1.5, 1.0 / 12.0, 1.0, 2.0);
+    for tail in [
+        "report [\"a\": 1].get(x, 0)",
+        "report sort([x, 1])",
+        "report contains([x], 1)",
+        "report sum([x, y])",
+        "report mean(one_of([x, x + 1]))",
+    ] {
+        let e = error(&format!("let x ~ uniform(0,2)\nlet y ~ uniform(0,2)\n{tail}"));
+        assert!(e.contains("@mode sample"), "{tail}: {e}");
+    }
+    // An index is an int, as when sampling.
+    assert!(error("let x ~ uniform(0,2)\nreport [1, 2].get(x)").contains("needs an int"));
+}

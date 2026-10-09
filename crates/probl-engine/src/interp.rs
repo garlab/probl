@@ -1276,7 +1276,16 @@ impl<'p> Engine<'p> {
                     let (v, run) = if self.sampler.is_some() {
                         (self.sample_continuous(v), Some(w.run))
                     } else {
-                        if analytic::contains(&v) && !matches!(v, Value::Analytic(_) | Value::Event(_)) {
+                        // A distribution of outcomes, from `max(x, d6)` say, reports
+                        // as their mixture.
+                        let outcome =
+                            |v: &Value| matches!(v, Value::Analytic(_) | Value::Event(_)) || !analytic::contains(v);
+                        if analytic::contains(&v)
+                            && !match &v {
+                                Value::Dist(d) => d.outcomes.iter().all(|(v, _)| outcome(v)),
+                                v => outcome(v),
+                            }
+                        {
                             return Err(
                                 analytic::unsupported("reporting a list or record of continuous outcomes")
                                     .help("report its fields individually, or use `@mode sample(runs: 10_000)`")
@@ -2705,18 +2714,7 @@ impl<'p> Engine<'p> {
         };
         let at = |err: OpError| err.at(span);
         builtins::check_query_input(b, values).map_err(at)?;
-        if values.iter().any(analytic::contains)
-            && !matches!(
-                b,
-                Builtin::Map
-                    | Builtin::Filter
-                    | Builtin::Reduce
-                    | Builtin::Len
-                    | Builtin::IterItems
-                    | Builtin::Settled
-                    | Builtin::BooleanLaw
-            )
-        {
+        if values.iter().any(analytic::contains) && !handles_analytic(b, values) {
             // Internal built-ins stand for the syntax that uses them.
             let name = match b {
                 Builtin::ScoreLaw => "score",
@@ -3078,6 +3076,40 @@ fn is_density(d: &Value) -> bool {
     match d {
         Value::Continuous(_) => true,
         Value::Dist(dist) => dist.outcomes.iter().any(|(x, _)| matches!(x, Value::Continuous(_))),
+        _ => false,
+    }
+}
+
+/// Whether a built-in deals with these analytic arguments deliberately.
+/// The others would look inside them as if they were plain values.
+fn handles_analytic(b: Builtin, values: &[Value]) -> bool {
+    use Builtin as B;
+    let plain = |v: &Value| !analytic::contains(v);
+    let number = |v: &Value| matches!(v, Value::Analytic(_) | Value::Int(_) | Value::Float(_) | Value::Prob(_));
+    let numbers = |v: &Value| matches!(v, Value::List(xs) if xs.iter().all(number));
+    match b {
+        B::Map | B::Filter | B::Reduce | B::Len | B::IterItems | B::Settled | B::BooleanLaw | B::IsListOfLen => true,
+        // They move values without looking at them.
+        B::Slice
+        | B::Reverse
+        | B::Keys
+        | B::Values
+        | B::Enumerate
+        | B::Zip
+        | B::Push
+        | B::Pop
+        | B::Last
+        | B::DropLast => true,
+        B::Count => values.len() == 1,
+        // A key is compared with others, so it can't be an outcome; an index
+        // is a number, which an outcome isn't.
+        B::Get | B::Insert | B::Remove => matches!(values[0], Value::List(_)) || plain(&values[1]),
+        // Affine in one draw, piecewise affine.
+        B::Sum | B::Mean => numbers(&values[0]),
+        B::Abs | B::Min | B::Max | B::Clamp => values
+            .iter()
+            .all(|v| number(v) || matches!(v, Value::Dist(_)) && plain(v)),
+        B::Minimum | B::Maximum => values.len() == 1 && numbers(&values[0]),
         _ => false,
     }
 }

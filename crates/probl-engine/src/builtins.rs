@@ -40,8 +40,15 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
     use Builtin as B;
     let a = |i: usize| &args[i];
     match b {
+        B::Min | B::Max if args.iter().any(|v| matches!(v, Value::Analytic(_))) => {
+            let want_max = b == B::Max;
+            ops::lift_n(args, budget, &|args, budget| {
+                crate::analytic::extreme(args, want_max, budget)
+            })
+        }
         B::Min | B::Max => min_max(args, b == B::Max, budget),
         B::Abs => match a(0) {
+            Value::Analytic(x) => crate::analytic::abs(x, budget),
             Value::Complex(z) => finite_float(z.abs(), "abs"),
             Value::Int(n) => Ok(Value::Int(n.abs())),
             Value::Prob(p) => Ok(Value::Prob(p.abs())),
@@ -153,11 +160,17 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         }
         B::Clamp => {
             let (lo, hi) = (a(1), a(2));
+            if matches!(lo, Value::Analytic(_)) || matches!(hi, Value::Analytic(_)) {
+                return Err(crate::analytic::unsupported("`clamp` with continuous bounds"));
+            }
             if ops::compare(lo, hi)?.is_gt() {
                 return Err(OpError::fault(
                     Fault::DomainError,
                     "clamp's lower bound is above its upper bound",
                 ));
+            }
+            if let (Value::Analytic(x), Some(lo), Some(hi)) = (a(0), lo.as_f64(), hi.as_f64()) {
+                return crate::analytic::clamp(x, lo, hi, budget);
             }
             if ops::compare(a(0), lo)?.is_lt() {
                 Ok(lo.clone())
@@ -573,6 +586,11 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
         B::P => probability_of(v),
         B::Pdf => Err(OpError::new("pdf needs a continuous distribution")
             .help("for a distribution whose outcomes can be listed, use `pmf`")),
+        // Within a world, the mean of outcomes of one draw is affine in it.
+        B::Mean if matches!(v, Value::List(xs) if xs.iter().any(|x| matches!(x, Value::Analytic(_)))) => {
+            let n = Value::Float(list(v, "mean")?.len() as f64);
+            ops::binary(probl_syntax::ast::BinOp::Div, &sum(v, budget)?, &n, budget)
+        }
         B::Mean => {
             let d = stat_dist(v, b.name(), budget)?;
             if d.outcomes.iter().any(|(x, _)| matches!(x, Value::Date(_))) {
@@ -779,8 +797,8 @@ fn continuous_query(b: Builtin, args: &[Value]) -> OpResult<Value> {
             for (part, p) in &m.parts {
                 match part {
                     Part::Continuous(f) => density += p * f.pdf(x),
-                    Part::Analytic(a) => density += p * a.pdf(x),
-                    Part::Point(_) => {
+                    Part::Analytic(a) if !a.has_atoms() => density += p * a.pdf(x),
+                    Part::Analytic(_) | Part::Point(_) => {
                         return Err(OpError::new(
                             "pdf needs a continuous distribution, without single values mixed in",
                         ));
@@ -1636,6 +1654,9 @@ pub fn population_extreme(v: &Value, want_max: bool, default: Option<&Value>, bu
                 select_extreme(&mut best, x, want_max, budget)?;
             }
             best.ok_or_else(|| OpError::new(format!("`{name}` needs a nonempty distribution")))
+        }
+        Value::List(xs) if xs.iter().any(|x| matches!(x, Value::Analytic(_))) => {
+            crate::analytic::extreme(xs, want_max, budget)
         }
         Value::List(_) | Value::Str(_) => {
             let mut best = None;
