@@ -123,8 +123,14 @@ impl Affine {
     fn constant(c: f64) -> Self {
         Affine { scale: 0.0, offset: c }
     }
+    /// Its value where the latent is `x`. A constant is that constant even
+    /// at an infinite end of the latent's range.
     pub fn at(self, x: f64) -> f64 {
-        self.scale * x + self.offset
+        if self.scale == 0.0 {
+            self.offset
+        } else {
+            self.scale * x + self.offset
+        }
     }
     fn negated(self) -> Self {
         Affine {
@@ -542,10 +548,18 @@ fn difference(a: Affine, b: Affine) -> OpResult<Affine> {
     })
 }
 
-/// Pieces cost work, and their number is limited like a collection's.
+/// The most pieces an outcome can have. Repeated folds like
+/// `y = abs(2 * y - 1)` double them each time.
+const MAX_PIECES: usize = 100_000;
+
+/// Pieces cost work, and their number is limited.
 fn spend(pieces: &[(f64, Affine)], budget: &mut Budget) -> OpResult<()> {
+    if pieces.len() > MAX_PIECES {
+        return Err(OpError::limit(format!(
+            "a continuous outcome with more than {MAX_PIECES} pieces is over the limit"
+        )));
+    }
     if pieces.len() > 1 {
-        budget.collection(pieces.len() as u128)?;
         budget.work(pieces.len() as u64)?;
     }
     Ok(())

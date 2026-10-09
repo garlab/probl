@@ -416,3 +416,32 @@ fn an_event_key_splits_its_group() {
     // Infinitely many groups still aren't a table.
     assert!(error("let x ~ uniform(0,2)\nreport true by x").contains("grouping by a continuous outcome"));
 }
+
+#[test]
+fn atoms_at_an_unbounded_end() {
+    use probl_engine::continuous::Family;
+    // max(z, 0) is 0 with probability 1/2, then z: its quantiles above the
+    // atom are z's own.
+    let o = outcome("let z ~ normal(0,1)\nreport max(z,0)\nreport min(z,0)");
+    let z = Family::normal(0.0, 1.0).unwrap();
+    let m = marginal(&o, 0);
+    assert_eq!(m.median(), 0.0);
+    assert_eq!(m.quantile(0.75), z.quantile(0.75));
+    close(m.mean(), 1.0 / (2.0 * std::f64::consts::PI).sqrt());
+    let m = marginal(&o, 1);
+    assert_eq!(m.median(), 0.0);
+    assert_eq!(m.quantile(0.25), z.quantile(0.25));
+}
+
+#[test]
+fn pieces_are_limited() {
+    // The tent map doubles the pieces each round.
+    let src = "let x ~ uniform(0,1)\nvar y = x\nrepeat 10 { y = abs(2 * y - 1) }\nreport y";
+    let o = outcome(src);
+    // It keeps x uniform: each fold is measure-preserving.
+    let m = marginal(&o, 0);
+    close(m.mean(), 0.5);
+    close(m.cdf(0.3), 0.3);
+    let e = exec_raw(&src.replace("10", "40"), &Options::default()).unwrap_err();
+    assert!(e.message.contains("pieces is over the limit"), "{}", e.message);
+}
