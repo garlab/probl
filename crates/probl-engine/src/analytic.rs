@@ -240,6 +240,9 @@ pub struct Analytic {
     pub family: Family,
     pub domain: Domain,
     pub pieces: Pieces,
+    /// Whether it's an int, as `floor(x)` is: then every piece is a whole
+    /// number.
+    pub int: bool,
 }
 impl Analytic {
     pub fn new(id: u64, family: Family) -> Self {
@@ -248,6 +251,7 @@ impl Analytic {
             family,
             domain: Domain::full(),
             pieces: vec![(1.0, Affine::IDENTITY)],
+            int: false,
         }
     }
     /// The draw itself.
@@ -278,15 +282,24 @@ impl Analytic {
             family: *to,
             domain: self.domain.moved(&self.family, to),
             pieces,
+            int: self.int,
         }
     }
-    /// Another function of the same draw.
+    /// Another function of the same draw, a float.
     fn with(&self, pieces: Pieces) -> Self {
         Self {
             id: self.id,
             family: self.family,
             domain: self.domain.clone(),
             pieces,
+            int: false,
+        }
+    }
+    /// Another function of the same draw, an int if `int`.
+    fn with_type(&self, pieces: Pieces, int: bool) -> Self {
+        Self {
+            int,
+            ..self.with(pieces)
         }
     }
     /// The function, when it's affine everywhere.
@@ -305,6 +318,7 @@ impl Analytic {
                 .iter()
                 .map(|(end, f)| (float_key(*end), float_key(f.scale), float_key(f.offset)))
                 .collect::<Vec<_>>(),
+            self.int,
         )
     }
     pub fn value(mut self) -> OpResult<Value> {
@@ -313,9 +327,39 @@ impl Analytic {
         }
         self.simplify();
         match self.affine() {
-            Some(f) if f.scale == 0.0 => Ok(Value::Float(f.offset)),
+            Some(f) if f.scale == 0.0 => Ok(number(f.offset, self.int)),
             _ => Ok(Value::Analytic(Arc::new(self))),
         }
+    }
+    /// Whether each of its values has positive probability: it's a constant
+    /// on each part of the domain, like `floor(x)`.
+    pub fn is_discrete(&self) -> bool {
+        self.pieces.len() > 1 && self.segments().iter().all(|(_, _, f)| f.scale == 0.0)
+    }
+    /// Each value of a discrete outcome, with where the draw is when it's
+    /// that value, and that part's share of the domain's probability.
+    pub fn atoms(&self) -> Vec<(Value, Domain, f64)> {
+        let mass = self.domain.mass();
+        let mut atoms: Vec<(f64, Vec<(f64, f64)>)> = Vec::new();
+        for (lo, hi, f) in self.segments() {
+            match atoms.iter_mut().find(|(c, _)| float_key(*c) == float_key(f.offset)) {
+                Some((_, parts)) => parts.push((lo, hi)),
+                None => atoms.push((f.offset, vec![(lo, hi)])),
+            }
+        }
+        atoms.sort_by(|a, b| a.0.total_cmp(&b.0));
+        atoms
+            .into_iter()
+            .map(|(c, parts)| {
+                let mut region = Vec::with_capacity(parts.len());
+                for (lo, hi) in parts {
+                    push(&mut region, lo, hi);
+                }
+                let region = Domain(region);
+                let share = region.mass() / mass;
+                (number(c, self.int), region, share)
+            })
+            .collect()
     }
     /// Gives each piece with no probability in the domain to a neighbour,
     /// since nothing outside the domain is read, then joins neighbours that
@@ -736,7 +780,9 @@ pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<
         _ => return Err(unsupported("nonlinear arithmetic")),
     };
     spend(&pieces, budget)?;
-    x.with(pieces).value()
+    // As with numbers, sums, differences and products of ints are ints.
+    let int = matches!(op, Add | Sub | Mul) && is_int(a) && is_int(b);
+    x.with_type(pieces, int).value()
 }
 
 /// The event that a difference `d` of outcomes of `x`'s draw compares with
@@ -766,7 +812,7 @@ fn compare(x: &Analytic, op: BinOp, d: &[(f64, Affine)]) -> OpResult<Event> {
 }
 
 pub fn negate(x: &Analytic) -> OpResult<Value> {
-    x.with(x.pieces.iter().map(|&(end, f)| (end, f.negated())).collect())
+    x.with_type(x.pieces.iter().map(|&(end, f)| (end, f.negated())).collect(), x.int)
         .value()
 }
 
@@ -775,7 +821,118 @@ pub fn abs(x: &Analytic, budget: &mut Budget) -> OpResult<Value> {
     let negated: Pieces = x.pieces.iter().map(|&(end, f)| (end, f.negated())).collect();
     let pieces = select(&negative, &negated, &x.pieces);
     spend(&pieces, budget)?;
-    x.with(pieces).value()
+    x.with_type(pieces, x.int).value()
+}
+
+/// A number as the language types it: an int, or a float.
+fn number(c: f64, int: bool) -> Value {
+    match probl_number::Integer::from_f64(c).filter(|_| int) {
+        Some(n) => Value::Int(n),
+        None => Value::Float(c),
+    }
+}
+
+/// Whether a value is an int, or an outcome that is one.
+fn is_int(v: &Value) -> bool {
+    match v {
+        Value::Int(_) => true,
+        Value::Analytic(x) => x.int,
+        _ => false,
+    }
+}
+
+/// How `floor`, `ceil`, `trunc` and `round` make an int of a number.
+#[derive(Clone, Copy, Debug)]
+pub enum Rounding {
+    Floor,
+    Ceil,
+    Trunc,
+    Round,
+}
+impl Rounding {
+    fn apply(self, v: f64) -> f64 {
+        match self {
+            Rounding::Floor => v.floor(),
+            Rounding::Ceil => v.ceil(),
+            Rounding::Trunc => libm::trunc(v),
+            // Half away from zero, as `round` does.
+            Rounding::Round => v.round(),
+        }
+    }
+    /// Where it can change, strictly between `lo` and `hi`: the whole
+    /// numbers, or the halves for `round`.
+    fn steps(self, lo: f64, hi: f64) -> impl Iterator<Item = f64> {
+        let half = if matches!(self, Rounding::Round) { 0.5 } else { 0.0 };
+        let first = (lo - half).floor() + 1.0;
+        let last = (hi - half).ceil() - 1.0;
+        (0..)
+            .map(move |i| first + i as f64)
+            .take_while(move |k| *k <= last)
+            .map(move |k| k + half)
+    }
+}
+
+/// `floor(x)`, `ceil(x)`, `trunc(x)` or `round(x)`: an int that is constant
+/// on each part of the draw where `x` is between two of the rounding's
+/// steps, with that part's probability. Where `x` is constant, it rounds as
+/// a number does, ties included; elsewhere a step has no probability.
+pub fn rounded(x: &Analytic, how: Rounding, budget: &mut Budget) -> OpResult<Value> {
+    let mut pieces: Pieces = Vec::new();
+    let mut at = 0.0;
+    for (lo, hi, f) in x.segments() {
+        if lo > at {
+            // Outside the domain: anything, which `value` gives away.
+            pieces.push((lo, Affine::constant(0.0)));
+        }
+        at = hi;
+        if f.scale == 0.0 {
+            pieces.push((hi, Affine::constant(how.apply(f.offset))));
+            continue;
+        }
+        let (a, b) = (f.at(x.family.quantile(lo)), f.at(x.family.quantile(hi)));
+        if !a.is_finite() || !b.is_finite() {
+            return Err(unsupported("rounding an outcome whose values have no bound"));
+        }
+        let (vmin, vmax) = (a.min(b), a.max(b));
+        let steps: Vec<f64> = how.steps(vmin, vmax).take(MAX_PIECES + 1).collect();
+        if pieces.len() + steps.len() > MAX_PIECES {
+            return Err(OpError::limit(format!(
+                "a continuous outcome with more than {MAX_PIECES} pieces is over the limit"
+            )));
+        }
+        budget.work(steps.len() as u64 + 1)?;
+        // Each step, as a coordinate of the draw, in increasing order.
+        let mut bounds: Vec<(f64, f64)> = steps
+            .iter()
+            .map(|&t| (x.family.cdf((t - f.offset) / f.scale).clamp(lo, hi), t))
+            .collect();
+        if f.scale < 0.0 {
+            bounds.reverse();
+        }
+        let mut from = if f.scale > 0.0 { vmin } else { vmax };
+        for (u, t) in bounds {
+            pieces.push((u, Affine::constant(how.apply((from + t) / 2.0))));
+            from = t;
+        }
+        let to = if f.scale > 0.0 { vmax } else { vmin };
+        pieces.push((hi, Affine::constant(how.apply((from + to) / 2.0))));
+    }
+    if at < 1.0 {
+        pieces.push((1.0, Affine::constant(0.0)));
+    }
+    // Ends that rounded together leave parts with no probability.
+    let mut tiling: Pieces = Vec::with_capacity(pieces.len());
+    for (end, f) in pieces {
+        match tiling.last_mut() {
+            Some(last) if end <= last.0 => {}
+            _ => tiling.push((end, f)),
+        }
+    }
+    if let Some(last) = tiling.last_mut() {
+        last.0 = 1.0;
+    }
+    spend(&tiling, budget)?;
+    x.with_type(tiling, true).value()
 }
 
 /// `min` or `max` of numbers and outcomes of one draw. As with numbers, each
@@ -806,18 +963,22 @@ pub fn extreme(args: &[Value], want_max: bool, budget: &mut Budget) -> OpResult<
         best = select(&better, &v, &best);
         spend(&best, budget)?;
     }
-    x.with(best).value()
+    x.with_type(best, args.iter().all(is_int)).value()
 }
 
 /// `clamp(x, lo, hi)` with numbers for bounds, which the caller has checked
-/// are in order.
-pub fn clamp(x: &Analytic, lo: f64, hi: f64, budget: &mut Budget) -> OpResult<Value> {
+/// are in order. It's an int if `x` and the bounds are.
+pub fn clamp(x: &Analytic, lo: &Value, hi: &Value, budget: &mut Budget) -> OpResult<Value> {
+    let int = x.int && is_int(lo) && is_int(hi);
+    let (Some(lo), Some(hi)) = (lo.as_f64(), hi.as_f64()) else {
+        return Err(unsupported("`clamp` with these bounds"));
+    };
     let under = below(&x.family, &x.pieces, lo, true)?;
     let over = below(&x.family, &x.pieces, hi, false)?.complement();
     let inside = select(&over, &[(1.0, Affine::constant(hi))], &x.pieces);
     let pieces = select(&under, &[(1.0, Affine::constant(lo))], &inside);
     spend(&pieces, budget)?;
-    x.with(pieces).value()
+    x.with_type(pieces, int).value()
 }
 
 pub fn logic(and: bool, a: &Value, b: &Value) -> OpResult<Value> {
@@ -1020,7 +1181,15 @@ mod tests {
     #[test]
     fn clamp_has_two_atoms() {
         // x ~ uniform(-1, 2): clamp(x, 0, 1) is 0 and 1 with 1/3 each.
-        let y = analytic(clamp(&uniform(-1.0, 2.0), 0.0, 1.0, &mut budget()).unwrap());
+        let y = analytic(
+            clamp(
+                &uniform(-1.0, 2.0),
+                &Value::Float(0.0),
+                &Value::Float(1.0),
+                &mut budget(),
+            )
+            .unwrap(),
+        );
         assert_eq!(y.pieces.len(), 3);
         close(y.cdf(0.0), 1.0 / 3.0);
         close(y.cdf(0.5), 0.5);

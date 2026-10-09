@@ -54,6 +54,20 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             Value::Prob(p) => Ok(Value::Prob(p.abs())),
             v => float1(v, "abs", |x| Some(x.abs())),
         },
+        B::Floor | B::Ceil | B::Trunc | B::Round if matches!(a(0), Value::Analytic(_)) => {
+            use crate::analytic::Rounding;
+            let Value::Analytic(x) = a(0) else {
+                unreachable!("an outcome")
+            };
+            let how = match b {
+                B::Floor => Rounding::Floor,
+                B::Ceil => Rounding::Ceil,
+                B::Trunc => Rounding::Trunc,
+                _ if args.len() == 1 => Rounding::Round,
+                _ => return Err(crate::analytic::unsupported("`round` to decimal places")),
+            };
+            crate::analytic::rounded(x, how, budget)
+        }
         B::Floor => to_int(a(0), f64::floor),
         B::Ceil => to_int(a(0), f64::ceil),
         B::Trunc => to_int(a(0), libm::trunc),
@@ -169,7 +183,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
                     "clamp's lower bound is above its upper bound",
                 ));
             }
-            if let (Value::Analytic(x), Some(lo), Some(hi)) = (a(0), lo.as_f64(), hi.as_f64()) {
+            if let Value::Analytic(x) = a(0) {
                 return crate::analytic::clamp(x, lo, hi, budget);
             }
             if ops::compare(a(0), lo)?.is_lt() {
@@ -321,6 +335,10 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::OneOf => one_of(a(0), budget),
         B::Binomial | B::Poisson | B::Geometric => {
             let counts = counts(b, args, budget)?.expect("called with plain arguments");
+            // Too broad to list: the law, until something needs the list.
+            if counts.listed_size() > budget.max_outcomes as f64 {
+                return Ok(Value::Counts(Arc::new(counts)));
+            }
             Ok(counts.list(budget)?.into_value())
         }
         B::Bag => bag(a(0), budget),
@@ -495,13 +513,18 @@ pub fn check_query_input(b: Builtin, args: &[Value]) -> OpResult<()> {
     let valid = match b {
         B::Minimum | B::Maximum => matches!(
             v,
-            Value::Dist(_) | Value::Continuous(_) | Value::List(_) | Value::Range(..) | Value::Str(_)
+            Value::Dist(_)
+                | Value::Continuous(_)
+                | Value::Counts(_)
+                | Value::List(_)
+                | Value::Range(..)
+                | Value::Str(_)
         ),
         B::P => matches!(v, Value::Dist(_)),
         B::Pdf => matches!(v, Value::Dist(_) | Value::Continuous(_)),
         _ => matches!(
             v,
-            Value::Dist(_) | Value::Continuous(_) | Value::List(_) | Value::Range(..)
+            Value::Dist(_) | Value::Continuous(_) | Value::Counts(_) | Value::List(_) | Value::Range(..)
         ),
     };
     if !valid {
@@ -547,6 +570,14 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
         ) {
             return range_query(b, lo, hi, args.get(1), budget);
         }
+    }
+    if let (B::Pmf | B::Cdf, Value::Dist(d)) = (b, v) {
+        if d.law.is_some() {
+            return listed_law_query(b, d, &args[1]);
+        }
+    }
+    if let Value::Counts(law) = v {
+        return law_stat(b, law, args, budget);
     }
     if matches!(b, B::P | B::Cdf | B::Pmf | B::Pdf) {
         if let Value::Dist(d) = v {
@@ -664,6 +695,104 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
         // Internal helpers that take their arguments as they are.
         _ => call_plain(b, args, budget),
     }
+}
+
+/// A query about a count law too broad to list, from its formulas. What
+/// needs its outcomes lists them, which fails on the outcome limit.
+fn law_stat(b: Builtin, law: &Counts, args: &[Value], budget: &mut Budget) -> OpResult<Value> {
+    use Builtin as B;
+    let int = |k: f64| {
+        Integer::from_f64(k)
+            .map(Value::Int)
+            .ok_or_else(|| OpError::limit("the outcome is too large for an int"))
+    };
+    let exact = matches!(law, Counts::Geometric { .. });
+    match b {
+        B::Pmf | B::Cdf if exact => law_query(b, law, &args[1]),
+        B::Mean => finite_float(law.mean(), "mean"),
+        B::Variance => finite_float(law.variance(), "variance"),
+        B::Sd => finite_float(libm::sqrt(law.variance()), "sd"),
+        // Their CDFs, without listing, aren't accurate this far yet.
+        B::Pmf | B::Cdf | B::Quantile | B::Median | B::MedianLow | B::MedianHigh if !exact => {
+            Err(OpError::unsupported(format!(
+                "`{}` of {law}, which has too many outcomes to list, isn't supported yet",
+                b.name()
+            ))
+            .help("its `mean`, `variance` and `sd` are exact; sampling draws from it directly"))
+        }
+        B::Quantile => {
+            let q = to_prob(&args[1])?;
+            if q <= 0.0 {
+                return law_stat(B::Minimum, law, args, budget);
+            }
+            if q >= 1.0 {
+                return Err(OpError::new("the 100% quantile of this distribution has no bound"));
+            }
+            int(law.quantile(q))
+        }
+        B::Median | B::MedianLow | B::MedianHigh => {
+            let lo = law.quantile(0.5);
+            // Half the probability exactly at or below `lo`: the next
+            // outcome is the high median.
+            let hi = if crate::stats::half_split(law.cdf(lo), 1.0) {
+                lo + 1.0
+            } else {
+                lo
+            };
+            match b {
+                B::MedianLow => int(lo),
+                B::MedianHigh => int(hi),
+                _ if lo == hi => int(lo),
+                _ => midpoint(&int(lo)?, &int(hi)?, budget),
+            }
+        }
+        B::Minimum => int(match law {
+            Counts::Geometric { .. } => 1.0,
+            _ => 0.0,
+        }),
+        _ => {
+            let v = ops::listed(&args[0], budget)?.into_owned();
+            let mut args = args.to_vec();
+            args[0] = v;
+            call_raw(b, &args, budget)
+        }
+    }
+}
+
+/// `pmf` or `cdf` of a count law's listed outcomes. What they leave out is
+/// the law's tail, less than 1e-18: unlike unresolved weight, it can't make
+/// a probability uncertain at any precision a float has.
+fn listed_law_query(b: Builtin, d: &Dist, x: &Value) -> OpResult<Value> {
+    let mut p = crate::stats::Sum::default();
+    for (outcome, w) in &d.outcomes {
+        let counts = if b == Builtin::Pmf {
+            outcome == x
+        } else {
+            statistical_compare(outcome, x)?.is_le()
+        };
+        if counts {
+            p.add(*w);
+        }
+    }
+    ops::computed_prob(p.value(), b.name())
+}
+
+/// `pmf` or `cdf` of a count law from its formulas. As with its outcomes,
+/// `pmf` is of an int: a float is none of them.
+fn law_query(b: Builtin, law: &Counts, x: &Value) -> OpResult<Value> {
+    if b == Builtin::Pmf {
+        let p = match x {
+            Value::Int(_) => law.pmf(x.as_f64().unwrap_or(f64::INFINITY)),
+            _ => 0.0,
+        };
+        return ops::computed_prob(p, "pmf");
+    }
+    // The comparison an outcome would make with `x`, for its errors.
+    statistical_compare(&Value::Int(0.into()), x)?;
+    let t = x
+        .as_f64()
+        .ok_or_else(|| OpError::new(format!("`cdf` needs a number, found {}", article(&x.kind()))))?;
+    ops::computed_prob(law.cdf(t), "cdf")
 }
 
 /// `P(d)`: query an explicitly constructed boolean distribution.

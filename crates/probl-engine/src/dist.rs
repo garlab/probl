@@ -21,6 +21,10 @@ pub struct Dist {
     /// support finite, or weight a `simulate` left unresolved. Drawing counts
     /// it as unresolved.
     pub missing: f64,
+    /// The law the outcomes were listed from, if they were: `pmf` and `cdf`
+    /// ask it, rather than the outcomes, which leave out the tail. It isn't
+    /// part of the distribution's identity, which its outcomes are.
+    pub law: Option<Box<Counts>>,
 }
 
 /// Work taken from a shared budget at a time: threads rarely touch it, and
@@ -208,6 +212,7 @@ impl Dist {
         Dist {
             outcomes: vec![(v, 1.0)],
             missing: 0.0,
+            law: None,
         }
     }
 
@@ -249,7 +254,11 @@ impl Dist {
                 *w *= scale;
             }
         }
-        Dist { outcomes, missing }
+        Dist {
+            outcomes,
+            missing,
+            law: None,
+        }
     }
 
     pub fn into_value(self) -> Value {
@@ -451,12 +460,116 @@ impl Counts {
         }
     }
 
-    /// The distribution with its outcomes listed.
+    /// The distribution with its outcomes listed, and this law.
     pub fn list(&self, budget: &mut Budget) -> OpResult<Dist> {
-        match *self {
+        let mut d = match *self {
             Counts::Binomial { n, p } => Dist::binomial(n, p, budget),
             Counts::Poisson { rate } => Dist::poisson(rate, budget),
             Counts::Geometric { p } => Dist::geometric(p, budget),
+        }?;
+        d.law = Some(Box::new(*self));
+        Ok(d)
+    }
+
+    /// About how many outcomes listing it would take: until the weight is
+    /// below `TAIL` of the mode's, some 9 standard deviations each side.
+    pub fn listed_size(&self) -> f64 {
+        match *self {
+            Counts::Geometric { p } if p < 1.0 => (libm::log(TAIL) / libm::log1p(-p)).ceil(),
+            Counts::Geometric { .. } => 1.0,
+            _ => 18.2 * libm::sqrt(self.variance()) + 1.0,
+        }
+    }
+
+    pub fn mean(&self) -> f64 {
+        match *self {
+            Counts::Binomial { n, p } => n as f64 * p,
+            Counts::Poisson { rate } => rate,
+            Counts::Geometric { p } => 1.0 / p,
+        }
+    }
+
+    pub fn variance(&self) -> f64 {
+        match *self {
+            Counts::Binomial { n, p } => n as f64 * p * (1.0 - p),
+            Counts::Poisson { rate } => rate,
+            Counts::Geometric { p } => (1.0 - p) / (p * p),
+        }
+    }
+
+    /// The smallest k with P(X ≤ k) ≥ q, for 0 < q < 1.
+    pub fn quantile(&self, q: f64) -> f64 {
+        if let Counts::Geometric { p } = *self {
+            if p >= 1.0 {
+                return 1.0;
+            }
+            // 1 − (1 − p)^k ≥ q, then a step back or forward for rounding.
+            let k = (libm::log1p(-q) / libm::log1p(-p)).ceil().max(1.0);
+            return if k > 1.0 && self.cdf(k - 1.0) >= q {
+                k - 1.0
+            } else if self.cdf(k) < q {
+                k + 1.0
+            } else {
+                k
+            };
+        }
+        let (mut lo, mut hi) = (-1.0, self.mean() + 10.0 * libm::sqrt(self.variance()) + 10.0);
+        while self.cdf(hi) < q {
+            hi *= 2.0;
+        }
+        // P(X ≤ lo) < q ≤ P(X ≤ hi).
+        while hi - lo > 1.0 {
+            let mid = ((lo + hi) / 2.0).floor();
+            if self.cdf(mid) >= q { hi = mid } else { lo = mid }
+        }
+        hi
+    }
+
+    /// What tells two laws apart.
+    pub fn key(&self) -> (u8, u64, u64) {
+        match *self {
+            Counts::Binomial { n, p } => (0, n, p.to_bits()),
+            Counts::Poisson { rate } => (1, rate.to_bits(), 0),
+            Counts::Geometric { p } => (2, p.to_bits(), 0),
+        }
+    }
+
+    /// P(X ≤ x).
+    pub fn cdf(&self, x: f64) -> f64 {
+        let k = x.floor();
+        match *self {
+            Counts::Binomial { n, p } => {
+                let n = n as f64;
+                if k < 0.0 {
+                    0.0
+                } else if k >= n || p <= 0.0 {
+                    1.0
+                } else if p >= 1.0 {
+                    0.0
+                } else {
+                    // I_{1−p}(n − k, k + 1).
+                    crate::continuous::beta_cdf(n - k, k + 1.0, 1.0 - p)
+                }
+            }
+            Counts::Poisson { rate } => {
+                if k < 0.0 {
+                    0.0
+                } else if rate <= 0.0 {
+                    1.0
+                } else {
+                    // Q(k + 1, rate), the upper regularized gamma.
+                    1.0 - crate::continuous::gamma_cdf(k + 1.0, rate)
+                }
+            }
+            Counts::Geometric { p } => {
+                if k < 1.0 {
+                    0.0
+                } else if p >= 1.0 {
+                    1.0
+                } else {
+                    -libm::expm1(k * libm::log1p(-p))
+                }
+            }
         }
     }
 
@@ -534,6 +647,17 @@ impl Counts {
                 // The inverse of P(X ≤ k) = 1 − (1 − p)^k.
                 (libm::log(rng.open()) / libm::log1p(-p)).ceil().max(1.0) as i64
             }
+        }
+    }
+}
+
+impl std::fmt::Display for Counts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::value::fmt_float;
+        match *self {
+            Counts::Binomial { n, p } => write!(f, "binomial({n}, {})", fmt_float(p)),
+            Counts::Poisson { rate } => write!(f, "poisson({})", fmt_float(rate)),
+            Counts::Geometric { p } => write!(f, "geometric({})", fmt_float(p)),
         }
     }
 }

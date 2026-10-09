@@ -118,8 +118,11 @@ const CASES: &[Case] = &[
     case("C", "let x ~ uniform(0, 2)\nreport min(x, 1)", Works, Works),
     case("C", "let x ~ uniform(-1, 2)\nreport clamp(x, 0, 1)", Works, Works),
     // D: rounding into finite bins.
-    case("D", "let x ~ uniform(0, 3)\nreport floor(x)", Unsupported, Works),
-    case("D", "let x ~ uniform(0, 3)\nreport round(x)", Unsupported, Works),
+    case("D", "let x ~ uniform(0, 3)\nreport floor(x)", Works, Works),
+    case("D", "let x ~ uniform(0, 3)\nreport round(x)", Works, Works),
+    // Not yet: infinitely many bins, and decimal places.
+    case("D", "let x ~ normal(0, 1)\nreport floor(x)", Unsupported, Works),
+    case("D", "let x ~ uniform(0, 3)\nreport round(x, 1)", Unsupported, Works),
     // E: nonlinear transforms of one latent.
     case("E", "let x ~ uniform(-1, 1)\nreport x * x", Unsupported, Works),
     case("E", "let x ~ normal(0, 1)\nreport exp(x)", Unsupported, Works),
@@ -218,10 +221,12 @@ const CASES: &[Case] = &[
         "O",
         "let d = geometric(0.000000000001)\nlet n ~ d\nreport n",
         Limit,
-        Limit,
+        Works,
     ),
-    case("O", "report pmf(geometric(0.5), 1)", Rejected, Rejected),
-    case("O", "report cdf(poisson(3), 2)", Rejected, Rejected),
+    case("O", "report pmf(geometric(0.5), 1)", Works, Works),
+    case("O", "report cdf(poisson(3), 2)", Works, Works),
+    // Not yet: the CDF of a law too broad to list, other than a geometric.
+    case("O", "report median(poisson(1000000000000))", Unsupported, Unsupported),
     // P: recursion with output.
     case(
         "P",

@@ -214,6 +214,15 @@ impl RunStat {
 
 impl Acc {
     fn add(&mut self, value: &Value, weight: Weight) {
+        // A discrete outcome, like `floor(x)`, is each of its values.
+        if let Value::Analytic(a) = value {
+            if a.is_discrete() {
+                for (v, _, share) in a.atoms() {
+                    self.add(&v, weight.scale(share));
+                }
+                return;
+            }
+        }
         self.continuous |= matches!(value, Value::Analytic(_) | Value::Continuous(_));
         self.nonnumeric |= !matches!(
             value,
@@ -451,6 +460,7 @@ impl Sink {
     pub(crate) fn validate_analytic(&self, key: &Value, value: &Value) -> crate::error::OpResult<()> {
         fn kinds(v: &Value) -> (bool, bool) {
             match v {
+                Value::Analytic(a) if a.is_discrete() => (false, true),
                 Value::Analytic(_) | Value::Continuous(_) => (true, true),
                 Value::Int(_) | Value::Float(_) | Value::Prob(_) => (false, true),
                 Value::Dist(d) => d

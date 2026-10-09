@@ -54,6 +54,11 @@ pub enum Value {
     Analytic(Arc<crate::analytic::Analytic>),
     /// A boolean predicate of that same outcome, retaining its identity.
     Event(Arc<crate::analytic::Event>),
+    /// A count law too broad to list its outcomes, like `geometric(1e-12)`:
+    /// drawn from directly when sampling, and asked by `pmf`, `cdf` and the
+    /// other queries. Anything that needs its outcomes lists it, which
+    /// fails on the outcome limit, as building it once did.
+    Counts(Arc<crate::dist::Counts>),
 }
 
 /// The distribution of a variable whose draw is delayed, updated exactly by
@@ -385,8 +390,10 @@ impl Value {
             Value::Closure(_) | Value::Builtin(_) => "function".into(),
             Value::Date(_) => "date".into(),
             Value::Delayed(_) => "value not drawn yet".into(),
+            Value::Analytic(a) if a.int => "int".into(),
             Value::Analytic(_) => "float".into(),
             Value::Event(_) => "bool".into(),
+            Value::Counts(_) => "distribution over ints".into(),
         }
     }
 
@@ -397,7 +404,7 @@ impl Value {
 
     /// Any distribution, including continuous ones: not a settled value.
     pub fn is_uncertain(&self) -> bool {
-        matches!(self, Value::Dist(_) | Value::Continuous(_))
+        matches!(self, Value::Dist(_) | Value::Continuous(_) | Value::Counts(_))
     }
 
     /// Numbers as f64: ints, floats and probabilities.
@@ -441,6 +448,7 @@ impl Value {
             Value::Complex(_) => 16,
             Value::Analytic(_) => 17,
             Value::Event(_) => 18,
+            Value::Counts(_) => 20,
         }
     }
 
@@ -512,6 +520,7 @@ fn eq_other(x: &Value, y: &Value) -> bool {
         (Value::Continuous(a), Value::Continuous(b)) => family_key(a) == family_key(b),
         (Value::Analytic(a), Value::Analytic(b)) => a.key() == b.key(),
         (Value::Event(a), Value::Event(b)) => a.key() == b.key(),
+        (Value::Counts(a), Value::Counts(b)) => a.key() == b.key(),
         (Value::Delayed(a), Value::Delayed(b)) => {
             a.variable == b.variable && family_key(&a.family) == family_key(&b.family)
         }
@@ -556,6 +565,7 @@ fn hash_other<H: Hasher>(value: &Value, state: &mut H) {
         Value::Analytic(a) => a.key().hash(state),
         Value::Event(a) => a.key().hash(state),
         Value::Delayed(d) => (d.variable, family_key(&d.family)).hash(state),
+        Value::Counts(c) => c.key().hash(state),
     }
 }
 
@@ -602,6 +612,7 @@ impl Ord for Value {
             (Value::Continuous(a), Value::Continuous(b)) => family_key(a).cmp(&family_key(b)),
             (Value::Analytic(a), Value::Analytic(b)) => a.key().cmp(&b.key()),
             (Value::Event(a), Value::Event(b)) => a.key().cmp(&b.key()),
+            (Value::Counts(a), Value::Counts(b)) => a.key().cmp(&b.key()),
             (Value::Delayed(a), Value::Delayed(b)) => {
                 (a.variable, family_key(&a.family)).cmp(&(b.variable, family_key(&b.family)))
             }
@@ -741,6 +752,7 @@ fn write_value(v: &Value, f: &mut fmt::Formatter<'_>, nested: bool) -> fmt::Resu
         Value::Closure(_) | Value::Builtin(_) => write!(f, "<function>"),
         Value::Date(d) => write!(f, "{}", crate::dates::format(*d)),
         Value::Continuous(family) => write!(f, "{family}"),
+        Value::Counts(c) => write!(f, "{c}"),
         Value::Analytic(a) => match a.affine() {
             Some(g) => write!(f, "<analytic float: {} * {} + {}>", g.scale, a.family, g.offset),
             None => write!(f, "<analytic float: piecewise in {}>", a.family),

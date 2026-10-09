@@ -519,6 +519,7 @@ impl<'p> Engine<'p> {
                 }
             }
             Value::Continuous(f) => Value::Float(f.sample(rng)),
+            Value::Counts(c) => Value::Int(c.sample(rng).into()),
             other => other.clone(),
         }
     }
@@ -629,6 +630,58 @@ impl<'p> Engine<'p> {
         self.updates(d.variable).exact += 1;
         self.densities |= matches!(seen, Seen::Normal { .. });
         Ok(Some(ln))
+    }
+
+    /// Assigning a discrete outcome, like `floor(x)`, splits its world: one
+    /// for each of its values, with the draw restricted to where it's that
+    /// value, so that the variable is a plain number. The split worlds go
+    /// to `failed`, to be dropped, and theirs to the end. (A place with a
+    /// path keeps the outcome.)
+    #[cold]
+    #[inline(never)]
+    fn split_discrete(
+        &mut self,
+        f: FnId,
+        stmt: &'p Stmt,
+        place: &Place,
+        worlds: &mut Vec<World>,
+        failed: &mut Vec<usize>,
+    ) -> Result<()> {
+        if !place.path.is_empty() {
+            return Ok(());
+        }
+        let mut split = Vec::new();
+        let mut gone = Vec::new();
+        for (i, w) in worlds.iter().enumerate() {
+            let Value::Analytic(a) = &w.slots[place.slot as usize] else {
+                continue;
+            };
+            // `failed` is in order: the worlds that failed to assign.
+            if !a.is_discrete() || failed.binary_search(&i).is_ok() {
+                continue;
+            }
+            for (v, region, share) in a.atoms() {
+                if share <= 0.0 {
+                    continue;
+                }
+                let mut nw = w.clone().scaled(share);
+                let latent = analytic::Latent {
+                    family: a.family,
+                    domain: a.domain.intersect(&region),
+                };
+                Arc::make_mut(&mut nw.constraints).insert(a.id, latent);
+                if let Err(e) = self.assign(f, place, v, &mut nw, stmt.span) {
+                    self.fail(e, At::new(f, stmt, &nw), None)?;
+                    continue;
+                }
+                split.push(nw);
+            }
+            gone.push(i);
+        }
+        failed.extend(gone);
+        failed.sort_unstable();
+        worlds.extend(split);
+        self.check_worlds(worlds.len() - failed.len(), stmt.span)
     }
 
     /// `if p` for a probability `p` drawn from a beta: each branch updates
@@ -1093,6 +1146,7 @@ impl<'p> Engine<'p> {
             StmtKind::Set { place, value } => {
                 let mut worlds = worlds;
                 let mut failed = Vec::new();
+                let mut discrete = false;
                 for (i, w) in worlds.iter_mut().enumerate() {
                     let mut saved = self.snapshot(w);
                     let v = match self.record_place_type(place, w) {
@@ -1100,9 +1154,15 @@ impl<'p> Engine<'p> {
                         None => self.eval(f, value, w),
                     };
                     let v = each!(self, At::new(f, stmt, w), saved saved, v, { failed.push(i) });
+                    if let Value::Analytic(_) = v {
+                        discrete |= is_discrete(&v);
+                    }
                     each!(self, At::new(f, stmt, w), saved saved, self.assign(f, place, v, w, span), {
                         failed.push(i)
                     });
+                }
+                if discrete {
+                    self.split_discrete(f, stmt, place, &mut worlds, &mut failed)?;
                 }
                 drop_failed(&mut worlds, &failed);
                 // When the live values say less than before, as when a
@@ -1545,6 +1605,13 @@ impl<'p> Engine<'p> {
                 let mut failed = Vec::new();
                 for (i, w) in worlds.iter().enumerate() {
                     let v = each!(self, At::new(f, stmt, w), world w, self.eval(f, value, w), { failed.push(i) });
+                    // A report of a count law lists it.
+                    let v = match v {
+                        Value::Counts(_) => ops::listed(&v, &mut self.budget)
+                            .map_err(|e| e.at(value.span))?
+                            .into_owned(),
+                        v => v,
+                    };
                     let k = match key {
                         Some(k) => {
                             let k_value =
@@ -1951,7 +2018,7 @@ impl<'p> Engine<'p> {
     /// Store each possible value of `d` into `place`, one world per outcome.
     fn split_by(&mut self, f: FnId, place: &Place, d: Value, w: World, span: Span, out: &mut Vec<World>) -> Result<()> {
         match d {
-            Value::Dist(_) | Value::Continuous(_) if self.sampler.is_some() => {
+            Value::Dist(_) | Value::Continuous(_) | Value::Counts(_) if self.sampler.is_some() => {
                 let v = self.sample(&d);
                 let mut w = w;
                 self.assign(f, place, v, &mut w, span)?;
@@ -1990,6 +2057,11 @@ impl<'p> Engine<'p> {
             }
             Value::Prob(p) => {
                 return self.split_by(f, place, Dist::bernoulli(p).into_value(), w, span, out);
+            }
+            // Enumerating needs its outcomes.
+            Value::Counts(_) => {
+                let d = ops::listed(&d, &mut self.budget).map_err(|e| e.at(span))?.into_owned();
+                return self.split_by(f, place, d, w, span, out);
             }
             other => {
                 let mut w = w;
@@ -2034,9 +2106,13 @@ impl<'p> Engine<'p> {
                     .map_err(|e| e.at(span))?
                     .into_owned(),
             ),
+            // An outcome like `floor(x)` is an int; another is never rounded
+            // into one.
+            (Value::Analytic(a), TypeSpec::Int) if a.int => Value::Analytic(a),
             (Value::Analytic(_), TypeSpec::Int) => {
                 return Err(analytic::unsupported("converting this outcome to int").at(span));
             }
+            (Value::Counts(c), TypeSpec::Dist(t)) if **t == TypeSpec::Int => Value::Counts(c),
             (Value::Prob(p), TypeSpec::Float) => Value::Float(p),
             // A declared type is a contract: failing it isn't a fault of the
             // world's values, even in partial mode.
@@ -2132,6 +2208,7 @@ impl<'p> Engine<'p> {
                 _ => self.conforms(x, t),
             }),
             (TypeSpec::Dist(t), Value::Continuous(_)) => **t == TypeSpec::Float,
+            (TypeSpec::Dist(t), Value::Counts(_)) => **t == TypeSpec::Int,
             (TypeSpec::Record(r), Value::Record(rec)) => {
                 let declared = &self.prog.records[*r as usize];
                 rec.ty.as_deref() == Some(declared.name.as_str())
@@ -3397,6 +3474,14 @@ fn is_density(d: &Value) -> bool {
     }
 }
 
+/// Whether a value is a discrete outcome of a draw, like `floor(x)`. Out of
+/// line: assignments run it on every analytic value they store.
+#[cold]
+#[inline(never)]
+fn is_discrete(v: &Value) -> bool {
+    matches!(v, Value::Analytic(a) if a.is_discrete())
+}
+
 /// Whether a built-in deals with these analytic arguments deliberately.
 /// The others would look inside them as if they were plain values.
 fn handles_analytic(b: Builtin, values: &[Value]) -> bool {
@@ -3423,6 +3508,8 @@ fn handles_analytic(b: Builtin, values: &[Value]) -> bool {
         B::Get | B::Insert | B::Remove => matches!(values[0], Value::List(_)) || plain(&values[1]),
         // Affine in one draw, piecewise affine.
         B::Sum | B::Mean => numbers(&values[0]),
+        B::Floor | B::Ceil | B::Trunc => matches!(values[0], Value::Analytic(_)),
+        B::Round => matches!(values[0], Value::Analytic(_)) && values[1..].iter().all(plain),
         B::Abs | B::Min | B::Max | B::Clamp => values
             .iter()
             .all(|v| number(v) || matches!(v, Value::Dist(_)) && plain(v)),
@@ -3492,6 +3579,15 @@ fn likelihood(d: &Value, v: &Value, sampling: bool) -> OpResult<Weighs> {
         ));
     }
     match d {
+        // As observing compares values: `2.0` is the outcome 2.
+        Value::Counts(law) => {
+            let x = match v.as_complex() {
+                Some(z) if z.im() == 0.0 => z.re(),
+                _ => f64::NAN,
+            };
+            let p = if x.is_nan() { 0.0 } else { law.pmf(x) };
+            Ok(Weighs::Probability(p, 0.0, 1.0 - p))
+        }
         Value::Dist(dist) => {
             let (mut seen, mut other) = (0.0, 0.0);
             for (x, p) in &dist.outcomes {

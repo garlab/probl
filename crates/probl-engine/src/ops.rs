@@ -19,6 +19,9 @@ pub fn integer<'a>(v: &'a Value, context: &str, budget: &mut Budget) -> OpResult
             budget.work(n.bits().div_ceil(64).max(1))?;
             Ok(Cow::Owned(n))
         }
+        Value::Analytic(a) if a.int => Err(crate::analytic::unsupported(&format!(
+            "an int outcome of a continuous draw as `{context}`"
+        ))),
         _ => {
             let found = match v {
                 Value::Float(f) => format!("the float {f:?}"),
@@ -28,6 +31,18 @@ pub fn integer<'a>(v: &'a Value, context: &str, budget: &mut Budget) -> OpResult
                 "`{context}` needs an int (or an exactly integral finite float), found {found}"
             )))
         }
+    }
+}
+
+/// A count law with its outcomes listed, for what needs them; anything
+/// else as it is. (Out of line: a lazy law is rare, and the lifting
+/// functions, generic and hot, must stay small enough to inline.)
+#[cold]
+#[inline(never)]
+pub fn listed<'a>(v: &'a Value, budget: &mut Budget) -> OpResult<std::borrow::Cow<'a, Value>> {
+    match v {
+        Value::Counts(c) => Ok(std::borrow::Cow::Owned(c.list(budget)?.into_value())),
+        v => Ok(std::borrow::Cow::Borrowed(v)),
     }
 }
 
@@ -57,6 +72,11 @@ pub fn combine(results: Vec<(Value, f64)>, missing: f64, budget: &mut Budget) ->
     let mut flat = Vec::with_capacity(results.len());
     let mut missing = missing;
     for (v, w) in results {
+        let v = if let Value::Counts(_) = v {
+            listed(&v, budget)?.into_owned()
+        } else {
+            v
+        };
         match v {
             Value::Dist(d) => {
                 missing += w * d.missing;
@@ -72,9 +92,11 @@ pub fn combine(results: Vec<(Value, f64)>, missing: f64, budget: &mut Budget) ->
 
 /// Apply `f` to a value, or to every outcome of a distribution.
 pub fn lift1(a: &Value, budget: &mut Budget, f: impl Fn(&Value, &mut Budget) -> OpResult<Value>) -> OpResult<Value> {
-    if !a.is_dist() {
+    if !a.is_dist() && !matches!(a, Value::Counts(_)) {
         return f(a, budget);
     }
+    let a = listed(a, budget)?;
+    let a = a.as_ref();
     let mut results = Vec::new();
     for (v, w) in outcomes(a).iter() {
         results.push((f(v, budget)?, *w));
@@ -89,9 +111,12 @@ pub fn lift2(
     budget: &mut Budget,
     f: impl Fn(&Value, &Value, &mut Budget) -> OpResult<Value>,
 ) -> OpResult<Value> {
-    if !a.is_dist() && !b.is_dist() {
+    let plain = |v: &Value| !v.is_dist() && !matches!(v, Value::Counts(_));
+    if plain(a) && plain(b) {
         return f(a, b, budget);
     }
+    let (a, b) = (listed(a, budget)?, listed(b, budget)?);
+    let (a, b) = (a.as_ref(), b.as_ref());
     let (oa, ob) = (outcomes(a), outcomes(b));
     budget.outcomes(oa.len() as u128 * ob.len() as u128)?;
     budget.work((oa.len() * ob.len()) as u64)?;
@@ -111,9 +136,19 @@ pub type NaryFn<'a> = &'a dyn Fn(&[Value], &mut Budget) -> OpResult<Value>;
 
 /// Apply `f` to a list of values, lifting over any that are distributions.
 pub fn lift_n(args: &[Value], budget: &mut Budget, f: NaryFn) -> OpResult<Value> {
-    if !args.iter().any(Value::is_dist) {
+    if !args.iter().any(|a| a.is_dist() || matches!(a, Value::Counts(_))) {
         return f(args, budget);
     }
+    let listed_args;
+    let args = if args.iter().any(|a| matches!(a, Value::Counts(_))) {
+        listed_args = args
+            .iter()
+            .map(|a| Ok(listed(a, budget)?.into_owned()))
+            .collect::<OpResult<Vec<_>>>()?;
+        &listed_args[..]
+    } else {
+        args
+    };
     let size = args
         .iter()
         .fold(1u128, |acc, a| acc.saturating_mul(outcomes(a).len() as u128));

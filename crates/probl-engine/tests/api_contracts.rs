@@ -73,12 +73,13 @@ both_modes! {
 
     #[test]
     fn tiny_missing_mass_is_not_erased_by_lifting() {
-        for query in [
-            "cdf(geometric(50%),2)",
-            "pmf(geometric(50%),1)",
-            "P(geometric(50%)>1)",
-            "P(abs(geometric(50%))>1)",
-        ] {
+        // The law itself answers exactly; what's computed from its listed
+        // outcomes keeps their missing tail.
+        for (query, p) in [("cdf(geometric(50%),2)", 0.75), ("pmf(geometric(50%),1)", 0.5)] {
+            let vs = values(MODE, &format!("report {query}"));
+            assert_eq!(vs, vec![Value::Prob(p)], "{query}");
+        }
+        for query in ["P(geometric(50%)>1)", "P(abs(geometric(50%))>1)"] {
             rejects(MODE, &format!("report {query}"), "unresolved");
         }
     }
