@@ -382,3 +382,37 @@ fn collections_carry_outcomes_of_a_draw() {
     // An index is an int, as when sampling.
     assert!(error("let x ~ uniform(0,2)\nreport [1, 2].get(x)").contains("needs an int"));
 }
+
+#[test]
+fn an_event_key_splits_its_group() {
+    let o = outcome("let x ~ uniform(0,2)\nreport x by x > 1\nreport x > 1.5 by x > 1");
+    let group = |i: usize, key: bool| {
+        let acc = &o.reports[i].groups[&Value::Bool(key)];
+        (acc.total.to_f64(), analytic_mixture(&acc.distribution()))
+    };
+    let (w, m) = group(0, false);
+    close(w, 0.5);
+    let m = m.unwrap();
+    close(m.mean(), 0.5);
+    close(m.quantile(1.0), 1.0);
+    let (w, m) = group(0, true);
+    close(w, 0.5);
+    close(m.unwrap().mean(), 1.5);
+    close(o.reports[1].groups[&Value::Bool(true)].chance(), 0.5);
+    close(o.reports[1].groups[&Value::Bool(false)].chance(), 0.0);
+    // The same groups as a branch that names them.
+    let rows = |src: &str| {
+        let out = output(src);
+        out.lines()
+            .filter(|l| !l.contains("5%"))
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert_eq!(
+        rows("let x ~ normal(1,2)\nreport x by x > 1.5"),
+        rows("let x ~ normal(1,2)\nlet g = if x > 1.5 { true } else { false }\nreport x by g")
+    );
+    // Infinitely many groups still aren't a table.
+    assert!(error("let x ~ uniform(0,2)\nreport true by x").contains("grouping by a continuous outcome"));
+}

@@ -775,14 +775,20 @@ impl<'p> Engine<'p> {
         Ok(flow)
     }
 
-    fn restrict_event(&mut self, event: &analytic::Event, yes: bool, w: &mut World, span: Span) -> Result<f64> {
+    fn restrict_event(
+        &mut self,
+        event: &analytic::Event,
+        yes: bool,
+        constraints: &mut analytic::Constraints,
+        span: Span,
+    ) -> Result<f64> {
         self.budget
-            .collection((w.constraints.len() + 1) as u128)
+            .collection((constraints.len() + 1) as u128)
             .map_err(|e| e.at(span))?;
         self.budget
-            .work((w.constraints.len() + event.yes.0.len() + event.draw.domain.0.len()) as u64)
+            .work((constraints.len() + event.yes.0.len() + event.draw.domain.0.len()) as u64)
             .map_err(|e| e.at(span))?;
-        Ok(event.restrict(yes, &mut w.constraints))
+        Ok(event.restrict(yes, constraints))
     }
 
     fn exec_stmt(&mut self, f: FnId, stmt: &'p Stmt, worlds: Vec<World>) -> Result<Flow> {
@@ -1029,8 +1035,8 @@ impl<'p> Engine<'p> {
                         self.check_callback_effect(cond.span)?;
                         let mut y = w.clone();
                         let mut n = w;
-                        let p = self.restrict_event(&event, true, &mut y, cond.span)?;
-                        let q = self.restrict_event(&event, false, &mut n, cond.span)?;
+                        let p = self.restrict_event(&event, true, &mut y.constraints, cond.span)?;
+                        let q = self.restrict_event(&event, false, &mut n.constraints, cond.span)?;
                         if p > 0.0 {
                             yes.push(y.scaled(p));
                         }
@@ -1198,7 +1204,7 @@ impl<'p> Engine<'p> {
                         None => {
                             let v = each!(self, here, saved saved, self.eval(f, value, &w));
                             if let Value::Event(event) = v {
-                                let p = self.restrict_event(&event, true, &mut w, value.span)?;
+                                let p = self.restrict_event(&event, true, &mut w.constraints, value.span)?;
                                 (p, 0.0, 1.0 - p)
                             } else {
                                 let b = ops::fact(&v, "observe").map_err(|e| e.at(value.span))?;
@@ -1218,7 +1224,7 @@ impl<'p> Engine<'p> {
                                 _ => {
                                     let dist = each!(self, here, saved saved, self.eval(f, d, &w));
                                     if let (Value::Bool(b), Value::Event(event)) = (&v, &dist) {
-                                        let p = self.restrict_event(event, *b, &mut w, span)?;
+                                        let p = self.restrict_event(event, *b, &mut w.constraints, span)?;
                                         (p, 0.0, 1.0 - p)
                                     } else {
                                         if analytic::contains(&v) || analytic::contains(&dist) {
@@ -1259,7 +1265,7 @@ impl<'p> Engine<'p> {
                         Some(k) => {
                             let k_value =
                                 each!(self, At::new(f, stmt, w), world w, self.eval(f, k, w), { failed.push(i) });
-                            if analytic::contains(&k_value) {
+                            if analytic::contains(&k_value) && !matches!(k_value, Value::Event(_)) {
                                 return Err(analytic::unsupported("grouping by a continuous outcome").at(k.span));
                             }
                             if k_value.is_uncertain() {
@@ -1294,6 +1300,25 @@ impl<'p> Engine<'p> {
                         }
                         (v, None)
                     };
+                    if let Value::Event(event) = &k {
+                        // An event of a draw is a key with two values: each
+                        // group has its part of the world.
+                        let span = key.as_ref().map_or(span, |k| k.span);
+                        for yes in [true, false] {
+                            let mut constraints = w.constraints.clone();
+                            let p = self.restrict_event(event, yes, &mut constraints, span)?;
+                            if p > 0.0 {
+                                let v = analytic::resolve(&v, &constraints, &mut self.budget)
+                                    .map_err(|e| e.at(value.span))?;
+                                let k = Value::Bool(yes);
+                                self.sinks[*site as usize]
+                                    .validate_analytic(&k, &v)
+                                    .map_err(|e| e.at(value.span))?;
+                                self.sinks[*site as usize].add(k, &v, w.weight.scale(p), run);
+                            }
+                        }
+                        continue;
+                    }
                     self.sinks[*site as usize]
                         .validate_analytic(&k, &v)
                         .map_err(|e| e.at(value.span))?;

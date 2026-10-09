@@ -201,7 +201,7 @@ const CASES: &[Case] = &[
         Works,
     ),
     // N: grouping and text.
-    case("N", "let x ~ uniform(0, 2)\nreport x by x > 1", Unsupported, Works),
+    case("N", "let x ~ uniform(0, 2)\nreport x by x > 1", Works, Works),
     case("N", "let x ~ uniform(0, 2)\nreport str(x)", Unsupported, Works),
     // O: broad count supports and queries about count laws.
     case("O", "let n ~ geometric(0.000000000001)\nreport n", Limit, Works),
