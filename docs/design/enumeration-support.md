@@ -386,6 +386,19 @@ Use exact or independently computed targets first, then sampled comparisons as s
 
 Keep new acceptance programs in the relevant engine and library suites. Add small illustrative examples only when their functionality exists; do not populate `examples/` with programs that currently fail by design.
 
+## Phase 0, as built
+
+**The corpus.** [capabilities.rs](../../crates/probl-engine/tests/capabilities.rs) runs 59 programs in both modes, with the survey's settings: 200 sampled runs, seed 7, total failure mode and a work limit of two million. Each program names the inventory item that would change it (A–R), or is a control: 12 that work in both modes, 3 that the language rejects on purpose, and 4 recipes and built-ins that aren't built in either mode. For each mode it expects one of: works, `Unsupported` (a capability that isn't built), a limit, or rejected (a language rule or a fault). The test also checks that no error suggests sampling for a program that sampling can't run either. Building a capability flips its expectations to "works". `PROBL_CAPABILITIES=print` prints what every program does now. It replaces the table in [reproducing the current boundaries](#reproducing-the-current-boundaries), which records the survey's revision.
+
+**Reclassified errors.** Two capability gaps were reported as language errors, as if the program were invalid. They are now `Unsupported`: observing a value from a continuous distribution when enumerating (A), whose help no longer claims that a density makes enumeration impossible, and arithmetic on an undrawn continuous distribution such as `normal(0, 1) * 2`. Two messages were fixed as well: `score` on an analytic outcome named an internal built-in, and the aggregate-report message mixed its advice into the sentence.
+
+**Contracts for what follows** (proposed, to agree before phase 1):
+
+- **A capability that isn't built is an `Unsupported` error.** It is never a fault: no `catch` takes it, and partial mode doesn't end only its world, so the run stops. Its help suggests sampling only where sampling runs the program, and enumeration never falls back to sampling by itself.
+- **Faults on part of a domain fault that part.** An analytic operation whose input has a region of positive probability where it faults, like `sqrt` over a draw that can be negative, fails that region as a world would fail: the run stops in total mode, the region's probability is failed weight in partial mode, and a matching `catch` continues the region, restricted to it. An operation that doesn't separate its fault region yet stays `Unsupported` for inputs that reach it. A region of probability zero doesn't fault, by the equality-to-a-point convention.
+- **Analytic results are exact up to floating point.** Formulas and numerical CDF inversion are reported as complete, without Monte Carlo error. A method that approximates beyond rounding, such as quadrature, grids or bins, reports its own error status in the results and is opt-in. It's never shown as an exact answer, and a grid never silently replaces a continuous draw.
+- **Densities keep their units.** Evidence that includes a density is labelled as a density and kept as its logarithm. Unresolved-weight bounds hold only for probability likelihoods, at most 1: a capability that applies densities where weight is unresolved must bound the missing likelihood, or reject the program.
+
 ## Relevant prior art
 
 These are directions to borrow, not evidence that another implementation can be imported unchanged or will be faster than Probl.
@@ -412,7 +425,7 @@ target/debug/probl run probe.probl --mode enumerate --on-error total --max-work 
 target/debug/probl run probe.probl --mode sample --runs 200 --seed 7 --on-error total --max-work 2000000 --timeout 2
 ```
 
-Each table cell below is a complete small program; semicolons separate statements. These were checked at the revision above.
+Each table cell below is a complete small program; semicolons separate statements. These were checked at the revision above; the [corpus](#phase-0-as-built) keeps the current version.
 
 | Program | Enumeration | Sampling |
 |---|---|---|

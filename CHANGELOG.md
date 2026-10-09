@@ -4,6 +4,10 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+### Changed
+
+- Two capabilities that aren't built yet are reported as `Unsupported` errors rather than language errors: observing a value from a continuous distribution when enumerating, and arithmetic on an undrawn continuous distribution, like `normal(0, 1) * 2`.
+
 ## [0.2.1] - 2026-10-09
 
 ### Added

@@ -1277,10 +1277,11 @@ impl<'p> Engine<'p> {
                         (self.sample_continuous(v), Some(w.run))
                     } else {
                         if analytic::contains(&v) && !matches!(v, Value::Analytic(_) | Value::Event(_)) {
-                            return Err(analytic::unsupported(
-                                "reporting an aggregate containing analytic outcomes; report its fields individually",
-                            )
-                            .at(value.span));
+                            return Err(
+                                analytic::unsupported("reporting a list or record of continuous outcomes")
+                                    .help("report its fields individually, or use `@mode sample(runs: 10_000)`")
+                                    .at(value.span),
+                            );
                         }
                         (v, None)
                     };
@@ -2716,7 +2717,14 @@ impl<'p> Engine<'p> {
                     | Builtin::BooleanLaw
             )
         {
-            return Err(analytic::unsupported(&format!("`{}` on this outcome", b.name())).at(span));
+            // Internal built-ins stand for the syntax that uses them.
+            let name = match b {
+                Builtin::ScoreLaw => "score",
+                Builtin::RepeatCount => "repeat",
+                Builtin::Typeof => "typeof",
+                b => b.name(),
+            };
+            return Err(analytic::unsupported(&format!("`{name}` on this outcome")).at(span));
         }
         match b {
             Builtin::Typeof => crate::type_name::of(&values[0], &self.prog.enums, &mut self.budget).map_err(at),
@@ -3099,8 +3107,10 @@ fn likelihood(d: &Value, v: &Value, sampling: bool) -> OpResult<(f64, f64, f64)>
     };
     if let Some(parts) = continuous {
         if !sampling {
-            return Err(OpError::new("observing a value from a continuous distribution needs sample mode")
-                .help("its density isn't a probability, so enumeration can't use it; sample with `@mode sample(runs: 10_000)`"));
+            return Err(OpError::unsupported(
+                "observing a value from a continuous distribution isn't supported when enumerating yet",
+            )
+            .help("sample the model with `@mode sample(runs: 10_000)`"));
         }
         let x = match v {
             Value::Bool(_) => None,

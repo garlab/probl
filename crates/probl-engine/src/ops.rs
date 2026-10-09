@@ -706,7 +706,15 @@ fn continuous_binary(op: BinOp, a: &Value, b: &Value) -> OpResult<Option<Value>>
         (BinOp::Gt | BinOp::Ge, false) | (BinOp::Lt | BinOp::Le, true) => 1.0 - below,
         (BinOp::Eq, _) => 0.0,
         (BinOp::Ne, _) => 1.0,
-        _ => return Err(needs_value()),
+        // Arithmetic would make a new recipe, which isn't built yet.
+        _ => {
+            return Err(OpError::unsupported(format!(
+                "`{}` on an undrawn {} distribution isn't supported yet",
+                op.symbol(),
+                family.name()
+            ))
+            .help("draw a value first, like `let x ~ normal(0, 1)`, and compute with it"));
+        }
     };
     Ok(Some(Dist::bernoulli(yes).into_value()))
 }
