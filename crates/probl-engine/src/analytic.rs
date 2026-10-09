@@ -563,6 +563,61 @@ impl Event {
     }
 }
 
+/// An exact update of a draw `x`, read in the world it's updated in, from
+/// observing `seen` with `x` itself as the parameter: the logarithm of the
+/// observation's probability (a density for a normal), and what the world
+/// knows about the draw after it. `None` if the draw's distribution isn't
+/// the prior of a conjugate pair with this observation.
+///
+/// A draw restricted to part of its range stays restricted: its posterior
+/// is the updated family on the same values, and the probability includes
+/// the ratio of the updated and the current family's mass there.
+pub fn update(x: &Analytic, seen: crate::conjugate::Seen) -> OpResult<Option<(f64, Latent)>> {
+    use crate::conjugate::Seen;
+    if x.affine() != Some(Affine::IDENTITY) {
+        return Ok(None);
+    }
+    // A uniform probability is a beta(1, 1) on part of its range, and an
+    // exponential rate a gamma with shape 1.
+    let prior = match (x.family, seen) {
+        (Family::Uniform { lo, hi }, Seen::Binomial { .. } | Seen::Bernoulli(_)) if lo >= 0.0 && hi <= 1.0 => {
+            Family::Beta { a: 1.0, b: 1.0 }
+        }
+        (Family::Exponential { rate }, Seen::Poisson { .. }) => Family::Gamma {
+            shape: 1.0,
+            scale: 1.0 / rate,
+        },
+        (family, _) => family,
+    };
+    let domain = x.domain.moved(&x.family, &prior);
+    let Some((ln, posterior)) = crate::conjugate::update(&prior, seen) else {
+        return Ok(None);
+    };
+    if ln == f64::NEG_INFINITY {
+        return Ok(Some((ln, Latent { family: prior, domain })));
+    }
+    let after = domain.moved(&prior, &posterior);
+    if after.mass() == 0.0 {
+        // Not impossible: beyond what CDF coordinates can tell apart.
+        return Err(OpError::unsupported(
+            "this update leaves the draw where its updated distribution has too little probability to represent",
+        )
+        .help("the draw is restricted to a region far into the tail of its distribution after this observation"));
+    }
+    let ln = if domain == Domain::full() && after == Domain::full() {
+        ln
+    } else {
+        ln + libm::log(after.mass()) - libm::log(domain.mass())
+    };
+    Ok(Some((
+        ln,
+        Latent {
+            family: posterior,
+            domain: after,
+        },
+    )))
+}
+
 pub fn unsupported(what: &str) -> OpError {
     OpError::unsupported(format!("{what} isn't supported for analytic continuous draws yet"))
         .help("use `@mode sample(runs: 10_000)` for this operation")

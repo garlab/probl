@@ -136,29 +136,38 @@ const CASES: &[Case] = &[
     case(
         "G",
         "let p ~ beta(2, 3)\nobserve 3 from binomial(5, p)\nreport p",
-        Unsupported,
+        Works,
         Works,
     ),
     case(
         "G",
         "let r ~ gamma(2, 1)\nobserve 3 from poisson(r)\nreport r",
-        Unsupported,
+        Works,
         Works,
     ),
     // H: a continuous draw as a probability.
     case(
         "H",
         "let p ~ beta(2, 3)\nlet hit = if p { true } else { false }\nreport hit",
+        Works,
+        Works,
+    ),
+    case("H", "let p ~ beta(2, 3)\nlet b ~ bernoulli(p)\nreport b", Works, Works),
+    case("H", "let p ~ uniform(0, 1)\nscore p\nreport p", Works, Works),
+    // Not yet: an affine mean in a conjugate likelihood, and a drawn weight
+    // in `chance`.
+    case(
+        "G",
+        "let mu ~ normal(0, 1)\nobserve 1 from normal(2 * mu, 1)\nreport mu",
         Unsupported,
         Works,
     ),
     case(
         "H",
-        "let p ~ beta(2, 3)\nlet b ~ bernoulli(p)\nreport b",
+        "let p ~ beta(2, 3)\nlet c = chance { p => 1, else => 0 }\nreport c",
         Unsupported,
         Works,
     ),
-    case("H", "let p ~ uniform(0, 1)\nscore p\nreport p", Unsupported, Works),
     // I: joint continuous values.
     case(
         "I",

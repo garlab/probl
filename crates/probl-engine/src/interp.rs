@@ -631,9 +631,153 @@ impl<'p> Engine<'p> {
         Ok(Some(ln))
     }
 
+    /// Update an analytic draw exactly when enumerating: the observation's
+    /// probability, as a logarithm, or `None` if it isn't an update this
+    /// can make.
+    fn observe_posterior(&mut self, f: FnId, u: &Update<'p>, w: &mut World, from: Span) -> Result<Option<f64>> {
+        let Some(x) = self.draw_in(w, u.slot, from)? else {
+            return Ok(None);
+        };
+        let Some(seen) = self.seen(f, u, w, from)? else {
+            return Ok(None);
+        };
+        let Some((ln, latent)) = analytic::update(&x, seen).map_err(|e| e.at(from))? else {
+            return Ok(None);
+        };
+        if matches!(seen, Seen::Normal { .. }) {
+            self.check_density(from)?;
+            self.densities = true;
+            w.densities += 1;
+        }
+        self.know(w, x.id, latent, from)?;
+        Ok(Some(ln))
+    }
+
+    /// Drawing from `bernoulli(p)` or `binomial(n, p)` when enumerating, with
+    /// `p` a variable drawn from a beta: each outcome, in a world where `p`
+    /// is updated exactly by it. `None` for another draw.
+    fn dependent_draw(&mut self, f: FnId, dist: &'p Expr, w: &World) -> Result<Option<Vec<(Value, World)>>> {
+        let ExprKind::Builtin { func, args, named } = &dist.kind else {
+            return Ok(None);
+        };
+        if self.sampler.is_some() || !named.is_empty() {
+            return Ok(None);
+        }
+        let (p, trials) = match (func, args.as_slice()) {
+            (Builtin::Bernoulli, [p]) => (p, None),
+            (Builtin::Binomial, [n, p]) => (p, Some(n)),
+            _ => return Ok(None),
+        };
+        // The variable, or `prob` of it.
+        let slot = match &p.kind {
+            ExprKind::Slot(s) => *s,
+            ExprKind::Builtin {
+                func: Builtin::Prob,
+                args,
+                ..
+            } => match args.as_slice() {
+                [
+                    Expr {
+                        kind: ExprKind::Slot(s),
+                        ..
+                    },
+                ] => *s,
+                _ => return Ok(None),
+            },
+            _ => return Ok(None),
+        };
+        let Some(x) = self.draw_in(w, slot, p.span)? else {
+            return Ok(None);
+        };
+        let outcomes: Vec<(Value, Seen)> = match trials {
+            None => [false, true].map(|b| (Value::Bool(b), Seen::Bernoulli(b))).into(),
+            Some(n) => {
+                let n = self.eval(f, n, w)?;
+                if analytic::contains(&n) {
+                    return Ok(None);
+                }
+                let counts = builtins::counts(Builtin::Binomial, &[n, Value::Prob(0.5)], &mut self.budget)
+                    .map_err(|e| e.at(dist.span))?;
+                let Some(Counts::Binomial { n, .. }) = counts else {
+                    return Ok(None);
+                };
+                self.budget.outcomes(n as u128 + 1).map_err(|e| e.at(dist.span))?;
+                (0..=n)
+                    .map(|k| (Value::Int(k.into()), Seen::Binomial { trials: n, k: k as f64 }))
+                    .collect()
+            }
+        };
+        let seen: Vec<Seen> = outcomes.iter().map(|(_, s)| *s).collect();
+        let worlds = self.outcomes_of(&x, w, &seen, dist.span)?;
+        if worlds.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(
+            outcomes
+                .into_iter()
+                .zip(worlds)
+                .filter_map(|((v, _), w)| Some((v, w?)))
+                .collect(),
+        ))
+    }
+
+    /// The worlds where a draw `x`, the parameter of a likelihood, saw each
+    /// of `seen`, updated exactly: an empty list if `x` isn't the prior of
+    /// that likelihood, and `None` for what `x` can't have seen.
+    fn outcomes_of(&mut self, x: &Analytic, w: &World, seen: &[Seen], span: Span) -> Result<Vec<Option<World>>> {
+        let mut out = Vec::with_capacity(seen.len());
+        for &s in seen {
+            let Some((ln, latent)) = analytic::update(x, s).map_err(|e| e.at(span))? else {
+                return Ok(Vec::new());
+            };
+            if ln == f64::NEG_INFINITY {
+                out.push(None);
+                continue;
+            }
+            let mut w = w.clone();
+            w.weight = w.weight * Weight::from_ln(ln);
+            self.know(&mut w, x.id, latent, span)?;
+            out.push(Some(w));
+        }
+        Ok(out)
+    }
+
+    /// The analytic outcome in `slot`, as the world reads it.
+    fn draw_in(&mut self, w: &World, slot: SlotId, span: Span) -> Result<Option<Analytic>> {
+        let v = &w.slots[slot as usize];
+        if !matches!(v, Value::Analytic(_)) {
+            return Ok(None);
+        }
+        Ok(
+            match analytic::resolve(v, &w.constraints, &mut self.budget).map_err(|e| e.at(span))? {
+                Value::Analytic(x) => Some((*x).clone()),
+                _ => None,
+            },
+        )
+    }
+
+    /// Record what a world now knows about a latent, and read the values
+    /// that hold it again, as they would be read.
+    fn know(&mut self, w: &mut World, id: u64, latent: analytic::Latent, span: Span) -> Result<()> {
+        Arc::make_mut(&mut w.constraints).insert(id, latent);
+        for slot in &mut w.slots {
+            if analytic::contains(slot) {
+                *slot = analytic::resolve(slot, &w.constraints, &mut self.budget).map_err(|e| e.at(span))?;
+            }
+        }
+        Ok(())
+    }
+
     /// What a conjugate observation saw, checked as when its variable is
     /// drawn; `None` if a part of it isn't a plain value.
     fn seen(&mut self, f: FnId, u: &Update<'p>, w: &World, from: Span) -> Result<Option<Seen>> {
+        if self.sampler.is_none() {
+            for e in u.others() {
+                if analytic::contains(&self.eval(f, e, w)?) {
+                    return Ok(None);
+                }
+            }
+        }
         // A count, as observing one from a drawn distribution reads it:
         // anything but a whole number of 0 or more is impossible.
         let count = |v: &Value| match v {
@@ -808,17 +952,10 @@ impl<'p> Engine<'p> {
     /// Weighs an enumerated world by the density `exp(ln)` of what an
     /// observation at `span` saw.
     fn observe_density(&mut self, ln: f64, w: &mut World, span: Span) -> Result<()> {
-        if self.depth > 0 {
-            return Err(OpError::unsupported(
-                "observing a value from a continuous distribution inside a function isn't supported when enumerating yet",
-            )
-            .help("observe it in the main program, or sample the model with `@mode sample(runs: 10_000)`")
-            .at(span));
-        }
+        self.check_density(span)?;
         if ln == f64::INFINITY {
             return Err(RuntimeError::new(span, "the density at the observed value is infinite"));
         }
-        self.density_at.get_or_insert(span);
         if ln == f64::NEG_INFINITY {
             self.lost += w.weight;
             w.weight = Weight::ZERO;
@@ -827,6 +964,20 @@ impl<'p> Engine<'p> {
             w.weight = w.weight * Weight::from_ln(ln);
             w.densities += 1;
         }
+        Ok(())
+    }
+
+    /// An enumerated world's weight can include a density only where the
+    /// world counts it (see `World::densities`).
+    fn check_density(&mut self, span: Span) -> Result<()> {
+        if self.depth > 0 {
+            return Err(OpError::unsupported(
+                "observing a value from a continuous distribution inside a function isn't supported when enumerating yet",
+            )
+            .help("observe it in the main program, or sample the model with `@mode sample(runs: 10_000)`")
+            .at(span));
+        }
+        self.density_at.get_or_insert(span);
         Ok(())
     }
 
@@ -931,6 +1082,17 @@ impl<'p> Engine<'p> {
                             out.push(w);
                             continue;
                         }
+                    }
+                    if let Some(outcomes) = each!(self, at, saved saved, self.dependent_draw(f, dist, &w)) {
+                        let mark = out.len();
+                        let assigned: Result<()> = outcomes.into_iter().try_for_each(|(v, mut w)| {
+                            self.assign(f, place, v, &mut w, dist.span)?;
+                            out.push(w);
+                            Ok(())
+                        });
+                        each!(self, at, saved saved, assigned, { out.truncate(mark) });
+                        self.check_worlds(out.len(), span)?;
+                        continue;
                     }
                     let d = each!(self, at, saved saved, self.eval(f, dist, &w));
                     if let (Some(variable), Value::Continuous(family)) = (delay, &d) {
@@ -1100,6 +1262,19 @@ impl<'p> Engine<'p> {
                         }
                         continue;
                     }
+                    if let Value::Analytic(x) = &condition {
+                        // A probability drawn from a beta: each branch
+                        // updates it, as observing the branch's side from
+                        // `bernoulli(p)` would.
+                        let sides = [Seen::Bernoulli(true), Seen::Bernoulli(false)];
+                        let mut sides = self.outcomes_of(x, &w, &sides, cond.span)?.into_iter();
+                        if let (Some(y), Some(n)) = (sides.next(), sides.next()) {
+                            self.check_callback_effect(cond.span)?;
+                            yes.extend(y);
+                            no.extend(n);
+                            continue;
+                        }
+                    }
                     let c = ops::condition(&condition).map_err(|e| e.at(cond.span))?;
                     if (c.yes > 0.0 && c.no > 0.0) || c.missing > 0.0 {
                         self.check_callback_effect(cond.span)?;
@@ -1234,7 +1409,9 @@ impl<'p> Engine<'p> {
             }
             StmtKind::Observe { value, from } => {
                 self.observed = true;
-                let exact = if self.delaying() {
+                // When sampling, an update of a delayed draw; when
+                // enumerating, of an analytic one.
+                let exact = if self.delaying() || self.sampler.is_none() {
                     probl_sema::conjugate::update(value, from.as_ref())
                 } else {
                     None
@@ -1245,7 +1422,12 @@ impl<'p> Engine<'p> {
                     let mut saved = self.snapshot(&w);
                     if let Some(u) = &exact {
                         let at = from.as_ref().map_or(span, |d| d.span);
-                        if let Some(ln) = each!(self, here, saved saved, self.observe_exactly(f, u, &mut w, at)) {
+                        let ln = if self.sampler.is_some() {
+                            self.observe_exactly(f, u, &mut w, at)
+                        } else {
+                            self.observe_posterior(f, u, &mut w, at)
+                        };
+                        if let Some(ln) = each!(self, here, saved saved, ln) {
                             w.weight = w.weight * Weight::from_ln(ln);
                             if w.weight.is_zero() {
                                 self.last_ruling_out = Some(span);
