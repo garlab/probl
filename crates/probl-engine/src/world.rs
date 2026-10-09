@@ -118,7 +118,8 @@ pub fn state_hash(w: &World, live: &[usize]) -> u64 {
 /// don't matter, cleared or not.
 pub fn merge(mut worlds: Vec<World>, live: &SlotSet, enabled: bool) -> Vec<World> {
     for w in &mut worlds {
-        if w.constraints.keys().all(|id| w.inherited.contains(id)) {
+        // Most worlds have no restrictions: don't even iterate.
+        if w.constraints.is_empty() || w.constraints.keys().all(|id| w.inherited.contains(id)) {
             continue;
         }
         let mut ids = (*w.inherited).clone();

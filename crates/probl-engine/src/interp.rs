@@ -631,9 +631,60 @@ impl<'p> Engine<'p> {
         Ok(Some(ln))
     }
 
+    /// `if p` for a probability `p` drawn from a beta: each branch updates
+    /// it, as observing that side from `bernoulli(p)` would. Whether it was
+    /// such a `p`. (Out of `exec_stmt_kind`, like the next two, which every
+    /// statement runs: inlined, they'd make its frame larger.)
+    #[inline(never)]
+    fn branch_on_draw(
+        &mut self,
+        x: &Analytic,
+        w: &World,
+        yes: &mut Vec<World>,
+        no: &mut Vec<World>,
+        span: Span,
+    ) -> Result<bool> {
+        let sides = [Seen::Bernoulli(true), Seen::Bernoulli(false)];
+        let mut sides = self.outcomes_of(x, w, &sides, span)?.into_iter();
+        let (Some(y), Some(n)) = (sides.next(), sides.next()) else {
+            return Ok(false);
+        };
+        self.check_callback_effect(span)?;
+        yes.extend(y);
+        no.extend(n);
+        Ok(true)
+    }
+
+    /// A draw from `bernoulli(p)` or `binomial(n, p)` with a probability
+    /// drawn from a beta, into `out` (see `dependent_draw`); whether it was
+    /// one.
+    #[inline(never)]
+    fn draw_dependent(
+        &mut self,
+        f: FnId,
+        place: &Place,
+        dist: &'p Expr,
+        w: &World,
+        out: &mut Vec<World>,
+    ) -> Result<bool> {
+        let Some(outcomes) = self.dependent_draw(f, dist, w)? else {
+            return Ok(false);
+        };
+        let mark = out.len();
+        for (v, mut w) in outcomes {
+            if let Err(e) = self.assign(f, place, v, &mut w, dist.span) {
+                out.truncate(mark);
+                return Err(e);
+            }
+            out.push(w);
+        }
+        Ok(true)
+    }
+
     /// Update an analytic draw exactly when enumerating: the observation's
     /// probability, as a logarithm, or `None` if it isn't an update this
     /// can make.
+    #[inline(never)]
     fn observe_posterior(&mut self, f: FnId, u: &Update<'p>, w: &mut World, from: Span) -> Result<Option<f64>> {
         let Some(x) = self.draw_in(w, u.slot, from)? else {
             return Ok(None);
@@ -1083,14 +1134,9 @@ impl<'p> Engine<'p> {
                             continue;
                         }
                     }
-                    if let Some(outcomes) = each!(self, at, saved saved, self.dependent_draw(f, dist, &w)) {
-                        let mark = out.len();
-                        let assigned: Result<()> = outcomes.into_iter().try_for_each(|(v, mut w)| {
-                            self.assign(f, place, v, &mut w, dist.span)?;
-                            out.push(w);
-                            Ok(())
-                        });
-                        each!(self, at, saved saved, assigned, { out.truncate(mark) });
+                    if self.sampler.is_none()
+                        && each!(self, at, saved saved, self.draw_dependent(f, place, dist, &w, &mut out))
+                    {
                         self.check_worlds(out.len(), span)?;
                         continue;
                     }
@@ -1263,15 +1309,7 @@ impl<'p> Engine<'p> {
                         continue;
                     }
                     if let Value::Analytic(x) = &condition {
-                        // A probability drawn from a beta: each branch
-                        // updates it, as observing the branch's side from
-                        // `bernoulli(p)` would.
-                        let sides = [Seen::Bernoulli(true), Seen::Bernoulli(false)];
-                        let mut sides = self.outcomes_of(x, &w, &sides, cond.span)?.into_iter();
-                        if let (Some(y), Some(n)) = (sides.next(), sides.next()) {
-                            self.check_callback_effect(cond.span)?;
-                            yes.extend(y);
-                            no.extend(n);
+                        if self.branch_on_draw(x, &w, &mut yes, &mut no, cond.span)? {
                             continue;
                         }
                     }
