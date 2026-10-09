@@ -35,6 +35,14 @@ cargo run --release -p probl-bench -- compare before.jsonl after.jsonl
 
 `compare` takes each model's fastest time and smallest peak heap over the runs in a file, and fails if any model's output or world-steps changed, or if it got more than 5% slower or bigger (`--threshold=`). Differences under 2 ms or 64 KB are noise. Running the two builds alternately keeps background load from favoring one.
 
+Compare builds made with one codegen unit and full LTO:
+
+```sh
+CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_LTO=fat cargo build --release -p probl-bench
+```
+
+With the release profile's 16 codegen units, how the compiler splits the engine depends on its types, and that decides what gets inlined: adding a field to a type that the models never use made sampled models 5% slower in the same number of instructions, and the same two builds with one codegen unit differed by 0.6%. A slowdown that `/usr/bin/time -l` shows as cycles but not as instructions retired is likely to be this.
+
 ## The models
 
 The baseline used twelve models in [`benches/`](../benches), each chosen to stress one candidate improvement, alongside the original ten examples. The runner discovers the current models in both directories, so today's suite includes later examples too.

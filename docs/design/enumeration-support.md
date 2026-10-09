@@ -2,7 +2,7 @@
 
 > Surveyed October 9, 2026 against revision `f12e583` (`0.2.0`). This document describes current restrictions and proposes implementation directions; it does not change the language contract. Effort estimates are engineering judgments, not measured implementation times. The [high-level plan](#high-level-implementation-plan) separates near-term work from research.
 >
-> Phases 0 and 1 are built since: see [phase 0](#phase-0-as-built) and [phase 1](#phase-1-as-built). The survey's sections still describe the revision it surveyed.
+> Phases 0 to 2 are built since: see [phase 0](#phase-0-as-built), [phase 1](#phase-1-as-built) and [phase 2](#phase-2-as-built). The survey's sections still describe the revision it surveyed.
 
 ## Recommendation
 
@@ -417,14 +417,37 @@ Left out: `clamp` with analytic bounds, whose order could fault on part of the d
 
 Left out: densities inside functions and `simulate`, which need the count in call results; a likelihood envelope that would bound unresolved weight instead of rejecting it; and analytic values or parameters in the observation, which are G and H.
 
-**Measurements.** Phase 0 against the commit before it, and phase 1 against phase 0, with `probl-bench --json` twice for each build, alternating, compared by `probl-bench compare` (the minimum of each), at a 5% threshold above noise floors of 2 ms and 64 KB:
+## Phase 2, as built
+
+The corpus's G and H programs now work in both modes: 5 of them. Two more rows record what's next: an affine mean in a conjugate likelihood, and a drawn weight in `chance`.
+
+**The posterior context.** A world's restriction on a draw is a `Latent`: the draw's distribution in that world, and the intervals in its CDF coordinates ([analytic.rs](../../crates/probl-engine/src/analytic.rs)). A value carries the coordinates of the distribution it was made under, and reading it moves it to the world's: each coordinate c becomes F'(Q(c)), the same values of the draw. So a stored event, a piece's boundary or a restriction keeps meaning the same values after an update. The context came in a commit of its own, which changed no results.
+
+**G: exact updates.** The compiler's recognition of conjugate observations, which the sampler uses for delayed draws, also serves enumeration now, with the same formulas ([conjugate.rs](../../crates/probl-engine/src/conjugate.rs)): `binomial`, `bernoulli` and `score` with a beta, `poisson` with a gamma, and `normal` with a normal mean, whose evidence is a density and counts as one. A uniform probability within [0, 1] is a beta(1, 1) on its range, and an exponential rate a gamma with shape 1. The parameter must be the variable itself, and the rest settled. After an update, the world's values that hold the draw are read again, so aliases in lists, stored events and closures see the posterior, and a call returns the posterior with its restrictions. A draw already restricted stays restricted: its posterior is the updated family on the same values, and the evidence includes the ratio of that family's mass there to the previous one's. A restriction and an update therefore give the same evidence and joint events in either order, which a test checks for `p > 0.5` and a binomial. Where the updated family's mass on the restriction rounds to zero in CDF coordinates, the update is unsupported, rather than impossible evidence.
+
+**H: branches and draws on a drawn probability.** `if p`, `~bernoulli(p)` and `~binomial(n, p)`, for a `p` drawn from a beta, split the world by outcome, each with the weight and the posterior of observing that outcome. The branches of `if p` weigh E[p] and 1 − E[p], and together give back the prior; two branches on the same `p` agree with probability E[p²] + E[(1 − p)²], 0.6 for beta(2, 3), not the 0.52 of independent ones. `~binomial(5, p)` has the beta-binomial's outcomes, and `p` after each.
+
+Left out:
+
+- A parameter that isn't the variable itself: `normal(2 * mu, 1)`, `bernoulli(1 - p)`, `bernoulli(xs[0])` or `score 0.5 * p`. An affine likelihood splits into a mixture of updates, and needs the likelihood recognized at run time rather than from the syntax.
+- A drawn weight in `chance`, and `prob(p)` or `let q: prob = p` as values.
+- Draws whose outcomes aren't finite: `~poisson(rate)` with a gamma rate needs lazy count laws (O), and `~normal(mu, 1)` joint continuous values (I).
+- A normal likelihood inside a function, which observes a density there (phase 1's restriction).
+- Precision in the tails: restrictions are CDF intervals, so a region whose probability is below about 1e-16 under the updated family can't be told apart from nothing.
+
+## Measurements of each phase
+
+Phase 0 against the commit before it, and each phase against the one before, with `probl-bench --json` twice for each build, alternating, compared by `probl-bench compare` (the minimum of each), at a 5% threshold above noise floors of 2 ms and 64 KB:
 
 | | Outputs and world steps | Time, total | Slower or more memory |
 |---|---|---|---|
 | Phase 0 | identical for all 31 models | 66.93 s → 66.97 s (+0.1%) | none |
 | Phase 1 | identical for all 31 models | 67.01 s → 67.01 s (−0.0%) | none: see below |
+| Phase 2 | identical for all 31 models | 67.41 s → 66.85 s (−0.8%), with one codegen unit | none: see below |
 
-Phase 1's comparison flagged two sampled models, and both were noise. `08_signup_forecast` was 5.9% slower; in six more runs of each build, alternating, the new build's fastest was 0.353 s and the old one's 0.359 s. `epidemic`'s peak heap was 7.5% higher: across threads it varies from run to run of the same build (7.28–7.80 MB), and on one thread both builds peak at exactly 4,062,497 bytes after the same number of world steps. The measurements are of commit `fa4affa`; the fix after it changes only analytic outcomes, which no model in the benchmark besides `19_analytic_continuous` has, and that one has no atoms.
+Phase 1's comparison flagged two sampled models, and both were noise. `08_signup_forecast` was 5.9% slower; in six more runs of each build, alternating, the new build's fastest was 0.353 s and the old one's 0.359 s. `epidemic`'s peak heap was 7.5% higher: across threads it varies from run to run of the same build (7.28–7.80 MB), and on one thread both builds peak at exactly 4,062,497 bytes after the same number of world steps. The measurements are of commit `ac8f0d5`; the fix after it changes only analytic outcomes, which no model in the benchmark besides `19_analytic_continuous` has, and that one has no atoms.
+
+Phase 2's first comparison, with the release profile, found four models 4–7% slower in six alternating runs each, enumerated and sampled alike, with the same instructions retired within 0.5% (`/usr/bin/time -l`, one thread). Two causes. The new code was inlined into `exec_stmt_kind`, which every statement runs, and grew its frame from 4,224 to 4,608 bytes: it's now in functions of its own. And `merge` iterated each world's restrictions even when there were none, an iterator call that a larger value type stopped inlining: it now checks for none first, which saves 0.4% of instructions on `inventory`. The rest followed the codegen units. Giving the restrictions' value type the family alone, without any of the code that uses it, cost 5% of cycles on `inventory` in the same instructions; a 24-byte newtype didn't, nor did aligning functions or branch targets, a large unused function, or another malloc zone. With one codegen unit and full LTO, the two builds differ by 0.6% there, and the whole benchmark by −0.8%, with one model flagged, `01_tour`, which six more runs each put at 221.1 ms against 221.3 ms. Both builds are also about 10% faster on `inventory` with those settings than with the release profile. [Benchmarks](../benchmarks.md#comparing-two-builds) now says to compare builds that way.
 
 ## Relevant prior art
 
