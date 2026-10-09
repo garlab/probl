@@ -1,6 +1,5 @@
-# Keep the GitHub Actions the workflows use, and the Dockerfile's base
-# images, up to date: they're pinned by commit and by digest, so their
-# versions only change through these pull requests.
+# The workflows' actions and the Dockerfile's base images are pinned by
+# commit and digest: their versions only change through these pull requests.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -14,7 +13,6 @@ updates:
     groups:
       actions:
         patterns: ["*"]
-  # The Dockerfile's base images, pinned by digest.
   - package-ecosystem: docker
     directory: /
     schedule:

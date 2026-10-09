@@ -1,6 +1,4 @@
-# The image builds the command from the workspace's manifests and crates:
-# nothing else is sent to the builder, so local files such as `.env` never
-# reach it.
+# Only what the build needs, which keeps local files such as `.env` out.
 *
 !Cargo.toml
 !Cargo.lock
