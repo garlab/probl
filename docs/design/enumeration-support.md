@@ -2,7 +2,7 @@
 
 > Surveyed October 9, 2026 against revision `f12e583` (`0.2.0`). This document describes current restrictions and proposes implementation directions; it does not change the language contract. Effort estimates are engineering judgments, not measured implementation times. The [high-level plan](#high-level-implementation-plan) separates near-term work from research.
 >
-> Phases 0 to 2 are built since: see [phase 0](#phase-0-as-built), [phase 1](#phase-1-as-built) and [phase 2](#phase-2-as-built). The survey's sections still describe the revision it surveyed.
+> Phases 0 to 3 are built since: see [phase 0](#phase-0-as-built), [phase 1](#phase-1-as-built), [phase 2](#phase-2-as-built) and [phase 3](#phase-3-as-built). The survey's sections still describe the revision it surveyed.
 
 ## Recommendation
 
@@ -435,6 +435,23 @@ Left out:
 - A normal likelihood inside a function, which observes a density there (phase 1's restriction).
 - Precision in the tails: restrictions are CDF intervals, so a region whose probability is below about 1e-16 under the updated family can't be told apart from nothing.
 
+## Phase 3, as built
+
+The corpus's D programs and O cells now work: rounding a bounded draw, `pmf` and `cdf` of count laws, and sampling a named law too broad to list. Three new rows record what's next: rounding a normal, rounding to decimal places, and the median of a Poisson too broad to list.
+
+**O: count laws.** A `binomial`, `poisson` or `geometric` still lists its outcomes, so what worked before behaves the same, but the listed distribution carries its law ([dist.rs](../../crates/probl-engine/src/dist.rs), `Dist::law`, which isn't part of the distribution's identity). `pmf` and `cdf` of it sum the listed outcomes, without renormalizing them and without rejecting their missing mass: the law says that the missing tail is below 10⁻¹⁸, which no probability a float holds can show. What's computed from the outcomes, like `P(poisson(3) > 2)` or arithmetic, keeps the missing mass, as a contract test checks. The outcomes answer rather than the formulas because the incomplete gamma and beta functions lose accuracy for large parameters: their front factors cancel, and their series stop after 10,000 terms.
+
+A law whose listing would need more outcomes than the limit is a `Value::Counts` instead. The number is estimated before listing: from the tail for a geometric, and as 9 standard deviations each side for the others. Sampling draws from it directly, named or not, so `let d = geometric(1e-12); let n ~ d` samples exactly what the direct draw does. `mean`, `variance` and `sd` of it come from formulas, and so do `pmf`, `cdf`, quantiles and medians of a geometric, whose closed forms are exact. For a Poisson or binomial that broad, those four are unsupported. Observing a value from it uses its `pmf`. Anything that needs its outcomes lists it, which fails on the outcome limit as building it used to: enumerating a draw from it, arithmetic, a report of it, or a mixture with it. No program that worked changes, and the corpus's direct and named recipes now agree in both modes.
+
+**D: rounding.** `floor`, `ceil`, `trunc` and `round` of an outcome with bounded values use phase 1's pieces, constant ones. Where the outcome is affine in the draw, the rounding's steps (whole numbers, or halves for `round`) split the piece, and each part's value is the rounding of its midpoint; a constant piece rounds as its number does, so a tie at an atom follows `round`'s rule. The outcome is an int, and sums, differences and products of ints stay ints, as numbers do. Comparisons on it are events of the draw, so `observe floor(x) == 1` restricts `x` to [1, 2). A report gives its values and their probabilities. Assigning it splits the world, a world for each value with the draw restricted to its part, so the variable is a plain int: `typeof`, indexing and `mod` work on it, and `let k: int = floor(x)` passes the annotation. A non-integral outcome still can't be converted to an int, so nothing rounds implicitly.
+
+Left out:
+
+- Rounding a draw whose values have no bound, like a normal's, which has infinitely many values: a lazy discrete law, or an unresolved tail.
+- `round(x, digits)`.
+- Using a rounded outcome as an index, or in other arithmetic, before assigning it: `[a, b, c][floor(x)]` or `floor(x) mod 2`. Assigned, both work.
+- `pmf`, `cdf`, quantiles and medians of a Poisson or binomial too broad to list, which need accurate incomplete gamma and beta functions for large parameters.
+
 ## Measurements of each phase
 
 Phase 0 against the commit before it, and each phase against the one before, with `probl-bench --json` twice for each build, alternating, compared by `probl-bench compare` (the minimum of each), at a 5% threshold above noise floors of 2 ms and 64 KB:
@@ -444,10 +461,13 @@ Phase 0 against the commit before it, and each phase against the one before, wit
 | Phase 0 | identical for all 31 models | 66.93 s → 66.97 s (+0.1%) | none |
 | Phase 1 | identical for all 31 models | 67.01 s → 67.01 s (−0.0%) | none: see below |
 | Phase 2 | identical for all 31 models | 67.41 s → 66.85 s (−0.8%), with one codegen unit | none: see below |
+| Phase 3 | identical for all 31 models | 66.90 s → 66.93 s (+0.0%), with one codegen unit | none, after two fixes: see below |
 
 Phase 1's comparison flagged two sampled models, and both were noise. `08_signup_forecast` was 5.9% slower; in six more runs of each build, alternating, the new build's fastest was 0.353 s and the old one's 0.359 s. `epidemic`'s peak heap was 7.5% higher: across threads it varies from run to run of the same build (7.28–7.80 MB), and on one thread both builds peak at exactly 4,062,497 bytes after the same number of world steps. The measurements are of commit `ac8f0d5`; the fix after it changes only analytic outcomes, which no model in the benchmark besides `19_analytic_continuous` has, and that one has no atoms.
 
 Phase 2's first comparison, with the release profile, found four models 4–7% slower in six alternating runs each, enumerated and sampled alike, with the same instructions retired within 0.5% (`/usr/bin/time -l`, one thread). Two causes. The new code was inlined into `exec_stmt_kind`, which every statement runs, and grew its frame from 4,224 to 4,608 bytes: it's now in functions of its own. And `merge` iterated each world's restrictions even when there were none, an iterator call that a larger value type stopped inlining: it now checks for none first, which saves 0.4% of instructions on `inventory`. The rest followed the codegen units. Giving the restrictions' value type the family alone, without any of the code that uses it, cost 5% of cycles on `inventory` in the same instructions; a 24-byte newtype didn't, nor did aligning functions or branch targets, a large unused function, or another malloc zone. With one codegen unit and full LTO, the two builds differ by 0.6% there, and the whole benchmark by −0.8%, with one model flagged, `01_tour`, which six more runs each put at 221.1 ms against 221.3 ms. Both builds are also about 10% faster on `inventory` with those settings than with the release profile. [Benchmarks](../benchmarks.md#comparing-two-builds) now says to compare builds that way.
+
+Phase 3's first comparison found 12 models 6–20% slower, with one codegen unit, and `inventory` 26% slower in cycles with 3.6% more instructions. The lifting functions (`lift1`, `lift2`, `lift_n`), which every operation on a value goes through, listed a lazy law by calling themselves again on the list, and a generic function that recurses isn't inlined: the build had 14 copies of them out of line, where it had 2. They now list it in a cold function and go on, without recursion. The rest was the check in the assignment loop for a discrete outcome to split, whose vector of worlds and `continue` cost 2% of cycles: it now sets a flag through a cold function, and the split happens after the loop. Putting the lazy law's variant next to `Dist`'s, so that one comparison checks for either, saved instructions but cost cycles, and was left out.
 
 ## Relevant prior art
 
