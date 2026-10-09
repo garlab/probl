@@ -26,6 +26,7 @@ The [examples directory](../examples) contains runnable models with expected out
 
 ## Research and historical rationale
 
+- [Extending enumeration](design/enumeration-support.md): current capability limits, analytic and symbolic implementation directions, effort estimates and a phased plan.
 - [Imports and model tests](design/imports-and-tests.md): static reusable definitions, acyclic dependencies, isolated `.test.probl` files and explicit assertions over weighted populations.
 - [Error handling](design/error-handling.md): a near-term proposal for specific local catches and total/partial failure modes (partial by default when sampling), with explicit failure accounting and partial-result reporting.
 - [Portals and external effects](design/portals-and-effects.md): a deferred proposal for an implicit prologue, read-only joint population views and midway host interaction; better reporting comes first.
