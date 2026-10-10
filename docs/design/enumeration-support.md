@@ -2,7 +2,7 @@
 
 > Surveyed October 9, 2026 against revision `f12e583` (`0.2.0`). This document describes current restrictions and proposes implementation directions; it does not change the language contract. Effort estimates are engineering judgments, not measured implementation times. The [high-level plan](#high-level-implementation-plan) separates near-term work from research.
 >
-> Phases 0 to 5 are built since: see [phase 0](#phase-0-as-built), [phase 1](#phase-1-as-built), [phase 2](#phase-2-as-built), [phase 3](#phase-3-as-built), [phase 4](#phase-4-as-built) and [phase 5](#phase-5-as-built). The survey's sections still describe the revision it surveyed.
+> Phases 0 to 6 are built since: see [phase 0](#phase-0-as-built), [phase 1](#phase-1-as-built), [phase 2](#phase-2-as-built), [phase 3](#phase-3-as-built), [phase 4](#phase-4-as-built), [phase 5](#phase-5-as-built) and [phase 6](#phase-6-as-built). The survey's sections still describe the revision it surveyed.
 
 ## Recommendation
 
@@ -488,6 +488,29 @@ Left out:
 - Normal observations inside functions, as in phase 1, and normal likelihoods with a drawn standard deviation.
 - Affine parameters of other likelihoods: `bernoulli(1 - p)`.
 
+## Phase 6, as built
+
+The corpus's K programs with local continuous draws work in both modes, and so does the L program. A new row records what's next: a report that mixes records of outcomes with other values. A `simulate` that captures an outer analytic draw stays unsupported, as K's third problem says: it would be a model conditional on the capture.
+
+**K: local draws.** `simulate` always enumerates, so continuous draws inside it are analytic outcomes, in sample mode too, and the guard that rejected them is gone. Its worlds' values are read at their return, so each is self-contained: its draws' distributions, restrictions and forms. What the block returns decides the result ([joint.rs](../../crates/probl-engine/src/joint.rs)):
+
+- Values without outcomes of draws give an ordinary distribution, as before.
+- Values of only events give their truth values: each combination of the events, with the probability of their intersection, from phase 5's boxes. `simulate { let x ~ normal(0, 1); x > 0 }` is true and false, 50% each.
+- Otherwise the result is a `Value::Joint`, a distribution whose outcomes own their draws. Each outcome's latents are renumbered from 2⁶³, in their order, so equal outcomes compare equal and none can be taken for a world's latent.
+
+Drawing from it gives each outcome's latents fresh numbers in the world, in the same order, so forms keep their sorted terms: two draws are independent, and the parts of one, like a record's fields, stay correlated. When sampling, a draw chooses an outcome, then a CDF coordinate uniformly in each of its latents' domains, and evaluates the outcome there: its pieces at each axis's coordinate, and its events' boxes. A choice among options that include one is drawn the same way. Reports add its outcomes' marginals, and `mean`, `sd`, `variance`, `median`, `quantile`, `cdf` and `pdf` use the mixture of them. A comparison with a number or arithmetic with one applies to each outcome, and the outcomes go back through the same construction, so `d > 1` is a distribution of bools. A `Value::Joint` doesn't count as holding analytic values: it never refers to a world's latents, so it can be a call's argument, and two worlds with the same one merge.
+
+**Local posteriors.** A `simulate` block can observe densities directly. Its result is normalized, so the units cancel when every returning world includes as many densities, which its `return` checks, and when none of its weight is unresolved, which could have any density. Functions called inside it still can't, as phase 1 says, and the program's evidence is unaffected. Joint updates inside it make substitutions in its frame, which values read at its return have already applied.
+
+**L: structured reports.** A report of records, lists or maps that hold outcomes of draws keeps each one by its marginals, without its draws' identities, so equal laws merge. Its results have a group per field path, `.x`, `[0]` or `["key"]`, computed as if that field were reported alone (`GroupResult::fields`, and the library's `Group::fields`). The renderer labels them "marginal of each field", since fields can depend on each other in ways marginals don't show. Values reported for one key must all be aggregates of the same fields, checked when they're added. Sampling still lists concrete records as outcomes.
+
+Left out:
+
+- Conditional local models: capturing an outer analytic draw, whose normalization can depend on the capture.
+- Arithmetic between two `simulate` distributions of outcomes, or between one and an outer draw, which would need the second's draws renumbered apart.
+- `support` and `pmf` of one, and `P` of a distribution of records that hold events.
+- Per-field summaries of sampled records, which list every distinct record.
+
 ## Measurements of each phase
 
 Phase 0 against the commit before it, and each phase against the one before, with `probl-bench --json` twice for each build, alternating, compared by `probl-bench compare` (the minimum of each), at a 5% threshold above noise floors of 2 ms and 64 KB:
@@ -500,6 +523,7 @@ Phase 0 against the commit before it, and each phase against the one before, wit
 | Phase 3 | identical for all 31 models | 66.90 s → 66.93 s (+0.0%), with one codegen unit | none, after two fixes: see below |
 | Phase 4 | identical for all 31 models | 66.96 s → 67.06 s (+0.1%), with one codegen unit | none: `inventory`'s +4.9% was noise, 469.5 ms against 470.2 ms in five more runs each |
 | Phase 5 | identical for all 31 models | 67.01 s → 67.00 s (−0.0%), with one codegen unit | none: see below |
+| Phase 6 | identical for all 31 models | 66.89 s → 66.78 s (−0.2%), with one codegen unit | none, after one fix: see below |
 
 Phase 1's comparison flagged two sampled models, and both were noise. `08_signup_forecast` was 5.9% slower; in six more runs of each build, alternating, the new build's fastest was 0.353 s and the old one's 0.359 s. `epidemic`'s peak heap was 7.5% higher: across threads it varies from run to run of the same build (7.28–7.80 MB), and on one thread both builds peak at exactly 4,062,497 bytes after the same number of world steps. The measurements are of commit `ac8f0d5`; the fix after it changes only analytic outcomes, which no model in the benchmark besides `19_analytic_continuous` has, and that one has no atoms.
 
@@ -508,6 +532,8 @@ Phase 2's first comparison, with the release profile, found four models 4–7% s
 Phase 3's first comparison found 12 models 6–20% slower, with one codegen unit, and `inventory` 26% slower in cycles with 3.6% more instructions. The lifting functions (`lift1`, `lift2`, `lift_n`), which every operation on a value goes through, listed a lazy law by calling themselves again on the list, and a generic function that recurses isn't inlined: the build had 14 copies of them out of line, where it had 2. They now list it in a cold function and go on, without recursion. The rest was the check in the assignment loop for a discrete outcome to split, whose vector of worlds and `continue` cost 2% of cycles: it now sets a flag through a cold function, and the split happens after the loop. Putting the lazy law's variant next to `Dist`'s, so that one comparison checks for either, saved instructions but cost cycles, and was left out.
 
 Phase 5's comparison flagged nothing, but `19_analytic_continuous`, the only model with analytic outcomes and the one this phase could slow down, took 146 µs before and 347 µs after, under the 2 ms noise floor. In 30 more runs of each build, alternating, its median was 351 µs before and 341 µs after, and both builds retire the same number of instructions for it within 0.5% (`/usr/bin/time -l`, about 24 million, including the runner's start).
+
+Phase 6's earlier comparisons flagged `08_signup_forecast` 11% slower once, and `epidemic`'s peak heap 6.2% higher once, and `inventory` was 2.6% slower in cycles on one thread, with 0.3% more instructions. The first two didn't hold. The signup model, through the command line, took a median of 358 ms against 367 ms before, in ten runs of each build; the benchmark's own runs agreed on one thread. `epidemic`'s heap, on one thread, differs by 72 bytes. `inventory`'s slowdown was real: every arithmetic operation tested its operands for analytic outcomes, then continuous distributions, then the new joint distributions. One test of each operand for all three kinds, with the rare cases out of line, now retires 1.3% fewer instructions on `inventory` than before the phase. The `return` statement and drawing from a joint distribution moved out of the functions that every statement and draw run, whose frames had grown. The report structures carry one pointer each for a structured report's fields: the smallest models' peak heap, which their final results set, is up to 192 bytes higher.
 
 ## Relevant prior art
 
