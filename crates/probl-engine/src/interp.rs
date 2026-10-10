@@ -258,6 +258,11 @@ pub struct Engine<'p> {
     /// How many densities the weights of the worlds that reported or
     /// finished include. It must be as many for each.
     pub reported_densities: Option<u32>,
+    /// In the innermost `simulate` running: its first observation of a
+    /// density, and how many its returning worlds' weights include, which
+    /// must be as many for each, since its result is normalized.
+    local_density_at: Option<Span>,
+    returned_densities: Option<u32>,
     pub sinks: Vec<Sink>,
     dice: FxHashMap<(u32, u32), Value>,
     pools: FxHashMap<(u32, Value), Value>,
@@ -378,6 +383,8 @@ impl<'p> Engine<'p> {
             last_ruling_out: None,
             density_at: None,
             reported_densities: None,
+            local_density_at: None,
+            returned_densities: None,
             sinks: vec![Sink::default(); prog.reports.len()],
             dice: FxHashMap::default(),
             pools: FxHashMap::default(),
@@ -515,11 +522,13 @@ impl<'p> Engine<'p> {
                 let i = rng.choose(d.outcomes.iter().map(|(_, p)| *p)).unwrap_or(0);
                 match &d.outcomes[i].0 {
                     Value::Continuous(f) => Value::Float(f.sample(rng)),
+                    Value::Joint(j) => crate::joint::sample(j, rng),
                     x => x.clone(),
                 }
             }
             Value::Continuous(f) => Value::Float(f.sample(rng)),
             Value::Counts(c) => Value::Int(c.sample(rng).into()),
+            Value::Joint(j) => crate::joint::sample(j, rng),
             other => other.clone(),
         }
     }
@@ -527,10 +536,15 @@ impl<'p> Engine<'p> {
     /// When sampling, a value to report: continuous parts are drawn; a
     /// finite distribution is kept whole, so each outcome counts with its
     /// probability.
+    #[inline(never)]
     fn sample_continuous(&mut self, v: Value) -> Value {
         match &v {
-            Value::Continuous(_) => self.sample(&v),
-            Value::Dist(d) if d.outcomes.iter().any(|(x, _)| matches!(x, Value::Continuous(_))) => {
+            Value::Continuous(_) | Value::Joint(_) => self.sample(&v),
+            Value::Dist(d)
+                if d.outcomes
+                    .iter()
+                    .any(|(x, _)| matches!(x, Value::Continuous(_) | Value::Joint(_))) =>
+            {
                 let pairs = d.outcomes.iter().map(|(x, p)| (self.sample(x), *p)).collect();
                 Dist::from_pairs(pairs, d.missing).into_value()
             }
@@ -559,13 +573,6 @@ impl<'p> Engine<'p> {
         }
         let counts = builtins::counts(*b, &values, &mut self.budget).map_err(|err| err.at(e.span))?;
         Ok(counts.filter(Counts::direct))
-    }
-
-    fn continuous_draw(&self, span: Span) -> RuntimeError {
-        analytic::unsupported("a continuous draw inside `simulate`")
-            .at(span)
-            .with_note("`simulate` is computed by enumeration, even in sample mode")
-            .with_help("draw the value outside `simulate`; analytic joint distribution recipes aren't supported yet")
     }
 
     /// Whether draws of conjugate priors are delayed now: when sampling,
@@ -763,7 +770,7 @@ impl<'p> Engine<'p> {
             return Ok(None);
         };
         if matches!(seen, Seen::Normal { .. }) {
-            self.check_density(from)?;
+            self.check_density(f, from)?;
             self.densities = true;
             w.densities += 1;
         }
@@ -792,9 +799,6 @@ impl<'p> Engine<'p> {
         let Some(sd) = self.plain_sd(f, sd, w, dist.span)? else {
             return Ok(None);
         };
-        if self.nested > 0 {
-            return Err(self.continuous_draw(dist.span));
-        }
         self.next_latent += 1;
         match analytic::normal_draw(&m, sd, self.next_latent).map_err(|e| e.at(dist.span))? {
             Some(v) => Ok(Some(v)),
@@ -833,7 +837,7 @@ impl<'p> Engine<'p> {
         let Some(y) = y else {
             return Ok(None);
         };
-        self.check_density(span)?;
+        self.check_density(f, span)?;
         let observed = analytic::observe_normal(&m, y, sd, &mut self.next_latent).map_err(|e| e.at(span))?;
         let Some((ln, known)) = observed else {
             return Err(analytic::unsupported(
@@ -1171,8 +1175,8 @@ impl<'p> Engine<'p> {
 
     /// Weighs an enumerated world by the density `exp(ln)` of what an
     /// observation at `span` saw.
-    fn observe_density(&mut self, ln: f64, w: &mut World, span: Span) -> Result<()> {
-        self.check_density(span)?;
+    fn observe_density(&mut self, f: FnId, ln: f64, w: &mut World, span: Span) -> Result<()> {
+        self.check_density(f, span)?;
         if ln == f64::INFINITY {
             return Err(RuntimeError::new(span, "the density at the observed value is infinite"));
         }
@@ -1189,16 +1193,40 @@ impl<'p> Engine<'p> {
 
     /// An enumerated world's weight can include a density only where the
     /// world counts it (see `World::densities`).
-    fn check_density(&mut self, span: Span) -> Result<()> {
-        if self.depth > 0 {
-            return Err(OpError::unsupported(
-                "observing a value from a continuous distribution inside a function isn't supported when enumerating yet",
-            )
-            .help("observe it in the main program, or sample the model with `@mode sample(runs: 10_000)`")
-            .at(span));
+    /// A `simulate` block's own observations can be densities too: its
+    /// result is normalized, as long as its worlds include as many.
+    #[inline(never)]
+    fn check_density(&mut self, f: FnId, span: Span) -> Result<()> {
+        if self.depth == 0 {
+            self.density_at.get_or_insert(span);
+            return Ok(());
         }
-        self.density_at.get_or_insert(span);
-        Ok(())
+        if self.prog.functions[f as usize].kind == FnKind::Simulate {
+            self.local_density_at.get_or_insert(span);
+            return Ok(());
+        }
+        Err(OpError::unsupported(
+            "observing a value from a continuous distribution inside a function isn't supported when enumerating yet",
+        )
+        .help("observe it in the main program or directly inside `simulate`, or sample the model with `@mode sample(runs: 10_000)`")
+        .at(span))
+    }
+
+    /// A world returning from a `simulate` block: its weight must include as
+    /// many densities as the others'.
+    #[inline(never)]
+    fn simulate_returns(&mut self, w: &World, span: Span) -> Result<()> {
+        match self.returned_densities {
+            Some(n) if n != w.densities => Err(OpError::unsupported(
+                "a `simulate` whose worlds observe different numbers of continuous values isn't supported when enumerating",
+            )
+            .help("a density is per unit of what it observes, so worlds with more of them can't be weighed against the others; observe the same values in every world")
+            .at(self.local_density_at.unwrap_or(span))),
+            _ => {
+                self.returned_densities = Some(w.densities);
+                Ok(())
+            }
+        }
     }
 
     /// The parts of a world where an event holds, or doesn't: each with its
@@ -1673,18 +1701,7 @@ impl<'p> Engine<'p> {
                 continued: worlds,
                 ..Flow::default()
             }),
-            StmtKind::Return(value) => {
-                let mut flow = Flow::default();
-                for w in worlds {
-                    let v = each!(self, At::new(f, stmt, &w), world w, self.eval(f, value, &w));
-                    let mut constraints = w.constraints;
-                    if constraints.keys().any(|id| !w.inherited.contains(id)) {
-                        Arc::make_mut(&mut constraints).retain(|id, _| w.inherited.contains(id));
-                    }
-                    flow.returned.push((v, w.weight, constraints));
-                }
-                Ok(flow)
-            }
+            StmtKind::Return(value) => self.exec_return(f, stmt, value, worlds),
             StmtKind::Observe { value, from } => {
                 self.observed = true;
                 // When sampling, an update of a delayed draw; when
@@ -1766,7 +1783,7 @@ impl<'p> Engine<'p> {
                                         ) {
                                             Weighs::Probability(p, missing, other) => (p, missing, other),
                                             Weighs::LogDensity(ln) => {
-                                                self.observe_density(ln, &mut w, span)?;
+                                                self.observe_density(f, ln, &mut w, span)?;
                                                 if !w.weight.is_zero() {
                                                     out.push(w);
                                                 }
@@ -1822,25 +1839,12 @@ impl<'p> Engine<'p> {
                         }
                         None => Value::Unit,
                     };
+                    // A distribution of outcomes, from `max(x, d6)` say, reports
+                    // as their mixture, and a record or list of them field by
+                    // field.
                     let (v, run) = if self.sampler.is_some() {
                         (self.sample_continuous(v), Some(w.run))
                     } else {
-                        // A distribution of outcomes, from `max(x, d6)` say, reports
-                        // as their mixture.
-                        let outcome =
-                            |v: &Value| matches!(v, Value::Analytic(_) | Value::Event(_)) || !analytic::contains(v);
-                        if analytic::contains(&v)
-                            && !match &v {
-                                Value::Dist(d) => d.outcomes.iter().all(|(v, _)| outcome(v)),
-                                v => outcome(v),
-                            }
-                        {
-                            return Err(
-                                analytic::unsupported("reporting a list or record of continuous outcomes")
-                                    .help("report its fields individually, or use `@mode sample(runs: 10_000)`")
-                                    .at(value.span),
-                            );
-                        }
                         (v, None)
                     };
                     if let Value::Event(event) = &k {
@@ -1856,9 +1860,9 @@ impl<'p> Engine<'p> {
                                     .map_err(|e| e.at(value.span))?;
                                 let k = Value::Bool(yes);
                                 self.same_units(w, value.span)?;
-                                self.sinks[*site as usize]
-                                    .validate_analytic(&k, &v)
-                                    .map_err(|e| e.at(value.span))?;
+                                let sink = &self.sinks[*site as usize];
+                                sink.validate_analytic(&k, &v).map_err(|e| e.at(value.span))?;
+                                sink.validate_structure(&k, &v).map_err(|e| e.at(value.span))?;
                                 self.sinks[*site as usize].add(k, &v, w.weight.scale(p), run);
                             }
                         }
@@ -1866,6 +1870,9 @@ impl<'p> Engine<'p> {
                     }
                     if run.is_none() {
                         self.same_units(w, value.span)?;
+                        self.sinks[*site as usize]
+                            .validate_structure(&k, &v)
+                            .map_err(|e| e.at(value.span))?;
                     }
                     self.sinks[*site as usize]
                         .validate_analytic(&k, &v)
@@ -1932,6 +1939,26 @@ impl<'p> Engine<'p> {
                 Ok(Flow::next(worlds))
             }
         }
+    }
+
+    /// `return`: each world's value, with the restrictions its caller can
+    /// see. (Out of `exec_stmt_kind`, whose frame every statement pays for.)
+    #[inline(never)]
+    fn exec_return(&mut self, f: FnId, stmt: &'p Stmt, value: &'p Expr, worlds: Vec<World>) -> Result<Flow> {
+        let mut flow = Flow::default();
+        let simulate = self.prog.functions[f as usize].kind == FnKind::Simulate;
+        for w in worlds {
+            let v = each!(self, At::new(f, stmt, &w), world w, self.eval(f, value, &w));
+            if simulate {
+                self.simulate_returns(&w, stmt.span)?;
+            }
+            let mut constraints = w.constraints;
+            if constraints.keys().any(|id| !w.inherited.contains(id)) {
+                Arc::make_mut(&mut constraints).retain(|id, _| w.inherited.contains(id));
+            }
+            flow.returned.push((v, w.weight, constraints));
+        }
+        Ok(flow)
     }
 
     fn exec_loop(
@@ -2211,16 +2238,13 @@ impl<'p> Engine<'p> {
     /// Store each possible value of `d` into `place`, one world per outcome.
     fn split_by(&mut self, f: FnId, place: &Place, d: Value, w: World, span: Span, out: &mut Vec<World>) -> Result<()> {
         match d {
-            Value::Dist(_) | Value::Continuous(_) | Value::Counts(_) if self.sampler.is_some() => {
+            Value::Dist(_) | Value::Continuous(_) | Value::Counts(_) | Value::Joint(_) if self.sampler.is_some() => {
                 let v = self.sample(&d);
                 let mut w = w;
                 self.assign(f, place, v, &mut w, span)?;
                 out.push(w);
             }
             Value::Continuous(family) => {
-                if self.nested > 0 {
-                    return Err(self.continuous_draw(span));
-                }
                 self.next_latent += 1;
                 let v = Analytic::new(self.next_latent, *family)
                     .value()
@@ -2240,7 +2264,7 @@ impl<'p> Engine<'p> {
                         w.clone().unwrap()
                     };
                     let mut nw = base.scaled(*p);
-                    if matches!(v, Value::Continuous(_)) {
+                    if matches!(v, Value::Continuous(_) | Value::Joint(_)) {
                         self.split_by(f, place, v.clone(), nw, span, out)?;
                     } else {
                         self.assign(f, place, v.clone(), &mut nw, span)?;
@@ -2251,6 +2275,7 @@ impl<'p> Engine<'p> {
             Value::Prob(p) => {
                 return self.split_by(f, place, Dist::bernoulli(p).into_value(), w, span, out);
             }
+            Value::Joint(dist) => self.draw_joint(f, place, &dist, w, span, out)?,
             // Enumerating needs its outcomes.
             Value::Counts(_) => {
                 let d = ops::listed(&d, &mut self.budget).map_err(|e| e.at(span))?.into_owned();
@@ -2261,6 +2286,28 @@ impl<'p> Engine<'p> {
                 self.assign(f, place, other, &mut w, span)?;
                 out.push(w);
             }
+        }
+        Ok(())
+    }
+
+    /// A draw from a distribution whose outcomes own their draws: a world
+    /// for each outcome, with its draws fresh there.
+    #[inline(never)]
+    fn draw_joint(
+        &mut self,
+        f: FnId,
+        place: &Place,
+        dist: &Dist,
+        w: World,
+        span: Span,
+        out: &mut Vec<World>,
+    ) -> Result<()> {
+        self.unresolved += w.weight.scale(dist.missing);
+        for (v, p) in &dist.outcomes {
+            let v = crate::joint::fresh(v, &mut self.next_latent);
+            let mut nw = w.clone().scaled(*p);
+            self.assign(f, place, v, &mut nw, span)?;
+            out.push(nw);
         }
         Ok(())
     }
@@ -2349,6 +2396,13 @@ impl<'p> Engine<'p> {
                 }
                 ops::combine(out, d.missing, &mut self.budget).map_err(|e| e.at(span))?
             }
+            (Value::Joint(d), TypeSpec::Dist(t)) => {
+                let mut out = Vec::with_capacity(d.outcomes.len());
+                for (x, p) in &d.outcomes {
+                    out.push((self.coerce_at(x.clone(), t, span, depth + 1)?, *p));
+                }
+                crate::joint::of(out, d.missing, &mut self.budget).map_err(|e| e.at(span))?
+            }
             (Value::Record(r), TypeSpec::Record(t)) => {
                 let types: Vec<_> = self.prog.records[*t as usize]
                     .fields
@@ -2396,7 +2450,7 @@ impl<'p> Engine<'p> {
             (TypeSpec::List(t), Value::Range(..)) => **t == TypeSpec::Int,
             (TypeSpec::Map(k, t), Value::Map(m)) => m.iter().all(|(a, b)| self.conforms(a, k) && self.conforms(b, t)),
             (TypeSpec::Bag(t), Value::Bag(b)) => b.keys().all(|x| self.conforms(x, t)),
-            (TypeSpec::Dist(t), Value::Dist(d)) => d.outcomes.iter().all(|(x, _)| match x {
+            (TypeSpec::Dist(t), Value::Dist(d) | Value::Joint(d)) => d.outcomes.iter().all(|(x, _)| match x {
                 Value::Continuous(_) => **t == TypeSpec::Float,
                 _ => self.conforms(x, t),
             }),
@@ -2714,6 +2768,7 @@ impl<'p> Engine<'p> {
         }
         let saved_observed = self.observed;
         let saved_densities = self.densities;
+        let saved_local = (self.local_density_at.take(), self.returned_densities.take());
         // Enumerated, even when sampling (section 14).
         let sampler = self.sampler.take();
         let callback = self.callback.take();
@@ -2725,7 +2780,16 @@ impl<'p> Engine<'p> {
         // Observations inside `simulate` condition its result only.
         self.observed = saved_observed;
         self.densities = saved_densities;
+        let local_density_at = std::mem::replace(&mut self.local_density_at, saved_local.0);
+        self.returned_densities = saved_local.1;
         let result = result?;
+        if let Some(span) = local_density_at.filter(|_| !result.unresolved.is_zero()) {
+            return Err(OpError::unsupported(
+                "observing a value from a continuous distribution while some probability is unresolved isn't supported when enumerating",
+            )
+            .help("the unresolved worlds could have any density at the value, so nothing would bound the evidence; sample the model with `@mode sample(runs: 10_000)`")
+            .at(span));
+        }
         if !result.pending.is_empty() {
             return Err(OpError::unsupported(
                 "a `simulate` block that comes back to a call still running isn't supported yet",
@@ -2747,12 +2811,17 @@ impl<'p> Engine<'p> {
             return Err(RuntimeError::new(span, message));
         }
         let denom = resolved + result.unresolved;
-        let pairs = result
+        let pairs: Vec<(Value, f64)> = result
             .outcomes
             .iter()
             .map(|(v, w, _)| (v.clone(), w.ratio(denom)))
             .collect();
-        ops::combine(pairs, result.unresolved.ratio(denom), &mut self.budget).map_err(|e| e.at(span))
+        let missing = result.unresolved.ratio(denom);
+        // Outcomes of its own draws make a joint distribution.
+        if pairs.iter().any(|(v, _)| analytic::contains(v)) {
+            return crate::joint::of(pairs, missing, &mut self.budget).map_err(|e| e.at(span));
+        }
+        ops::combine(pairs, missing, &mut self.budget).map_err(|e| e.at(span))
     }
 
     /// Call a closure that must not split worlds (used by `map`, `filter`, …).

@@ -129,8 +129,9 @@ match program.run(&options) {
 | `probability()` | A boolean report's probability estimate |
 | `distribution()` | An available finite table of formatted outcomes and probability estimates |
 | `numeric()` | Supported real numeric mean, standard deviation and quantile queries |
+| `fields()` | For records or lists of continuous outcomes, enumerated: each field's path (`.x`, `[0]`) with its own `Group` |
 
-Facts have `probability()` and no redundant true/false table. A continuous analytic report has no finite table: `None` means unavailable, not an empty population. Outcome labels are display strings, not a typed serialization format; distinct outcomes can have the same display label.
+Facts have `probability()` and no redundant true/false table. A structured report's fields are marginals of one joint distribution: they don't say how the fields depend on each other, and the group's other accessors are `None`. A continuous analytic report has no finite table: `None` means unavailable, not an empty population. Outcome labels are display strings, not a typed serialization format; distinct outcomes can have the same display label.
 
 Numeric summaries expose the renderer's precision. They do not make `f64` an exact representation of arbitrary integers. `quantile(q)` returns `InvalidQuantile` for nonfinite/out-of-range probabilities and `Unavailable` when the summary cannot be supplied.
 

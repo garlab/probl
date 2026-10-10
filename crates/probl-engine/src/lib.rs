@@ -13,6 +13,7 @@ pub mod dist;
 pub mod error;
 pub mod failure;
 pub mod interp;
+pub mod joint;
 mod math;
 pub mod ops;
 mod ordering;

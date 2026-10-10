@@ -101,7 +101,7 @@ impl Names<'_> {
                 let value = self.common(items.values(), depth + 1, false)?;
                 return self.parameterized("map", &[key, value]);
             }
-            Value::Dist(d) => {
+            Value::Dist(d) | Value::Joint(d) => {
                 let item = self.common(d.outcomes.iter().map(|(v, _)| v), depth + 1, true)?;
                 return self.parameterized("dist", &[item]);
             }

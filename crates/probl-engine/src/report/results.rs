@@ -47,7 +47,17 @@ pub struct GroupResult {
     pub unresolved_share: f64,
     /// When sampling: how many runs it rests on.
     pub support: Option<Support>,
+    /// For records or lists that hold outcomes of draws: each field's path
+    /// (`.x`, `[0]`), with what it says reported alone. Fields can depend on
+    /// each other, which their marginals don't show. The other summaries
+    /// are then empty.
+    pub fields: Option<Box<Fields>>,
 }
+
+/// A structured report group's fields: each one's path, with what it says
+/// reported alone.
+#[derive(Clone, Debug)]
+pub struct Fields(pub Vec<(String, GroupResult)>);
 
 /// How many sampled runs a group rests on.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -222,6 +232,9 @@ fn reach(kind: ReportKind, sink: &Sink, format: Format) -> Option<Reach> {
 }
 
 pub(super) fn group(key: &Value, acc: &Acc, format: Format, kind: ReportKind, unresolved: Weight) -> GroupResult {
+    if acc.structured {
+        return structured(key, acc, format, kind, unresolved);
+    }
     let sampled = acc.sampled();
     let support = sampled.then(|| Support {
         contributing_runs: acc.contributing_runs(),
@@ -249,6 +262,47 @@ pub(super) fn group(key: &Value, acc: &Acc, format: Format, kind: ReportKind, un
         unresolved_share: acc.unresolved_share(format.unresolved),
         distribution,
         support,
+        fields: None,
+    }
+}
+
+/// A group of records or lists of outcomes of draws: each field summarized
+/// as if it were reported alone.
+fn structured(key: &Value, acc: &Acc, format: Format, kind: ReportKind, unresolved: Weight) -> GroupResult {
+    let mut values: Vec<(&Value, Weight)> = acc.values.iter().map(|(v, w)| (v, *w)).collect();
+    values.sort_by(|a, b| a.0.cmp(b.0));
+    let mut fields: Vec<(String, Acc)> = Vec::new();
+    for (v, w) in values {
+        for (path, leaf) in super::fields(v) {
+            let i = match fields.iter().position(|(p, _)| *p == path) {
+                Some(i) => i,
+                None => {
+                    fields.push((path, Acc::default()));
+                    fields.len() - 1
+                }
+            };
+            let field = &mut fields[i].1;
+            field.total += w;
+            field.add(&leaf, w);
+        }
+    }
+    let fields = fields
+        .into_iter()
+        .map(|(path, mut field)| {
+            field.missing = acc.missing;
+            let result = group(&Value::Str(path.as_str().into()), &field, format, kind, unresolved);
+            (path, result)
+        })
+        .collect();
+    GroupResult {
+        key: key.clone(),
+        fact: None,
+        values: None,
+        distribution: Vec::new(),
+        numeric: None,
+        unresolved_share: acc.unresolved_share(format.unresolved),
+        support: None,
+        fields: Some(Box::new(Fields(fields))),
     }
 }
 

@@ -10,7 +10,7 @@ use std::fmt::Write;
 
 mod results;
 
-pub use results::{GroupResult, Numeric, Quantity, Reach, ReportResult, Status, Support, Uncertainty, results};
+pub use results::{Fields, GroupResult, Numeric, Quantity, Reach, ReportResult, Status, Support, Uncertainty, results};
 
 /// Everything one report site saw for one key.
 #[derive(Clone, Debug)]
@@ -31,6 +31,9 @@ pub struct Acc {
     moments: Option<Moments>,
     continuous: bool,
     nonnumeric: bool,
+    /// The values are records or lists that hold outcomes of draws, all
+    /// with the same fields: the report summarizes each field on its own.
+    structured: bool,
 }
 
 impl Default for Acc {
@@ -45,8 +48,53 @@ impl Default for Acc {
             moments: None,
             continuous: false,
             nonnumeric: false,
+            structured: false,
         }
     }
+}
+
+/// Whether a value is a record, list or map, whose fields a structured
+/// report summarizes.
+fn is_aggregate(v: &Value) -> bool {
+    matches!(v, Value::Record(_) | Value::List(_) | Value::Map(_))
+}
+
+/// The fields of a reported record, list or map, by path (`.name`, `[0]`,
+/// `["key"]`), each with its value; anything else is one field, `""`.
+pub(crate) fn fields(v: &Value) -> Vec<(String, Value)> {
+    fn walk(v: &Value, path: &mut String, out: &mut Vec<(String, Value)>) {
+        let mut child = |path: &mut String, name: String, x: &Value| {
+            let len = path.len();
+            path.push_str(&name);
+            walk(x, path, out);
+            path.truncate(len);
+        };
+        match v {
+            Value::Record(r) => {
+                for (k, x) in &r.fields {
+                    child(path, format!(".{k}"), x);
+                }
+            }
+            Value::List(xs) => {
+                for (i, x) in xs.iter().enumerate() {
+                    child(path, format!("[{i}]"), x);
+                }
+            }
+            Value::Map(m) => {
+                for (k, x) in m.iter() {
+                    child(path, format!("[{}]", display(k)), x);
+                }
+            }
+            leaf => out.push((path.clone(), leaf.clone())),
+        }
+    }
+    let mut out = Vec::new();
+    walk(v, &mut String::new(), &mut out);
+    out
+}
+
+fn shape(v: &Value) -> Vec<String> {
+    fields(v).into_iter().map(|(path, _)| path).collect()
 }
 
 /// Sums over sampled runs, for the standard error of an estimate
@@ -232,6 +280,7 @@ impl Acc {
                 | Value::Analytic(_)
                 | Value::Continuous(_)
                 | Value::Dist(_)
+                | Value::Joint(_)
         );
         match value {
             Value::Analytic(a) => {
@@ -255,11 +304,19 @@ impl Acc {
                     self.yes += weight;
                 }
             }
-            Value::Dist(d) => {
+            Value::Dist(d) | Value::Joint(d) => {
                 self.missing += weight.scale(d.missing);
                 for (x, q) in &d.outcomes {
                     self.add(x, weight.scale(*q));
                 }
+            }
+            other if is_aggregate(other) && crate::analytic::contains(other) => {
+                self.structured = true;
+                let slot = self
+                    .values
+                    .entry(crate::analytic::marginal(other))
+                    .or_insert(Weight::ZERO);
+                *slot += weight;
             }
             other => {
                 let slot = self.values.entry(other.clone()).or_insert(Weight::ZERO);
@@ -320,6 +377,7 @@ impl Acc {
         self.missing += other.missing;
         self.continuous |= other.continuous;
         self.nonnumeric |= other.nonnumeric;
+        self.structured |= other.structured;
         for (v, w) in other.values {
             *self.values.entry(v).or_insert(Weight::ZERO) += w;
         }
@@ -451,6 +509,8 @@ impl Acc {
 #[derive(Clone, Debug, Default)]
 pub struct Sink {
     pub groups: BTreeMap<Value, Acc>,
+    /// Whether a group's values are records or lists of outcomes of draws.
+    structured: bool,
     /// When sampling: Σ w and Σ w² over the runs that reached the report,
     /// each counted once.
     pub reached: Weight,
@@ -464,7 +524,7 @@ impl Sink {
                 Value::Analytic(a) if a.is_discrete() => (false, true),
                 Value::Analytic(_) | Value::Continuous(_) => (true, true),
                 Value::Int(_) | Value::Float(_) | Value::Prob(_) => (false, true),
-                Value::Dist(d) => d
+                Value::Dist(d) | Value::Joint(d) => d
                     .outcomes
                     .iter()
                     .map(|(v, _)| kinds(v))
@@ -485,11 +545,73 @@ impl Sink {
         Ok(())
     }
 
+    /// When enumerating: a record or list of outcomes of draws can only be
+    /// reported with others of its shape, whose fields are summarized each
+    /// on its own.
+    #[inline(never)]
+    pub(crate) fn validate_structure(&self, key: &Value, value: &Value) -> crate::error::OpResult<()> {
+        let holds = |v: &Value| is_aggregate(v) && crate::analytic::contains(v);
+        let structured = match value {
+            Value::Dist(d) | Value::Joint(d) => d.outcomes.iter().any(|(v, _)| holds(v)),
+            v => holds(v),
+        };
+        if !self.structured && !structured {
+            return Ok(());
+        }
+        self.check_structure(key, value)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn check_structure(&self, key: &Value, value: &Value) -> crate::error::OpResult<()> {
+        let items: Vec<&Value> = match value {
+            Value::Dist(d) | Value::Joint(d) => d.outcomes.iter().map(|(v, _)| v).collect(),
+            v => vec![v],
+        };
+        let acc = self.groups.get(key);
+        // Other keys' values may be structured, and these not.
+        let holds = |v: &&Value| is_aggregate(v) && crate::analytic::contains(v);
+        if !acc.is_some_and(|a| a.structured) && !items.iter().any(holds) {
+            return Ok(());
+        }
+        let mixed = || {
+            crate::analytic::unsupported("reporting a record or list of continuous outcomes together with other values")
+        };
+        if acc.is_some_and(|a| !a.facts.is_zero()) {
+            return Err(mixed());
+        }
+        // What was reported before, all of one shape once structured, must
+        // fit too.
+        let earlier: Vec<&Value> = match acc {
+            Some(a) if !a.structured => a.values.keys().collect(),
+            Some(a) => a.values.keys().take(1).collect(),
+            None => Vec::new(),
+        };
+        let mut reference = None;
+        for v in earlier.into_iter().chain(items) {
+            if !is_aggregate(v) {
+                return Err(mixed());
+            }
+            let s = shape(v);
+            match &reference {
+                Some(r) if *r != s => {
+                    return Err(crate::analytic::unsupported(
+                        "reporting records or lists of continuous outcomes with different fields",
+                    ));
+                }
+                Some(_) => {}
+                None => reference = Some(s),
+            }
+        }
+        Ok(())
+    }
+
     /// Record a value reported in a world, and when sampling, by which run.
     pub fn add(&mut self, key: Value, value: &Value, weight: Weight, run: Option<u32>) {
         let acc = self.groups.entry(key).or_default();
         acc.total += weight;
         acc.add(value, weight);
+        self.structured |= acc.structured;
         if let Some(run) = run {
             let stat = acc.runs.entry(run).or_insert_with(|| RunStat {
                 weight,
@@ -526,6 +648,7 @@ impl Sink {
     /// Add what another batch of runs reported. Batches are combined in
     /// order, so the sums don't depend on which thread ran which batch.
     pub fn absorb(&mut self, other: Sink) {
+        self.structured |= other.structured;
         self.reached += other.reached;
         self.reached_squares += other.reached_squares;
         for (key, acc) in other.groups {
@@ -597,7 +720,8 @@ pub fn render_results(sites: &[ReportSite], results: &[ReportResult], format: Fo
             label.push_str(" (per visit)");
         }
         let reach = reach_note(result.reach, format);
-        if site.key_label.is_none() {
+        let structured = result.groups.iter().any(|g| g.fields.is_some());
+        if site.key_label.is_none() && !structured {
             let text = match result.groups.first() {
                 None => "(never reached)".to_string(),
                 Some(group) => format!("{}{reach}", value_text(group, format)),
@@ -612,6 +736,11 @@ pub fn render_results(sites: &[ReportSite], results: &[ReportResult], format: Fo
         if !out.is_empty() && !out.ends_with("\n\n") {
             out.push('\n');
         }
+        if structured {
+            out.push_str(&fields_text(&label, &reach, site.key_label.as_deref(), result, format));
+            out.push('\n');
+            continue;
+        }
         writeln!(out, "{label}{reach}").unwrap();
         if result.groups.is_empty() {
             writeln!(out, "  (never reached)").unwrap();
@@ -623,6 +752,32 @@ pub fn render_results(sites: &[ReportSite], results: &[ReportResult], format: Fo
     flush(&mut simple, &mut out);
     while out.ends_with("\n\n") {
         out.pop();
+    }
+    out
+}
+
+/// A report of records or lists of outcomes of draws: under its label,
+/// each field's own summary, for each `by` key.
+fn fields_text(label: &str, reach: &str, key_label: Option<&str>, result: &ReportResult, format: Format) -> String {
+    let mut out = String::new();
+    writeln!(out, "{label} (marginal of each field){reach}").unwrap();
+    for group in &result.groups {
+        let indent = match key_label {
+            Some(k) => {
+                writeln!(out, "  {k} = {}", display(&group.key)).unwrap();
+                "    "
+            }
+            None => "  ",
+        };
+        let Some(fields) = &group.fields else {
+            writeln!(out, "{indent}{}", value_text(group, format)).unwrap();
+            continue;
+        };
+        let width = fields.0.iter().map(|(path, _)| path.chars().count()).max().unwrap_or(0);
+        for (path, field) in &fields.0 {
+            let pad = " ".repeat(width - path.chars().count());
+            writeln!(out, "{indent}{path}{pad}    {}", value_text(field, format)).unwrap();
+        }
     }
     out
 }

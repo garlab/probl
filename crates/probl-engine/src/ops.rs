@@ -468,36 +468,14 @@ pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<
 }
 
 fn binary_plain(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
-    if matches!(a, Value::Analytic(_)) || matches!(b, Value::Analytic(_)) {
-        return crate::analytic::binary(op, a, b, budget);
+    // Outcomes of draws and continuous distributions are rare: one test
+    // each, for all of them.
+    let unusual = |v: &Value| matches!(v, Value::Analytic(_) | Value::Continuous(_) | Value::Joint(_));
+    if unusual(a) || unusual(b) {
+        return unusual_binary(op, a, b, budget);
     }
-    if matches!(
-        op,
-        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
-    ) && (crate::analytic::contains(a) || crate::analytic::contains(b))
-    {
-        if matches!(op, BinOp::Eq | BinOp::Ne) {
-            if let (Value::Event(x), Value::Bool(b)) | (Value::Bool(b), Value::Event(x)) = (a, b) {
-                return if *b == (op == BinOp::Eq) {
-                    Ok(Value::Event(x.clone()))
-                } else {
-                    not(&Value::Event(x.clone()), budget)
-                };
-            }
-        }
-        if let (Value::Event(x), Value::Event(y)) = (a, b) {
-            if matches!(op, BinOp::Eq | BinOp::Ne) {
-                budget.work((x.size() + y.size()) as u64)?;
-                let equal = x.combine(y, BinOp::Eq)?;
-                return Ok(if op == BinOp::Eq { equal } else { equal.complement()? }.value());
-            }
-        }
-        return Err(crate::analytic::unsupported(
-            "comparing aggregate or boolean analytic outcomes",
-        ));
-    }
-    if let Some(v) = continuous_binary(op, a, b)? {
-        return Ok(v);
+    if is_comparison(op) && (crate::analytic::contains(a) || crate::analytic::contains(b)) {
+        return analytic_comparison(op, a, b, budget);
     }
     if matches!(
         op,
@@ -705,10 +683,59 @@ fn arith(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value
 /// A continuous distribution compared with a number: a distribution of
 /// facts, from its CDF. Nothing else is defined on one yet
 /// (docs/semantics.md, section 13).
-fn continuous_binary(op: BinOp, a: &Value, b: &Value) -> OpResult<Option<Value>> {
+fn is_comparison(op: BinOp) -> bool {
+    matches!(
+        op,
+        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+    )
+}
+
+/// `op` with an outcome of a draw, or a continuous distribution, or a
+/// distribution whose outcomes own draws.
+#[inline(never)]
+fn unusual_binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
+    if matches!(a, Value::Analytic(_)) || matches!(b, Value::Analytic(_)) {
+        return crate::analytic::binary(op, a, b, budget);
+    }
+    if is_comparison(op) && (crate::analytic::contains(a) || crate::analytic::contains(b)) {
+        return analytic_comparison(op, a, b, budget);
+    }
+    match continuous_binary(op, a, b, budget)? {
+        Some(v) => Ok(v),
+        None => unreachable!("a continuous operand"),
+    }
+}
+
+/// A comparison with a value that holds outcomes of draws: of an event with
+/// a fact or another event.
+#[inline(never)]
+fn analytic_comparison(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
+    if matches!(op, BinOp::Eq | BinOp::Ne) {
+        if let (Value::Event(x), Value::Bool(b)) | (Value::Bool(b), Value::Event(x)) = (a, b) {
+            return if *b == (op == BinOp::Eq) {
+                Ok(Value::Event(x.clone()))
+            } else {
+                not(&Value::Event(x.clone()), budget)
+            };
+        }
+    }
+    if let (Value::Event(x), Value::Event(y)) = (a, b) {
+        if matches!(op, BinOp::Eq | BinOp::Ne) {
+            budget.work((x.size() + y.size()) as u64)?;
+            let equal = x.combine(y, BinOp::Eq)?;
+            return Ok(if op == BinOp::Eq { equal } else { equal.complement()? }.value());
+        }
+    }
+    Err(crate::analytic::unsupported(
+        "comparing aggregate or boolean analytic outcomes",
+    ))
+}
+
+fn continuous_binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Option<Value>> {
     let (family, other, flipped) = match (a, b) {
         (Value::Continuous(f), other) => (f, other, false),
         (other, Value::Continuous(f)) => (f, other, true),
+        (Value::Joint(_), _) | (_, Value::Joint(_)) => return crate::joint::binary(op, a, b, budget).map(Some),
         _ => return Ok(None),
     };
     let needs_value = || {

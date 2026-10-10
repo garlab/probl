@@ -396,7 +396,12 @@ pub struct Group {
     probability: Option<Estimate>,
     distribution: Option<Vec<(String, Estimate)>>,
     numeric: Option<NumericSummary>,
+    fields: Option<Box<Fields>>,
 }
+
+/// A structured group's fields, each with its path.
+#[derive(Clone, Debug)]
+struct Fields(Vec<(String, Group)>);
 
 impl Group {
     fn new(group: &GroupResult, by: bool) -> Group {
@@ -415,6 +420,15 @@ impl Group {
                 _ => None,
             },
             numeric: group.numeric.clone().map(NumericSummary::new),
+            fields: group.fields.as_ref().map(|fields| {
+                Box::new(Fields(
+                    fields
+                        .0
+                        .iter()
+                        .map(|(path, field)| (path.clone(), Group::new(field, false)))
+                        .collect(),
+                ))
+            }),
         }
     }
 
@@ -440,6 +454,15 @@ impl Group {
     /// deviation and quantiles.
     pub fn numeric(&self) -> Option<&NumericSummary> {
         self.numeric.as_ref()
+    }
+
+    /// When the values are records or lists that hold continuous outcomes,
+    /// as enumeration reports them: each field's path, like `.x` or `[0]`,
+    /// with its own summary. The fields come from one joint distribution, and
+    /// can depend on each other in ways their summaries don't show. The
+    /// group's other summaries are then `None`.
+    pub fn fields(&self) -> Option<&[(String, Group)]> {
+        self.fields.as_deref().map(|f| f.0.as_slice())
     }
 }
 

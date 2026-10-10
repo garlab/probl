@@ -241,8 +241,14 @@ const CASES: &[Case] = &[
     case(
         "K",
         "let d = simulate { let x ~ normal(0, 1)\n x > 0 }\nreport d",
-        Unsupported,
-        Unsupported,
+        Works,
+        Works,
+    ),
+    case(
+        "K",
+        "let d = simulate { let x ~ normal(0, 1)\n {x: x, twice: 2 * x} }\nlet r ~ d\nreport r.twice - 2 * r.x",
+        Works,
+        Works,
     ),
     case(
         "K",
@@ -251,9 +257,11 @@ const CASES: &[Case] = &[
         Works,
     ),
     // L: aggregates containing analytic values.
+    case("L", "let x ~ uniform(0, 2)\nreport { a: x, b: x + 1 }", Works, Works),
+    // Not yet: a report mixing records of outcomes with other values.
     case(
         "L",
-        "let x ~ uniform(0, 2)\nreport { a: x, b: x + 1 }",
+        "let x ~ uniform(0, 2)\nreport if x > 1 { { a: x } } else { 0 }",
         Unsupported,
         Works,
     ),

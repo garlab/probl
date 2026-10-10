@@ -526,10 +526,15 @@ pub fn check_query_input(b: Builtin, args: &[Value]) -> OpResult<()> {
                 | Value::Str(_)
         ),
         B::P => matches!(v, Value::Dist(_)),
-        B::Pdf => matches!(v, Value::Dist(_) | Value::Continuous(_)),
+        B::Pdf => matches!(v, Value::Dist(_) | Value::Continuous(_) | Value::Joint(_)),
         _ => matches!(
             v,
-            Value::Dist(_) | Value::Continuous(_) | Value::Counts(_) | Value::List(_) | Value::Range(..)
+            Value::Dist(_)
+                | Value::Continuous(_)
+                | Value::Counts(_)
+                | Value::Joint(_)
+                | Value::List(_)
+                | Value::Range(..)
         ),
     };
     if !valid {
@@ -865,8 +870,11 @@ fn continuous(family: OpResult<Family>) -> OpResult<Value> {
 /// Whether a value is, or mixes in, a continuous distribution.
 fn continuous_parts(v: &Value) -> bool {
     match v {
-        Value::Continuous(_) => true,
-        Value::Dist(d) => d.outcomes.iter().any(|(x, _)| matches!(x, Value::Continuous(_))),
+        Value::Continuous(_) | Value::Joint(_) => true,
+        Value::Dist(d) => d
+            .outcomes
+            .iter()
+            .any(|(x, _)| matches!(x, Value::Continuous(_) | Value::Joint(_))),
         _ => false,
     }
 }
@@ -889,22 +897,34 @@ fn continuous_query(b: Builtin, args: &[Value]) -> OpResult<Value> {
                 ops::computed_prob(at / d.total(), "pmf")
             }
             Value::Continuous(_) => ops::computed_prob(0.0, "pmf"),
+            Value::Joint(_) => Err(OpError::new(
+                "`pmf` needs a distribution whose outcomes can be listed, not one of continuous outcomes",
+            )),
             _ => unreachable!("checked continuous input"),
         };
     }
+    // The marginal of a `simulate` distribution of continuous outcomes.
+    let joint = |d: &Dist, scale: f64| match crate::joint::mixture(d) {
+        Some(m) => Ok(m.parts.into_iter().map(move |(part, p)| (part, p * scale))),
+        None => Err(OpError::unsupported(format!(
+            "`{}` of a distribution of continuous outcomes that aren't all numbers isn't supported",
+            b.name()
+        ))),
+    };
     let parts = match &args[0] {
         Value::Continuous(f) => vec![(Part::Continuous(**f), 1.0)],
-        Value::Dist(d) => d
-            .outcomes
-            .iter()
-            .map(|(x, p)| {
-                let part = match x {
-                    Value::Continuous(f) => Part::Continuous(**f),
-                    other => Part::Point(number(other, b.name())?),
-                };
-                Ok((part, *p))
-            })
-            .collect::<OpResult<Vec<_>>>()?,
+        Value::Joint(d) => joint(d, 1.0)?.collect(),
+        Value::Dist(d) => {
+            let mut parts = Vec::with_capacity(d.outcomes.len());
+            for (x, p) in &d.outcomes {
+                match x {
+                    Value::Continuous(f) => parts.push((Part::Continuous(**f), *p)),
+                    Value::Joint(j) => parts.extend(joint(j, *p)?),
+                    other => parts.push((Part::Point(number(other, b.name())?), *p)),
+                }
+            }
+            parts
+        }
         _ => unreachable!("checked by `continuous_parts`"),
     };
     let m = Mixture { parts };

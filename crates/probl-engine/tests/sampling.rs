@@ -156,9 +156,11 @@ fn simulate_is_enumerated_when_sampling() {
     let d = distribution(src);
     assert_eq!(d.len(), 1);
     close(d[0].0.as_f64().unwrap(), 1.0 / 3.0);
-    // Sampling inside it isn't supported yet.
-    let e = error("@mode sample(runs: 10, seed: 1)\nlet d = simulate { let x ~ normal(0, 1)\nx > 0 }\nreport d");
-    assert!(e.contains("computed by enumeration"), "{e}");
+    // A continuous draw inside it is an analytic outcome there too.
+    let d =
+        distribution("@mode sample(runs: 10, seed: 1)\nlet p = P(simulate { let x ~ normal(0, 1)\nx > 0 })\nreport p");
+    assert_eq!(d.len(), 1);
+    close(d[0].0.as_f64().unwrap(), 0.5);
 }
 
 #[test]

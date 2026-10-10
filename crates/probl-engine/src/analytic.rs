@@ -796,6 +796,31 @@ impl Analytic {
             None => None,
         }
     }
+    /// The same outcome of other latents: each as `map` renames it.
+    pub fn renamed(&self, map: &BTreeMap<u64, u64>) -> Self {
+        let rename = |id: u64| *map.get(&id).unwrap_or(&id);
+        let mut x = self.clone();
+        match &self.form {
+            Some(f) => {
+                x.form = Some(Arc::new(Linear {
+                    constant: f.constant,
+                    terms: f.terms.iter().map(|t| Term { id: rename(t.id), ..*t }).collect(),
+                }))
+            }
+            None => x.id = rename(self.id),
+        }
+        x
+    }
+    /// Its value where its axis is `value`, at the CDF coordinate `c`.
+    pub fn at(&self, c: f64, value: f64) -> Value {
+        let f = self
+            .pieces
+            .iter()
+            .find(|(end, _)| c <= *end)
+            .unwrap_or(&self.pieces[self.pieces.len() - 1])
+            .1;
+        number(f.at(value), self.int)
+    }
     /// The same function of the same values, as a function of another
     /// axis, `id` or `form`, that `t` moves it to.
     fn rebased(&self, id: u64, form: Option<Arc<Linear>>, t: &Transport) -> Self {
@@ -1942,6 +1967,9 @@ fn spend(pieces: &[(f64, Fun)], budget: &mut Budget) -> OpResult<()> {
 
 pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
     use BinOp::*;
+    if matches!(a, Value::Joint(_)) || matches!(b, Value::Joint(_)) {
+        return crate::joint::binary(op, a, b, budget);
+    }
     let x = match (a, b) {
         (Value::Analytic(x), _) | (_, Value::Analytic(x)) => x,
         _ => return Err(unsupported("this operation")),
@@ -2341,6 +2369,84 @@ pub fn contains(v: &Value) -> bool {
         }
     }
     false
+}
+
+/// Whether a value holds an outcome of a draw, other than events.
+pub fn has_outcomes(v: &Value) -> bool {
+    let mut pending = vec![v];
+    while let Some(v) = pending.pop() {
+        match v {
+            Value::Analytic(_) => return true,
+            Value::List(v) => pending.extend(v.iter()),
+            Value::Map(v) => pending.extend(v.values()),
+            Value::Record(v) => pending.extend(v.fields.iter().map(|(_, v)| v)),
+            Value::Dist(d) => pending.extend(d.outcomes.iter().map(|(v, _)| v)),
+            Value::Closure(c) => pending.extend(c.captured.iter()),
+            _ => {}
+        }
+    }
+    false
+}
+
+/// A value as reports keep it: each outcome of a draw by its marginal alone,
+/// without the identity of its draws, so that equal laws merge.
+pub fn marginal(v: &Value) -> Value {
+    if !contains(v) {
+        return v.clone();
+    }
+    let bare = |a: &Analytic| Analytic {
+        id: 0,
+        form: None,
+        ..a.clone()
+    };
+    match v {
+        Value::Analytic(a) => Value::Analytic(Arc::new(bare(a))),
+        Value::Event(e) => Value::Event(Arc::new(Event {
+            draws: e.draws.iter().map(bare).collect(),
+            boxes: e.boxes.clone(),
+        })),
+        Value::List(xs) => Value::list(xs.iter().map(marginal).collect()),
+        Value::Record(r) => crate::ops::make_record(
+            r.ty.clone(),
+            r.fields.iter().map(|(k, v)| (k.clone(), marginal(v))).collect(),
+        ),
+        Value::Map(xs) => Value::map(xs.iter().map(|(k, v)| (k.clone(), marginal(v))).collect()),
+        Value::Dist(d) => {
+            crate::dist::Dist::from_pairs(d.outcomes.iter().map(|(v, p)| (marginal(v), *p)).collect(), d.missing)
+                .into_value()
+        }
+        _ => v.clone(),
+    }
+}
+
+/// The same value with its latents renamed by `map`.
+pub fn renamed(v: &Value, map: &BTreeMap<u64, u64>) -> Value {
+    if !contains(v) {
+        return v.clone();
+    }
+    match v {
+        Value::Analytic(a) => Value::Analytic(Arc::new(a.renamed(map))),
+        Value::Event(e) => Value::Event(Arc::new(Event {
+            draws: e.draws.iter().map(|d| d.renamed(map)).collect(),
+            boxes: e.boxes.clone(),
+        })),
+        Value::List(xs) => Value::list(xs.iter().map(|v| renamed(v, map)).collect()),
+        Value::Record(r) => crate::ops::make_record(
+            r.ty.clone(),
+            r.fields.iter().map(|(k, v)| (k.clone(), renamed(v, map))).collect(),
+        ),
+        Value::Map(xs) => Value::map(xs.iter().map(|(k, v)| (k.clone(), renamed(v, map))).collect()),
+        Value::Closure(f) => Value::Closure(Arc::new(Closure {
+            func: f.func,
+            captured: f.captured.iter().map(|v| renamed(v, map)).collect(),
+        })),
+        Value::Dist(d) => crate::dist::Dist::from_pairs(
+            d.outcomes.iter().map(|(v, p)| (renamed(v, map), *p)).collect(),
+            d.missing,
+        )
+        .into_value(),
+        _ => v.clone(),
+    }
 }
 
 /// Latents reachable through an immutable value (including closure captures).

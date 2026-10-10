@@ -111,6 +111,31 @@ fn continuous_reports_have_summaries_but_no_table() {
     assert!(continuous > 0, "{}", outcome.text());
 }
 
+#[test]
+fn records_of_continuous_outcomes_report_each_field() {
+    let outcome = run(
+        "let x ~ normal(0, 1)\nreport {x: x, twice: 2 * x, positive: x > 0}",
+        &Options::new(),
+    );
+    let group = &outcome
+        .report("{x: x, twice: 2 * x, positive: x > 0}")
+        .unwrap()
+        .groups()[0];
+    assert!(group.numeric().is_none() && group.distribution().is_none());
+    let fields = group.fields().expect("fields");
+    let paths: Vec<&str> = fields.iter().map(|(path, _)| path.as_str()).collect();
+    assert_eq!(paths, [".positive", ".twice", ".x"]);
+    close(fields[0].1.probability().unwrap().point().unwrap(), 0.5, 1e-12);
+    close(
+        fields[1].1.numeric().unwrap().sd().unwrap().point().unwrap(),
+        2.0,
+        1e-12,
+    );
+    // Plain records still list their outcomes.
+    let outcome = run("report {a: d6 > 3}", &Options::new());
+    assert!(outcome.reports()[0].groups()[0].fields().is_none());
+}
+
 // ── Uncertainty stays explicit ───────────────────────────────────────────
 
 const GEOMETRIC: &str = "var n = 0\nwhile d6 != 6 {\n  n += 1\n}\n";

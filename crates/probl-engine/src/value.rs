@@ -59,6 +59,10 @@ pub enum Value {
     /// other queries. Anything that needs its outcomes lists it, which
     /// fails on the outcome limit, as building it once did.
     Counts(Arc<crate::dist::Counts>),
+    /// A distribution whose outcomes own continuous draws, from `simulate`
+    /// (docs/semantics.md, section 8): drawing from it gives each outcome's
+    /// draws fresh identities (see `crate::joint`).
+    Joint(Arc<crate::dist::Dist>),
 }
 
 /// The distribution of a variable whose draw is delayed, updated exactly by
@@ -394,6 +398,10 @@ impl Value {
             Value::Analytic(_) => "float".into(),
             Value::Event(_) => "bool".into(),
             Value::Counts(_) => "distribution over ints".into(),
+            Value::Joint(d) => match d.outcomes.first() {
+                Some((v, _)) => format!("distribution over {}", plural_kind(&v.kind())),
+                None => "distribution".into(),
+            },
         }
     }
 
@@ -404,7 +412,10 @@ impl Value {
 
     /// Any distribution, including continuous ones: not a settled value.
     pub fn is_uncertain(&self) -> bool {
-        matches!(self, Value::Dist(_) | Value::Continuous(_) | Value::Counts(_))
+        matches!(
+            self,
+            Value::Dist(_) | Value::Continuous(_) | Value::Counts(_) | Value::Joint(_)
+        )
     }
 
     /// Numbers as f64: ints, floats and probabilities.
@@ -449,6 +460,7 @@ impl Value {
             Value::Analytic(_) => 17,
             Value::Event(_) => 18,
             Value::Counts(_) => 20,
+            Value::Joint(_) => 21,
         }
     }
 
@@ -521,6 +533,7 @@ fn eq_other(x: &Value, y: &Value) -> bool {
         (Value::Analytic(a), Value::Analytic(b)) => a.key() == b.key(),
         (Value::Event(a), Value::Event(b)) => a.key() == b.key(),
         (Value::Counts(a), Value::Counts(b)) => a.key() == b.key(),
+        (Value::Joint(a), Value::Joint(b)) => Arc::ptr_eq(a, b) || a == b,
         (Value::Delayed(a), Value::Delayed(b)) => {
             a.variable == b.variable && family_key(&a.family) == family_key(&b.family)
         }
@@ -566,6 +579,7 @@ fn hash_other<H: Hasher>(value: &Value, state: &mut H) {
         Value::Event(a) => a.key().hash(state),
         Value::Delayed(d) => (d.variable, family_key(&d.family)).hash(state),
         Value::Counts(c) => c.key().hash(state),
+        Value::Joint(d) => d.hash(state),
     }
 }
 
@@ -613,6 +627,7 @@ impl Ord for Value {
             (Value::Analytic(a), Value::Analytic(b)) => a.key().cmp(&b.key()),
             (Value::Event(a), Value::Event(b)) => a.key().cmp(&b.key()),
             (Value::Counts(a), Value::Counts(b)) => a.key().cmp(&b.key()),
+            (Value::Joint(a), Value::Joint(b)) => a.cmp(b),
             (Value::Delayed(a), Value::Delayed(b)) => {
                 (a.variable, family_key(&a.family)).cmp(&(b.variable, family_key(&b.family)))
             }
@@ -734,7 +749,7 @@ fn write_value(v: &Value, f: &mut fmt::Formatter<'_>, nested: bool) -> fmt::Resu
             write!(f, " }}")
         }
         Value::Enum(e) => write!(f, "{}", e.name),
-        Value::Dist(d) => {
+        Value::Dist(d) | Value::Joint(d) => {
             write!(f, "dist(")?;
             for (i, (v, p)) in d.outcomes.iter().enumerate() {
                 if i == 8 {
