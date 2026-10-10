@@ -12,7 +12,7 @@ use crate::chain::{Chain, Solution};
 use crate::conjugate::{self, Seen};
 use crate::continuous::{Family, Rng};
 use crate::dist::{Budget, Counts, Dist};
-use crate::error::{Fault, OpError, OpResult, Result, RuntimeError};
+use crate::error::{ErrorKind, Fault, OpError, OpResult, Result, RuntimeError};
 use crate::failure::Failures;
 use crate::ops::{self, Truth};
 use crate::report::Sink;
@@ -113,6 +113,9 @@ pub struct Config {
     /// A fault ends only the world it happens in (docs/semantics.md,
     /// section 11), instead of the run.
     pub partial: bool,
+    /// Compute what has no formula by numerical integration, to this
+    /// relative tolerance (section 13).
+    pub integrate: Option<f64>,
 }
 
 /// The most steps eliminating one loop's chain may take before the loop is
@@ -222,6 +225,10 @@ pub struct Engine<'p> {
     config: Config,
     budget: Budget,
     memo: FxHashMap<CallKey, Arc<CallResult>>,
+    /// `simulate` results that are distributions whose outcomes own their
+    /// draws: pure values of the block and its captures, which a call's
+    /// result, holding analytic outcomes, can't be cached as.
+    simulated: FxHashMap<CallKey, Value>,
     /// The calls running, with their depth in the stack.
     active: FxHashMap<CallKey, usize>,
     /// Results so far of calls that wait on a call being solved by
@@ -263,6 +270,8 @@ pub struct Engine<'p> {
     /// must be as many for each, since its result is normalized.
     local_density_at: Option<Span>,
     returned_densities: Option<u32>,
+    /// The tolerance, if a result is computed by numerical integration.
+    pub integrated: Option<f64>,
     pub sinks: Vec<Sink>,
     dice: FxHashMap<(u32, u32), Value>,
     pools: FxHashMap<(u32, Value), Value>,
@@ -367,6 +376,7 @@ impl<'p> Engine<'p> {
             budget: config.budget.clone(),
             config,
             memo: FxHashMap::default(),
+            simulated: FxHashMap::default(),
             active: FxHashMap::default(),
             approx: FxHashMap::default(),
             frames_at: Vec::new(),
@@ -385,6 +395,7 @@ impl<'p> Engine<'p> {
             reported_densities: None,
             local_density_at: None,
             returned_densities: None,
+            integrated: None,
             sinks: vec![Sink::default(); prog.reports.len()],
             dice: FxHashMap::default(),
             pools: FxHashMap::default(),
@@ -681,6 +692,7 @@ impl<'p> Engine<'p> {
                     family: a.family,
                     domain: a.domain.intersect(&region),
                     form: None,
+                    weight: a.weight.clone(),
                 };
                 Arc::make_mut(&mut nw.constraints).insert(a.id, latent);
                 if let Err(e) = self.assign(f, place, v, &mut nw, stmt.span) {
@@ -840,6 +852,9 @@ impl<'p> Engine<'p> {
         self.check_density(f, span)?;
         let observed = analytic::observe_normal(&m, y, sd, &mut self.next_latent).map_err(|e| e.at(span))?;
         let Some((ln, known)) = observed else {
+            if self.config.integrate.is_some() {
+                return Ok(None);
+            }
             return Err(analytic::unsupported(
                 "observing a value from a normal distribution whose mean is this outcome",
             )
@@ -852,6 +867,177 @@ impl<'p> Engine<'p> {
         }
         self.reread(w, span)?;
         Ok(Some(ln))
+    }
+
+    /// `observe v from D(…)` with `@integrate`, when parameters of `D` are
+    /// outcomes of one draw: what it says about the draw, as a factor of
+    /// its likelihood, and its probability or density, as a logarithm.
+    /// `None` if it isn't such an observation.
+    #[inline(never)]
+    fn observe_numerically(
+        &mut self,
+        f: FnId,
+        v: &Value,
+        d: &'p Expr,
+        w: &mut World,
+        span: Span,
+    ) -> Result<Option<f64>> {
+        use crate::likelihood::{Factor, Law, Likelihood, Param};
+        let Some(tolerance) = self.config.integrate else {
+            return Ok(None);
+        };
+        let ExprKind::Builtin { func, args, named } = &d.kind else {
+            return Ok(None);
+        };
+        // Each law's parameters, with where each is valid: from, to, and
+        // whether each end is included.
+        type Range = (Option<(f64, bool)>, Option<(f64, bool)>);
+        let positive: Range = (Some((0.0, false)), None);
+        let any: Range = (None, None);
+        let probability: Range = (Some((0.0, true)), Some((1.0, true)));
+        let (law, ranges): (Law, Vec<Range>) = match func {
+            Builtin::Normal => (Law::Normal, vec![any, positive]),
+            Builtin::Lognormal => (Law::Lognormal, vec![any, positive]),
+            Builtin::Uniform => (Law::Uniform, vec![any, any]),
+            Builtin::Beta => (Law::Beta, vec![positive, positive]),
+            Builtin::Gamma => (Law::Gamma, vec![positive, positive]),
+            Builtin::Exponential => (Law::Exponential, vec![positive]),
+            Builtin::Binomial => (Law::Binomial, vec![any, probability]),
+            Builtin::Bernoulli => (Law::Bernoulli, vec![probability]),
+            Builtin::Poisson => (Law::Poisson, vec![(Some((0.0, true)), None)]),
+            Builtin::Geometric => (Law::Geometric, vec![(Some((0.0, false)), Some((1.0, true)))]),
+            _ => return Ok(None),
+        };
+        if !named.is_empty() || args.len() != ranges.len() {
+            return Ok(None);
+        }
+        let mut values = Vec::with_capacity(args.len());
+        for a in args {
+            values.push(self.eval(f, a, w)?);
+        }
+        let mut draw: Option<Arc<Analytic>> = None;
+        for value in &values {
+            match value {
+                Value::Analytic(a) => match &draw {
+                    None => draw = Some(a.clone()),
+                    Some(x) if x.same_axis(a) => {}
+                    Some(_) => {
+                        return Err(analytic::unsupported(
+                            "an observation whose parameters are outcomes of different draws",
+                        )
+                        .at(d.span));
+                    }
+                },
+                v if v.as_f64().is_some() => {}
+                _ => return Ok(None),
+            }
+        }
+        let Some(x) = draw else {
+            return Ok(None);
+        };
+        if x.form.is_some() {
+            return Err(
+                analytic::unsupported("integrating over a sum of draws, which has several dimensions").at(d.span),
+            );
+        }
+        let value = match (law, v) {
+            (Law::Bernoulli, Value::Bool(b)) => f64::from(u8::from(*b)),
+            (_, Value::Int(_) | Value::Float(_) | Value::Prob(_)) => match v.as_f64() {
+                Some(y) => y,
+                None => return Ok(None),
+            },
+            _ => return Ok(None),
+        };
+        // A whole number of trials, as `binomial` takes it.
+        if law == Law::Binomial {
+            let n = &values[0];
+            if !matches!(n, Value::Int(_)) {
+                return Err(analytic::unsupported("a number of trials that's an outcome of a draw").at(d.span));
+            }
+            builtins::call_plain(Builtin::Binomial, &[n.clone(), Value::Prob(0.5)], &mut self.budget)
+                .map_err(|e| e.at(d.span))?;
+        }
+        // Parameters outside their range: everywhere, the fault a number
+        // makes; on part of the draw's range, not supported yet.
+        let mut params = Vec::with_capacity(values.len());
+        for (value, &(lo, hi)) in values.iter().zip(&ranges) {
+            match value {
+                Value::Analytic(a) => {
+                    let bad = analytic::outside(&x, &a.pieces, lo, hi).map_err(|e| e.at(d.span))?;
+                    let mass = bad.mass();
+                    if mass > 0.0 {
+                        let name = law.name();
+                        return Err(if mass >= x.domain.mass() {
+                            RuntimeError::new(d.span, format!("`{name}` isn't defined for these parameters"))
+                                .as_fault(Fault::DomainError)
+                        } else {
+                            analytic::unsupported(&format!(
+                                "`{name}` with a parameter outside its range on part of the draw's range"
+                            ))
+                            .at(d.span)
+                        });
+                    }
+                    params.push(Param::Outcome(a.pieces.clone()));
+                }
+                v => params.push(Param::Plain(v.as_f64().expect("a number"))),
+            }
+        }
+        if law.is_density() {
+            self.check_density(f, span)?;
+        }
+        let mut factors = x.weight.as_ref().map(|l| l.factors.clone()).unwrap_or_default();
+        factors.push(Factor { law, params, value });
+        let before = match &x.weight {
+            None => libm::log(x.domain.mass()),
+            Some(l) => l.shift + libm::log(l.mass(&x.domain)),
+        };
+        let likelihood = Likelihood::new(x.family, factors, tolerance, &mut self.budget).map_err(|e| e.at(span))?;
+        self.integrated = Some(tolerance);
+        if law.is_density() {
+            self.densities = true;
+            w.densities += 1;
+        }
+        let Some(likelihood) = likelihood else {
+            return Ok(Some(f64::NEG_INFINITY));
+        };
+        let after = likelihood.shift + libm::log(likelihood.mass(&x.domain));
+        let latent = analytic::Latent {
+            family: x.family,
+            domain: x.domain.clone(),
+            form: None,
+            weight: Some(Arc::new(likelihood)),
+        };
+        self.know(w, x.id, latent, span)?;
+        Ok(Some(after - before))
+    }
+
+    /// An observation's distribution that takes outcomes of draws as
+    /// parameters, without `@integrate`: its error says that `@integrate`
+    /// would compute it.
+    #[cold]
+    fn integration_hint(&self, d: &Expr, e: RuntimeError) -> RuntimeError {
+        let law = matches!(
+            &d.kind,
+            ExprKind::Builtin {
+                func: Builtin::Normal
+                    | Builtin::Lognormal
+                    | Builtin::Uniform
+                    | Builtin::Beta
+                    | Builtin::Gamma
+                    | Builtin::Exponential
+                    | Builtin::Binomial
+                    | Builtin::Bernoulli
+                    | Builtin::Poisson
+                    | Builtin::Geometric,
+                ..
+            }
+        );
+        if e.kind != ErrorKind::Unsupported || !law || self.config.integrate.is_some() || self.sampler.is_some() {
+            return e;
+        }
+        e.with_help(
+            "`@integrate` computes such an observation of one draw by numerical integration, approximately; or use `@mode sample(runs: 10_000)`",
+        )
     }
 
     /// A normal distribution's standard deviation, checked as `normal`
@@ -1755,8 +1941,11 @@ impl<'p> Engine<'p> {
                                 }
                                 _ => {
                                     if self.sampler.is_none() {
-                                        let gaussian = self.observe_gaussian(f, &v, d, &mut w, span);
-                                        if let Some(ln) = each!(self, here, saved saved, gaussian) {
+                                        let mut exact = self.observe_gaussian(f, &v, d, &mut w, span);
+                                        if matches!(exact, Ok(None)) {
+                                            exact = self.observe_numerically(f, &v, d, &mut w, span);
+                                        }
+                                        if let Some(ln) = each!(self, here, saved saved, exact) {
                                             w.weight = w.weight * Weight::from_ln(ln);
                                             if w.weight.is_zero() {
                                                 self.last_ruling_out = Some(span);
@@ -1766,7 +1955,8 @@ impl<'p> Engine<'p> {
                                             continue;
                                         }
                                     }
-                                    let dist = each!(self, here, saved saved, self.eval(f, d, &w));
+                                    let dist = self.eval(f, d, &w).map_err(|e| self.integration_hint(d, e));
+                                    let dist = each!(self, here, saved saved, dist);
                                     if let (Value::Bool(b), Value::Event(event)) = (&v, &dist) {
                                         self.observe_event(event, *b, w, &mut out, span)?;
                                         continue;
@@ -2766,6 +2956,13 @@ impl<'p> Engine<'p> {
         if key.iter().any(analytic::contains) {
             return Err(analytic::unsupported("capturing an analytic draw inside `simulate`").at(span));
         }
+        if !self.simulated.is_empty() {
+            if let Some(v) = self.simulated.get(&(func, key.clone())) {
+                self.stats.memo_hits += 1;
+                return Ok(v.clone());
+            }
+        }
+        let call_key = self.config.memoizing.then(|| (func, key.clone()));
         let saved_observed = self.observed;
         let saved_densities = self.densities;
         let saved_local = (self.local_density_at.take(), self.returned_densities.take());
@@ -2819,7 +3016,14 @@ impl<'p> Engine<'p> {
         let missing = result.unresolved.ratio(denom);
         // Outcomes of its own draws make a joint distribution.
         if pairs.iter().any(|(v, _)| analytic::contains(v)) {
-            return crate::joint::of(pairs, missing, &mut self.budget).map_err(|e| e.at(span));
+            let v = crate::joint::of(pairs, missing, &mut self.budget).map_err(|e| e.at(span))?;
+            if let Some(call_key) = call_key {
+                if self.simulated.len() >= self.config.max_cached_calls {
+                    self.simulated.clear();
+                }
+                self.simulated.insert(call_key, v.clone());
+            }
+            return Ok(v);
         }
         ops::combine(pairs, missing, &mut self.budget).map_err(|e| e.at(span))
     }

@@ -27,6 +27,7 @@ pub struct Outcome {
     failures: Vec<Failure>,
     failed_share: Option<f64>,
     finished: bool,
+    integration: Option<f64>,
 }
 
 impl Outcome {
@@ -64,6 +65,7 @@ impl Outcome {
             None => outcome.unresolved,
         };
         Outcome {
+            integration: outcome.integration,
             evidence: evidence(&outcome),
             unresolved: Unresolved(unresolved),
             sampling: outcome.sample.as_ref().map(|s| Sampling {
@@ -127,6 +129,16 @@ impl Outcome {
     /// the observations, or their density.
     pub fn evidence(&self) -> Option<&Evidence> {
         self.evidence.as_ref()
+    }
+
+    /// With `@integrate` (or [`Options::integrate`](crate::Options::integrate)),
+    /// when results came from numerical integration: its relative tolerance.
+    /// Every probability, summary and the evidence can then be approximate,
+    /// to about that tolerance by the integration's own error estimates, which
+    /// aren't bounds. `None` when every result is exact up to rounding, or
+    /// sampled.
+    pub fn integration(&self) -> Option<f64> {
+        self.integration
     }
 
     /// The weight that loops and limits cut off before it finished.

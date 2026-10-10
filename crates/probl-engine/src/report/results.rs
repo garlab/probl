@@ -113,6 +113,9 @@ pub struct Numeric {
     pub sd: Quantity,
     /// Every value was a probability (shown as percentages).
     pub percent: bool,
+    /// The mean and sd came from numerical integration, with `@integrate`,
+    /// where there's no formula.
+    pub integrated: bool,
     shape: Shape,
     /// For the quantiles: the group's completeness and sampling support.
     complete: bool,
@@ -252,7 +255,7 @@ pub(super) fn group(key: &Value, acc: &Acc, format: Format, kind: ReportKind, un
     let numeric = if acc.is_event() {
         None
     } else {
-        numeric(acc, &distribution, complete, support)
+        numeric(acc, &distribution, complete, support, format.integrate)
     };
     GroupResult {
         key: key.clone(),
@@ -399,8 +402,14 @@ fn values(
 
 /// The mean and standard deviation of real numbers, or of a continuous
 /// marginal mixed with point masses, as the renderer prints them.
-fn numeric(acc: &Acc, distribution: &[(Value, f64)], complete: bool, support: Option<Support>) -> Option<Numeric> {
-    let summary = |mean: f64, sd: f64, mean_sampling: Option<Uncertainty>, percent: bool, shape: Shape| {
+fn numeric(
+    acc: &Acc,
+    distribution: &[(Value, f64)],
+    complete: bool,
+    support: Option<Support>,
+    integrate: Option<f64>,
+) -> Option<Numeric> {
+    let summary = |mean: f64, sd: f64, mean_sampling: Option<Uncertainty>, percent: bool, shape: Shape, integrated| {
         // NaN: a continuous outcome whose moments have no formula.
         let quantity = |x: f64, sampling| Quantity {
             point: (!x.is_nan()).then_some(x),
@@ -412,14 +421,22 @@ fn numeric(acc: &Acc, distribution: &[(Value, f64)], complete: bool, support: Op
             mean: quantity(mean, mean_sampling),
             sd: quantity(sd, support.map(not_computed)),
             percent,
+            integrated,
             shape,
             complete,
             support,
         })
     };
     if let Some(m) = super::analytic_mixture(distribution) {
-        let (mean, sd) = (m.mean(), m.sd());
-        return summary(mean, sd, support.map(not_computed), false, Shape::Mixture(m));
+        let (mean, sd, integrated) = mixture_moments(&m, integrate);
+        return summary(
+            mean,
+            sd,
+            support.map(not_computed),
+            false,
+            Shape::Mixture(m),
+            integrated,
+        );
     }
     let nums: Vec<(f64, f64)> = distribution
         .iter()
@@ -453,5 +470,43 @@ fn numeric(acc: &Acc, distribution: &[(Value, f64)], complete: bool, support: Op
             support,
         }
     });
-    summary(mean, sd, mean_sampling, percent, Shape::Points(distribution.to_vec()))
+    summary(
+        mean,
+        sd,
+        mean_sampling,
+        percent,
+        Shape::Points(distribution.to_vec()),
+        false,
+    )
+}
+
+/// A mixture's mean and sd: from formulas, or with `@integrate`, by
+/// numerical integration for the parts that have none. Whether it took
+/// integration.
+fn mixture_moments(m: &Mixture, integrate: Option<f64>) -> (f64, f64, bool) {
+    use crate::continuous::Part;
+    let (mean, sd) = (m.mean(), m.sd());
+    let Some(tolerance) = integrate.filter(|_| mean.is_nan()) else {
+        return (mean, sd, false);
+    };
+    let mut parts = Vec::with_capacity(m.parts.len());
+    for (part, p) in &m.parts {
+        let moments = match part {
+            Part::Analytic(a) => a.moments().or_else(|| a.integrated_moments(tolerance)),
+            Part::Continuous(f) => Some((f.mean(), f.variance())),
+            Part::Point(x) => Some((*x, 0.0)),
+        };
+        match moments {
+            Some(mv) => parts.push((mv, *p)),
+            None => return (f64::NAN, f64::NAN, false),
+        }
+    }
+    let total: f64 = parts.iter().map(|(_, p)| p).sum();
+    let mean = parts.iter().map(|((m, _), p)| m * p).sum::<f64>() / total;
+    let variance = parts
+        .iter()
+        .map(|((m, v), p)| p * (v + (m - mean).powi(2)))
+        .sum::<f64>()
+        / total;
+    (mean, variance.sqrt(), true)
 }

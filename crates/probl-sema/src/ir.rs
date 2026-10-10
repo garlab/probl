@@ -78,7 +78,14 @@ pub struct Settings {
     /// `@on_error`: what a fault in one world does to the others. `None`
     /// leaves it to the mode (docs/semantics.md, section 11).
     pub on_error: Option<FailureMode>,
+    /// `@integrate`: when enumerating, compute what has no formula by
+    /// numerical integration, to this relative tolerance (docs/semantics.md,
+    /// section 13). `None` without it.
+    pub integrate: Option<f64>,
 }
+
+/// `@integrate`'s tolerance when it doesn't give one.
+pub const DEFAULT_TOLERANCE: f64 = 1e-9;
 
 impl Default for Settings {
     fn default() -> Settings {
@@ -89,6 +96,7 @@ impl Default for Settings {
             max_iterations: 10_000_000,
             max_worlds: 10_000_000,
             on_error: None,
+            integrate: None,
         }
     }
 }

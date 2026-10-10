@@ -695,6 +695,9 @@ pub struct Format {
     /// It isn't when worlds failed before evidence they'd have met
     /// (docs/semantics.md, section 11): their weight doesn't count it.
     pub reach_known: bool,
+    /// With `@integrate`: the tolerance to compute means and spreads that
+    /// have no formula to, by numerical integration.
+    pub integrate: Option<f64>,
 }
 
 /// Render reports, each with what its sink collected, in source order.
@@ -1363,6 +1366,7 @@ mod tests {
             run_squares: None,
             weighted: false,
             reach_known: true,
+            integrate: None,
         }
     }
 

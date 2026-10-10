@@ -21,6 +21,7 @@ pub struct Options {
     seed: Option<u64>,
     today: Option<Date>,
     epsilon: Option<f64>,
+    integrate: Option<f64>,
     fractions: bool,
     conjugate: bool,
     pub(crate) limits: Limits,
@@ -75,6 +76,7 @@ impl Default for Options {
             seed: None,
             today: None,
             epsilon: None,
+            integrate: None,
             fractions: false,
             conjugate: true,
             limits: Limits::default(),
@@ -130,6 +132,15 @@ impl Options {
     /// this share of what entered, instead of the program's `@epsilon`.
     pub fn epsilon(mut self, e: f64) -> Options {
         self.epsilon = Some(e);
+        self
+    }
+
+    /// When enumerating, compute what has no formula by numerical
+    /// integration, to this relative tolerance, as the program's
+    /// `@integrate` does: results computed that way say so, and are never
+    /// presented as exact.
+    pub fn integrate(mut self, tolerance: f64) -> Options {
+        self.integrate = Some(tolerance);
         self
     }
 
@@ -218,6 +229,7 @@ impl Options {
             solve: self.checks.solve,
             progress: self.progress.clone().map(probl_engine::Progress),
             on_error: self.on_error.map(FailureMode::engine),
+            integrate: self.integrate,
         }
     }
 }
@@ -230,6 +242,7 @@ impl fmt::Debug for Options {
             .field("seed", &self.seed)
             .field("today", &self.today)
             .field("epsilon", &self.epsilon)
+            .field("integrate", &self.integrate)
             .field("fractions", &self.fractions)
             .field("conjugate", &self.conjugate)
             .field("limits", &self.limits)

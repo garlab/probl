@@ -16,6 +16,7 @@
 use crate::continuous::Family;
 use crate::dist::Budget;
 use crate::error::{Fault, OpError, OpResult};
+use crate::likelihood::Likelihood;
 use crate::value::{Closure, Value, family_key, float_key};
 use probl_syntax::ast::BinOp;
 use std::collections::BTreeMap;
@@ -32,6 +33,9 @@ pub struct Latent {
     pub family: Family,
     pub domain: Domain,
     pub form: Option<Arc<Linear>>,
+    /// With `@integrate`, what observations that aren't conjugate say about
+    /// it: a weight on `family` (see `crate::likelihood`).
+    pub weight: Option<Arc<Likelihood>>,
 }
 impl Eq for Latent {}
 impl std::hash::Hash for Latent {
@@ -39,6 +43,7 @@ impl std::hash::Hash for Latent {
         family_key(&self.family).hash(h);
         self.domain.key().hash(h);
         self.form.as_ref().map(|f| f.key()).hash(h);
+        self.weight.as_ref().map(|w| w.key()).hash(h);
     }
 }
 
@@ -167,6 +172,7 @@ impl Linear {
                 )],
                 int: false,
                 form: None,
+                weight: None,
             }
             .value(),
             _ => {
@@ -178,6 +184,7 @@ impl Linear {
                     pieces: vec![(1.0, Fun::affine(map))],
                     int: false,
                     form: Some(axis),
+                    weight: None,
                 }
                 .value()
             }
@@ -531,7 +538,7 @@ impl Fun {
     fn is_finite(self) -> bool {
         self.outer.is_finite() && self.inner.is_finite()
     }
-    fn key(self) -> (u8, u64, u64, u64, u64) {
+    pub(crate) fn key(self) -> (u8, u64, u64, u64, u64) {
         (
             self.kernel as u8,
             float_key(self.outer.scale),
@@ -732,6 +739,8 @@ pub struct Analytic {
     /// For a function of several normal latents, its axis: a linear form
     /// of them, whose distribution is `family`. `id` is then 0.
     pub form: Option<Arc<Linear>>,
+    /// The latent's likelihood, with `@integrate`: a weight on `family`.
+    pub weight: Option<Arc<Likelihood>>,
 }
 impl Analytic {
     pub fn new(id: u64, family: Family) -> Self {
@@ -742,6 +751,7 @@ impl Analytic {
             pieces: vec![(1.0, Fun::IDENTITY)],
             int: false,
             form: None,
+            weight: None,
         }
     }
     /// The axis itself: the draw, or the form.
@@ -777,7 +787,7 @@ impl Analytic {
     /// affine in a normal latent or a form, and unrestricted.
     pub fn linear(&self) -> Option<Linear> {
         let a = self.affine()?;
-        if !self.domain.is_full() {
+        if !self.domain.is_full() || self.weight.is_some() {
             return None;
         }
         match &self.form {
@@ -831,6 +841,7 @@ impl Analytic {
             pieces: t.pieces(&self.pieces),
             int: self.int,
             form,
+            weight: None,
         }
     }
     /// The same function of the same values of the draw, in the coordinates
@@ -859,6 +870,7 @@ impl Analytic {
             pieces,
             int: self.int,
             form: self.form.clone(),
+            weight: self.weight.clone(),
         }
     }
     /// Another function of the same draw, a float.
@@ -870,6 +882,7 @@ impl Analytic {
             pieces,
             int: false,
             form: self.form.clone(),
+            weight: self.weight.clone(),
         }
     }
     /// Another function of the same draw, an int if `int`.
@@ -902,6 +915,7 @@ impl Analytic {
                 .collect::<Vec<_>>(),
             self.int,
             self.form.as_ref().map(|f| f.key()),
+            self.weight.as_ref().map(|w| w.key()),
         )
     }
     pub fn value(mut self) -> OpResult<Value> {
@@ -922,7 +936,7 @@ impl Analytic {
     /// Each value of a discrete outcome, with where the draw is when it's
     /// that value, and that part's share of the domain's probability.
     pub fn atoms(&self) -> Vec<(Value, Domain, f64)> {
-        let mass = self.domain.mass();
+        let mass = self.measure(&self.domain);
         let mut atoms: Vec<(f64, Vec<(f64, f64)>)> = Vec::new();
         for (lo, hi, f) in self.segments() {
             let c = f.outer.offset;
@@ -940,7 +954,7 @@ impl Analytic {
                     push(&mut region, lo, hi);
                 }
                 let region = Domain(region);
-                let share = region.mass() / mass;
+                let share = self.measure(&region) / mass;
                 (number(c, self.int), region, share)
             })
             .collect()
@@ -1011,10 +1025,23 @@ impl Analytic {
     pub fn has_atoms(&self) -> bool {
         self.pieces.len() > 1 && self.segments().iter().any(|(_, _, f)| f.as_constant().is_some())
     }
+    /// The measure of part of its coordinates: its length, or with a
+    /// likelihood, the likelihood's integral there.
+    pub fn measure(&self, d: &Domain) -> f64 {
+        match &self.weight {
+            None => d.mass(),
+            Some(l) => l.mass(d),
+        }
+    }
+    /// The probability of `part` of its coordinates, given its domain.
+    pub fn share(&self, part: &Domain) -> f64 {
+        (self.measure(&self.domain.intersect(part)) / self.measure(&self.domain)).clamp(0.0, 1.0)
+    }
     pub fn cdf(&self, x: f64) -> f64 {
-        let Some(f) = self.affine() else {
+        let affine = self.affine().filter(|_| self.weight.is_none());
+        let Some(f) = affine else {
             return match below(&self.family, &self.pieces, x, false) {
-                Ok(at_most) => (self.domain.intersect(&at_most).mass() / self.domain.mass()).clamp(0.0, 1.0),
+                Ok(at_most) => self.share(&at_most),
                 Err(_) => f64::NAN,
             };
         };
@@ -1025,7 +1052,9 @@ impl Analytic {
     /// The density at `x`, of a piecewise affine outcome: the caller rules
     /// out atoms and other functions.
     pub fn pdf(&self, x: f64) -> f64 {
-        let mass = self.domain.mass();
+        let mass = self.measure(&self.domain);
+        // The posterior density, in the coordinates, relative to the prior.
+        let weight = |u: f64| self.weight.as_ref().map_or(1.0, |l| l.at(u));
         let Some(f) = self.affine() else {
             return self
                 .segments()
@@ -1035,7 +1064,7 @@ impl Analytic {
                     let x = (x - f.offset) / f.scale;
                     let u = self.family.cdf(x);
                     if lo <= u && u <= hi {
-                        self.family.pdf(x) / (f.scale.abs() * mass)
+                        self.family.pdf(x) * weight(u) / (f.scale.abs() * mass)
                     } else {
                         0.0
                     }
@@ -1045,12 +1074,15 @@ impl Analytic {
         let x = (x - f.offset) / f.scale;
         let u = self.family.cdf(x);
         if self.domain.0.iter().any(|(a, b)| *a <= u && u <= *b) {
-            self.family.pdf(x) / (f.scale.abs() * mass)
+            self.family.pdf(x) * weight(u) / (f.scale.abs() * mass)
         } else {
             0.0
         }
     }
     pub fn quantile(&self, q: f64) -> f64 {
+        if let Some(l) = &self.weight {
+            return self.weighted_quantile(l, q);
+        }
         let Some(f) = self.affine() else {
             return self.piecewise_quantile(q);
         };
@@ -1121,9 +1153,94 @@ impl Analytic {
             t
         }
     }
+    /// The quantile under a likelihood: each segment's from the inverse of
+    /// its integral, and between the lowest and the highest of theirs, the
+    /// inverse of the CDF, which inherits its tolerance.
+    fn weighted_quantile(&self, l: &Likelihood, q: f64) -> f64 {
+        let family = &self.family;
+        let segments = self.segments();
+        let within = |lo: f64, hi: f64, f: Fun| {
+            if let Some(c) = f.as_constant() {
+                return c;
+            }
+            let up = f.increasing(family, lo, hi);
+            if q <= 0.0 || q >= 1.0 {
+                let (a, b) = f.ends(family, lo, hi);
+                return if (q <= 0.0) == up { a } else { b };
+            }
+            let u = l.inverse(&Domain(vec![(lo, hi)]), if up { q } else { 1.0 - q });
+            f.at(family.quantile(u.clamp(lo, hi)))
+        };
+        let each = || segments.iter().map(|&(lo, hi, f)| within(lo, hi, f));
+        let lo = each().fold(f64::INFINITY, f64::min);
+        let hi = each().fold(f64::NEG_INFINITY, f64::max);
+        if q <= 0.0 || segments.len() == 1 {
+            return lo;
+        }
+        if q >= 1.0 {
+            return hi;
+        }
+        let (lo, hi) = (lo.max(-f64::MAX), hi.min(f64::MAX));
+        if lo >= hi || self.cdf(lo) >= q {
+            return lo;
+        }
+        crate::continuous::invert(|t| self.cdf(t), q, lo, hi)
+    }
+    /// The mean and variance under a likelihood, by integration, the
+    /// variance about the mean: `None` if an integral doesn't converge.
+    fn weighted_moments(&self, l: &Likelihood) -> Option<(f64, f64)> {
+        let key = (
+            self.pieces.iter().map(|(end, f)| (float_key(*end), f.key())).collect(),
+            self.domain.key(),
+        );
+        l.moments(key, || self.integrate_moments(l))
+    }
+    fn integrate_moments(&self, l: &Likelihood) -> Option<(f64, f64)> {
+        let total = l.mass(&self.domain);
+        let segments = self.segments();
+        let integrate = |g: &dyn Fn(f64) -> f64| -> Option<f64> {
+            let mut sum = 0.0;
+            for &(lo, hi, f) in &segments {
+                sum += match f.as_constant() {
+                    Some(c) => g(c) * l.mass(&Domain(vec![(lo, hi)])),
+                    None => l.integral(|u| g(f.at(self.family.quantile(u))), lo, hi)?,
+                };
+            }
+            Some(sum / total)
+        };
+        let mean = integrate(&|y| y)?;
+        let variance = integrate(&|y| (y - mean) * (y - mean))?;
+        (mean.is_finite() && variance.is_finite()).then_some((mean, variance))
+    }
+    /// The mean and variance by numerical integration, to `tolerance`, for
+    /// `@integrate` where there's no formula: `None` if an integral doesn't
+    /// converge.
+    pub fn integrated_moments(&self, tolerance: f64) -> Option<(f64, f64)> {
+        if let Some(l) = &self.weight {
+            return self.weighted_moments(l);
+        }
+        let total = self.domain.mass();
+        let segments = self.segments();
+        let integrate = |g: &dyn Fn(f64) -> f64| -> Option<f64> {
+            let mut sum = 0.0;
+            for &(lo, hi, f) in &segments {
+                sum += match f.as_constant() {
+                    Some(c) => g(c) * (hi - lo),
+                    None => crate::quadrature::moment(|u| g(f.at(self.family.quantile(u))), lo, hi, tolerance)?,
+                };
+            }
+            Some(sum / total)
+        };
+        let mean = integrate(&|y| y)?;
+        let variance = integrate(&|y| (y - mean) * (y - mean))?;
+        (mean.is_finite() && variance.is_finite()).then_some((mean, variance))
+    }
     /// The mean and variance, from formulas: `None` where a piece's function
     /// has none for the draw's family.
     pub fn moments(&self) -> Option<(f64, f64)> {
+        if let Some(l) = &self.weight {
+            return self.weighted_moments(l);
+        }
         let Some(f) = self.affine() else {
             let mass = self.domain.mass();
             let parts: Vec<_> = self
@@ -1158,7 +1275,7 @@ impl Analytic {
 
     pub fn sd(&self) -> Option<f64> {
         match self.affine() {
-            Some(f) if self.domain == Domain::full() => Some(f.scale.abs() * self.family.sd()),
+            Some(f) if self.domain == Domain::full() && self.weight.is_none() => Some(f.scale.abs() * self.family.sd()),
             _ => self.moments().map(|(_, v)| libm::sqrt(v)),
         }
     }
@@ -1491,13 +1608,7 @@ impl Event {
         let p: f64 = self
             .boxes
             .iter()
-            .map(|b| {
-                self.draws
-                    .iter()
-                    .zip(b)
-                    .map(|(d, yes)| d.domain.intersect(yes).mass() / d.domain.mass())
-                    .product::<f64>()
-            })
+            .map(|b| self.draws.iter().zip(b).map(|(d, yes)| d.share(yes)).product::<f64>())
             .sum();
         p.clamp(0.0, 1.0)
     }
@@ -1547,13 +1658,14 @@ impl Event {
         for (draw, yes) in self.draws.iter().zip(part) {
             let prior = &draw.domain;
             let domain = prior.intersect(yes);
-            p *= domain.mass() / prior.mass();
+            p *= draw.measure(&domain) / draw.measure(prior);
             Arc::make_mut(context).insert(
                 draw.id,
                 Latent {
                     family: draw.family,
                     domain,
                     form: None,
+                    weight: draw.weight.clone(),
                 },
             );
         }
@@ -1634,7 +1746,7 @@ impl Event {
 /// the ratio of the updated and the current family's mass there.
 pub fn update(x: &Analytic, seen: crate::conjugate::Seen) -> OpResult<Option<(f64, Latent)>> {
     use crate::conjugate::Seen;
-    if x.affine() != Some(Affine::IDENTITY) || x.form.is_some() {
+    if x.affine() != Some(Affine::IDENTITY) || x.form.is_some() || x.weight.is_some() {
         return Ok(None);
     }
     // A uniform probability is a beta(1, 1) on part of its range, and an
@@ -1660,6 +1772,7 @@ pub fn update(x: &Analytic, seen: crate::conjugate::Seen) -> OpResult<Option<(f6
                 family: prior,
                 domain,
                 form: None,
+                weight: None,
             },
         )));
     }
@@ -1682,8 +1795,29 @@ pub fn update(x: &Analytic, seen: crate::conjugate::Seen) -> OpResult<Option<(f6
             family: posterior,
             domain: after,
             form: None,
+            weight: None,
         },
     )))
+}
+
+/// Where an outcome of a draw, by its `pieces`, is outside the range from
+/// `lo` to `hi`, in the draw's coordinates within its domain. Each bound is
+/// included when its flag is.
+pub fn outside(
+    x: &Analytic,
+    pieces: &[(f64, Fun)],
+    lo: Option<(f64, bool)>,
+    hi: Option<(f64, bool)>,
+) -> OpResult<Domain> {
+    let pieces = split_turns(&x.family, pieces.to_vec());
+    let mut out = Domain(Vec::new());
+    if let Some((t, included)) = lo {
+        out = out.union(&below(&x.family, &pieces, t, included)?);
+    }
+    if let Some((t, included)) = hi {
+        out = out.union(&below(&x.family, &pieces, t, !included)?.complement());
+    }
+    Ok(x.domain.intersect(&out))
 }
 
 /// A draw from `normal(mean, sd)`, with `mean` an outcome of normal draws:
@@ -1721,6 +1855,9 @@ pub type Observed = (f64, Vec<(u64, Latent)>);
 /// `y`, the covariance is D^½ (I − c cᵀ) D^½ for D = diag(s²) and
 /// c = s a / √S, and its square root D^½ (I − γ c cᵀ), γ = 1 / (1 + sd / √S).
 pub fn observe_normal(mean: &Analytic, y: f64, sd: f64, next: &mut u64) -> OpResult<Option<Observed>> {
+    if mean.weight.is_some() {
+        return Ok(None);
+    }
     if mean.form.is_none() && matches!(mean.family, Family::Normal { .. }) {
         let Some(a) = mean.affine() else {
             return Ok(None);
@@ -1772,6 +1909,7 @@ pub fn observe_normal(mean: &Analytic, y: f64, sd: f64, next: &mut u64) -> OpRes
             family: linear.normal()?,
             domain: Domain::full(),
             form: Some(Arc::new(linear)),
+            weight: None,
         };
         known.push((t.id, latent));
     }
@@ -2579,6 +2717,7 @@ fn read(x: &Analytic, c: &Constraints, b: &mut Budget) -> OpResult<(Analytic, Op
         Some(l) => {
             let mut y = x.moved(&l.family);
             y.domain = y.domain.intersect(&l.domain);
+            y.weight = l.weight.clone();
             let t = (l.family != x.family).then(|| Transport::moved(x.family, l.family));
             (y, t)
         }

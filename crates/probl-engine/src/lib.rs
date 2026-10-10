@@ -14,9 +14,11 @@ pub mod error;
 pub mod failure;
 pub mod interp;
 pub mod joint;
+pub mod likelihood;
 mod math;
 pub mod ops;
 mod ordering;
+pub mod quadrature;
 pub mod report;
 mod stats;
 mod text;
@@ -147,6 +149,9 @@ pub struct Options {
     /// when it enumerates and partial when it samples (docs/semantics.md,
     /// section 11).
     pub on_error: Option<FailureMode>,
+    /// Turns on numerical integration, to this relative tolerance, as the
+    /// program's `@integrate` does (docs/semantics.md, section 13).
+    pub integrate: Option<f64>,
 }
 
 /// A function told how many runs are done, and how many there are.
@@ -175,6 +180,7 @@ impl Default for Options {
             solve: true,
             progress: None,
             on_error: None,
+            integrate: None,
         }
     }
 }
@@ -190,6 +196,10 @@ pub struct Outcome {
     pub unresolved: Weight,
     /// The probability of the evidence, if the program observed anything.
     pub evidence: Option<Weight>,
+    /// With `@integrate`, if results came from numerical integration: its
+    /// relative tolerance. Every result of the run, and the evidence, can
+    /// then be approximate to about that tolerance.
+    pub integration: Option<f64>,
     /// What each `report` collected, in the order of `Program::reports`.
     pub reports: Vec<Sink>,
     /// What each report says, as numbers: what `output` prints them from.
@@ -358,6 +368,7 @@ fn run_here(
         solving: options.solve,
         max_chain_states: limits.max_chain_states,
         partial: on_error == FailureMode::Partial,
+        integrate: options.integrate.or(settings.integrate),
     };
     let epsilon = config.epsilon;
     let inputs = inputs(program, options)?;
@@ -365,6 +376,13 @@ fn run_here(
     let conj = probl_sema::conjugate::analyze(program);
     if let Some((runs, seed)) = sample {
         return sampled(program, &live, &conj, config, options, print, runs, seed, on_error);
+    }
+    let integrate = config.integrate;
+    if let Some(t) = integrate.filter(|t| !(*t > 0.0 && *t <= 1e-3)) {
+        return Err(RuntimeError::new(
+            Default::default(),
+            format!("integration needs a relative tolerance above 0 and at most 0.001, not {t}"),
+        ));
     }
     let mut engine = interp::Engine::new(program, &live, &conj, config, inputs, print);
     let finished = engine.run_main()?;
@@ -410,12 +428,28 @@ fn run_here(
         program_total: total,
         run_squares: None,
         reach_known: comparable,
+        integrate,
     };
     let plain = Format {
         fractions: false,
         ..format
     };
+    let results = report::results(&program.reports, &engine.sinks, format, unresolved);
+    // What a numerical integration computed, if anything: the worlds'
+    // weights, or a mean or spread without a formula.
+    let integration = engine.integrated.or_else(|| {
+        let numeric = |g: &report::GroupResult| g.numeric.as_ref().is_some_and(|n| n.integrated);
+        results
+            .iter()
+            .flat_map(|r| &r.groups)
+            .any(|g| numeric(g) || g.fields.iter().flat_map(|f| &f.0).any(|(_, g)| numeric(g)))
+            .then_some(integrate)
+            .flatten()
+    });
     let mut header = String::from("enumerated");
+    if let Some(tolerance) = integration {
+        header.push_str(&format!(" · integrated to {tolerance:e}"));
+    }
     if !failures.is_empty() {
         header.push_str(" · partial result");
         if comparable && !total.is_zero() {
@@ -452,7 +486,6 @@ fn run_here(
             header.push_str(&format!(" · unresolved {:.1e}", unresolved.to_f64()));
         }
     }
-    let results = report::results(&program.reports, &engine.sinks, format, unresolved);
     let body = report::render_results(&program.reports, &results, format);
     let output = if body.is_empty() {
         header
@@ -465,6 +498,7 @@ fn run_here(
         stats: engine.stats.clone(),
         unresolved,
         evidence,
+        integration,
         reports: std::mem::take(&mut engine.sinks),
         results,
         format,
@@ -858,6 +892,7 @@ fn sampled(
         run_squares: Some(total_squares),
         weighted: program.main().effects.observes,
         reach_known: comparable,
+        integrate: None,
     };
     // The report lines don't show unresolved weight when sampling (the
     // summary line does), but the results still say what's incomplete.
@@ -874,6 +909,7 @@ fn sampled(
         stats: engine.stats.clone(),
         unresolved,
         evidence: engine.observed.then_some(evidence),
+        integration: None,
         densities: engine.densities,
         reports: std::mem::take(&mut engine.sinks),
         results,

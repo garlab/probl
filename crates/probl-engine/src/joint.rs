@@ -198,28 +198,34 @@ pub fn fresh(v: &Value, next: &mut u64) -> Value {
 pub fn sample(d: &Dist, rng: &mut Rng) -> Value {
     let i = rng.choose(d.outcomes.iter().map(|(_, p)| *p)).unwrap_or(0);
     let v = &d.outcomes[i].0;
-    let mut latents: BTreeMap<u64, (Family, Domain)> = BTreeMap::new();
+    let mut latents: BTreeMap<u64, Drawn> = BTreeMap::new();
     gather(v, &mut latents);
     let at: BTreeMap<u64, (f64, f64)> = latents
         .into_iter()
-        .map(|(id, (family, domain))| {
-            let c = within(&domain, rng);
+        .map(|(id, (family, domain, weight))| {
+            let c = within(&domain, weight.as_deref(), rng);
             (id, (c, family.quantile(c)))
         })
         .collect();
     concrete(v, &at)
 }
 
-/// Each latent of a value, with its distribution and where it can be.
-fn gather(v: &Value, latents: &mut BTreeMap<u64, (Family, Domain)>) {
+/// A latent's distribution, where it can be, and its likelihood.
+type Drawn = (Family, Domain, Option<Arc<crate::likelihood::Likelihood>>);
+
+/// Each latent of a value, with its distribution, where it can be and its
+/// likelihood.
+fn gather(v: &Value, latents: &mut BTreeMap<u64, Drawn>) {
     let mut add = |a: &analytic::Analytic| match &a.form {
         Some(f) => {
             for t in &f.terms {
-                latents.entry(t.id).or_insert((t.family, Domain::full()));
+                latents.entry(t.id).or_insert((t.family, Domain::full(), None));
             }
         }
         None => {
-            let entry = latents.entry(a.id).or_insert((a.family, a.domain.clone()));
+            let entry = latents
+                .entry(a.id)
+                .or_insert((a.family, a.domain.clone(), a.weight.clone()));
             entry.1 = entry.1.intersect(&a.domain);
         }
     };
@@ -238,8 +244,12 @@ fn gather(v: &Value, latents: &mut BTreeMap<u64, (Family, Domain)>) {
     }
 }
 
-/// A CDF coordinate drawn uniformly from where a latent can be.
-fn within(domain: &Domain, rng: &mut Rng) -> f64 {
+/// A CDF coordinate drawn from where a latent can be: uniformly, or by its
+/// likelihood.
+fn within(domain: &Domain, weight: Option<&crate::likelihood::Likelihood>, rng: &mut Rng) -> f64 {
+    if let Some(l) = weight {
+        return l.inverse(domain, rng.open());
+    }
     let mut left = rng.open() * domain.mass();
     for &(a, b) in &domain.0 {
         if left <= b - a {

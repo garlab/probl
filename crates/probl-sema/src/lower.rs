@@ -756,6 +756,18 @@ impl<'a> Lowerer<'a> {
                     self.error(pragma.span, format!("`@{name}` needs a positive whole number"));
                 }
             },
+            "integrate" => match arg {
+                None => self.settings.integrate = Some(crate::ir::DEFAULT_TOLERANCE),
+                Some(a) => match pragma_float(a) {
+                    Some(t) if t > 0.0 && t <= 1e-3 => self.settings.integrate = Some(t),
+                    _ => {
+                        self.error(
+                            pragma.span,
+                            "`@integrate` takes a relative tolerance above 0 and at most 0.001, like `@integrate 1e-9`",
+                        );
+                    }
+                },
+            },
             "on_error" => match arg.map(|a| &a.kind) {
                 Some(ast::ExprKind::Name(m)) if m == "total" => self.settings.on_error = Some(FailureMode::Total),
                 Some(ast::ExprKind::Name(m)) if m == "partial" => self.settings.on_error = Some(FailureMode::Partial),
@@ -767,7 +779,7 @@ impl<'a> Lowerer<'a> {
             },
             _ => {
                 self.error(pragma.name.span, format!("unknown pragma `@{name}`"))
-                    .help("the pragmas are @mode, @epsilon, @max_iterations, @max_worlds and @on_error");
+                    .help("the pragmas are @mode, @epsilon, @max_iterations, @max_worlds, @on_error and @integrate");
             }
         }
     }

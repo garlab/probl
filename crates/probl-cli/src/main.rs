@@ -66,6 +66,9 @@ enum Command {
         /// Stop `while` and `loop` once the worlds still inside weigh less than this share of what entered.
         #[arg(long)]
         epsilon: Option<f64>,
+        /// When enumerating, compute what has no formula by numerical integration, to this relative tolerance (like `@integrate`).
+        #[arg(long, value_name = "TOLERANCE", num_args = 0..=1, require_equals = true, default_missing_value = "1e-9")]
+        integrate: Option<f64>,
         /// Print how much work the engine did.
         #[arg(long)]
         stats: bool,
@@ -150,6 +153,7 @@ fn main() -> ExitCode {
             today,
             fractions,
             epsilon,
+            integrate,
             stats,
             mode,
             runs,
@@ -180,6 +184,9 @@ fn main() -> ExitCode {
                 .conjugate(!no_conjugate);
             if let Some(e) = epsilon {
                 options = options.epsilon(e);
+            }
+            if let Some(t) = integrate {
+                options = options.integrate(t);
             }
             options = match mode {
                 Some(ModeArg::Enumerate) => options.enumerate(),

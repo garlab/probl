@@ -136,6 +136,23 @@ fn records_of_continuous_outcomes_report_each_field() {
     assert!(outcome.reports()[0].groups()[0].fields().is_none());
 }
 
+#[test]
+fn integrated_results_say_so() {
+    let source = "let p ~ beta(2, 3)\nobserve true from bernoulli(1 - p)\nreport p";
+    let outcome = run(source, &Options::new().integrate(1e-8));
+    assert_eq!(outcome.integration(), Some(1e-8));
+    let mean = outcome.report("p").unwrap().groups()[0]
+        .numeric()
+        .unwrap()
+        .mean()
+        .unwrap()
+        .point()
+        .unwrap();
+    close(mean, 1.0 / 3.0, 1e-7);
+    // Exact results don't.
+    assert_eq!(run("report 1", &Options::new().integrate(1e-8)).integration(), None);
+}
+
 // ── Uncertainty stays explicit ───────────────────────────────────────────
 
 const GEOMETRIC: &str = "var n = 0\nwhile d6 != 6 {\n  n += 1\n}\n";

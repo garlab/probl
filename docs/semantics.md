@@ -519,6 +519,21 @@ This implementation deliberately rejects unsupported uses with a sampling diagno
 
 Continuous draws inside `simulate` make a distribution whose outcomes own their draws, so that each draw from it is fresh and its parts stay correlated (section 8); capturing analytic outcomes into `simulate` remains unsupported. Ordinary functions can already return analytic outcomes. Cyclic loops involving analytic state use bounded unrolling and the usual iteration/work limits rather than the finite-state Markov solver.
 
+### Numerical integration
+
+`@integrate`, or `@integrate 1e-6` with a relative tolerance (1e-9 by default, at most 0.001), lets enumeration compute by numerical integration what has no formula. The host can turn it on too (`--integrate`, `Options::integrate`). It's opt-in because its results are approximations beyond rounding: the summary line says `integrated to 1e-9`, and the library's `Outcome::integration()` gives the tolerance. Then every probability, summary and the evidence of the run can be approximate to about that tolerance. Results that didn't need it aren't marked.
+
+What it computes:
+
+- **Observations of one draw that aren't conjugate.** `observe v from D(…)` with `D` one of `normal`, `lognormal`, `uniform`, `beta`, `gamma`, `exponential`, `binomial`, `bernoulli`, `poisson` and `geometric`, whose parameters are outcomes of one draw (`bernoulli(1 - p)`, `poisson(rate)` for a lognormal `rate`, `normal(mu * mu, 0.5)`), weighs the draw by the likelihood: its posterior is its distribution times the product of such likelihoods, normalized. Conjugate observations of a draw without a likelihood stay exact updates. The draw keeps its identity: conditions, events, `if`, `report … by`, rounding and the functions of section 13 apply to it, and later observations of it add to its likelihood. The evidence is the likelihood's mean, a density when `D` is continuous (section 13).
+- **Means and spreads without a formula**, like `exp(p)` for a `p` drawn from a beta.
+
+How: the draw's posterior is a weight on its CDF coordinates, which are bounded, so a draw with infinite tails is integrated over [0, 1]. A table of the weight's integral, made once per likelihood by an adaptive 21-point Gauss–Kronrod rule, answers probabilities, CDFs and quantiles. Its breakpoints are where parameters change function, and around the highest points of the weight on a grid, graded outward. Means integrate the outcome times the weight, to the tolerance relative to the integral of its absolute value.
+
+Each integral must reach the tolerance by its own error estimate. An observation whose integral doesn't is an `Unsupported` error; a mean or sd that doesn't, as one that doesn't exist (the mean of `1/x` where the posterior doesn't vanish at 0), shows as unavailable. An error estimate isn't a bound: in particular, a peak of the likelihood much narrower than the grid, in the draw's coordinates, can go unseen. A parameter outside its range (a probability outside [0, 1], a rate or spread of 0 or less) is the fault a number would make where it's outside everywhere, and isn't supported where it's outside on part of the draw's range with positive probability, as section 13's contract says.
+
+Integration is one-dimensional: an observation whose parameters are outcomes of several draws, or of a sum of normal draws, isn't supported, nor is a draw from a distribution whose probability is weighted (`~bernoulli(p)` after a non-conjugate observation of `p`). When sampling, observations weigh runs as usual, and only `simulate`, which enumerates, can integrate: a draw from such a recipe inverts its likelihood's table.
+
 ## 14. Sampling
 
 `@mode sample(runs: n, seed: s)` estimates the same model as sections 1–13 by following `n` random paths through the program, called **runs**, instead of every path.

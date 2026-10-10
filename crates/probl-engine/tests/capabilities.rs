@@ -237,6 +237,27 @@ const CASES: &[Case] = &[
         Unsupported,
         Works,
     ),
+    // J: numerical integration, opt-in with `@integrate`.
+    case(
+        "J",
+        "@integrate\nlet p ~ beta(2, 3)\nobserve true from bernoulli(1 - p)\nreport p",
+        Works,
+        Works,
+    ),
+    case(
+        "J",
+        "@integrate\nlet rate ~ lognormal(0, 1)\nobserve 3 from poisson(rate)\nreport rate",
+        Works,
+        Works,
+    ),
+    case("J", "@integrate\nlet p ~ beta(2, 3)\nreport exp(p)", Works, Works),
+    // Not yet: several dimensions.
+    case(
+        "J",
+        "@integrate\nlet x ~ uniform(0, 1)\nlet y ~ uniform(0, 1)\nobserve 1 from poisson(x * y)\nreport x",
+        Unsupported,
+        Works,
+    ),
     // K: continuous `simulate`.
     case(
         "K",

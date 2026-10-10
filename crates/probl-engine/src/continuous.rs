@@ -1018,10 +1018,11 @@ impl Mixture {
                     intervals.push((lo, hi, *weight));
                 }
                 Part::Analytic(a) => {
-                    let total = a.domain.mass();
+                    let total = a.measure(&a.domain);
                     for (lo, hi, f) in a.segments() {
                         let (x, y) = f.ends(&a.family, lo, hi);
-                        intervals.push((x.min(y), x.max(y), weight * (hi - lo) / total));
+                        let share = a.measure(&crate::analytic::Domain(vec![(lo, hi)])) / total;
+                        intervals.push((x.min(y), x.max(y), weight * share));
                     }
                 }
             }
