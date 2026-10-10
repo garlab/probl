@@ -239,6 +239,7 @@ impl Acc {
                 // avoids keeping one copy per independent draw/branch.
                 let mut marginal = (**a).clone();
                 marginal.id = 0;
+                marginal.form = None;
                 *self
                     .values
                     .entry(Value::Analytic(std::sync::Arc::new(marginal)))

@@ -134,6 +134,19 @@ const CASES: &[Case] = &[
     case(
         "F",
         "let x ~ normal(0, 1)\nlet y ~ normal(0, 1)\nreport x > 0 and y > 0",
+        Works,
+        Works,
+    ),
+    case(
+        "F",
+        "let x ~ normal(0, 1)\nlet y ~ normal(0, 1)\nobserve x > 0 or y > 0\nreport x",
+        Works,
+        Works,
+    ),
+    // Not yet: events of draws that depend on each other.
+    case(
+        "F",
+        "let x ~ normal(0, 1)\nlet y ~ normal(0, 1)\nreport x > 0 and x + y > 0",
         Unsupported,
         Works,
     ),
@@ -159,11 +172,17 @@ const CASES: &[Case] = &[
     ),
     case("H", "let p ~ beta(2, 3)\nlet b ~ bernoulli(p)\nreport b", Works, Works),
     case("H", "let p ~ uniform(0, 1)\nscore p\nreport p", Works, Works),
-    // Not yet: an affine mean in a conjugate likelihood, and a drawn weight
-    // in `chance`.
     case(
         "G",
         "let mu ~ normal(0, 1)\nobserve 1 from normal(2 * mu, 1)\nreport mu",
+        Works,
+        Works,
+    ),
+    // Not yet: an affine probability in a conjugate likelihood, and a drawn
+    // weight in `chance`.
+    case(
+        "G",
+        "let p ~ beta(2, 3)\nobserve true from bernoulli(1 - p)\nreport p",
         Unsupported,
         Works,
     ),
@@ -177,12 +196,44 @@ const CASES: &[Case] = &[
     case(
         "I",
         "let x ~ normal(0, 1)\nlet y ~ normal(0, 1)\nreport x + y",
-        Unsupported,
+        Works,
         Works,
     ),
     case(
         "I",
         "let mu ~ normal(0, 1)\nlet y ~ normal(mu, 1)\nreport y",
+        Works,
+        Works,
+    ),
+    case(
+        "I",
+        "let mu ~ normal(0, 1)\nlet y ~ normal(mu, 1)\nobserve 1.5 from normal(y, 0.5)\nreport mu",
+        Works,
+        Works,
+    ),
+    // Not yet: a condition on a sum, products, sums with other families,
+    // and sums with a restricted draw.
+    case(
+        "I",
+        "let x ~ normal(0, 1)\nlet y ~ normal(0, 1)\nobserve x + y > 0\nreport x",
+        Unsupported,
+        Works,
+    ),
+    case(
+        "I",
+        "let x ~ normal(0, 1)\nlet y ~ normal(0, 1)\nreport x * y",
+        Unsupported,
+        Works,
+    ),
+    case(
+        "I",
+        "let x ~ uniform(0, 1)\nlet y ~ normal(0, 1)\nreport x + y",
+        Unsupported,
+        Works,
+    ),
+    case(
+        "I",
+        "let x ~ normal(0, 1)\nlet y ~ normal(0, 1)\nobserve x > 0\nreport x + y",
         Unsupported,
         Works,
     ),

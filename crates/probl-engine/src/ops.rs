@@ -311,11 +311,10 @@ pub fn truth(v: &Value, op: &str) -> OpResult<Truth> {
 pub fn not(v: &Value, budget: &mut Budget) -> OpResult<Value> {
     match truth(v, "not")? {
         Truth::Fact(b) => Ok(Value::Bool(!b)),
-        Truth::Analytic(e) => Ok(crate::analytic::Event {
-            draw: e.draw.clone(),
-            yes: e.yes.complement(),
+        Truth::Analytic(e) => {
+            budget.work(e.size() as u64)?;
+            Ok(e.complement()?.value())
         }
-        .value()),
         Truth::Probability(p) => computed_prob(1.0 - p, "not"),
         Truth::Uncertain(d) => lift1(&Value::Dist(d), budget, |x, _| match x {
             Value::Bool(b) => Ok(Value::Bool(!b)),
@@ -336,8 +335,8 @@ pub fn logic(and: bool, a: Truth, b: Truth, budget: &mut Budget) -> OpResult<Val
         let (a, b) = (value(a), value(b));
         for v in [&a, &b] {
             if let Value::Event(e) = v {
-                budget.collection(e.yes.0.len() as u128 + e.draw.domain.0.len() as u128)?;
-                budget.work((e.yes.0.len() + e.draw.domain.0.len()) as u64)?;
+                budget.collection(e.size() as u128)?;
+                budget.work(e.size() as u64)?;
             }
         }
         return crate::analytic::logic(and, &a, &b);
@@ -487,15 +486,10 @@ fn binary_plain(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResul
             }
         }
         if let (Value::Event(x), Value::Event(y)) = (a, b) {
-            if x.draw.id == y.draw.id && matches!(op, BinOp::Eq | BinOp::Ne) {
-                let both = x.yes.intersect(&y.yes);
-                let neither = x.yes.complement().intersect(&y.yes.complement());
-                let equal = both.complement().intersect(&neither.complement()).complement();
-                return Ok(crate::analytic::Event {
-                    draw: x.draw.clone(),
-                    yes: if op == BinOp::Eq { equal } else { equal.complement() },
-                }
-                .value());
+            if matches!(op, BinOp::Eq | BinOp::Ne) {
+                budget.work((x.size() + y.size()) as u64)?;
+                let equal = x.combine(y, BinOp::Eq)?;
+                return Ok(if op == BinOp::Eq { equal } else { equal.complement()? }.value());
             }
         }
         return Err(crate::analytic::unsupported(

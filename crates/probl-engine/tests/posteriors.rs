@@ -154,7 +154,7 @@ fn what_isnt_conjugate_is_unsupported() {
             "isn't supported",
         ),
         (
-            "let mu ~ normal(0, 1)\nobserve 1 from normal(2 * mu, 1)\nreport mu",
+            "let p ~ beta(2, 3)\nobserve true from bernoulli(1 - p)\nreport p",
             "isn't supported",
         ),
         (

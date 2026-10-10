@@ -126,6 +126,7 @@ pub fn merge(mut worlds: Vec<World>, live: &SlotSet, enabled: bool) -> Vec<World
         for slot in live.iter() {
             crate::analytic::collect_ids(&w.slots[slot as usize], &mut ids);
         }
+        crate::analytic::collect_form_ids(&w.constraints, &mut ids);
         Arc::make_mut(&mut w.constraints).retain(|id, _| ids.contains(id));
     }
     if !enabled || worlds.len() < 2 {

@@ -110,7 +110,8 @@ fn independent_calls_never_share_fresh_latent_ids() {
         stats(&o, 1, 1.0, 1.0 / 3.0, 0.0, 2.0);
     }
     assert!(
-        error("fn draw() {let x ~ uniform(0,2)\nx}\nlet x=draw()\nlet y=draw()\nreport x-y").contains("independent")
+        error("fn draw() {let x ~ uniform(0,2)\nx}\nlet x=draw()\nlet y=draw()\nreport x-y")
+            .contains("different continuous draws")
     );
 }
 
@@ -343,7 +344,7 @@ fn piecewise_faults_and_limits_stay_as_they_were() {
     let o = outcome("let x ~ uniform(0,2)\nlet y = try { clamp(x, 1, 0) } catch DomainError { -1 }\nreport y");
     assert_eq!(o.reports[0].distribution(), vec![(Value::Int((-1).into()), 1.0)]);
     for (tail, what) in [
-        ("report min(x, y)", "independent continuous draws"),
+        ("report min(x, y)", "different continuous draws"),
         ("report abs(x) * x * x", "nonlinear arithmetic"),
         ("report clamp(x, 0, y)", "continuous bounds"),
         ("report x / max(x, 1)", "nonlinear arithmetic"),

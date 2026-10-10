@@ -660,6 +660,11 @@ impl<'p> Engine<'p> {
             if !a.is_discrete() || failed.binary_search(&i).is_ok() {
                 continue;
             }
+            if a.form.is_some() {
+                return Err(
+                    analytic::joint_condition("assigning a rounded outcome of several normal draws").at(stmt.span),
+                );
+            }
             for (v, region, share) in a.atoms() {
                 if share <= 0.0 {
                     continue;
@@ -668,6 +673,7 @@ impl<'p> Engine<'p> {
                 let latent = analytic::Latent {
                     family: a.family,
                     domain: a.domain.intersect(&region),
+                    form: None,
                 };
                 Arc::make_mut(&mut nw.constraints).insert(a.id, latent);
                 if let Err(e) = self.assign(f, place, v, &mut nw, stmt.span) {
@@ -708,9 +714,11 @@ impl<'p> Engine<'p> {
         Ok(true)
     }
 
-    /// A draw from `bernoulli(p)` or `binomial(n, p)` with a probability
-    /// drawn from a beta, into `out` (see `dependent_draw`); whether it was
-    /// one.
+    /// A draw whose distribution depends on an analytic draw, into `out`:
+    /// from `normal(mean, sd)` with an outcome of normal draws as its mean
+    /// (see `gaussian_draw`), or from `bernoulli(p)` or `binomial(n, p)`
+    /// with a probability drawn from a beta (see `dependent_draw`). Whether
+    /// it was one.
     #[inline(never)]
     fn draw_dependent(
         &mut self,
@@ -720,6 +728,12 @@ impl<'p> Engine<'p> {
         w: &World,
         out: &mut Vec<World>,
     ) -> Result<bool> {
+        if let Some(v) = self.gaussian_draw(f, dist, w)? {
+            let mut w = w.clone();
+            self.assign(f, place, v, &mut w, dist.span)?;
+            out.push(w);
+            return Ok(true);
+        }
         let Some(outcomes) = self.dependent_draw(f, dist, w)? else {
             return Ok(false);
         };
@@ -755,6 +769,103 @@ impl<'p> Engine<'p> {
         }
         self.know(w, x.id, latent, from)?;
         Ok(Some(ln))
+    }
+
+    /// A draw from `normal(mean, sd)` when enumerating, with `mean` an
+    /// outcome of normal draws: the mean plus a fresh normal draw. `None`
+    /// for another draw.
+    fn gaussian_draw(&mut self, f: FnId, dist: &'p Expr, w: &World) -> Result<Option<Value>> {
+        let ExprKind::Builtin {
+            func: Builtin::Normal,
+            args,
+            named,
+        } = &dist.kind
+        else {
+            return Ok(None);
+        };
+        let ([mean, sd], true) = (args.as_slice(), named.is_empty()) else {
+            return Ok(None);
+        };
+        let Value::Analytic(m) = self.eval(f, mean, w)? else {
+            return Ok(None);
+        };
+        let Some(sd) = self.plain_sd(f, sd, w, dist.span)? else {
+            return Ok(None);
+        };
+        if self.nested > 0 {
+            return Err(self.continuous_draw(dist.span));
+        }
+        self.next_latent += 1;
+        match analytic::normal_draw(&m, sd, self.next_latent).map_err(|e| e.at(dist.span))? {
+            Some(v) => Ok(Some(v)),
+            None => Err(
+                analytic::unsupported("drawing from a normal distribution whose mean is this outcome").at(mean.span),
+            ),
+        }
+    }
+
+    /// `observe y from normal(mean, sd)` when enumerating, with `mean` an
+    /// outcome of normal draws: the observation's density, as a logarithm,
+    /// with the world updated exactly. `None` if the mean isn't an outcome.
+    #[inline(never)]
+    fn observe_gaussian(&mut self, f: FnId, v: &Value, d: &'p Expr, w: &mut World, span: Span) -> Result<Option<f64>> {
+        let ExprKind::Builtin {
+            func: Builtin::Normal,
+            args,
+            named,
+        } = &d.kind
+        else {
+            return Ok(None);
+        };
+        let ([mean, sd], true) = (args.as_slice(), named.is_empty()) else {
+            return Ok(None);
+        };
+        let Value::Analytic(m) = self.eval(f, mean, w)? else {
+            return Ok(None);
+        };
+        let Some(sd) = self.plain_sd(f, sd, w, d.span)? else {
+            return Ok(None);
+        };
+        let y = match v {
+            Value::Int(_) | Value::Float(_) | Value::Prob(_) => v.as_f64(),
+            _ => None,
+        };
+        let Some(y) = y else {
+            return Ok(None);
+        };
+        self.check_density(span)?;
+        let observed = analytic::observe_normal(&m, y, sd, &mut self.next_latent).map_err(|e| e.at(span))?;
+        let Some((ln, known)) = observed else {
+            return Err(analytic::unsupported(
+                "observing a value from a normal distribution whose mean is this outcome",
+            )
+            .at(mean.span));
+        };
+        self.densities = true;
+        w.densities += 1;
+        for (id, latent) in known {
+            Arc::make_mut(&mut w.constraints).insert(id, latent);
+        }
+        self.reread(w, span)?;
+        Ok(Some(ln))
+    }
+
+    /// A normal distribution's standard deviation, checked as `normal`
+    /// checks it; `None` if it isn't a plain value.
+    fn plain_sd(&mut self, f: FnId, sd: &Expr, w: &World, span: Span) -> Result<Option<f64>> {
+        let sd = self.eval(f, sd, w)?;
+        if analytic::contains(&sd) || sd.is_uncertain() {
+            return Ok(None);
+        }
+        let checked = builtins::call_plain(Builtin::Normal, &[Value::Float(0.0), sd], &mut self.budget)
+            .map_err(|e| e.at(span))?;
+        let Value::Continuous(family) = checked else {
+            unreachable!("`normal` gives a continuous distribution")
+        };
+        let Family::Normal { sd, .. } = *family else {
+            unreachable!("`normal` gives a normal distribution")
+        };
+        Ok(Some(sd))
     }
 
     /// Drawing from `bernoulli(p)` or `binomial(n, p)` when enumerating, with
@@ -864,6 +975,11 @@ impl<'p> Engine<'p> {
     /// that hold it again, as they would be read.
     fn know(&mut self, w: &mut World, id: u64, latent: analytic::Latent, span: Span) -> Result<()> {
         Arc::make_mut(&mut w.constraints).insert(id, latent);
+        self.reread(w, span)
+    }
+
+    /// Read the values that hold latents again, as the world reads them.
+    fn reread(&mut self, w: &mut World, span: Span) -> Result<()> {
         for slot in &mut w.slots {
             if analytic::contains(slot) {
                 *slot = analytic::resolve(slot, &w.constraints, &mut self.budget).map_err(|e| e.at(span))?;
@@ -1085,20 +1201,93 @@ impl<'p> Engine<'p> {
         Ok(())
     }
 
-    fn restrict_event(
+    /// The parts of a world where an event holds, or doesn't: each with its
+    /// probability given what the world knew, and the restrictions there.
+    /// An event of several independent draws has a part for each box.
+    fn event_parts(
         &mut self,
         event: &analytic::Event,
         yes: bool,
-        constraints: &mut analytic::Constraints,
+        constraints: &analytic::Constraints,
         span: Span,
-    ) -> Result<f64> {
+    ) -> Result<Vec<(f64, analytic::Constraints)>> {
+        if !event.restrictable() {
+            return Err(analytic::joint_condition("a condition on several normal draws together").at(span));
+        }
+        let boxes = event.side(yes).map_err(|e| e.at(span))?;
+        let n = boxes.len().max(1);
         self.budget
-            .collection((constraints.len() + 1) as u128)
+            .collection(((constraints.len() + event.draws.len()) * n) as u128)
             .map_err(|e| e.at(span))?;
         self.budget
-            .work((constraints.len() + event.yes.0.len() + event.draw.domain.0.len()) as u64)
+            .work(((constraints.len() + event.size()) * n) as u64)
             .map_err(|e| e.at(span))?;
-        Ok(event.restrict(yes, constraints))
+        let mut parts = Vec::with_capacity(boxes.len());
+        for part in &boxes {
+            let mut c = constraints.clone();
+            let p = event.restrict(part, &mut c);
+            parts.push((p, c));
+        }
+        Ok(parts)
+    }
+
+    /// `if` on an event: each part of the world where it holds goes to
+    /// `yes`, and each where it doesn't to `no`, restricted to that part.
+    #[inline(never)]
+    fn branch_on_event(
+        &mut self,
+        event: &analytic::Event,
+        w: World,
+        yes: &mut Vec<World>,
+        no: &mut Vec<World>,
+        span: Span,
+    ) -> Result<()> {
+        let holds = self.event_parts(event, true, &w.constraints, span)?;
+        let fails = self.event_parts(event, false, &w.constraints, span)?;
+        let parts: Vec<_> = (holds.into_iter().map(|(p, c)| (true, p, c)))
+            .chain(fails.into_iter().map(|(p, c)| (false, p, c)))
+            .filter(|(_, p, _)| *p > 0.0)
+            .collect();
+        let last = parts.len().saturating_sub(1);
+        let mut w = Some(w);
+        for (i, (side, p, c)) in parts.into_iter().enumerate() {
+            // The last part takes the world itself.
+            let mut nw = if i == last { w.take() } else { w.clone() }.expect("the world");
+            nw.constraints = c;
+            let out = if side { &mut *yes } else { &mut *no };
+            out.push(nw.scaled(p));
+        }
+        Ok(())
+    }
+
+    /// `observe` of an event, or of one side of it: each part of the world
+    /// where it holds goes on, restricted to that part.
+    #[inline(never)]
+    fn observe_event(
+        &mut self,
+        event: &analytic::Event,
+        yes: bool,
+        w: World,
+        out: &mut Vec<World>,
+        span: Span,
+    ) -> Result<()> {
+        let parts = self.event_parts(event, yes, &w.constraints, span)?;
+        let p: f64 = parts.iter().map(|(p, _)| p).sum();
+        if p < 1.0 && self.sampler.is_none() {
+            self.lost += w.weight.scale(1.0 - p);
+        }
+        if p <= 0.0 {
+            self.last_ruling_out = Some(span);
+        }
+        let parts: Vec<_> = parts.into_iter().filter(|(p, _)| *p > 0.0).collect();
+        let last = parts.len().saturating_sub(1);
+        let mut w = Some(w);
+        for (i, (p, c)) in parts.into_iter().enumerate() {
+            let mut nw = if i == last { w.take() } else { w.clone() }.expect("the world");
+            nw.constraints = c;
+            out.push(nw.scaled(p));
+        }
+        Ok(())
     }
 
     fn exec_stmt(&mut self, f: FnId, stmt: &'p Stmt, worlds: Vec<World>) -> Result<Flow> {
@@ -1356,16 +1545,7 @@ impl<'p> Engine<'p> {
                     let condition = each!(self, At::new(f, stmt, &w), world w, self.eval(f, cond, &w));
                     if let Value::Event(event) = condition {
                         self.check_callback_effect(cond.span)?;
-                        let mut y = w.clone();
-                        let mut n = w;
-                        let p = self.restrict_event(&event, true, &mut y.constraints, cond.span)?;
-                        let q = self.restrict_event(&event, false, &mut n.constraints, cond.span)?;
-                        if p > 0.0 {
-                            yes.push(y.scaled(p));
-                        }
-                        if q > 0.0 {
-                            no.push(n.scaled(q));
-                        }
+                        self.branch_on_event(&event, w, &mut yes, &mut no, cond.span)?;
                         continue;
                     }
                     if let Value::Analytic(x) = &condition {
@@ -1539,8 +1719,8 @@ impl<'p> Engine<'p> {
                         None => {
                             let v = each!(self, here, saved saved, self.eval(f, value, &w));
                             if let Value::Event(event) = v {
-                                let p = self.restrict_event(&event, true, &mut w.constraints, value.span)?;
-                                (p, 0.0, 1.0 - p)
+                                self.observe_event(&event, true, w, &mut out, value.span)?;
+                                continue;
                             } else {
                                 let b = ops::fact(&v, "observe").map_err(|e| e.at(value.span))?;
                                 if b { (1.0, 0.0, 0.0) } else { (0.0, 0.0, 1.0) }
@@ -1557,10 +1737,22 @@ impl<'p> Engine<'p> {
                                     (x.map_or(0.0, |x| counts.pmf(x)), 0.0, 0.0)
                                 }
                                 _ => {
+                                    if self.sampler.is_none() {
+                                        let gaussian = self.observe_gaussian(f, &v, d, &mut w, span);
+                                        if let Some(ln) = each!(self, here, saved saved, gaussian) {
+                                            w.weight = w.weight * Weight::from_ln(ln);
+                                            if w.weight.is_zero() {
+                                                self.last_ruling_out = Some(span);
+                                            } else {
+                                                out.push(w);
+                                            }
+                                            continue;
+                                        }
+                                    }
                                     let dist = each!(self, here, saved saved, self.eval(f, d, &w));
                                     if let (Value::Bool(b), Value::Event(event)) = (&v, &dist) {
-                                        let p = self.restrict_event(event, *b, &mut w.constraints, span)?;
-                                        (p, 0.0, 1.0 - p)
+                                        self.observe_event(event, *b, w, &mut out, span)?;
+                                        continue;
                                     } else {
                                         if analytic::contains(&v) || analytic::contains(&dist) {
                                             return Err(analytic::unsupported("this likelihood observation").at(span));
@@ -1656,9 +1848,10 @@ impl<'p> Engine<'p> {
                         // group has its part of the world.
                         let span = key.as_ref().map_or(span, |k| k.span);
                         for yes in [true, false] {
-                            let mut constraints = w.constraints.clone();
-                            let p = self.restrict_event(event, yes, &mut constraints, span)?;
-                            if p > 0.0 {
+                            for (p, constraints) in self.event_parts(event, yes, &w.constraints, span)? {
+                                if p <= 0.0 {
+                                    continue;
+                                }
                                 let v = analytic::resolve(&v, &constraints, &mut self.budget)
                                     .map_err(|e| e.at(value.span))?;
                                 let k = Value::Bool(yes);

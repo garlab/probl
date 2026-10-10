@@ -1,14 +1,17 @@
 //! Identity-preserving continuous outcomes during enumeration.
 //!
-//! A draw is a function of one latent variable: affine on each of a few
-//! pieces of the latent's CDF coordinates, which keeps `abs`, `min`, `max`
-//! and `clamp` exact. Evidence is a set of intervals in those coordinates.
+//! An outcome is a function of one axis: a latent variable, or a linear
+//! form of independent normal latents, as `x + y` is. It's affine on each
+//! of a few pieces of the axis's CDF coordinates, which keeps `abs`, `min`,
+//! `max` and `clamp` exact. Evidence is a set of intervals in a latent's
+//! coordinates, and an event a union of boxes of independent axes' ones.
 //! Worlds own their restrictions, and the latent's distribution there: a
-//! posterior after an exact update. A value carries the coordinates of the
+//! posterior after an exact update. An observation of several normal
+//! latents together makes each the linear form of fresh independent ones,
+//! which carries their correlation. A value carries the coordinates of the
 //! distribution it was made under, and moves to the world's when it's read.
 //! Values and closures remain immutable, and calls return restrictions
-//! alongside their results. Independent latent combinations require
-//! sampling for now.
+//! alongside their results.
 
 use crate::continuous::Family;
 use crate::dist::Budget;
@@ -21,17 +24,164 @@ use std::sync::Arc;
 pub type Constraints = Arc<BTreeMap<u64, Latent>>;
 
 /// What a world knows about a latent: its distribution, and where it can
-/// be, in that distribution's CDF coordinates.
+/// be, in that distribution's CDF coordinates. After an observation of
+/// several normal latents together, also the linear form of fresh ones that
+/// it is now: its distribution is then that form's, and it's unrestricted.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Latent {
     pub family: Family,
     pub domain: Domain,
+    pub form: Option<Arc<Linear>>,
 }
 impl Eq for Latent {}
 impl std::hash::Hash for Latent {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
         family_key(&self.family).hash(h);
         self.domain.key().hash(h);
+        self.form.as_ref().map(|f| f.key()).hash(h);
+    }
+}
+
+/// One of the independent normal latents of a linear form: its id, its
+/// coefficient, and its distribution where the form was made.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Term {
+    pub id: u64,
+    pub coef: f64,
+    pub family: Family,
+}
+
+/// `constant + Σ coef × latent` over independent normal latents, by
+/// increasing id, none with a zero coefficient.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Linear {
+    pub constant: f64,
+    pub terms: Vec<Term>,
+}
+type FormKey = (u64, Vec<(u64, u64, (&'static str, Vec<u64>))>);
+impl Linear {
+    fn key(&self) -> FormKey {
+        (
+            float_key(self.constant),
+            self.terms
+                .iter()
+                .map(|t| (t.id, float_key(t.coef), family_key(&t.family)))
+                .collect(),
+        )
+    }
+    /// The sum of a constant and terms in any order: those of one latent
+    /// add up, and zero coefficients go.
+    fn from_terms(constant: f64, mut terms: Vec<Term>) -> OpResult<Linear> {
+        terms.sort_by_key(|t| t.id);
+        let mut out: Vec<Term> = Vec::with_capacity(terms.len());
+        for t in terms {
+            match out.last_mut() {
+                Some(last) if last.id == t.id => {
+                    if last.family != t.family {
+                        return Err(OpError::internal(
+                            "internal error: a latent with two distributions in one sum",
+                        ));
+                    }
+                    last.coef += t.coef;
+                }
+                _ => out.push(t),
+            }
+        }
+        out.retain(|t| t.coef != 0.0);
+        Ok(Linear { constant, terms: out })
+    }
+    /// `a` of it: `a.scale × self + a.offset`.
+    fn affine(&self, a: Affine) -> Linear {
+        if a.scale == 0.0 {
+            return Linear {
+                constant: a.offset,
+                terms: Vec::new(),
+            };
+        }
+        Linear {
+            constant: a.scale * self.constant + a.offset,
+            terms: self
+                .terms
+                .iter()
+                .map(|t| Term {
+                    coef: a.scale * t.coef,
+                    ..*t
+                })
+                .collect(),
+        }
+    }
+    /// `self + k × other`.
+    fn plus(&self, other: &Linear, k: f64) -> OpResult<Linear> {
+        let terms = self
+            .terms
+            .iter()
+            .copied()
+            .chain(other.terms.iter().map(|t| Term { coef: k * t.coef, ..*t }))
+            .collect();
+        Linear::from_terms(self.constant + k * other.constant, terms)
+    }
+    /// Its mean and variance.
+    fn moments(&self) -> (f64, f64) {
+        let mean = self.terms.iter().map(|t| t.coef * t.family.mean()).sum::<f64>();
+        let variance = self.terms.iter().map(|t| t.coef * t.coef * t.family.variance()).sum();
+        (self.constant + mean, variance)
+    }
+    /// Its distribution, a normal one: unsupported where it isn't finite.
+    fn normal(&self) -> OpResult<Family> {
+        let (mean, variance) = self.moments();
+        Family::normal(mean, libm::sqrt(variance))
+            .map_err(|_| unsupported("a sum of normal draws this large or this small"))
+    }
+    /// The axis of a form of several latents, and the form as an affine
+    /// function of it: the axis is the form without its constant, scaled so
+    /// that its first coefficient is 1 or −1.
+    fn axis(&self) -> (Arc<Linear>, Affine) {
+        let k = self.terms[0].coef.abs();
+        let axis = Linear {
+            constant: 0.0,
+            terms: self.terms.iter().map(|t| Term { coef: t.coef / k, ..*t }).collect(),
+        };
+        (
+            Arc::new(axis),
+            Affine {
+                scale: k,
+                offset: self.constant,
+            },
+        )
+    }
+    /// The outcome it is: a number without latents, a function of the
+    /// latent with one, and otherwise a function of its axis.
+    pub fn value(self) -> OpResult<Value> {
+        match self.terms[..] {
+            [] => Ok(Value::Float(self.constant)),
+            [t] => Analytic {
+                id: t.id,
+                family: t.family,
+                domain: Domain::full(),
+                pieces: vec![(
+                    1.0,
+                    Fun::affine(Affine {
+                        scale: t.coef,
+                        offset: self.constant,
+                    }),
+                )],
+                int: false,
+                form: None,
+            }
+            .value(),
+            _ => {
+                let (axis, map) = self.axis();
+                Analytic {
+                    id: 0,
+                    family: axis.normal()?,
+                    domain: Domain::full(),
+                    pieces: vec![(1.0, Fun::affine(map))],
+                    int: false,
+                    form: Some(axis),
+                }
+                .value()
+            }
+        }
     }
 }
 
@@ -49,6 +199,12 @@ impl Domain {
     }
     pub fn mass(&self) -> f64 {
         self.0.iter().map(|(a, b)| b - a).sum()
+    }
+    pub fn is_full(&self) -> bool {
+        self.0[..] == [(0.0, 1.0)]
+    }
+    pub fn union(&self, other: &Self) -> Self {
+        self.complement().intersect(&other.complement()).complement()
     }
     pub fn intersect(&self, other: &Self) -> Self {
         let (mut i, mut j) = (0, 0);
@@ -176,6 +332,87 @@ impl Affine {
     /// The `x` where it's `y`, for a nonconstant one.
     fn inverse(self, y: f64) -> f64 {
         (y - self.offset) / self.scale
+    }
+    /// It of `inner`.
+    fn of(self, inner: Affine) -> Affine {
+        Affine {
+            scale: self.scale * inner.scale,
+            offset: self.scale * inner.offset + self.offset,
+        }
+    }
+}
+
+/// How a function of one axis becomes a function of another, when the old
+/// axis is `map` of the new one, and their distributions are `from` and
+/// `to`: the same values of the old axis, in the new axis's coordinates.
+#[derive(Clone, Copy, Debug)]
+struct Transport {
+    from: Family,
+    to: Family,
+    map: Affine,
+}
+impl Transport {
+    /// The same axis under another distribution.
+    fn moved(from: Family, to: Family) -> Transport {
+        Transport {
+            from,
+            to,
+            map: Affine::IDENTITY,
+        }
+    }
+    fn coordinate(&self, c: f64) -> f64 {
+        self.to.cdf(self.map.inverse(self.from.quantile(c))).clamp(0.0, 1.0)
+    }
+    fn increasing(&self) -> bool {
+        self.map.scale > 0.0
+    }
+    fn domain(&self, d: &Domain) -> Domain {
+        let mut out = Vec::with_capacity(d.0.len());
+        if self.increasing() {
+            for &(a, b) in &d.0 {
+                push(&mut out, self.coordinate(a), self.coordinate(b));
+            }
+        } else {
+            for &(a, b) in d.0.iter().rev() {
+                push(&mut out, self.coordinate(b), self.coordinate(a));
+            }
+        }
+        Domain(out)
+    }
+    /// A piece's function of the old axis, as one of the new.
+    fn fun(&self, f: Fun) -> Fun {
+        match f.kernel {
+            Kernel::Id => Fun::affine(f.outer.of(self.map)),
+            _ => Fun {
+                inner: f.inner.of(self.map),
+                ..f
+            },
+        }
+    }
+    fn pieces(&self, pieces: &[(f64, Fun)]) -> Pieces {
+        let n = pieces.len();
+        let mut out: Pieces = Vec::with_capacity(n);
+        let mut add = |end: f64, f: Fun| {
+            // A piece that rounds to nothing has no probability either way.
+            if end > out.last().map_or(0.0, |p| p.0) {
+                out.push((end, self.fun(f)));
+            }
+        };
+        if self.increasing() {
+            for (i, &(end, f)) in pieces.iter().enumerate() {
+                add(if i + 1 == n { 1.0 } else { self.coordinate(end) }, f);
+            }
+        } else {
+            // In reverse: a piece ends where it started.
+            for i in (0..n).rev() {
+                add(if i == 0 { 1.0 } else { self.coordinate(pieces[i - 1].0) }, pieces[i].1);
+            }
+        }
+        match out.last_mut() {
+            Some(p) => p.0 = 1.0,
+            None => out.push((1.0, self.fun(pieces[n - 1].1))),
+        }
+        out
     }
 }
 
@@ -492,6 +729,9 @@ pub struct Analytic {
     /// Whether it's an int, as `floor(x)` is: then every piece is a whole
     /// number.
     pub int: bool,
+    /// For a function of several normal latents, its axis: a linear form
+    /// of them, whose distribution is `family`. `id` is then 0.
+    pub form: Option<Arc<Linear>>,
 }
 impl Analytic {
     pub fn new(id: u64, family: Family) -> Self {
@@ -501,11 +741,72 @@ impl Analytic {
             domain: Domain::full(),
             pieces: vec![(1.0, Fun::IDENTITY)],
             int: false,
+            form: None,
         }
     }
-    /// The draw itself.
-    fn latent(&self) -> Self {
+    /// The axis itself: the draw, or the form.
+    pub(crate) fn latent(&self) -> Self {
         self.with(vec![(1.0, Fun::IDENTITY)])
+    }
+    /// Whether it's a function of the same axis as `other`.
+    pub fn same_axis(&self, other: &Analytic) -> bool {
+        match (&self.form, &other.form) {
+            (None, None) => self.id == other.id,
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a == b,
+            _ => false,
+        }
+    }
+    /// Whether it depends on one of the latents that `other` does: then the
+    /// two aren't independent.
+    fn shares_latents(&self, other: &Analytic) -> bool {
+        let mut mine = std::collections::BTreeSet::new();
+        self.collect_ids(&mut mine);
+        let mut theirs = std::collections::BTreeSet::new();
+        other.collect_ids(&mut theirs);
+        !mine.is_disjoint(&theirs)
+    }
+    fn collect_ids(&self, ids: &mut std::collections::BTreeSet<u64>) {
+        match &self.form {
+            Some(f) => ids.extend(f.terms.iter().map(|t| t.id)),
+            None => {
+                ids.insert(self.id);
+            }
+        }
+    }
+    /// The linear form of independent normal latents it is, if it's one:
+    /// affine in a normal latent or a form, and unrestricted.
+    pub fn linear(&self) -> Option<Linear> {
+        let a = self.affine()?;
+        if !self.domain.is_full() {
+            return None;
+        }
+        match &self.form {
+            Some(f) => Some(f.affine(a)),
+            None if matches!(self.family, Family::Normal { .. }) => Some(
+                Linear {
+                    constant: 0.0,
+                    terms: vec![Term {
+                        id: self.id,
+                        coef: 1.0,
+                        family: self.family,
+                    }],
+                }
+                .affine(a),
+            ),
+            None => None,
+        }
+    }
+    /// The same function of the same values, as a function of another
+    /// axis, `id` or `form`, that `t` moves it to.
+    fn rebased(&self, id: u64, form: Option<Arc<Linear>>, t: &Transport) -> Self {
+        Self {
+            id,
+            family: t.to,
+            domain: t.domain(&self.domain),
+            pieces: t.pieces(&self.pieces),
+            int: self.int,
+            form,
+        }
     }
     /// The same function of the same values of the draw, in the coordinates
     /// of `to`, a distribution of the draw with the same support or less.
@@ -532,6 +833,7 @@ impl Analytic {
             domain: self.domain.moved(&self.family, to),
             pieces,
             int: self.int,
+            form: self.form.clone(),
         }
     }
     /// Another function of the same draw, a float.
@@ -542,6 +844,7 @@ impl Analytic {
             domain: self.domain.clone(),
             pieces,
             int: false,
+            form: self.form.clone(),
         }
     }
     /// Another function of the same draw, an int if `int`.
@@ -573,6 +876,7 @@ impl Analytic {
                 .map(|(end, f)| (float_key(*end), f.key()))
                 .collect::<Vec<_>>(),
             self.int,
+            self.form.as_ref().map(|f| f.key()),
         )
     }
     pub fn value(mut self) -> OpResult<Value> {
@@ -1089,17 +1393,88 @@ mod moments {
     }
 }
 
+/// Where independent axes are: a union of disjoint boxes, each a domain of
+/// each axis in its CDF coordinates.
 #[derive(Clone, Debug)]
 pub struct Event {
-    pub draw: Analytic,
-    pub yes: Domain,
+    /// Each axis itself, with its domain where the event was made: no two
+    /// share a latent.
+    pub draws: Vec<Analytic>,
+    pub boxes: Vec<Vec<Domain>>,
 }
+
+/// The most boxes an event can have: each `or` of events of different
+/// draws can multiply them.
+const MAX_BOXES: usize = 10_000;
+
+/// The common parts of two unions of disjoint boxes.
+fn intersect_boxes(a: &[Vec<Domain>], b: &[Vec<Domain>]) -> OpResult<Vec<Vec<Domain>>> {
+    let mut out = Vec::with_capacity(a.len() * b.len());
+    for x in a {
+        for y in b {
+            let both: Vec<Domain> = x.iter().zip(y).map(|(x, y)| x.intersect(y)).collect();
+            if both.iter().all(|d| !d.0.is_empty()) {
+                out.push(both);
+            }
+        }
+        if out.len() > MAX_BOXES {
+            return Err(OpError::limit(format!(
+                "an event with more than {MAX_BOXES} boxes is over the limit"
+            )));
+        }
+    }
+    Ok(out)
+}
+
+/// Where none of a union of disjoint boxes of `n` axes is: the box minus
+/// each box in turn, each difference as disjoint boxes (outside the first
+/// axis's part; inside it and outside the second's; …).
+fn complement_boxes(boxes: &[Vec<Domain>], n: usize) -> OpResult<Vec<Vec<Domain>>> {
+    let mut out = vec![vec![Domain::full(); n]];
+    for b in boxes {
+        let mut outside = Vec::with_capacity(n);
+        for i in 0..n {
+            let mut part: Vec<Domain> = b[..i].to_vec();
+            part.push(b[i].complement());
+            part.extend(std::iter::repeat_n(Domain::full(), n - i - 1));
+            if part.iter().all(|d| !d.0.is_empty()) {
+                outside.push(part);
+            }
+        }
+        out = intersect_boxes(&out, &outside)?;
+    }
+    Ok(out)
+}
+
 impl Event {
+    pub fn single(draw: Analytic, yes: Domain) -> Self {
+        Self {
+            draws: vec![draw],
+            boxes: vec![vec![yes]],
+        }
+    }
     pub fn key(&self) -> impl Ord + std::hash::Hash + use<> {
-        (self.draw.key(), self.yes.key())
+        (
+            self.draws.iter().map(Analytic::key).collect::<Vec<_>>(),
+            self.boxes
+                .iter()
+                .map(|b| b.iter().map(Domain::key).collect::<Vec<_>>())
+                .collect::<Vec<_>>(),
+        )
     }
     pub fn probability(&self) -> f64 {
-        (self.draw.domain.intersect(&self.yes).mass() / self.draw.domain.mass()).clamp(0.0, 1.0)
+        let p: f64 = self
+            .boxes
+            .iter()
+            .map(|b| {
+                self.draws
+                    .iter()
+                    .zip(b)
+                    .map(|(d, yes)| d.domain.intersect(yes).mass() / d.domain.mass())
+                    .product::<f64>()
+            })
+            .sum();
+        p.clamp(0.0, 1.0)
     }
     pub fn value(self) -> Value {
         let p = self.probability();
@@ -1109,18 +1484,117 @@ impl Event {
             Value::Event(Arc::new(self))
         }
     }
-    pub fn restrict(&self, yes: bool, context: &mut Constraints) -> f64 {
-        let prior = &self.draw.domain;
-        let domain = prior.intersect(&if yes { self.yes.clone() } else { self.yes.complement() });
-        let p = domain.mass() / prior.mass();
-        Arc::make_mut(context).insert(
-            self.draw.id,
-            Latent {
-                family: self.draw.family,
-                domain,
-            },
-        );
+    /// Where it doesn't hold.
+    pub fn complement(&self) -> OpResult<Event> {
+        Ok(Event {
+            draws: self.draws.clone(),
+            boxes: self.side(false)?,
+        })
+    }
+    /// The boxes where it holds, or where it doesn't. Of one axis, that's
+    /// one box.
+    pub fn side(&self, yes: bool) -> OpResult<Vec<Vec<Domain>>> {
+        match (&self.boxes[..], self.draws.len()) {
+            ([b], 1) => Ok(vec![vec![if yes { b[0].clone() } else { b[0].complement() }]]),
+            _ if yes => Ok(self.boxes.clone()),
+            _ => complement_boxes(&self.boxes, self.draws.len()),
+        }
+    }
+    /// How many intervals it holds, which operations on it cost.
+    pub fn size(&self) -> usize {
+        let boxes: usize = self
+            .boxes
+            .iter()
+            .map(|b| b.iter().map(|d| d.0.len()).sum::<usize>())
+            .sum();
+        boxes + self.draws.iter().map(|d| d.domain.0.len()).sum::<usize>()
+    }
+    /// Whether worlds can be restricted to it: each axis is a latent, not
+    /// a form of several. Restricting a form would make its latents a
+    /// truncated joint distribution.
+    pub fn restrictable(&self) -> bool {
+        self.draws.iter().all(|d| d.form.is_none())
+    }
+    /// Restricts a world to one of its boxes: the box's probability given
+    /// what the world knew.
+    pub fn restrict(&self, part: &[Domain], context: &mut Constraints) -> f64 {
+        let mut p = 1.0;
+        for (draw, yes) in self.draws.iter().zip(part) {
+            let prior = &draw.domain;
+            let domain = prior.intersect(yes);
+            p *= domain.mass() / prior.mass();
+            Arc::make_mut(context).insert(
+                draw.id,
+                Latent {
+                    family: draw.family,
+                    domain,
+                    form: None,
+                },
+            );
+        }
         p.clamp(0.0, 1.0)
+    }
+    /// Both events, either, or the same outcome for both, by `op`
+    /// (`And`, `Or`, or `Eq`). Their axes must be the same or independent.
+    pub fn combine(&self, other: &Event, op: BinOp) -> OpResult<Event> {
+        let mut draws = self.draws.clone();
+        let mut at = Vec::with_capacity(other.draws.len());
+        for d in &other.draws {
+            match draws.iter().position(|x| x.same_axis(d)) {
+                Some(i) => at.push(i),
+                None => {
+                    if draws.iter().any(|x| x.shares_latents(d)) {
+                        return Err(unsupported("combining events of draws that depend on each other"));
+                    }
+                    at.push(draws.len());
+                    draws.push(d.clone());
+                }
+            }
+        }
+        let n = draws.len();
+        let mine: Vec<Vec<Domain>> = self
+            .boxes
+            .iter()
+            .map(|b| {
+                let mut part = b.clone();
+                part.resize(n, Domain::full());
+                part
+            })
+            .collect();
+        let theirs: Vec<Vec<Domain>> = other
+            .boxes
+            .iter()
+            .map(|b| {
+                let mut part = vec![Domain::full(); n];
+                for (d, &i) in b.iter().zip(&at) {
+                    part[i] = d.clone();
+                }
+                part
+            })
+            .collect();
+        let boxes = match op {
+            BinOp::And => intersect_boxes(&mine, &theirs)?,
+            BinOp::Or => {
+                let mut boxes = mine.clone();
+                boxes.extend(intersect_boxes(&theirs, &complement_boxes(&mine, n)?)?);
+                boxes
+            }
+            _ => {
+                let mut boxes = intersect_boxes(&mine, &theirs)?;
+                let (not_mine, not_theirs) = (complement_boxes(&mine, n)?, complement_boxes(&theirs, n)?);
+                boxes.extend(intersect_boxes(&not_mine, &not_theirs)?);
+                boxes
+            }
+        };
+        Ok(Event { draws, boxes }.simplified())
+    }
+    /// Of one axis, its boxes as one.
+    fn simplified(mut self) -> Event {
+        if self.draws.len() == 1 && self.boxes.len() != 1 {
+            let union = self.boxes.iter().fold(Domain(Vec::new()), |all, b| all.union(&b[0]));
+            self.boxes = vec![vec![union]];
+        }
+        self
     }
 }
 
@@ -1135,7 +1609,7 @@ impl Event {
 /// the ratio of the updated and the current family's mass there.
 pub fn update(x: &Analytic, seen: crate::conjugate::Seen) -> OpResult<Option<(f64, Latent)>> {
     use crate::conjugate::Seen;
-    if x.affine() != Some(Affine::IDENTITY) {
+    if x.affine() != Some(Affine::IDENTITY) || x.form.is_some() {
         return Ok(None);
     }
     // A uniform probability is a beta(1, 1) on part of its range, and an
@@ -1155,7 +1629,14 @@ pub fn update(x: &Analytic, seen: crate::conjugate::Seen) -> OpResult<Option<(f6
         return Ok(None);
     };
     if ln == f64::NEG_INFINITY {
-        return Ok(Some((ln, Latent { family: prior, domain })));
+        return Ok(Some((
+            ln,
+            Latent {
+                family: prior,
+                domain,
+                form: None,
+            },
+        )));
     }
     let after = domain.moved(&prior, &posterior);
     if after.mass() == 0.0 {
@@ -1175,13 +1656,114 @@ pub fn update(x: &Analytic, seen: crate::conjugate::Seen) -> OpResult<Option<(f6
         Latent {
             family: posterior,
             domain: after,
+            form: None,
         },
     )))
+}
+
+/// A draw from `normal(mean, sd)`, with `mean` an outcome of normal draws:
+/// the mean plus a fresh normal latent `id` with standard deviation `sd`.
+/// `None` if the mean isn't an unrestricted linear form of normal draws.
+pub fn normal_draw(mean: &Analytic, sd: f64, id: u64) -> OpResult<Option<Value>> {
+    let Some(m) = mean.linear() else {
+        return Ok(None);
+    };
+    let noise = Linear {
+        constant: 0.0,
+        terms: vec![Term {
+            id,
+            coef: 1.0,
+            family: Family::Normal { mean: 0.0, sd },
+        }],
+    };
+    Ok(Some(m.plus(&noise, 1.0)?.value()?))
+}
+
+/// An observation's log density, and what the world knows about each latent
+/// after it.
+pub type Observed = (f64, Vec<(u64, Latent)>);
+
+/// Observing `y` from `normal(mean, sd)`, with `mean` an outcome of normal
+/// draws: the logarithm of its density, and what the world knows about
+/// each latent after it. `None` if the mean isn't affine in a normal latent
+/// or a linear form of several.
+///
+/// With one latent, it's the conjugate update, by what `y` says about the
+/// latent itself. With several, which are unrestricted, their posterior is
+/// normal with a covariance. Each becomes its posterior mean plus a linear
+/// form of fresh standard normal latents, numbered after `next`: with
+/// prior standard deviations `s`, coefficients `a` and `S` the variance of
+/// `y`, the covariance is D^½ (I − c cᵀ) D^½ for D = diag(s²) and
+/// c = s a / √S, and its square root D^½ (I − γ c cᵀ), γ = 1 / (1 + sd / √S).
+pub fn observe_normal(mean: &Analytic, y: f64, sd: f64, next: &mut u64) -> OpResult<Option<Observed>> {
+    if mean.form.is_none() && matches!(mean.family, Family::Normal { .. }) {
+        let Some(a) = mean.affine() else {
+            return Ok(None);
+        };
+        // y ~ normal(s x + o, sd) is (y − o) / s ~ normal(x, sd / |s|), with
+        // the density divided by |s|.
+        let seen = crate::conjugate::Seen::Normal {
+            y: (y - a.offset) / a.scale,
+            sd: sd / a.scale.abs(),
+        };
+        let updated = update(&mean.latent(), seen)?;
+        return Ok(updated.map(|(ln, latent)| (ln - libm::log(a.scale.abs()), vec![(mean.id, latent)])));
+    }
+    let Some(form) = mean.linear() else {
+        return Ok(None);
+    };
+    let (m, variance) = form.moments();
+    let total = variance + sd * sd;
+    let r = y - m;
+    let ln = -0.5 * libm::log(2.0 * std::f64::consts::PI * total) - r * r / (2.0 * total);
+    let root = libm::sqrt(total);
+    let gamma = 1.0 / (1.0 + sd / root);
+    let c: Vec<f64> = form.terms.iter().map(|t| t.family.sd() * t.coef / root).collect();
+    let fresh: Vec<u64> = form
+        .terms
+        .iter()
+        .map(|_| {
+            *next += 1;
+            *next
+        })
+        .collect();
+    let standard = Family::Normal { mean: 0.0, sd: 1.0 };
+    let mut known = Vec::with_capacity(form.terms.len());
+    for (i, t) in form.terms.iter().enumerate() {
+        let s = t.family.sd();
+        let constant = t.family.mean() + s * s * t.coef * r / total;
+        let terms = fresh
+            .iter()
+            .zip(&c)
+            .enumerate()
+            .map(|(j, (&id, &cj))| Term {
+                id,
+                coef: s * (f64::from(u8::from(i == j)) - gamma * c[i] * cj),
+                family: standard,
+            })
+            .collect();
+        let linear = Linear::from_terms(constant, terms)?;
+        let latent = Latent {
+            family: linear.normal()?,
+            domain: Domain::full(),
+            form: Some(Arc::new(linear)),
+        };
+        known.push((t.id, latent));
+    }
+    Ok(Some((ln, known)))
 }
 
 pub fn unsupported(what: &str) -> OpError {
     OpError::unsupported(format!("{what} isn't supported for analytic continuous draws yet"))
         .help("use `@mode sample(runs: 10_000)` for this operation")
+}
+
+/// Restricting worlds by an outcome of several normal draws together would
+/// make them a truncated joint distribution.
+pub fn joint_condition(what: &str) -> OpError {
+    OpError::unsupported(format!("{what} isn't supported when enumerating yet")).help(
+        "it would make the draws a truncated joint distribution: report it instead, or use `@mode sample(runs: 10_000)`",
+    )
 }
 
 /// An operand of an operation on outcomes of one draw.
@@ -1192,8 +1774,8 @@ enum Operand<'a> {
 
 fn operand<'a>(v: &'a Value, x: &Analytic) -> OpResult<Operand<'a>> {
     match v {
-        Value::Analytic(y) if y.id == x.id => Ok(Operand::Pieces(&y.pieces)),
-        Value::Analytic(_) => Err(unsupported("combining independent continuous draws")),
+        Value::Analytic(y) if y.same_axis(x) => Ok(Operand::Pieces(&y.pieces)),
+        Value::Analytic(_) => Err(different_draws()),
         v => v
             .as_f64()
             .filter(|v| v.is_finite())
@@ -1367,6 +1949,11 @@ pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<
     if op == Pow {
         return power(a, b, budget);
     }
+    if let (Value::Analytic(p), Value::Analytic(q)) = (a, b) {
+        if !p.same_axis(q) {
+            return combined(op, p, q, budget);
+        }
+    }
     let (p, q) = (operand(a, x)?, operand(b, x)?);
     let plain = matches!(q, Operand::Constant(_));
     let pieces = match op {
@@ -1389,6 +1976,36 @@ pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<
     // As with numbers, sums, differences and products of ints are ints.
     let int = matches!(op, Add | Sub | Mul) && is_int(a) && is_int(b);
     x.with_type(pieces, int).value()
+}
+
+/// Combining outcomes of different axes: only sums and differences of
+/// normal latents, which are linear forms of them.
+fn different_draws() -> OpError {
+    OpError::unsupported(
+        "combining different continuous draws isn't supported when enumerating, except to add or subtract normal ones without restrictions",
+    )
+    .help("use `@mode sample(runs: 10_000)` for this operation")
+}
+
+/// An operation on outcomes of different axes: a sum or difference of
+/// normal latents is a linear form of them, and a comparison an event of
+/// the difference.
+fn combined(op: BinOp, p: &Analytic, q: &Analytic, budget: &mut Budget) -> OpResult<Value> {
+    use BinOp::*;
+    let sign = match op {
+        Add => 1.0,
+        Sub | Eq | Ne | Lt | Le | Gt | Ge => -1.0,
+        _ => return Err(different_draws()),
+    };
+    let (Some(a), Some(b)) = (p.linear(), q.linear()) else {
+        return Err(different_draws());
+    };
+    budget.work((a.terms.len() + b.terms.len()) as u64)?;
+    let d = a.plus(&b, sign)?.value()?;
+    match op {
+        Add | Sub => Ok(d),
+        _ => crate::ops::binary(op, &d, &Value::Float(0.0), budget),
+    }
 }
 
 /// `a ^ b` with an outcome of a draw: a square, a square root or a
@@ -1511,7 +2128,7 @@ fn compare(x: &Analytic, op: BinOp, d: &[(f64, Fun)]) -> OpResult<Event> {
             if op == Eq { equal } else { equal.complement() }
         }
     };
-    Ok(Event { draw: x.latent(), yes })
+    Ok(Event::single(x.latent(), yes))
 }
 
 pub fn negate(x: &Analytic) -> OpResult<Value> {
@@ -1694,27 +2311,12 @@ pub fn logic(and: bool, a: &Value, b: &Value) -> OpResult<Value> {
         (Value::Event(e), b) | (b, Value::Event(e)) => (e, b),
         _ => return Err(unsupported("this logical operation")),
     };
-    let mut e = (**event).clone();
     match other {
-        Value::Bool(x) => {
-            if *x != and {
-                return Ok(Value::Bool(*x));
-            }
-        }
-        Value::Event(other) if e.draw.id == other.draw.id => {
-            e.yes = if and {
-                e.yes.intersect(&other.yes)
-            } else {
-                e.yes.complement().intersect(&other.yes.complement()).complement()
-            };
-        }
-        _ => {
-            return Err(unsupported(
-                "combining this event with another probability or independent draw",
-            ));
-        }
+        Value::Bool(x) if *x != and => Ok(Value::Bool(*x)),
+        Value::Bool(_) => Ok(Value::Event(event.clone())),
+        Value::Event(other) => Ok(event.combine(other, if and { BinOp::And } else { BinOp::Or })?.value()),
+        _ => Err(unsupported("combining this event with a probability")),
     }
-    Ok(e.value())
 }
 
 /// Scan through aggregate values too: symbolic numbers must never become
@@ -1746,12 +2348,8 @@ pub fn collect_ids(v: &Value, ids: &mut std::collections::BTreeSet<u64>) {
     let mut pending = vec![v];
     while let Some(v) = pending.pop() {
         match v {
-            Value::Analytic(a) => {
-                ids.insert(a.id);
-            }
-            Value::Event(e) => {
-                ids.insert(e.draw.id);
-            }
+            Value::Analytic(a) => a.collect_ids(ids),
+            Value::Event(e) => e.draws.iter().for_each(|d| d.collect_ids(ids)),
             Value::List(v) => pending.extend(v.iter()),
             Value::Map(v) => pending.extend(v.iter().flat_map(|(k, v)| [k, v])),
             Value::Bag(v) => pending.extend(v.keys()),
@@ -1763,6 +2361,21 @@ pub fn collect_ids(v: &Value, ids: &mut std::collections::BTreeSet<u64>) {
     }
 }
 
+/// Adds the latents that the forms of those in `ids` are made of, which
+/// the world must keep knowing about too.
+pub fn collect_form_ids(context: &Constraints, ids: &mut std::collections::BTreeSet<u64>) {
+    let mut pending: Vec<u64> = ids.iter().copied().collect();
+    while let Some(id) = pending.pop() {
+        if let Some(Latent { form: Some(f), .. }) = context.get(&id) {
+            for t in &f.terms {
+                if ids.insert(t.id) {
+                    pending.push(t.id);
+                }
+            }
+        }
+    }
+}
+
 /// Snapshot a value under this world's posterior without mutating aliases.
 pub fn resolve(v: &Value, context: &Constraints, budget: &mut Budget) -> OpResult<Value> {
     if context.is_empty() || !contains(v) {
@@ -1770,53 +2383,166 @@ pub fn resolve(v: &Value, context: &Constraints, budget: &mut Budget) -> OpResul
     }
     resolve_at(v, context, budget, 0)
 }
+
+/// The linear form of independent latents that `form` is in a world: each
+/// latent that an observation of several replaced by its form, and each
+/// one's distribution there. `None` if that's `form` itself. Unsupported
+/// where a latent is restricted, since the form isn't normal then.
+fn expand(form: &Linear, c: &Constraints, b: &mut Budget, depth: usize) -> OpResult<Option<Linear>> {
+    if depth > 64 {
+        return Err(OpError::limit("analytic value nesting exceeds the limit of 64"));
+    }
+    b.work(form.terms.len() as u64)?;
+    let mut changed = false;
+    let mut constant = form.constant;
+    let mut terms = Vec::with_capacity(form.terms.len());
+    for t in &form.terms {
+        match c.get(&t.id) {
+            None => terms.push(*t),
+            Some(Latent { form: Some(sub), .. }) => {
+                changed = true;
+                let sub = match expand(sub, c, b, depth + 1)? {
+                    Some(e) => e,
+                    None => (**sub).clone(),
+                };
+                constant += t.coef * sub.constant;
+                terms.extend(sub.terms.iter().map(|u| Term {
+                    coef: t.coef * u.coef,
+                    ..*u
+                }));
+            }
+            Some(l) if l.domain.is_full() && matches!(l.family, Family::Normal { .. }) => {
+                changed |= l.family != t.family;
+                terms.push(Term { family: l.family, ..*t });
+            }
+            Some(_) => return Err(different_draws()),
+        }
+    }
+    if !changed {
+        return Ok(None);
+    }
+    Linear::from_terms(constant, terms).map(Some)
+}
+
+/// `x`, whose axis the world now knows to be `e`, as a function of `e`'s
+/// axis, and how its coordinates moved.
+fn onto(x: &Analytic, e: Linear) -> OpResult<(Analytic, Transport)> {
+    let (id, form, to, map) = match e.terms[..] {
+        [] => return Err(unsupported("a draw that an observation made constant")),
+        [t] => (
+            t.id,
+            None,
+            t.family,
+            Affine {
+                scale: t.coef,
+                offset: e.constant,
+            },
+        ),
+        _ => {
+            let (axis, map) = e.axis();
+            let to = axis.normal()?;
+            (0, Some(axis), to, map)
+        }
+    };
+    let t = Transport {
+        from: x.family,
+        to,
+        map,
+    };
+    Ok((x.rebased(id, form, &t), t))
+}
+
+/// An outcome as a world reads it, and how its coordinates moved, if they
+/// did.
+fn read(x: &Analytic, c: &Constraints, b: &mut Budget) -> OpResult<(Analytic, Option<Transport>)> {
+    if let Some(form) = &x.form {
+        return Ok(match expand(form, c, b, 0)? {
+            None => (x.clone(), None),
+            Some(e) => {
+                let (x, t) = onto(x, e)?;
+                (x, Some(t))
+            }
+        });
+    }
+    Ok(match c.get(&x.id) {
+        Some(Latent { form: Some(sub), .. }) => {
+            let e = expand(sub, c, b, 0)?.unwrap_or_else(|| (**sub).clone());
+            let (x, t) = onto(x, e)?;
+            (x, Some(t))
+        }
+        Some(l) => {
+            let mut y = x.moved(&l.family);
+            y.domain = y.domain.intersect(&l.domain);
+            let t = (l.family != x.family).then(|| Transport::moved(x.family, l.family));
+            (y, t)
+        }
+        None => (x.clone(), None),
+    })
+}
+
 fn resolve_at(v: &Value, c: &Constraints, b: &mut Budget, depth: usize) -> OpResult<Value> {
     b.work(1)?;
     if depth > 64 {
         return Err(OpError::limit("analytic value nesting exceeds the limit of 64"));
     }
-    let draw = |x: &Analytic| match c.get(&x.id) {
-        Some(l) => {
-            let mut x = x.moved(&l.family);
-            x.domain = x.domain.intersect(&l.domain);
-            x
-        }
-        None => x.clone(),
-    };
-    let mut child = |v: &Value| resolve_at(v, c, b, depth + 1);
     Ok(match v {
-        Value::Analytic(x) => draw(x).value()?,
+        Value::Analytic(x) => read(x, c, b)?.0.value()?,
         Value::Event(e) => {
-            let draw = draw(&e.draw);
-            let yes = if draw.family == e.draw.family {
-                e.yes.clone()
-            } else {
-                e.yes.moved(&e.draw.family, &draw.family)
-            };
-            Event { draw, yes }.value()
+            let mut draws = Vec::with_capacity(e.draws.len());
+            let mut boxes = e.boxes.clone();
+            let mut moved = false;
+            for (i, d) in e.draws.iter().enumerate() {
+                let (d, t) = read(d, c, b)?;
+                if let Some(t) = t {
+                    moved = true;
+                    for part in &mut boxes {
+                        part[i] = t.domain(&part[i]);
+                    }
+                }
+                draws.push(d);
+            }
+            // An observation can make independent draws depend on each other.
+            if moved && draws.len() > 1 {
+                for (i, d) in draws.iter().enumerate() {
+                    if draws[..i].iter().any(|x| x.same_axis(d) || x.shares_latents(d)) {
+                        return Err(unsupported(
+                            "an event of draws that an observation made depend on each other",
+                        ));
+                    }
+                }
+            }
+            Event { draws, boxes }.simplified().value()
         }
-        Value::List(xs) => Value::list(xs.iter().map(&mut child).collect::<OpResult<_>>()?),
+        Value::List(xs) => Value::list(
+            xs.iter()
+                .map(|v| resolve_at(v, c, b, depth + 1))
+                .collect::<OpResult<_>>()?,
+        ),
         Value::Record(r) => crate::ops::make_record(
             r.ty.clone(),
             r.fields
                 .iter()
-                .map(|(k, v)| Ok((k.clone(), child(v)?)))
+                .map(|(k, v)| Ok((k.clone(), resolve_at(v, c, b, depth + 1)?)))
                 .collect::<OpResult<_>>()?,
         ),
         Value::Map(xs) => Value::map(
             xs.iter()
-                .map(|(k, v)| Ok((k.clone(), child(v)?)))
+                .map(|(k, v)| Ok((k.clone(), resolve_at(v, c, b, depth + 1)?)))
                 .collect::<OpResult<_>>()?,
         ),
         Value::Closure(f) => Value::Closure(Arc::new(Closure {
             func: f.func,
-            captured: f.captured.iter().map(&mut child).collect::<OpResult<_>>()?,
+            captured: f
+                .captured
+                .iter()
+                .map(|v| resolve_at(v, c, b, depth + 1))
+                .collect::<OpResult<_>>()?,
         })),
         Value::Dist(d) => {
             let pairs = d
                 .outcomes
                 .iter()
-                .map(|(v, p)| Ok((child(v)?, *p)))
+                .map(|(v, p)| Ok((resolve_at(v, c, b, depth + 1)?, *p)))
                 .collect::<OpResult<_>>()?;
             crate::ops::combine(pairs, d.missing, b)?
         }
@@ -1914,8 +2640,8 @@ mod tests {
         let Value::Event(e) = binary(BinOp::Lt, &y, &Value::Float(0.5), &mut budget()).unwrap() else {
             panic!("expected an event");
         };
-        assert_eq!(e.yes, Domain(vec![(0.25, 0.75)]));
-        assert_eq!(e.draw.affine(), Some(Affine::IDENTITY));
+        assert_eq!(e.boxes, vec![vec![Domain(vec![(0.25, 0.75)])]]);
+        assert_eq!(e.draws[0].affine(), Some(Affine::IDENTITY));
         // An atom equals its value with its probability.
         let m = extreme(&[Value::Analytic(Arc::new(x)), Value::Float(0.0)], true, &mut budget()).unwrap();
         let Value::Event(e) = binary(BinOp::Eq, &m, &Value::Float(0.0), &mut budget()).unwrap() else {
