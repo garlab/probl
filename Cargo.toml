@@ -54,3 +54,14 @@ opt-level = 1
 
 [profile.release]
 debug = 1
+
+# The binaries that are shipped, in the container image: the whole program
+# optimized together, without debug information. They're a fifth smaller and
+# mostly faster, but build about 3 times as slowly, so `release` keeps
+# Cargo's defaults for those: see docs/benchmarks.md#build-profiles.
+[profile.dist]
+inherits = "release"
+codegen-units = 1
+lto = "fat"
+debug = 0
+strip = "symbols"

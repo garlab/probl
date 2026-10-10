@@ -43,6 +43,30 @@ CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_LTO=fat cargo build 
 
 With the release profile's 16 codegen units, how the compiler splits the engine depends on its types, and that decides what gets inlined: adding a field to a type that the models never use made sampled models 5% slower in the same number of instructions, and the same two builds with one codegen unit differed by 0.6%. A slowdown that `/usr/bin/time -l` shows as cycles but not as instructions retired is likely to be this.
 
+### Build profiles
+
+The workspace has two profiles for optimized native builds ([Cargo.toml](../Cargo.toml)):
+
+- **`release`**, for building and benchmarking locally, keeps Cargo's defaults: each crate is split into 16 codegen units, optimized in parallel, and code is only inlined across crates where it's generic or marked inline. It keeps debug information, for profilers.
+- **`dist`**, for the binaries that are shipped (the [container image](docker.md)), compiles each crate as one unit, optimizes the whole program, including the standard library and dependencies, together when linking (fat LTO), and strips symbols.
+
+The shipped binaries are all that need `dist`'s optimizations, and `release` would pay for them on every build. Measured on 10 October 2026, on the Mac above:
+
+| `probl-cli` | `release` | `dist` |
+|---|--:|--:|
+| Build from nothing | 12.0 s | 32.7 s |
+| Build after editing the engine | 7.4 s | 27.8 s |
+| Binary, stripped, macOS arm64 | 3.46 MB | 2.82 MB |
+| Binary in the image, linux/arm64 | 3.3 MB | 2.82 MB |
+
+The whole program is optimized again at every link, so a small edit costs almost a full build. Builds and tests without `--release` use neither profile.
+
+At run time it's mixed, but mostly faster. At commit `95a2c57`, of the 18 models that take more than 5 ms, `dist`'s settings (without stripping) made 6 faster by 4–10%: `06_blackjack_dealer`, `inventory`, `04_risk_battle`, `15_service_queue`, `yahtzee` and `board_game`. Five were 2–4% slower: `blackjack_deck`, `08_signup_forecast`, `epidemic`, `blackjack_shoe` and `16_predictive_check`. The other seven changed by less than 4%, among them `snakes_three` (+0.3%), which is 90% of the total time: the total went from 67.15 s to 67.41 s. For the models under 5 ms, every difference was below the comparison's 2 ms noise floor.
+
+Comparisons of two builds use those settings through the environment variables above, rather than `dist`, to keep debug information for profiling what a comparison finds.
+
+`cargo install probl-cli` builds with Cargo's own release defaults: a published crate doesn't include the workspace's profiles. The playground's WebAssembly has a profile of its own, `wasm`, which also has one codegen unit and LTO, and optimizes for size.
+
 ## The models
 
 The baseline used twelve models in [`benches/`](../benches), each chosen to stress one candidate improvement, alongside the original ten examples. The runner discovers the current models in both directories, so today's suite includes later examples too.

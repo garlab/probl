@@ -9,7 +9,7 @@ The image ([Dockerfile](../Dockerfile), published by [release.yml](../.github/wo
 - **A shell.** CI systems such as GitLab CI run scripts inside a job's image. Distroless and static images have no shell.
 - **No login to pull.** Docker Hardened Images (`dhi.io`) need a Docker account, which the release workflow and Dependabot would then have to store.
 
-The image is 32 MB uncompressed, of which the binary is 3.3 MB. The same command, built statically with musl on `scratch`, is 1.6 MB.
+The image is 32 MB uncompressed, of which the binary is 2.8 MB: it is built with the `dist` profile, which optimizes the whole program together ([build profiles](benchmarks.md#build-profiles)). The same command, built statically with musl on `scratch`, is 1.6 MB.
 
 ## glibc and musl, measured
 
