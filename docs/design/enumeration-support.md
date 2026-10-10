@@ -2,7 +2,7 @@
 
 > Surveyed October 9, 2026 against revision `f12e583` (`0.2.0`). This document describes current restrictions and proposes implementation directions; it does not change the language contract. Effort estimates are engineering judgments, not measured implementation times. The [high-level plan](#high-level-implementation-plan) separates near-term work from research.
 >
-> Phases 0 to 4 are built since: see [phase 0](#phase-0-as-built), [phase 1](#phase-1-as-built), [phase 2](#phase-2-as-built), [phase 3](#phase-3-as-built) and [phase 4](#phase-4-as-built). The survey's sections still describe the revision it surveyed.
+> Phases 0 to 5 are built since: see [phase 0](#phase-0-as-built), [phase 1](#phase-1-as-built), [phase 2](#phase-2-as-built), [phase 3](#phase-3-as-built), [phase 4](#phase-4-as-built) and [phase 5](#phase-5-as-built). The survey's sections still describe the revision it surveyed.
 
 ## Recommendation
 
@@ -466,6 +466,28 @@ What arithmetic makes stays in this form, or is unsupported: affine functions mu
 
 Left out: trigonometry, which turns infinitely often on an unbounded range; powers other than 2, 1/2 and −1; compositions such as `exp(x * x)`; and moments without closed forms, such as `exp` of a beta, which need opt-in quadrature with an error status (J).
 
+## Phase 5, as built
+
+The corpus's F and I programs work in both modes, and so does the G program with an affine normal mean. New rows record what's next: an event of draws that depend on each other, a condition on a sum, a product of two draws, a sum with a uniform draw, a sum with a restricted draw, and an affine probability in a conjugate likelihood.
+
+**F: events as boxes.** An event is a union of disjoint boxes over independent axes, each box an interval set of each axis's CDF coordinates ([analytic.rs](../../crates/probl-engine/src/analytic.rs), `Event`). An event of one draw has one box, as before. `and` intersects boxes, `or` adds the part of the second event outside the first, and `not` takes the whole box minus each box in turn, so boxes stay disjoint and a probability is a sum of products. Observing, branching on or grouping by an event splits a world into a part for each box, in which each draw is restricted to its own intervals, so a world's restrictions are still one interval set per draw. Two events combine only if their axes share no latent, checked again when an event is read after an update. An event has at most 10,000 boxes.
+
+**I: linear forms as axes.** An outcome's axis can be a linear form of independent normal latents instead of one latent (`Analytic::form`, with `id` 0): a sum scaled so that its first coefficient is 1 or −1, distributed by the normal its terms give. What phases 1 to 4 built on one axis (pieces, kernels, comparisons, quantiles, moments) needs only the axis's distribution, so it works on a form unchanged: `abs(x - y)`, `exp(x + y)`, `x + y > 0`. A sum or difference of two unrestricted normal outcomes of different axes is a form. So is a draw from `normal(m, s)` whose mean is one: the mean plus a fresh latent normal(0, s). What cancels back to one latent, like `(x + y) - y`, is that latent again, which a condition can restrict.
+
+**Joint updates without a joint distribution.** Observing `y` from `normal(L, σ)`, for a form L with coefficients a over k latents with prior standard deviations s, makes the latents normal with covariance D^½ (I − c cᵀ) D^½, where D = diag(s²), c = s a / √S and S is the variance of `y`. Rather than store that covariance, each latent becomes its posterior mean plus a linear form of k fresh standard normal latents, with the symmetric square root D^½ (I − γ c cᵀ), γ = 1 / (1 + σ / √S), for coefficients. That's a closed form, without factorizing a matrix, and well-conditioned however small σ is. The world records each latent's form (`Latent::form`), and the values that hold the old latents are read again, as phase 2's updates are, which makes them forms of the fresh ones. So the world still knows only independent latents, the covariance lives in the values, and reading a form expands its terms. Updates don't grow the forms: k latents become k fresh ones. With one latent, the observation is that latent's conjugate update by what `y` says about it, (y − o) / s ~ normal(x, σ / |s|) for a mean s x + o, which keeps restrictions. Density observations are only allowed in the main program (phase 1), so no update happens inside a call.
+
+**What can't be followed is rejected.** A form is normal only while its latents are unrestricted: reading one that has a restricted latent is unsupported. Restricting worlds to an event of a form, by `observe x + y > 0`, `if`, `report … by`, or by assigning a rounded form, would make its latents a truncated joint distribution, and is unsupported too, but the event can be reported. Products and quotients of different axes, and sums with other families, stay unsupported.
+
+The test suite checks the closed forms ([joint.rs](../../crates/probl-engine/tests/joint.rs)). Its references include a regression through three points, observed one by one in two orders, against the batch formulas for the posterior and against the evidence from the points' joint density.
+
+Left out:
+
+- Joint truncation: a condition on a sum, which needs truncated multivariate normal probabilities and moments.
+- Events of draws that depend on each other (`x > 0 and x + y > 0`), which need a joint normal's probabilities of rectangles.
+- Sums of other families, such as gamma sums and uniform convolutions.
+- Normal observations inside functions, as in phase 1, and normal likelihoods with a drawn standard deviation.
+- Affine parameters of other likelihoods: `bernoulli(1 - p)`.
+
 ## Measurements of each phase
 
 Phase 0 against the commit before it, and each phase against the one before, with `probl-bench --json` twice for each build, alternating, compared by `probl-bench compare` (the minimum of each), at a 5% threshold above noise floors of 2 ms and 64 KB:
@@ -477,12 +499,15 @@ Phase 0 against the commit before it, and each phase against the one before, wit
 | Phase 2 | identical for all 31 models | 67.41 s → 66.85 s (−0.8%), with one codegen unit | none: see below |
 | Phase 3 | identical for all 31 models | 66.90 s → 66.93 s (+0.0%), with one codegen unit | none, after two fixes: see below |
 | Phase 4 | identical for all 31 models | 66.96 s → 67.06 s (+0.1%), with one codegen unit | none: `inventory`'s +4.9% was noise, 469.5 ms against 470.2 ms in five more runs each |
+| Phase 5 | identical for all 31 models | 67.01 s → 67.00 s (−0.0%), with one codegen unit | none: see below |
 
 Phase 1's comparison flagged two sampled models, and both were noise. `08_signup_forecast` was 5.9% slower; in six more runs of each build, alternating, the new build's fastest was 0.353 s and the old one's 0.359 s. `epidemic`'s peak heap was 7.5% higher: across threads it varies from run to run of the same build (7.28–7.80 MB), and on one thread both builds peak at exactly 4,062,497 bytes after the same number of world steps. The measurements are of commit `ac8f0d5`; the fix after it changes only analytic outcomes, which no model in the benchmark besides `19_analytic_continuous` has, and that one has no atoms.
 
 Phase 2's first comparison, with the release profile, found four models 4–7% slower in six alternating runs each, enumerated and sampled alike, with the same instructions retired within 0.5% (`/usr/bin/time -l`, one thread). Two causes. The new code was inlined into `exec_stmt_kind`, which every statement runs, and grew its frame from 4,224 to 4,608 bytes: it's now in functions of its own. And `merge` iterated each world's restrictions even when there were none, an iterator call that a larger value type stopped inlining: it now checks for none first, which saves 0.4% of instructions on `inventory`. The rest followed the codegen units. Giving the restrictions' value type the family alone, without any of the code that uses it, cost 5% of cycles on `inventory` in the same instructions; a 24-byte newtype didn't, nor did aligning functions or branch targets, a large unused function, or another malloc zone. With one codegen unit and full LTO, the two builds differ by 0.6% there, and the whole benchmark by −0.8%, with one model flagged, `01_tour`, which six more runs each put at 221.1 ms against 221.3 ms. Both builds are also about 10% faster on `inventory` with those settings than with the release profile. [Benchmarks](../benchmarks.md#comparing-two-builds) now says to compare builds that way.
 
 Phase 3's first comparison found 12 models 6–20% slower, with one codegen unit, and `inventory` 26% slower in cycles with 3.6% more instructions. The lifting functions (`lift1`, `lift2`, `lift_n`), which every operation on a value goes through, listed a lazy law by calling themselves again on the list, and a generic function that recurses isn't inlined: the build had 14 copies of them out of line, where it had 2. They now list it in a cold function and go on, without recursion. The rest was the check in the assignment loop for a discrete outcome to split, whose vector of worlds and `continue` cost 2% of cycles: it now sets a flag through a cold function, and the split happens after the loop. Putting the lazy law's variant next to `Dist`'s, so that one comparison checks for either, saved instructions but cost cycles, and was left out.
+
+Phase 5's comparison flagged nothing, but `19_analytic_continuous`, the only model with analytic outcomes and the one this phase could slow down, took 146 µs before and 347 µs after, under the 2 ms noise floor. In 30 more runs of each build, alternating, its median was 351 µs before and 341 µs after, and both builds retire the same number of instructions for it within 0.5% (`/usr/bin/time -l`, about 24 million, including the runner's start).
 
 ## Relevant prior art
 
