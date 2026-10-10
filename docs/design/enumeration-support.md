@@ -2,7 +2,7 @@
 
 > Surveyed October 9, 2026 against revision `f12e583` (`0.2.0`). This document describes current restrictions and proposes implementation directions; it does not change the language contract. Effort estimates are engineering judgments, not measured implementation times. The [high-level plan](#high-level-implementation-plan) separates near-term work from research.
 >
-> Phases 0 to 6 are built since: see [phase 0](#phase-0-as-built), [phase 1](#phase-1-as-built), [phase 2](#phase-2-as-built), [phase 3](#phase-3-as-built), [phase 4](#phase-4-as-built), [phase 5](#phase-5-as-built) and [phase 6](#phase-6-as-built). The survey's sections still describe the revision it surveyed.
+> Phases 0 to 6, and the optional J, are built since: see [phase 0](#phase-0-as-built), [phase 1](#phase-1-as-built), [phase 2](#phase-2-as-built), [phase 3](#phase-3-as-built), [phase 4](#phase-4-as-built), [phase 5](#phase-5-as-built), [phase 6](#phase-6-as-built) and the optional [J](#optional-j-as-built). The survey's sections still describe the revision it surveyed.
 
 ## Recommendation
 
@@ -511,6 +511,27 @@ Left out:
 - `support` and `pmf` of one, and `P` of a distribution of records that hold events.
 - Per-field summaries of sampled records, which list every distinct record.
 
+## Optional J, as built
+
+Numerical integration is opt-in, with `@integrate` (1e-9 relative tolerance by default, at most 0.001), `--integrate` or `Options::integrate`, as the recommendation says, and the corpus's new J rows run with it. Without it, the same observations stay unsupported, and their errors now say that `@integrate` would compute them.
+
+**A likelihood as a weight.** The draw keeps its distribution and its CDF coordinates, and with `@integrate`, an observation whose parameters are outcomes of the draw adds a factor to its likelihood ([likelihood.rs](../../crates/probl-engine/src/likelihood.rs)): `normal`, `lognormal`, `uniform`, `beta`, `gamma`, `exponential`, `binomial`, `bernoulli`, `poisson` or `geometric`, with the parameters as pieces in the draw's coordinates. The posterior's density over the coordinates is the product, normalized. Everything phases 1 to 6 built on probabilities of parts of the coordinates goes through one measure, `Analytic::measure`, which is their length without a likelihood and its integral with one: events, restrictions, CDFs, atoms of rounded outcomes and densities. Quantiles invert it, and moments integrate the outcome against it. So a weighted draw keeps its identity through conditions, `if`, `report … by`, events of several draws, functions and `simulate` recipes, whose sampling inverts it too. Conjugate observations of a draw without a likelihood stay exact; with one, they become factors.
+
+**Quadrature** ([quadrature.rs](../../crates/probl-engine/src/quadrature.rs)). The coordinates are bounded, so tails need no transformation. The rule is QUADPACK's 21-point Gauss–Kronrod, bisecting the part with the largest error until the total error is within the tolerance, or failing after 4,000 parts. A likelihood is integrated once, into a table of its parts and their running totals, which answers any interval with whole parts and the rule on the rest, and inverts by Newton's steps, since the weight is the integral's derivative. The weight is computed relative to its largest value on a grid, so that many observations neither underflow nor overflow, and the evidence is kept as a logarithm. Breakpoints are where parameters change function and around the four highest peaks of the weight on a 4,096-point grid, refined, and graded outward in powers of two from each peak's width. A test showed why: without the grading, the rule converged on a narrow peak's centre and missed its flanks, with an error estimate near zero. Moments are integrated to the tolerance relative to the integral of the outcome's absolute value, so that a centred moment near 0 converges, and are cached in the likelihood, which a sampled run asks again and again.
+
+**The accuracy contract.** An integral that doesn't reach the tolerance, by its own estimate, is an `Unsupported` error for an observation, and an unavailable mean or sd for a report, as for a mean that doesn't exist. Results computed this way are marked at the level of the run: once an observation is integrated, every probability, summary and the evidence can depend on integrated weights. The summary line says `integrated to 1e-9`, and `Outcome::integration()` gives the tolerance; runs that didn't need integration aren't marked, with `@integrate` or without. Estimates aren't bounds, which the semantics say, with the case of a peak narrower than the grid. Parameters outside their range are checked exactly, from the pieces, as in phase 4: everywhere is the fault a number makes, on part of the draw's range with positive probability unsupported. A continuous likelihood is a density, counted as phase 1 counts them.
+
+The tests compare against references that share nothing with the quadrature ([integrate.rs](../../crates/probl-engine/tests/integrate.rs)): closed forms where the model is a conjugate pair in disguise (beta(2, 4) from `bernoulli(1 - p)`, a truncated normal from a uniform prior), and otherwise a 400,000-point midpoint rule over the variable itself, for posterior means, probabilities and the evidence. Agreement is to 1e-7 or better.
+
+`simulate` results that are distributions of outcomes are now cached by their block and captures, since they're pure values. A sampled run that calls a block integrating a likelihood took minutes before that, and before the Newton steps and the cached moments; it takes about a second now.
+
+Left out:
+
+- Several dimensions: observations whose parameters are outcomes of several draws, or of a sum of normal draws.
+- Draws whose probability is a weighted draw (`~bernoulli(p)`), which would split worlds by the likelihood of each outcome.
+- Per-quantity error estimates: the status is the run's tolerance.
+- Integration when sampling, outside `simulate`: there, observations weigh runs.
+
 ## Measurements of each phase
 
 Phase 0 against the commit before it, and each phase against the one before, with `probl-bench --json` twice for each build, alternating, compared by `probl-bench compare` (the minimum of each), at a 5% threshold above noise floors of 2 ms and 64 KB:
@@ -524,6 +545,7 @@ Phase 0 against the commit before it, and each phase against the one before, wit
 | Phase 4 | identical for all 31 models | 66.96 s → 67.06 s (+0.1%), with one codegen unit | none: `inventory`'s +4.9% was noise, 469.5 ms against 470.2 ms in five more runs each |
 | Phase 5 | identical for all 31 models | 67.01 s → 67.00 s (−0.0%), with one codegen unit | none: see below |
 | Phase 6 | identical for all 31 models | 66.89 s → 66.78 s (−0.2%), with one codegen unit | none, after one fix: see below |
+| Optional J | identical for all 31 models | 67.11 s → 67.08 s (−0.0%), with one codegen unit | none: see below |
 
 Phase 1's comparison flagged two sampled models, and both were noise. `08_signup_forecast` was 5.9% slower; in six more runs of each build, alternating, the new build's fastest was 0.353 s and the old one's 0.359 s. `epidemic`'s peak heap was 7.5% higher: across threads it varies from run to run of the same build (7.28–7.80 MB), and on one thread both builds peak at exactly 4,062,497 bytes after the same number of world steps. The measurements are of commit `ac8f0d5`; the fix after it changes only analytic outcomes, which no model in the benchmark besides `19_analytic_continuous` has, and that one has no atoms.
 
@@ -534,6 +556,8 @@ Phase 3's first comparison found 12 models 6–20% slower, with one codegen unit
 Phase 5's comparison flagged nothing, but `19_analytic_continuous`, the only model with analytic outcomes and the one this phase could slow down, took 146 µs before and 347 µs after, under the 2 ms noise floor. In 30 more runs of each build, alternating, its median was 351 µs before and 341 µs after, and both builds retire the same number of instructions for it within 0.5% (`/usr/bin/time -l`, about 24 million, including the runner's start).
 
 Phase 6's earlier comparisons flagged `08_signup_forecast` 11% slower once, and `epidemic`'s peak heap 6.2% higher once, and `inventory` was 2.6% slower in cycles on one thread, with 0.3% more instructions. The first two didn't hold. The signup model, through the command line, took a median of 358 ms against 367 ms before, in ten runs of each build; the benchmark's own runs agreed on one thread. `epidemic`'s heap, on one thread, differs by 72 bytes. `inventory`'s slowdown was real: every arithmetic operation tested its operands for analytic outcomes, then continuous distributions, then the new joint distributions. One test of each operand for all three kinds, with the rare cases out of line, now retires 1.3% fewer instructions on `inventory` than before the phase. The `return` statement and drawing from a joint distribution moved out of the functions that every statement and draw run, whose frames had grown. The report structures carry one pointer each for a structured report's fields: the smallest models' peak heap, which their final results set, is up to 192 bytes higher.
+
+J's comparison flagged two sampled models. `09_roadmap`, 13.9% slower, was noise: five more runs of each put the fastest at 99.2 ms before and 99.0 ms after, and on one thread it retires 0.4% fewer instructions. `08_signup_forecast` was 6% slower in the benchmark's own runs, on one thread too, with 0.2% fewer instructions. Through the command line, which runs the same engine, its median of ten runs was 374.7 ms before and 374.1 ms after; on one thread it retires the same instructions within 0.01%, in 1.1% more cycles. A difference in cycles alone is how the layout of code shows (phase 2), and the benchmark's binary lays out differently from the command line's.
 
 ## Relevant prior art
 
