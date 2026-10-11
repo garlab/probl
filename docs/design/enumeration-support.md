@@ -2,7 +2,7 @@
 
 > Surveyed October 9, 2026 against revision `f12e583` (`0.2.0`). This document describes current restrictions and proposes implementation directions; it does not change the language contract. Effort estimates are engineering judgments, not measured implementation times. The [high-level plan](#high-level-implementation-plan) separates near-term work from research.
 >
-> Phases 0 to 6, and the optional J, are built since: see [phase 0](#phase-0-as-built), [phase 1](#phase-1-as-built), [phase 2](#phase-2-as-built), [phase 3](#phase-3-as-built), [phase 4](#phase-4-as-built), [phase 5](#phase-5-as-built), [phase 6](#phase-6-as-built) and the optional [J](#optional-j-as-built). The survey's sections still describe the revision it surveyed.
+> Phases 0 to 6, and the optional J and P, are built since: see [phase 0](#phase-0-as-built), [phase 1](#phase-1-as-built), [phase 2](#phase-2-as-built), [phase 3](#phase-3-as-built), [phase 4](#phase-4-as-built), [phase 5](#phase-5-as-built), [phase 6](#phase-6-as-built), and the optional [J](#optional-j-as-built) and [P](#optional-p-as-built). The survey's sections still describe the revision it surveyed.
 
 ## Recommendation
 
@@ -532,6 +532,24 @@ Left out:
 - Per-quantity error estimates: the status is the run's tolerance.
 - Integration when sampling, outside `simulate`: there, observations weigh runs.
 
+## Optional P, as built
+
+The narrow reward subset: a loop's counters and totals, carried by its chain rather than kept in its states. The chosen benchmark is example 05, whose race counts its turns.
+
+**Rewards, statically** ([rewards.rs](../../crates/probl-sema/src/rewards.rs)). A reward of an unbounded loop is a variable that every statement in the loop writes only as `r = r + e` or `r = r - e`, with `e` not reading `r`, and that no other statement in it reads: not the condition, not another variable's update, not a call's argument or a closure's capture, not a `return`. It can't change where the loop goes, which is what lets the chain leave it out. It may be read after the loop, which is the point. The type check after each write of a typed variable (`var n: int`) doesn't count as a read: it sees the reward as a step left it, 0 plus the step's increment in the chain, which has the type the whole reward has, so it fails exactly when unrolling's would.
+
+**Rewards, dynamically** (`solve_loop`, `iterate_rewards`). The loop's cycle detection ignores the rewards, so a loop comes back to a state when its other variables do. The chain is explored as before, with the rewards at 0 in each state, so that after one run of the body, a reward's value in a world is how much that step added. A step's increments must be plain numbers; otherwise the loop is unrolled. Each reward is followed as a whole number while all its values are ints, and as a float once one is a float; an overflow unrolls the loop. The law of each state and reward is then iterated, step after step, with unrolling's ε cutoff, unresolved weight and iteration limit, so results are unrolling's up to rounding; the tests check that the output is identical. When every step adds the same, as a count of rounds does, and every world starts with the same reward, all states have the same reward at each step, and the law is a vector of weights by state. Otherwise it's a map from state and reward to weight. A world leaving the loop gets its reward plus what its last step added. States that can't be left are found by searching backwards from the ways out, without elimination: elimination on a few thousand strongly connected states, which a reward loop doesn't need, had taken most of a run's time.
+
+**What it beats.** Example 05 takes 18 ms instead of 159 ms, with 5,217 world steps instead of 1,105,771, and the same output; examples 02 and 03, whose loops count too, take 86% and 63% less time. A two-player version of `snakes_three` takes 0.36 s instead of 10.3 s.
+
+Memory was the work's second half. The first version doubled example 03's peak heap: it made a leaving world for each state, reward and way out, which unrolling would have merged, and kept each step's increments in vectors of values. The distinct leaving worlds are now interned, with weight added up by world and reward as unrolling's merging would, the increments are packed bits with a mask of which are floats, and the exploration's states are dropped before iterating. Examples 02, 03 and 05 now peak at 81%, 21% and 64% less than before. `snakes_three` itself has too many states for a chain, and is unrolled as before; giving up on its chain early also ends the loop's cycle detection, whose set of states had grown for the whole run. `while true { n += 1 }` is now an error saying that its worlds can never leave, instead of running to a limit.
+
+Left out:
+
+- Rewards whose increments read another reward, or the reward itself (`total = total * 1.1`).
+- Exact moments of rewards from `(I − Q)m = r`: the law is computed to ε like unrolling, which also gives quantiles and the whole distribution, as reports need.
+- Phase-type queries without listing the times, and loops with analytic state.
+
 ## Measurements of each phase
 
 Phase 0 against the commit before it, and each phase against the one before, with `probl-bench --json` twice for each build, alternating, compared by `probl-bench compare` (the minimum of each), at a 5% threshold above noise floors of 2 ms and 64 KB:
@@ -546,6 +564,7 @@ Phase 0 against the commit before it, and each phase against the one before, wit
 | Phase 5 | identical for all 31 models | 67.01 s → 67.00 s (−0.0%), with one codegen unit | none: see below |
 | Phase 6 | identical for all 31 models | 66.89 s → 66.78 s (−0.2%), with one codegen unit | none, after one fix: see below |
 | Optional J | identical for all 31 models | 67.11 s → 67.08 s (−0.0%), with one codegen unit | none: see below |
+| Optional P | identical for all 31 models; fewer world steps for the 4 examples whose loops count | 67.51 s → 66.84 s (−1.0%), with one codegen unit | none, after the memory work above: see below |
 
 Phase 1's comparison flagged two sampled models, and both were noise. `08_signup_forecast` was 5.9% slower; in six more runs of each build, alternating, the new build's fastest was 0.353 s and the old one's 0.359 s. `epidemic`'s peak heap was 7.5% higher: across threads it varies from run to run of the same build (7.28–7.80 MB), and on one thread both builds peak at exactly 4,062,497 bytes after the same number of world steps. The measurements are of commit `ac8f0d5`; the fix after it changes only analytic outcomes, which no model in the benchmark besides `19_analytic_continuous` has, and that one has no atoms.
 
@@ -558,6 +577,8 @@ Phase 5's comparison flagged nothing, but `19_analytic_continuous`, the only mod
 Phase 6's earlier comparisons flagged `08_signup_forecast` 11% slower once, and `epidemic`'s peak heap 6.2% higher once, and `inventory` was 2.6% slower in cycles on one thread, with 0.3% more instructions. The first two didn't hold. The signup model, through the command line, took a median of 358 ms against 367 ms before, in ten runs of each build; the benchmark's own runs agreed on one thread. `epidemic`'s heap, on one thread, differs by 72 bytes. `inventory`'s slowdown was real: every arithmetic operation tested its operands for analytic outcomes, then continuous distributions, then the new joint distributions. One test of each operand for all three kinds, with the rare cases out of line, now retires 1.3% fewer instructions on `inventory` than before the phase. The `return` statement and drawing from a joint distribution moved out of the functions that every statement and draw run, whose frames had grown. The report structures carry one pointer each for a structured report's fields: the smallest models' peak heap, which their final results set, is up to 192 bytes higher.
 
 J's comparison flagged two sampled models. `09_roadmap`, 13.9% slower, was noise: five more runs of each put the fastest at 99.2 ms before and 99.0 ms after, and on one thread it retires 0.4% fewer instructions. `08_signup_forecast` was 6% slower in the benchmark's own runs, on one thread too, with 0.2% fewer instructions. Through the command line, which runs the same engine, its median of ten runs was 374.7 ms before and 374.1 ms after; on one thread it retires the same instructions within 0.01%, in 1.1% more cycles. A difference in cycles alone is how the layout of code shows (phase 2), and the benchmark's binary lays out differently from the command line's.
+
+P's comparison found no change in any output, and fewer world steps for examples 01, 02, 03 and 05, which `compare` flags by design. A first run, while the engine was being compiled on the same machine, found `blackjack_deck` and two sampled models 17–90% slower; `blackjack_deck` has no rewards, and the undisturbed run found every model within noise. The per-statement table of rewards made the smallest models' heap 1–4% higher, about 24 bytes a statement; it's a map of the loops that have rewards now, and their heap is the same as before, to the byte.
 
 ## Relevant prior art
 
