@@ -1,6 +1,6 @@
 # Symbolic exact inference for Probl
 
-> October 4, 2026. Assessment of [Scaling Exact Inference for Discrete Probabilistic Programs](https://arxiv.org/pdf/2005.09089), by Steven Holtzen, Guy Van den Broeck, and Todd Millstein (OOPSLA 2020). This report records an exploratory measurement and proposes an evaluation plan. No symbolic backend has been implemented or benchmarked against Probl.
+> October 4, 2026. Assessment of [Scaling Exact Inference for Discrete Probabilistic Programs](https://arxiv.org/pdf/2005.09089), by Steven Holtzen, Guy Van den Broeck, and Todd Millstein (OOPSLA 2020). This report records an exploratory measurement and proposes an evaluation plan. *October 11: stage 1 is built, as an experimental backend, off by default; see [stage 1, as built](#stage-1-as-built).*
 
 ## Recommendation
 
@@ -215,3 +215,85 @@ The difficult integration decisions are:
 - Where symbolic execution ends and the current engines resume, without losing correlations or evidence.
 
 The earlier [benchmark assessment](../benchmarks.md) correctly favored cheaper changes for its workloads. Its claim that large game states cannot benefit from symbolic methods was too categorical: large state counts alone do not prove that no compact representation exists. The new posterior-reporting example justifies a focused experiment. It does not yet justify replacing the existing inference engine.
+
+## Stage 1, as built
+
+> October 11, 2026. An experimental backend, off by default ([symbolic.rs](../../crates/probl-engine/src/symbolic.rs), [bdd.rs](../../crates/probl-engine/src/symbolic/bdd.rs)).
+
+**What it runs.** Programs whose top level is made of:
+
+- draws from Boolean laws whose probabilities are constants: `bernoulli(1%)`, a named recipe drawn more than once, `~p` for a probability, and laws chosen by facts, like `if burglary { bernoulli(95%) } else { bernoulli(1%) }`;
+- Boolean expressions: `and`, `or`, `not`, `==`, `!=`, `if` as a value, and draws inside them;
+- assignments, including a variable reassigned in a branch;
+- `if` on a fact, or on a probability or a Boolean law, which is a fresh trial each time;
+- `observe` of a fact, `observe b from` a Boolean law (which is also what `observe ~p` is), and `score` of a probability;
+- reports without `by`, of Booleans and of constants.
+
+Values other than Booleans are constants, or a constant in each of a few sets of worlds: `score if sick { 95% } else { 8% }` lowers to a temporary that is 95% where `sick` holds and 8% elsewhere. Loops, calls, `chance`, dice and other laws that aren't Boolean, collections, `print`, `by` and data are unsupported, and so is a constant operation that fails, like `bernoulli(p)` with `p = 1.5`, wherever a world reaches it. A pass over the lowered program finds the unsupported constructs before anything runs; running finds the rest.
+
+That's stage 1's list, with laws chosen by facts and `score`: a program could already write them as an `if` with a draw in each branch, and diagnosis models are made of them.
+
+**How.** Each uncertain trial is a variable, weighted for false and true as the enumerator's `bernoulli` weighs its outcomes; a certain one is a constant. Variables are ordered by when the lowered program draws them, after the compiler has moved draws to their first use. Booleans are reduced ordered BDDs with complement edges, so negation is free and equal functions are equal edges. The evidence is one diagram. A branch runs under its path condition: an observation inside it keeps `evidence ∧ (¬path ∨ fact)`, and the branches' assignments merge as if-then-else. As enumeration does, it runs nothing where no world is left, so an error, or an unsupported value, in a branch that the evidence or a certain draw rules out stays unreached. A report adds the weighted model counts of `path ∧ evidence ∧ value` and `path ∧ evidence ∧ ¬value` to the report's sink, the one enumeration's worlds add to: the results, the summary line and the text are enumeration's code. The impossible-evidence error points at the same observation, the last that ruled out a world.
+
+**Counting.** A count passes over the diagram once, with two weights for each node, of its function and of its complement. Neither is computed from the other, so a posterior of 10⁻²⁰, or evidence of 10⁻⁴⁰⁰ in the engine's `Weight`, keeps its digits. Counts of nodes are shared by a run's reports. A report's conjunction with the evidence is counted without making its nodes, over pairs of nodes kept for that count only. Making `evidence ∧ ¬fault_i` for each of n reports had made n² nodes, which nothing reclaims: 2.2 million for 2,048 faults, and 505 MB. Counting the pairs made 123,176 nodes, in 35 MB and half the time.
+
+**Selection.** Off by default: `Options::symbolic` in the engine, `EngineChecks::symbolic` in the library's `__internal`, `probl run --symbolic[=only|prefer]` (hidden), `probl-bench --symbolic`, and the WebAssembly adapter's `"symbolic"` field, which the playground doesn't send. `only` fails with an `Unsupported` error naming the construct and where it is; `prefer` enumerates the programs it doesn't support, and those whose diagrams outgrow their limit. Neither turns an exact request into sampling, and sampled programs ignore both. A run answered with diagrams prints what enumeration prints; `--stats` gives its variables and nodes.
+
+**Budgets.** `Limits::max_nodes`, 10 million by default, with cancellation checked every 16,384 nodes and after each statement. A cancelled run stops, rather than being enumerated. Nodes aren't reclaimed during a run, so the limit counts intermediate results too.
+
+**No dependency.** The diagrams are about 400 lines of the engine, not [RSDD](https://github.com/neuppl/rsdd). Weights in the engine's `Weight`, counts that never subtract, a node limit and cancellation inside the operations, and nothing new for the WebAssembly build were quicker to write than to evaluate and adapt. RSDD's sentential decision diagrams, variable reordering and reclamation are what to evaluate if a later stage needs them.
+
+**Verification.** The oracle crate generates Boolean programs inside the subset (`generate::boolean`): constant laws and recipes, nested `if` on facts and probabilities, draws inside expressions, reassignment, observations (some impossible) and reports inside branches. `symbolic_answers_agree` runs 400 of them by default, with diagrams only. Each must agree with the rational oracle on the evidence, in logarithms, and on every report's measure, to 10⁻⁹, and print what enumeration prints, but for rounding in the last digit. Of 5,000, 4,211 agreed, and 789 failed in all three with impossible evidence, at the same observation. Before that, the generator found two bugs: a run kept going where the evidence had left no world, and read variables that branches no world reached hadn't assigned. What's left is rounding: evidence of exactly 1 prints as 99.99999999999997% from summed weights and as 100.00% from a count, 73.125% rounds either way, and 10⁻⁴ prints as 1.00e-4 or 0.01%, depending on the side its rounding falls. The oracle's corpus and generated programs also run with `prefer`. The engine's tests ([symbolic.rs](../../crates/probl-engine/tests/symbolic.rs)) check the identity of draws and recipes, fresh trials for probability conditions, observations in one branch, impossible and tiny evidence, certain draws, laws chosen by facts, 200 faults against their closed form, each unsupported construct with `only` and with `prefer`, an error in an unreachable branch, the node limit and cancellation.
+
+**Measurements.** On the Apple M2 Pro of the [benchmarks](../benchmarks.md) (12 cores, 16 GB, macOS 26.4.1), rustc 1.99.0, with one codegen unit and fat LTO, at the commit that added the backend.
+
+The benchmark models in the subset, in process (`probl-bench`; the median of five runs, the peak heap from a run that counts allocations), with the same output both ways:
+
+| model | enumerated | with diagrams |
+|---|--:|--:|
+| `faults`: 18 faults, as in the review | 796 ms, 262,144 worlds, 196 MB | 0.37 ms, 171 nodes, 0.20 MB |
+| `alarms`: 15 causes, 10 noisy alarms | 1.13 s, 65,536 worlds, 410 MB | 10.5 ms, 121,421 nodes, 9.2 MB |
+| `diagnosis`: conditional failures, evidence in a branch | 69 ms, 22,814 worlds, 34 MB | 0.39 ms, 886 nodes, 0.21 MB |
+| `reliability`: 20 components, no evidence | 0.40 ms, 256 worlds, 0.26 MB | 0.30 ms, 148 nodes, 0.11 MB |
+
+The review's family through `probl run` (the median of five runs, with the process's start and the compilation, about 3 ms; the peak resident memory):
+
+| faults | enumerated | with diagrams |
+|--:|--:|--:|
+| 12 | 7.2 ms, 6.8 MB | 3.0 ms, 3.6 MB, 78 nodes |
+| 16 | 139 ms, 66 MB | 3.0 ms, 3.7 MB, 136 nodes |
+| 18 | 844 ms, 259 MB | 3.0 ms, 3.8 MB, 171 nodes |
+| 20 | 3.77 s, 1.16 GB | 3.1 ms, 3.9 MB, 210 nodes |
+| 64 | | 3.3 ms, 4.7 MB, 2,080 nodes |
+| 256 | | 7.3 ms, 7.3 MB, 11,996 nodes |
+| 1,024 | | 54 ms, 17 MB, 56,300 nodes |
+| 2,048 | | 198 ms, 34 MB, 123,176 nodes |
+
+Ordering: n pairs `(x_i and y_i)`, observed together, with every `x_i` reported. The variables are ordered by first use, which here is declaration, `x_0, y_0, x_1, y_1, …` side by side, or every `x` before every `y`:
+
+| pairs | side by side | `x`s first | enumerated |
+|--:|--:|--:|--:|
+| 8 | 3.0 ms, 80 nodes | 3.0 ms, 765 nodes | 59 ms, 65,536 worlds, 56 MB |
+| 12 | 3.1 ms, 168 nodes | 4.2 ms, 12,285 nodes | the world limit, after 17.5 s and 6.5 GB |
+| 16 | 3.1 ms, 288 nodes | 29 ms, 196,605 nodes | |
+| 20 | 3.0 ms, 440 nodes | 731 ms, 3,145,725 nodes, 566 MB | |
+| 24 | 3.1 ms, 624 nodes | the node limit, after 1.3 s and 699 MB | |
+| 256 | 11.9 ms, 14,548 nodes | | |
+
+Evidence written last: `alarms` with 18 causes, and all ten observations after all ten alarms, so that enumeration keeps every alarm live as well as every cause. Diagrams take 15 ms (106,422 nodes, 20 MB); enumeration was cancelled at two minutes, at 7.6 GB.
+
+In WebAssembly, run by Bun with the playground's limits, the four benchmark models print what they print natively, both ways, and take about the same: 0.5 ms rather than 963 ms for `faults`, 9.1 ms rather than 1.20 s for `alarms`, 0.4 ms rather than 81 ms for `diagnosis`.
+
+**What it shows.**
+
+- Where facts stay live together through evidence, diagrams win by two to three orders of magnitude, and keep going where enumeration can't: 2,048 faults take 0.2 s. A noisy-or network's causes cost them tens of thousands of nodes, not 2¹⁵ worlds each through every alarm.
+- The order of the evidence stops mattering: a network enumeration can't finish when its observations come last takes diagrams 15 ms.
+- The order of the variables matters, as the paper says: 20 pairs take 440 nodes side by side and 3.1 million `x`s first, and 24 pairs `x`s first exceed the node limit, where with `prefer` the program is enumerated, and exceeds the world limit too. The order is the order of first use, which declarations and the expressions that first read the draws decide.
+- Where enumeration already does well, like `reliability` after moving draws, there's little to gain or lose.
+- The prototype adds nothing to a run that doesn't select it: the benchmark's 31 other models print the same and take the same time (66.82 s and 66.81 s in all; [enumeration support](enumeration-support.md#measurements-of-each-phase) has the comparison).
+
+**Not done.**
+
+- One report of several values, like `report [a, b]`, whose outcomes are as many as the output's lines: it would list the satisfying assignments of the values, within the outcome limit.
+- Stage 3: enums and finite laws, functions with fresh trials for each call, bounded loops. Variables aren't reordered, and nodes aren't reclaimed during a run.
+- Automatic selection. `prefer` gives enumeration's results or enumerates, but nothing bounds its cost against enumeration's: no program measured here was slower with diagrams, but a diagram can grow where worlds stay few, and a program that outgrows the node limit pays for its diagrams before it's enumerated (1.3 s and 699 MB for 24 pairs `x`s first). Before `prefer` becomes the default for programs in the subset, stage 2's other families should be measured: dependent failures that share intermediate state, and programs that mix the subset with what it doesn't support, which would need diagrams and worlds to hand over to each other.

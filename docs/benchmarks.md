@@ -9,7 +9,7 @@ This is a historical measurement record: the baseline precedes the improvements 
 1. **Parallel sampling batches first.** Every sampled forecast takes 0.5–2.6 s on one core, and runs are independent. Running example 07's runs as 8 processes takes 0.27 s instead of 1.77 s (6.6×). This is the cheapest large win, and it meets the plan's target for example 07 (under 2 s on 8 cores) several times over. *Done: 6–8× on 12 cores ([below](#since-parallel-batches)).*
 2. **Then cheaper merging, and moving draws to their first use.** Enumeration hits a wall when states are large or many facts stay live together: blackjack from a real deck takes 5.2 s and 952 MB, and a 20-component reliability model 1.4 s and 847 MB. Merging (hashing and comparing world states) takes 34–70% of that time; caching the hashes of collections cuts most of it. Separately, moving each draw to just before its first use turns the reliability model's 1,048,576 worlds into 256, with the same answer. *Both are done: cheaper merging makes enumeration 1.4–2.9× faster ([below](#since-cheaper-merging)), and moving draws takes the reliability model from 1.2 s to 0.6 ms ([below](#since-moving-draws)).*
 3. **Then better inference for evidence-heavy forecasts.** Weighting runs by the evidence (likelihood weighting) degrades as data accumulates: an A/B test's 100,000 runs are worth 852 after 30 days of data, 467 after 60 and 211 after 120, and it gets exponentially worse with more unknown parameters. Forecasts with real data need conjugate updates, MCMC or particles; each needs its contract specified first (audit D4). *Done for conjugate priors: the A/B test's runs are worth 100,000 instead of 863 ([below](#since-exact-updates-for-conjugate-priors)). A general method waits for a benchmark that needs it.*
-4. **Not now, for the original benchmark suite:** symbolic inference, persistent collections and a bytecode interpreter. No benchmark establishes a need for them that a cheaper change cannot address first. Markov-chain solving would make cyclic loops exact and allow recursion to the same call, but no model is slow because of them. *Done for loops: those that cycle are solved exactly ([below](#since-solving-loops-that-cycle)). October follow-up: a [symbolic inference review](design/symbolic-inference.md) identifies a different workload, many posterior reports over live discrete unknowns, and recommends a bounded prototype.*
+4. **Not now, for the original benchmark suite:** symbolic inference, persistent collections and a bytecode interpreter. No benchmark establishes a need for them that a cheaper change cannot address first. Markov-chain solving would make cyclic loops exact and allow recursion to the same call, but no model is slow because of them. *Done for loops: those that cycle are solved exactly ([below](#since-solving-loops-that-cycle)). October follow-up: a [symbolic inference review](design/symbolic-inference.md) identifies a different workload, many posterior reports over live discrete unknowns, and recommends a bounded prototype, now built, experimental, and two to three orders of magnitude faster on that workload ([below](#since-decision-diagrams-experimental)).*
 
 ## Running them
 
@@ -19,6 +19,7 @@ cargo run --release -p probl-bench -- tennis    # models whose name contains "te
 cargo run --release -p probl-bench -- --quick   # one timed run each
 cargo run --release -p probl-bench -- --threads=1   # sample on one thread
 cargo run --release -p probl-bench -- --no-conjugate   # sample without exact updates for conjugate priors
+cargo run --release -p probl-bench -- --symbolic   # decision diagrams for the models they support (experimental)
 ```
 
 For each model, the runner reports the median time of up to five runs, the engine's statistics, the peak heap (from a separate run that counts allocations, and isn't timed), and for enumerated models the same run without merging worlds. Sampling uses every core unless `--threads=` says otherwise. A run that takes more than 60 seconds is cancelled and reported as such. Models that use `today` see 2026-09-29, as the example tests do. `cargo test` checks that every model still compiles.
@@ -86,6 +87,14 @@ The baseline used twelve models in [`benches/`](../benches), each chosen to stre
 | `epidemic` | a stochastic SIR epidemic in a town (sampled) | large counts drawn every day |
 | `ab_test` | an A/B test with 30 days of data (sampled) | evidence-heavy sampling |
 
+October added three, for the [symbolic backend](#since-decision-diagrams-experimental): models whose facts stay live together through evidence.
+
+| Model | What it computes | What it stresses |
+|---|---|---|
+| `faults` | which of 18 components failed, given that one did | 2¹⁸ worlds, none of which merge |
+| `alarms` | an outage's 15 possible causes, from 10 noisy alarms | overlapping evidence about live causes |
+| `diagnosis` | a pumping station's failed parts, from its sensors | laws that depend on facts, evidence in a branch |
+
 ## Results
 
 Measured before sampling ran in parallel: sampled models used one core.
@@ -150,7 +159,7 @@ Large states are dominated by merging: a world's slots, including its deck (a ma
 
 **Markov-chain solving.** The models with loops that cycle (`tennis`, craps, snakes and ladders, the tour's `while d6 != 6`) run in milliseconds; what unrolling costs them is exactness (unresolved weight up to 2.3 × 10⁻¹¹ in `tennis`), not time. Solving absorbing chains would make them exact, and would allow recursion that returns to the same call, which enumeration rejects today. *Worth doing for exactness and expressiveness, after the above. Done for loops ([below](#since-solving-loops-that-cycle)).*
 
-**Symbolic inference** (decision diagrams, as in Dice). Moving draws fixes the original `reliability` model more cheaply. The large concrete states in `blackjack_deck` and `snakes_three` motivate sampling (`snakes_three` samples 20,000 games in 1.4 s), but their size alone does not establish whether a symbolic representation would help. This suite did not measure that question. *Deferred for these workloads. The October [symbolic inference review](design/symbolic-inference.md) adds an exploratory posterior-reporting workload that still reaches `2^n` worlds with current optimizations and proposes a bounded Boolean prototype; no symbolic speedup has yet been measured.*
+**Symbolic inference** (decision diagrams, as in Dice). Moving draws fixes the original `reliability` model more cheaply. The large concrete states in `blackjack_deck` and `snakes_three` motivate sampling (`snakes_three` samples 20,000 games in 1.4 s), but their size alone does not establish whether a symbolic representation would help. This suite did not measure that question. *Deferred for these workloads. The October [symbolic inference review](design/symbolic-inference.md) adds an exploratory posterior-reporting workload that still reaches `2^n` worlds with current optimizations and proposes a bounded Boolean prototype, now built and measured ([below](#since-decision-diagrams-experimental)).*
 
 **Persistent collections.** No benchmark spends significant time copying large collections: the collections in these models are small (a deck of 10 counts, a pipeline of 3 orders, hands as records), and each world's copy differs from the others. What costs is hashing them, which cached hashes fix. *Not now; revisit if a model with large shared collections shows up.*
 
@@ -248,6 +257,19 @@ Without merging, both now finish: solving tells states apart itself. Nothing els
 Hashing the states costs nothing measurable. A loop that ends once in 10⁹ rounds, which unrolling couldn't finish, takes microseconds.
 
 Recursion that comes back to the same call now works too (semantics §6). Such a call is solved by rounds, with every call in the cycle run at most once per round. A recursive tennis game takes 35 rounds and gives the loop's 81.26%. Exploding dice take 15 rounds.
+
+## Since: decision diagrams (experimental)
+
+An experimental backend answers a Boolean subset with binary decision diagrams instead of worlds: draws from Boolean laws, Boolean expressions, `if`, observations, `score` and reports without `by` ([plan](design/symbolic-inference.md#stage-1-as-built)). It's off by default; `--symbolic` uses it for the models it supports and enumerates the others. The four models in the subset, with the same output both ways, on the same machine in October, with one codegen unit and fat LTO:
+
+| model | enumerated | with diagrams |
+|---|--:|--:|
+| benches/faults | 796 ms, 262,144 worlds, 196 MB | 0.37 ms, 171 nodes, 0.20 MB |
+| benches/alarms | 1.13 s, 65,536 worlds, 410 MB | 10.5 ms, 121,421 nodes, 9.2 MB |
+| benches/diagnosis | 69 ms, 22,814 worlds, 34 MB | 0.39 ms, 886 nodes, 0.21 MB |
+| benches/reliability | 0.40 ms, 256 worlds, 0.26 MB | 0.30 ms, 148 nodes, 0.11 MB |
+
+These are the workloads it was built for: facts that stay live together through evidence, which merging can't combine and moving draws can't separate. `reliability`, which moving draws already fixed, gains little. Diagrams have their own limit, the order of their variables, which is the order the program first uses its draws: twenty pairs `(x and y)` take 440 nodes declared side by side and 3.1 million with every `x` first. The plan has more sizes, the ordering family and the WebAssembly runs.
 
 ## Smaller findings
 

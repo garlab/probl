@@ -550,6 +550,14 @@ Left out:
 - Exact moments of rewards from `(I − Q)m = r`: the law is computed to ε like unrolling, which also gives quantiles and the whole distribution, as reports need.
 - Phase-type queries without listing the times, and loops with analytic state.
 
+## Optional Q, as built
+
+Stage 1 of the [symbolic inference plan](symbolic-inference.md#stage-1-as-built): an experimental backend, off by default, that answers a Boolean subset with binary decision diagrams instead of worlds. The subset is draws from Boolean laws with constant probabilities, or laws chosen by facts, Boolean expressions, assignments, `if`, observations, `score` and reports without `by`, at the top level. Programs outside it are enumerated (`prefer`) or rejected as unsupported (`only`); it's selected with the hidden `probl run --symbolic`, `probl-bench --symbolic`, or the library's internal switches. Each report is two weighted model counts added to the same sink enumeration's worlds add to, so the results and their text are enumeration's. Generated Boolean programs agree with the rational oracle and print what enumeration prints, but for rounding in the last digit.
+
+**What it beats.** Facts that stay live together through evidence. The benchmark's three new models, in process: `faults` (18 independent faults, one of which failed) takes 0.37 ms instead of 796 ms, and 171 nodes instead of 262,144 worlds; `alarms` (15 causes behind 10 noisy alarms) 10.5 ms instead of 1.13 s; `diagnosis` (conditional failures, with evidence in a branch) 0.39 ms instead of 69 ms. Two thousand faults take 0.2 s. The order of variables matters as it does for any decision diagram: twenty pairs `(x_i and y_i)` take 440 nodes declared side by side and 3.1 million with every `x` first. The [plan](symbolic-inference.md#stage-1-as-built) has the tables, and the WebAssembly runs, which print the same.
+
+Left out, as the plan's later stages: enums and finite laws, functions with fresh trials per call, loops, one report of several values, variable reordering and reclamation, and automatic selection.
+
 ## Measurements of each phase
 
 Phase 0 against the commit before it, and each phase against the one before, with `probl-bench --json` twice for each build, alternating, compared by `probl-bench compare` (the minimum of each), at a 5% threshold above noise floors of 2 ms and 64 KB:
@@ -565,6 +573,7 @@ Phase 0 against the commit before it, and each phase against the one before, wit
 | Phase 6 | identical for all 31 models | 66.89 s → 66.78 s (−0.2%), with one codegen unit | none, after one fix: see below |
 | Optional J | identical for all 31 models | 67.11 s → 67.08 s (−0.0%), with one codegen unit | none: see below |
 | Optional P | identical for all 31 models; fewer world steps for the 4 examples whose loops count | 67.51 s → 66.84 s (−1.0%), with one codegen unit | none, after the memory work above: see below |
+| Optional Q | identical for all 31 models; 3 new models (`faults`, `alarms`, `diagnosis`) | 66.82 s → 66.81 s (−0.0%), with one codegen unit, the backend off | none: see below |
 
 Phase 1's comparison flagged two sampled models, and both were noise. `08_signup_forecast` was 5.9% slower; in six more runs of each build, alternating, the new build's fastest was 0.353 s and the old one's 0.359 s. `epidemic`'s peak heap was 7.5% higher: across threads it varies from run to run of the same build (7.28–7.80 MB), and on one thread both builds peak at exactly 4,062,497 bytes after the same number of world steps. The measurements are of commit `ac8f0d5`; the fix after it changes only analytic outcomes, which no model in the benchmark besides `19_analytic_continuous` has, and that one has no atoms.
 
@@ -579,6 +588,8 @@ Phase 6's earlier comparisons flagged `08_signup_forecast` 11% slower once, and 
 J's comparison flagged two sampled models. `09_roadmap`, 13.9% slower, was noise: five more runs of each put the fastest at 99.2 ms before and 99.0 ms after, and on one thread it retires 0.4% fewer instructions. `08_signup_forecast` was 6% slower in the benchmark's own runs, on one thread too, with 0.2% fewer instructions. Through the command line, which runs the same engine, its median of ten runs was 374.7 ms before and 374.1 ms after; on one thread it retires the same instructions within 0.01%, in 1.1% more cycles. A difference in cycles alone is how the layout of code shows (phase 2), and the benchmark's binary lays out differently from the command line's.
 
 P's comparison found no change in any output, and fewer world steps for examples 01, 02, 03 and 05, which `compare` flags by design. A first run, while the engine was being compiled on the same machine, found `blackjack_deck` and two sampled models 17–90% slower; `blackjack_deck` has no rewards, and the undisturbed run found every model within noise. The per-statement table of rewards made the smallest models' heap 1–4% higher, about 24 bytes a statement; it's a map of the loops that have rewards now, and their heap is the same as before, to the byte.
+
+Q's backend is off by default, so the comparison is of the code around it: the options, the statistics, and the outcome's assembly, which enumeration and diagrams now share. It flagged `07_launch_forecast`, sampled on 12 threads, 7.9% slower, with 3.9% more peak heap. The heap was noise: six more runs of each build peaked at 61.5–63.4 MB after, against 62.8–63.6 MB before. The time held in the benchmark's own runs, 334–342 ms against 316–321 ms, but only there. On one thread, the benchmark took 2,329 ms at best against 2,322 ms, and through the command line, both builds retire 38.52 billion instructions, within 0.01%; with every thread, ten runs of each took a median of 324 ms after and 335 ms before. That's the benchmark binary's code layout, as for J.
 
 ## Relevant prior art
 
