@@ -185,16 +185,12 @@ Every published crate has the workspace's version. In the root `Cargo.toml`, eac
 
 Each published crate has its own `README.md`, selected by its package manifest and displayed on crates.io. The library and CLI READMEs explain how to use those packages; internal crate READMEs describe their role and direct users to `probl`. The repository's root README remains the language overview. Use absolute links in crate READMEs so they work on both GitHub and crates.io.
 
-To release:
-
-1. In the root `Cargo.toml`, set the new version in `[workspace.package]` and in each pin in `[workspace.dependencies]`. Then build once so that `Cargo.lock` follows, and add the release's section to the [changelog](../CHANGELOG.md). Commit these together.
-2. Check the packages with `cargo publish --workspace --dry-run --locked`. `cargo package --list -p <crate>` shows what a package contains.
-3. On GitHub's releases page, publish a **pre-release** with the tag `vX.Y.Z` on that commit. This is a dry run: the [release workflow](../.github/workflows/release.yml) checks that the tag matches the version, runs the tests and the packages' dry run, and builds and tests the container image on linux/amd64 and linux/arm64 runners. Nothing is published.
-4. When it passes, edit the pre-release and make it a release. The same checks run again, then the crates are published through crates.io's Trusted Publishing, once a maintainer approves the `release` environment, and the image as `ghcr.io/garlab/probl:X.Y.Z`, `:X.Y` and, for the latest release, `:latest`, with a provenance attestation. Neither needs a stored token. Crates already on crates.io at that version are skipped, so a failed publish can be re-run from the workflow's page.
-5. Check that docs.rs built each crate's documentation, and that `cargo install probl-cli --locked` installs the new version.
-
-A failed dry run leaves its tag behind: delete the pre-release and its tag before trying again, or use the next version if the tag is protected.
-
-Trusted Publishing can only be configured for a crate that already exists on crates.io. So a newly published crate's first release is done by hand, after which its crates.io settings name this repository, `release.yml` and the `release` environment as its trusted publisher.
+The [release guide](releases.md) describes the automated release and Homebrew pipeline,
+including published artifacts and verification guarantees. After updating the
+workspace version, dependency pins, lockfile and changelog on `main`, push the corresponding `vX.Y.Z` tag.
+The workflow tests and packages that commit, publishes crates and containers,
+attests the source archive, publishes an immutable GitHub release, and notifies
+the Homebrew tap. Routine formula updates and bottle publication need no manual
+URL or checksum copying.
 
 Before 1.0, Cargo treats `0.1.x` releases as compatible with each other, so a release that breaks the `probl` API must be `0.2.0`. [cargo-semver-checks](https://github.com/obi1kenobi/cargo-semver-checks) can compare `probl` against its last published version; CI doesn't run it yet. See [Cargo's publishing guidance](https://doc.rust-lang.org/cargo/reference/publishing.html) and [SemVer compatibility](https://doc.rust-lang.org/cargo/reference/semver.html).

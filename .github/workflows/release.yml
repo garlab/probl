@@ -1,40 +1,31 @@
-# Releases come from GitHub's releases page, with a vX.Y.Z tag:
-#
-# - Publishing a pre-release is a dry run: the tests, the crates' packages
-#   and each platform's container image are built and checked, and nothing
-#   is published.
-# - Turning it into a release, or publishing a release directly, runs the
-#   same checks, then publishes the crates to crates.io and the image to
-#   ghcr.io/garlab/probl.
-#
-# The crates go through Trusted Publishing: their crates.io settings name
-# this repository, this workflow and the `release` environment. Crates
-# already on crates.io at this version are skipped, so a failed publish can
-# be re-run. The image is pushed with the workflow's own token; with the
-# DOCKERHUB_IMAGE and DOCKERHUB_USERNAME variables and the DOCKERHUB_TOKEN
-# secret, it's copied to Docker Hub too.
+# Push a stable version tag to release. Dispatch on that tag with dry_run=true
+# to validate without publishing. See docs/releases.md for the release process.
 name: Release
 
 on:
-  release:
-    # Publishing a release directly fires both; its `published` run does
-    # nothing.
-    types: [published, released]
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Test and package without publishing (select a version tag)
+        type: boolean
+        default: true
 
 permissions: {}
 
+# Serialise versions as well as retries, so older runs cannot move latest back.
 concurrency:
-  group: release-${{ github.event.release.tag_name }}
+  group: probl-release
   cancel-in-progress: false
 
 env:
   IMAGE: ghcr.io/garlab/probl
-  TAG: ${{ github.event.release.tag_name }}
-  PUBLISH: ${{ github.event.action == 'released' }}
+  TAG: ${{ github.ref_name }}
+  PUBLISH: ${{ github.event_name == 'push' || !inputs.dry_run }}
 
 jobs:
   verify:
-    if: github.event.action == 'released' || (github.event.action == 'published' && github.event.release.prerelease)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -42,6 +33,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: stable
@@ -50,13 +42,11 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: tests
-      - name: The tag is the version
-        run: |
-          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "probl") | .version')
-          if [ "$TAG" != "v$version" ]; then
-            echo "::error::the tag is $TAG, but the version in Cargo.toml is $version"
-            exit 1
-          fi
+      - name: Validate release identity and ordering
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 ci/release.py check "$TAG"
+      - run: python3 -m unittest discover -s ci -p 'test_*.py'
       - run: cargo test --all --locked
       - run: cargo publish --workspace --dry-run --locked
 
@@ -78,6 +68,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         id: meta
@@ -138,7 +129,7 @@ jobs:
           retention-days: 1
 
   crates:
-    if: github.event.action == 'released'
+    if: github.event_name == 'push' || !inputs.dry_run
     needs: [verify, image]
     runs-on: ubuntu-latest
     environment: release
@@ -149,6 +140,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: stable
@@ -178,7 +170,7 @@ jobs:
           fi
 
   container:
-    if: github.event.action == 'released'
+    if: github.event_name == 'push' || !inputs.dry_run
     needs: [verify, image]
     runs-on: ubuntu-24.04
     permissions:
@@ -198,15 +190,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # `latest` moves only to the repository's latest release, not to a
-      # fix for an older version.
-      - name: Whether it's the latest release
-        id: latest
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
-          echo "latest=$([ "$latest" = "$TAG" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         id: meta
         with:
@@ -215,7 +198,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}},value=${{ env.TAG }}
             type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }}
-            type=raw,value=latest,enable=${{ steps.latest.outputs.latest }}
+            type=raw,value=latest
       - name: Tag the platforms together
         working-directory: ${{ runner.temp }}/digests
         env:
@@ -257,3 +240,68 @@ jobs:
           args=()
           for tag in $TAGS; do args+=(--tag "$HUB:${tag##*:}"); done
           docker buildx imagetools create "${args[@]}" "$IMAGE@$DIGEST"
+
+  source:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 ci/release.py archive "$TAG" "$RUNNER_TEMP/release"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: env.PUBLISH == 'true'
+        with:
+          subject-path: ${{ runner.temp }}/release/*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: source-release
+          path: ${{ runner.temp }}/release/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    if: github.event_name == 'push' || !inputs.dry_run
+    needs: [verify, source, crates, container]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: source-release
+          path: ${{ runner.temp }}/release
+      - name: Publish immutable release (identical retries are safe)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 ci/release.py publish "$TAG" "$RUNNER_TEMP/release"
+
+  homebrew:
+    needs: release
+    runs-on: ubuntu-latest
+    environment: release
+    permissions: {}
+    steps:
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        id: app
+        with:
+          app-id: ${{ vars.HOMEBREW_APP_ID }}
+          private-key: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}
+          owner: garlab
+          repositories: homebrew-tap
+          permission-contents: write
+      - name: Notify tap (the tap independently verifies the release)
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          jq -n --arg tag "$TAG" '{event_type: "probl-release", client_payload: {tag: $tag}}' |
+            gh api repos/garlab/homebrew-tap/dispatches --input -
