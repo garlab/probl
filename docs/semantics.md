@@ -372,8 +372,9 @@ Finite medians and quantiles sort a separate population using language compariso
 **Unbounded loops.** `while` and `loop` repeat until no world is left inside. `for` and `repeat` loops are never cut short.
 
 - **Solved, when they cycle.** When enumerating, a `while` or `loop` whose worlds come back to a state they were in at the start of an earlier round is solved as an absorbing Markov chain from that round on. A state is the values of the variables read later. The engine finds every state reachable from the worlds inside, runs the body once from each, and solves for the expected number of visits to each state. That gives how much weight leaves by each way out: `break`, `return`, and observations that rule worlds out. The answer is exact up to floating-point rounding, and nothing is left unresolved. If some worlds can never leave, because no way out can be reached from their state, it's an error.
+- **Counters are rewards.** A variable that the loop only adds to (`n += 1`, `cost = cost + price`), and that nothing else in the loop reads, doesn't decide what the loop does, so it doesn't make a state new: the loop can come back to a state when its other variables do. Such a loop is solved as a chain over its other variables, whose steps carry how much each reward grows. The law of each state and reward is followed step by step on the chain, as unrolling would follow its worlds but without running the body again, and like unrolling, it stops once the weight still inside is less than ε times the weight that entered (below), leaving that weight unresolved. The results are those of unrolling, up to rounding. A reward read by the loop's condition, or by any other statement in it, is an ordinary variable.
 - **Unrolled, otherwise.** Some loops are unrolled instead:
-  - one that never comes back to a state, such as one that counts its rounds;
+  - one that never comes back to a state;
   - one whose body reports or prints, which happen once per visit;
   - one whose chain would have more states than the host allows (50,000 by default).
 

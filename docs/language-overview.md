@@ -296,7 +296,8 @@ loop { …; if done { break } }
 A loop with an uncertain condition runs until every world has left it. Some loops never end with certainty: `while ~d6 != 6` could in principle roll forever.
 
 - **Loops that come back are solved.** If the worlds come back to states they were in before, as a tennis game returns to deuce, Probl solves the loop exactly, as a Markov chain.
-- **Other loops stop at ε.** A loop that counts its rounds never comes back to a state. Probl stops such a `while` or `loop` once the worlds still inside weigh less than ε times the weight that entered it (ε is 10⁻¹² by default; change it with `@epsilon 1e-9`). That remainder is reported as *unresolved* weight rather than silently dropped.
+- **Counters don't stop that.** A variable the loop only adds to, like a count of rounds, and doesn't otherwise read, is carried along a chain of the loop's other variables: the same answer as unrolling the loop, much faster, and like unrolling, it stops at ε (below).
+- **Other loops stop at ε.** A loop whose worlds never come back to a state is unrolled. Probl stops such a `while` or `loop` once the worlds still inside weigh less than ε times the weight that entered it (ε is 10⁻¹² by default; change it with `@epsilon 1e-9`). That remainder is reported as *unresolved* weight rather than silently dropped.
 
 `for` and `repeat` always run to the end.
 

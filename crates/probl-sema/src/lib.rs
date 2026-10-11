@@ -12,6 +12,7 @@ pub mod ir;
 pub mod liveness;
 pub mod lower;
 pub mod pretty;
+pub mod rewards;
 pub mod symbols;
 
 pub use builtins::{Builtin, Constant};

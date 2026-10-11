@@ -185,16 +185,54 @@ report x",
 }
 
 #[test]
-fn loops_that_report_print_or_count_are_unrolled() {
+fn loops_that_report_or_print_are_unrolled() {
     // A report or print happens on every visit, so those loops aren't
-    // solved; a loop that counts its rounds never comes back to a state.
+    // solved.
     for src in [
         "var x = 0\nwhile x < 3 {\n  x = if (chance { 50% => true, else => false }) { 0 } else { x + 1 }\n  report x by x\n}",
         "var x = 0\nwhile x < 3 {\n  x = if (chance { 50% => true, else => false }) { 0 } else { x + 1 }\n  print(x)\n}",
-        "var x = 0\nvar n = 0\nwhile x < 3 {\n  x = if (chance { 50% => true, else => false }) { 0 } else { x + 1 }\n  n += 1\n}\nreport n",
     ] {
         assert_eq!(outcome(src).stats.solved_loops, 0, "{src}");
     }
+}
+
+/// The same program, with the loop solved and unrolled: the same reports,
+/// and how many world steps each took.
+fn solved_and_unrolled(src: &str) -> (Outcome, Outcome) {
+    let solved = outcome(src);
+    let unrolled = exec(
+        src,
+        &Options {
+            solve: false,
+            ..Options::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(solved.output, unrolled.output, "{src}");
+    (solved, unrolled)
+}
+
+#[test]
+fn counters_are_rewards_the_chain_carries() {
+    // A counter that nothing else reads doesn't make states new: the chain
+    // is solved over the rest, and carries how much each step adds.
+    for src in [
+        "var x = 0\nvar n = 0\nwhile x < 3 {\n  x = if (chance { 50% => true, else => false }) { 0 } else { x + 1 }\n  n += 1\n}\nreport n",
+        // Two rewards, an int and a float, and one added after the
+        // condition, in the step that leaves.
+        "var x = 0\nvar n = 0\nvar cost = 0.0\nloop {\n  n += 1\n  x = if (chance { 50% => true, else => false }) { 0 } else { x + 1 }\n  cost = cost + 0.5\n  if x == 3 { break }\n}\nreport n\nreport cost",
+        // Steps that add different amounts, by state.
+        "var x = 0\nvar total = 0\nwhile x < 4 {\n  let r ~ d4\n  x = if r == 1 { 0 } else { x + 1 }\n  total += x * 10\n}\nreport total",
+        // In a function, whose result is the reward.
+        "fn play() {\n  var x = 0\n  var n = 0\n  while x < 2 {\n    n += 1\n    x = if (chance { 50% => true, else => false }) { 0 } else { x + 1 }\n  }\n  return n\n}\nreport play()",
+    ] {
+        let (solved, unrolled) = solved_and_unrolled(src);
+        assert_eq!(solved.stats.solved_loops, 1, "{src}");
+        assert!(solved.stats.world_steps * 10 < unrolled.stats.world_steps, "{src}");
+    }
+    // A loop that can't be left is found, rather than run to a limit.
+    let e = error("var n = 0\nwhile true { n += 1 }\nreport n");
+    assert!(e.contains("never leave"), "{e}");
 }
 
 #[test]

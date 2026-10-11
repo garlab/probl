@@ -277,7 +277,7 @@ fn i3_host_limits_hold() {
         max_work: 10_000,
         ..Limits::default()
     });
-    let err = exec_raw("var n = 0\nwhile true { n += 1 }", &little_work).unwrap_err();
+    let err = exec_raw("var n = 0\nwhile n >= 0 { n += 1 }", &little_work).unwrap_err();
     assert_eq!(err.kind, ErrorKind::Limit);
 
     // A program can lower the host's world limit but not raise it.

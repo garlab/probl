@@ -250,6 +250,9 @@ pub struct Engine<'p> {
     /// For each statement: whether it's an unbounded loop that may be
     /// solved as a Markov chain (section 10).
     solvable: Vec<bool>,
+    /// For each loop: the variables it only adds to, which the chain carries
+    /// as rewards rather than in its states.
+    rewards: FxHashMap<StmtId, Vec<SlotId>>,
     /// Loops whose chains were found too large to solve: they're unrolled
     /// from then on.
     too_large: FxHashSet<StmtId>,
@@ -387,6 +390,7 @@ impl<'p> Engine<'p> {
             unresolved: Weight::ZERO,
             lost: Weight::ZERO,
             solvable: probl_sema::effects::solvable_loops(prog),
+            rewards: probl_sema::rewards::loop_rewards(prog),
             too_large: FxHashSet::default(),
             observed: false,
             densities: false,
@@ -2173,7 +2177,10 @@ impl<'p> Engine<'p> {
         while !inside.is_empty() {
             let cycles = match &mut met {
                 Some(met) => {
-                    let head = live_slots(&live.loop_head[stmt.id as usize], inside[0].slots.len());
+                    // A loop's rewards don't make its states new.
+                    let rewards = self.rewards.get(&stmt.id).map_or(&[][..], Vec::as_slice);
+                    let mut head = live_slots(&live.loop_head[stmt.id as usize], inside[0].slots.len());
+                    head.retain(|&i| !rewards.contains(&(i as SlotId)));
                     let hashes: Vec<u64> = inside.iter().map(|w| state_hash(w, &head)).collect();
                     let again = hashes.iter().any(|h| met.contains(h));
                     met.extend(hashes);
@@ -2183,7 +2190,7 @@ impl<'p> Engine<'p> {
             };
             if cycles {
                 met = None;
-                if let Some(solved) = self.solve_loop(f, stmt, body, &inside)? {
+                if let Some(solved) = self.solve_loop(f, stmt, body, &inside, cutoff, &mut iterations)? {
                     out.join(solved);
                     break;
                 }
@@ -2237,7 +2244,15 @@ impl<'p> Engine<'p> {
     /// each state, and the worlds that leave. The expected number of visits
     /// to each state then says how much of each leaves. `None` if the chain
     /// is too large, and the loop should be unrolled instead.
-    fn solve_loop(&mut self, f: FnId, stmt: &'p Stmt, body: &'p Block, inside: &[World]) -> Result<Option<Flow>> {
+    fn solve_loop(
+        &mut self,
+        f: FnId,
+        stmt: &'p Stmt,
+        body: &'p Block,
+        inside: &[World],
+        cutoff: Weight,
+        iterations: &mut u64,
+    ) -> Result<Option<Flow>> {
         // The chain's transitions are probabilities: a density isn't one.
         if inside
             .iter()
@@ -2249,15 +2264,46 @@ impl<'p> Engine<'p> {
         let head_set = &self.live.loop_head[stmt.id as usize];
         let after = &self.live.after[stmt.id as usize];
         let n = inside[0].slots.len();
-        let head = live_slots(head_set, n);
+        let rewards: Vec<usize> = self
+            .rewards
+            .get(&stmt.id)
+            .map_or(&[][..], Vec::as_slice)
+            .iter()
+            .map(|&r| r as usize)
+            .collect();
+        let mut head = live_slots(head_set, n);
+        head.retain(|i| !rewards.contains(i));
         let dead: Vec<SlotId> = head_set.iter_missing(n).collect();
-        // Each state: its world, with dead slots cleared, found by its live
-        // slots.
+        if rewards.len() > MAX_REWARDS {
+            self.too_large.insert(stmt.id);
+            return Ok(None);
+        }
+        // A world's rewards, where they're plain numbers: whole numbers or
+        // floats, by their bits, and which are floats.
+        let reward_of = |slots: &[Value]| -> Option<Raw> {
+            let (mut bits, mut floats) = ([0u64; MAX_REWARDS], 0u8);
+            for (i, &r) in rewards.iter().enumerate() {
+                bits[i] = match &slots[r] {
+                    Value::Int(n) => n.to_i64()? as u64,
+                    Value::Float(x) => {
+                        floats |= 1 << i;
+                        x.to_bits()
+                    }
+                    _ => return None,
+                };
+            }
+            Some((bits, floats))
+        };
+        // Each state: its world, with dead slots cleared and rewards at 0,
+        // found by its other live slots.
         let mut states: Vec<Vec<Value>> = Vec::new();
         let mut index: FxHashMap<Vec<Value>, usize> = FxHashMap::default();
         let mut intern = |mut slots: Vec<Value>, states: &mut Vec<Vec<Value>>| -> usize {
             for &d in &dead {
                 slots[d as usize] = Value::Dead;
+            }
+            for &r in &rewards {
+                slots[r] = Value::Int(0.into());
             }
             let key: Vec<Value> = head.iter().map(|&i| slots[i].clone()).collect();
             *index.entry(key).or_insert_with(|| {
@@ -2267,13 +2313,27 @@ impl<'p> Engine<'p> {
         };
         let total = total_weight(inside);
         let mut start: Vec<f64> = Vec::new();
+        // With rewards: each state and reward the worlds start with.
+        let mut starts: Vec<((usize, Raw), f64)> = Vec::new();
         for w in inside {
+            let reward = if rewards.is_empty() {
+                ([0; MAX_REWARDS], 0)
+            } else {
+                match reward_of(&w.slots) {
+                    Some(r) => r,
+                    None => return Ok(None),
+                }
+            };
             let i = intern(w.slots.clone(), &mut states);
             if start.len() <= i {
                 start.resize(i + 1, 0.0);
             }
             start[i] += w.weight.ratio(total);
+            starts.push(((i, reward), w.weight.ratio(total)));
         }
+        // With rewards: each state's steps, to each state with how much the
+        // rewards grow.
+        let mut moves: Vec<Vec<(u32, Raw, f64)>> = Vec::new();
         let mut chain = Chain::default();
         let mut exits: Vec<Vec<World>> = Vec::new();
         let mut returns: Vec<Vec<Returned>> = Vec::new();
@@ -2341,6 +2401,7 @@ impl<'p> Engine<'p> {
                 leave += *w;
             }
             let mut next: FxHashMap<usize, f64> = FxHashMap::default();
+            let mut steps: Vec<(u32, Raw, f64)> = Vec::new();
             for w in flow.next.into_iter().chain(flow.continued) {
                 let p = w.weight.to_f64();
                 if p == 0.0 {
@@ -2349,9 +2410,25 @@ impl<'p> Engine<'p> {
                     self.pending = saved_pending;
                     return Ok(None);
                 }
+                let grows = if rewards.is_empty() {
+                    ([0; MAX_REWARDS], 0)
+                } else {
+                    match reward_of(&w.slots) {
+                        Some(r) => r,
+                        None => {
+                            self.too_large.insert(stmt.id);
+                            self.pending = saved_pending;
+                            return Ok(None);
+                        }
+                    }
+                };
                 let j = intern(w.slots, &mut states);
                 *next.entry(j).or_insert(0.0) += p;
+                if !rewards.is_empty() {
+                    steps.push((j as u32, grows, p));
+                }
             }
+            moves.push(steps);
             let mut next: Vec<(usize, f64)> = next.into_iter().collect();
             next.sort_by_key(|&(j, _)| j);
             chain.next.push(next);
@@ -2369,6 +2446,29 @@ impl<'p> Engine<'p> {
             return Ok(None);
         }
         start.resize(states.len(), 0.0);
+        // Rewards are iterated, which needs no elimination: only states that
+        // can't be left are found first.
+        if !rewards.is_empty() {
+            if let Some(s) = chain.stuck() {
+                return Err(self.never_leaves(f, stmt, &states[s], &head));
+            }
+            drop(index);
+            drop(states);
+            let chain = Rewarded {
+                rewards: &rewards,
+                moves: &moves,
+                exits,
+                returns,
+                unresolved,
+                failed,
+                faulted,
+            };
+            let solved = self.iterate_rewards(stmt, chain, starts, total, cutoff, iterations)?;
+            if solved.is_none() {
+                self.too_large.insert(stmt.id);
+            }
+            return Ok(solved);
+        }
         let mut steps = MAX_ELIMINATION;
         let solution = chain.visits(&start, &mut steps);
         self.spend(MAX_ELIMINATION - steps, stmt.span)?;
@@ -2402,6 +2502,246 @@ impl<'p> Engine<'p> {
                 w.weight = w.weight * times;
                 flow.faulted.push((w, e));
             }
+        }
+        self.unresolved += left;
+        Ok(Some(flow))
+    }
+
+    /// A loop solved as a chain whose steps carry rewards: the law of each
+    /// state and reward, step after step, from the worlds that start it, as
+    /// unrolling would follow them, but without running the body again.
+    /// Like unrolling, it stops once what's still inside weighs less than
+    /// `cutoff`, which is then unresolved, or after the most iterations.
+    /// `None` if a reward doesn't fit the numbers it's followed in.
+    fn iterate_rewards(
+        &mut self,
+        stmt: &Stmt,
+        chain: Rewarded,
+        starts: Vec<((usize, Raw), f64)>,
+        total: Weight,
+        cutoff: Weight,
+        iterations: &mut u64,
+    ) -> Result<Option<Flow>> {
+        let span = stmt.span;
+        let count = chain.rewards.len();
+        // Each reward is followed as a whole number while every value it
+        // takes is an int, and as a float once one is a float.
+        let floats = starts
+            .iter()
+            .map(|((_, (_, f)), _)| *f)
+            .chain(chain.moves.iter().flatten().map(|(_, (_, f), _)| *f))
+            .fold(0u8, |a, f| a | f);
+        let float: [bool; MAX_REWARDS] = std::array::from_fn(|i| floats & (1 << i) != 0);
+        let compact = |(bits, floats): &Raw| -> Option<Reward> {
+            let mut out = *bits;
+            for i in 0..count {
+                if float[i] && floats & (1 << i) == 0 {
+                    let n = bits[i] as i64;
+                    if n.unsigned_abs() > 1 << 53 {
+                        return None;
+                    }
+                    out[i] = (n as f64).to_bits();
+                }
+            }
+            Some(out)
+        };
+        let plus = |a: &Reward, b: &Reward| -> Option<Reward> {
+            let mut out = [0u64; MAX_REWARDS];
+            for i in 0..count {
+                out[i] = if float[i] {
+                    (f64::from_bits(a[i]) + f64::from_bits(b[i])).to_bits()
+                } else {
+                    (a[i] as i64).checked_add(b[i] as i64)? as u64
+                };
+            }
+            Some(out)
+        };
+        let value = |r: &Reward, i: usize| -> Value {
+            if float[i] {
+                Value::Float(f64::from_bits(r[i]))
+            } else {
+                Value::Int((r[i] as i64).into())
+            }
+        };
+        let mut moves: Vec<Vec<(u32, Reward, f64)>> = Vec::with_capacity(chain.moves.len());
+        for steps in chain.moves {
+            let mut out = Vec::with_capacity(steps.len());
+            for (j, d, p) in steps {
+                let Some(d) = compact(d) else { return Ok(None) };
+                out.push((*j, d, *p));
+            }
+            moves.push(out);
+        }
+        let mut current: FxHashMap<(u32, Reward), f64> = FxHashMap::default();
+        for ((s, r), p) in &starts {
+            let Some(r) = compact(r) else { return Ok(None) };
+            *current.entry((*s as u32, r)).or_insert(0.0) += p;
+        }
+        // How much weight ran the body from each state; leaves by each of
+        // the distinct worlds that leave, with each reward, as unrolling's
+        // merging would add it up; and faulted, by state and reward.
+        let mut visits = vec![0.0; moves.len()];
+        let mut templates: Vec<&World> = Vec::new();
+        let mut template_index: FxHashMap<&[Value], u32> = FxHashMap::default();
+        let exits: Vec<Vec<(u32, f64)>> = chain
+            .exits
+            .iter()
+            .map(|worlds| {
+                worlds
+                    .iter()
+                    .map(|w| {
+                        let t = *template_index.entry(&w.slots[..]).or_insert_with(|| {
+                            templates.push(w);
+                            (templates.len() - 1) as u32
+                        });
+                        (t, w.weight.to_f64())
+                    })
+                    .collect()
+            })
+            .collect();
+        drop(template_index);
+        let mut leaving: FxHashMap<(u32, Reward), f64> = FxHashMap::default();
+        let mut ran: FxHashMap<(u32, Reward), f64> = FxHashMap::default();
+        let mut next: FxHashMap<(u32, Reward), f64> = FxHashMap::default();
+        // When every step adds the same, and every world starts with the
+        // same reward, as a counter of rounds does, all the worlds have the
+        // same reward at each step: the weights are a vector by state.
+        let mut increments = moves.iter().flatten().map(|(_, d, _)| d);
+        let same = increments.next().copied().filter(|d| increments.all(|e| e == d));
+        let mut rewards = current.keys().map(|(_, r)| r);
+        let start = rewards.next().copied().filter(|r| rewards.all(|q| q == r));
+        if let (Some(d), Some(mut reward)) = (same, start) {
+            let n = moves.len();
+            let mut weights = vec![0.0; n];
+            for (&(s, _), &m) in &current {
+                weights[s as usize] += m;
+            }
+            let mut after = vec![0.0; n];
+            loop {
+                let mass: f64 = weights.iter().sum();
+                if mass == 0.0 {
+                    break;
+                }
+                if total.scale(mass) < cutoff {
+                    self.unresolved += total.scale(mass);
+                    break;
+                }
+                *iterations += 1;
+                if *iterations > self.config.max_iterations {
+                    return Err(RuntimeError::limit(
+                        span,
+                        format!("this loop ran {} times without finishing", self.config.max_iterations),
+                    )
+                    .with_note(format!(
+                        "worlds still inside the loop weigh {} of what entered it",
+                        fmt_prob(mass)
+                    ))
+                    .with_help("check that every world can leave the loop"));
+                }
+                self.spend(n as u64, span)?;
+                for (s, &m) in weights.iter().enumerate() {
+                    if m == 0.0 {
+                        continue;
+                    }
+                    visits[s] += m;
+                    for &(j, _, p) in &moves[s] {
+                        after[j as usize] += m * p;
+                    }
+                    for &(t, p) in &exits[s] {
+                        *leaving.entry((t, reward)).or_insert(0.0) += m * p;
+                    }
+                    if !chain.faulted[s].is_empty() {
+                        *ran.entry((s as u32, reward)).or_insert(0.0) += m;
+                    }
+                }
+                std::mem::swap(&mut weights, &mut after);
+                after.iter_mut().for_each(|w| *w = 0.0);
+                let Some(r) = plus(&reward, &d) else { return Ok(None) };
+                reward = r;
+            }
+            current.clear();
+        }
+        while !current.is_empty() {
+            let mass: f64 = current.values().sum();
+            if total.scale(mass) < cutoff {
+                self.unresolved += total.scale(mass);
+                break;
+            }
+            *iterations += 1;
+            if *iterations > self.config.max_iterations {
+                return Err(RuntimeError::limit(
+                    span,
+                    format!("this loop ran {} times without finishing", self.config.max_iterations),
+                )
+                .with_note(format!(
+                    "worlds still inside the loop weigh {} of what entered it",
+                    fmt_prob(mass)
+                ))
+                .with_help("check that every world can leave the loop"));
+            }
+            self.spend(current.len() as u64, span)?;
+            for (&(s, r), &m) in &current {
+                visits[s as usize] += m;
+                for (j, d, p) in &moves[s as usize] {
+                    let Some(r) = plus(&r, d) else { return Ok(None) };
+                    *next.entry((*j, r)).or_insert(0.0) += m * p;
+                }
+                for &(t, p) in &exits[s as usize] {
+                    *leaving.entry((t, r)).or_insert(0.0) += m * p;
+                }
+                if !chain.faulted[s as usize].is_empty() {
+                    *ran.entry((s, r)).or_insert(0.0) += m;
+                }
+            }
+            self.check_worlds(next.len(), span)?;
+            std::mem::swap(&mut current, &mut next);
+            next.clear();
+        }
+        self.stats.solved_loops += 1;
+        self.stats.chain_states += moves.len() as u64;
+        // A world leaving from a state with a reward: what it gained in
+        // its last step, added to the reward.
+        let add = |a: Value, b: &Value, budget: &mut crate::dist::Budget| -> Result<Value> {
+            ops::binary(probl_syntax::ast::BinOp::Add, &a, b, budget).map_err(|e| e.at(span))
+        };
+        let mut flow = Flow::default();
+        let rewarded = |w: &World, r: &Reward, budget: &mut crate::dist::Budget| -> Result<World> {
+            let mut w = w.clone();
+            for (i, &slot) in chain.rewards.iter().enumerate() {
+                if !matches!(w.slots[slot], Value::Dead) {
+                    w.slots[slot] = add(value(r, i), &w.slots[slot], budget)?;
+                }
+            }
+            Ok(w)
+        };
+        let mut leaving: Vec<((u32, Reward), f64)> = leaving.into_iter().collect();
+        leaving.sort_by_key(|a| a.0);
+        for ((t, r), m) in leaving {
+            let mut w = rewarded(templates[t as usize], &r, &mut self.budget)?;
+            w.weight = total.scale(m);
+            flow.next.push(w);
+        }
+        let mut ran: Vec<((u32, Reward), f64)> = ran.into_iter().collect();
+        ran.sort_by_key(|a| a.0);
+        for ((s, r), m) in ran {
+            let times = total.scale(m);
+            for (w, e) in &chain.faulted[s as usize] {
+                let mut w = rewarded(w, &r, &mut self.budget)?;
+                w.weight = w.weight * times;
+                flow.faulted.push((w, e.clone()));
+            }
+        }
+        let mut left = Weight::ZERO;
+        for (s, v) in visits.into_iter().enumerate() {
+            if v == 0.0 {
+                continue;
+            }
+            let times = total.scale(v);
+            for (value, w, c) in &chain.returns[s] {
+                flow.returned.push((value.clone(), *w * times, c.clone()));
+            }
+            left += chain.unresolved[s] * times;
+            self.failures.absorb(&chain.failed[s], times, None, false);
         }
         self.unresolved += left;
         Ok(Some(flow))
@@ -3843,6 +4183,28 @@ impl<'p> Engine<'p> {
 }
 
 /// A call as written: `f(3, true)`.
+/// The most rewards a loop's chain follows.
+const MAX_REWARDS: usize = 4;
+
+/// A loop's rewards, as whole numbers or floats by their bits.
+type Reward = [u64; MAX_REWARDS];
+
+/// Rewards as a world has them: their bits, and which are floats.
+type Raw = (Reward, u8);
+
+/// A loop's chain with rewards, as `solve_loop` found it: for each state,
+/// its steps with how much the rewards grow, and what leaves the loop from
+/// it, in one run of the body from the state with its rewards at 0.
+struct Rewarded<'a> {
+    rewards: &'a [usize],
+    moves: &'a [Vec<(u32, Raw, f64)>],
+    exits: Vec<Vec<World>>,
+    returns: Vec<Vec<Returned>>,
+    unresolved: Vec<Weight>,
+    failed: Vec<Failures>,
+    faulted: Vec<Vec<(World, RuntimeError)>>,
+}
+
 fn describe_call(fun: &Function, key: &[Value]) -> String {
     let args: Vec<String> = key[..fun.n_params as usize].iter().map(|v| format!("{v:?}")).collect();
     format!("{}({})", fun.name, args.join(", "))

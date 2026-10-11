@@ -210,6 +210,37 @@ struct Eliminated {
 /// The strongly connected groups of states, each group's states in no
 /// particular order, and the groups in reverse topological order (Tarjan's
 /// algorithm, without recursion).
+impl Chain {
+    /// A state from which the chain can never be left, if there's one: one
+    /// with no path to a state with a way out, by a search backwards from
+    /// them, without solving anything.
+    pub fn stuck(&self) -> Option<usize> {
+        let n = self.next.len();
+        let mut into: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (i, steps) in self.next.iter().enumerate() {
+            for &(j, p) in steps {
+                if p > 0.0 {
+                    into[j].push(i);
+                }
+            }
+        }
+        let mut leaves = vec![false; n];
+        let mut pending: Vec<usize> = (0..n).filter(|&i| self.leave[i] > 0.0).collect();
+        for &i in &pending {
+            leaves[i] = true;
+        }
+        while let Some(j) = pending.pop() {
+            for &i in &into[j] {
+                if !leaves[i] {
+                    leaves[i] = true;
+                    pending.push(i);
+                }
+            }
+        }
+        leaves.iter().position(|l| !l)
+    }
+}
+
 fn strongly_connected(next: &[Vec<(usize, f64)>]) -> Vec<Vec<usize>> {
     const UNSEEN: usize = usize::MAX;
     let n = next.len();

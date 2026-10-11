@@ -22,8 +22,8 @@ fn race() -> int {
   }
   turns
 }
-# `roll` is never read again once the turn is over, so worlds merge on
-# (square, turns): at most 100 of them at a time, however long the game.
+# `turns` only counts, and `roll` is never read again once the turn is over,
+# so the loop is solved as a chain over `square`, which carries the count.
 
 let game = simulate { race() }     # the distribution of turns for one player
 report game as "turns to finish"
