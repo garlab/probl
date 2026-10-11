@@ -8,6 +8,7 @@
 //! cargo run --release -p probl-bench -- --threads=1 # sampling on one thread
 //! cargo run --release -p probl-bench -- --no-conjugate # no exact updates for conjugate priors
 //! cargo run --release -p probl-bench -- --no-solve   # unroll loops that cycle instead of solving them
+//! cargo run --release -p probl-bench -- --symbolic   # decision diagrams for the models they support (experimental)
 //! cargo run --release -p probl-bench -- --json > after.jsonl    # one JSON record per model
 //! cargo run --release -p probl-bench -- compare before.jsonl after.jsonl
 //! ```
@@ -24,7 +25,7 @@
 //! can hold several runs of the suite; each model's fastest time and
 //! smallest heap count.
 
-use probl::__internal::{EngineChecks, engine_checks};
+use probl::__internal::{EngineChecks, Symbolic, diagrams, engine_checks};
 use probl::{Cancel, Data, Date, Limits, LocalFiles, Mode, Options, Outcome, Program};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::BTreeMap;
@@ -111,6 +112,9 @@ struct Settings {
     conjugate: bool,
     /// Solve loops that cycle as Markov chains (the default).
     solve: bool,
+    /// Answer the models decision diagrams support with them (docs/design/
+    /// symbolic-inference.md), and enumerate the others.
+    symbolic: bool,
     /// The model's data, read once before the runs.
     data: Option<Data>,
 }
@@ -135,6 +139,11 @@ fn run_once(program: &Program, settings: &Settings, merge: bool, limit: Duration
     let checks = EngineChecks {
         merge,
         solve: settings.solve,
+        symbolic: if settings.symbolic {
+            Symbolic::Prefer
+        } else {
+            Symbolic::Off
+        },
         ..EngineChecks::default()
     };
     let options = engine_checks(options, checks);
@@ -194,7 +203,9 @@ fn measure(name: &str, program: &Program, settings: &Settings) -> Measured {
     }
     times.sort();
     let time = times[times.len() / 2];
-    let unmerged = (enumerated && first.result.is_ok()).then(|| {
+    // Diagrams don't merge worlds: they have none.
+    let symbolic = first.result.as_ref().is_ok_and(|o| diagrams(o.stats()).is_some());
+    let unmerged = (enumerated && first.result.is_ok() && !symbolic).then(|| {
         let limit = (first.time * 20).clamp(Duration::from_secs(1), Duration::from_secs(30));
         let run = run_once(program, settings, false, limit);
         run.result.map(|o| (run.time, o.stats().world_steps()))
@@ -295,12 +306,22 @@ fn row(m: &Measured) -> String {
             } else {
                 "".into()
             };
+            let note = match diagrams(s) {
+                Some((variables, nodes)) => {
+                    let n = [
+                        note(o),
+                        format!("symbolic: {} variables, {} nodes", count(variables), count(nodes)),
+                    ];
+                    n.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(", ")
+                }
+                None => note(o),
+            };
             (
                 count(s.peak_worlds() as u64),
                 count(s.world_steps()),
                 per_step,
                 calls,
-                note(o),
+                note,
             )
         }
         Err(e) => ("".into(), "".into(), "".into(), "".into(), format!("**{e}**")),
@@ -335,13 +356,14 @@ fn row(m: &Measured) -> String {
 
 /// One model's measurement, as `--json` writes it.
 fn record(m: &Measured) -> String {
-    let (output, world_steps, peak_worlds) = match &m.outcome {
+    let (output, world_steps, peak_worlds, nodes) = match &m.outcome {
         Ok(o) => (
             o.text().to_string(),
             o.stats().world_steps(),
             o.stats().peak_worlds() as u64,
+            diagrams(o.stats()).map_or(0, |(_, nodes)| nodes),
         ),
-        Err(e) => (format!("error: {e}"), 0, 0),
+        Err(e) => (format!("error: {e}"), 0, 0, 0),
     };
     serde_json::json!({
         "name": m.name,
@@ -350,6 +372,7 @@ fn record(m: &Measured) -> String {
         "peak_heap": m.peak_heap,
         "world_steps": world_steps,
         "peak_worlds": peak_worlds,
+        "nodes": nodes,
         "output": output,
     })
     .to_string()
@@ -478,6 +501,7 @@ fn main() -> std::process::ExitCode {
         }),
         conjugate: !args.iter().any(|a| a == "--no-conjugate"),
         solve: !args.iter().any(|a| a == "--no-solve"),
+        symbolic: args.iter().any(|a| a == "--symbolic"),
         data: None,
     };
     let filter: Vec<String> = args.into_iter().filter(|a| !a.starts_with("--")).collect();

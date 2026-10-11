@@ -5,9 +5,13 @@
 //! `PROBL_ORACLE_CASES` sets how many programs to generate (default 400) and
 //! `PROBL_ORACLE_SEED` the first seed (default 1). A failure prints the seed
 //! and the program; `PROBL_ORACLE_SEED=<seed> PROBL_ORACLE_CASES=1` repeats it.
+//!
+//! Boolean programs are also answered with decision diagrams (the
+//! experimental symbolic backend), which must agree with the oracle and
+//! print what enumeration prints.
 
 use probl_engine::value::Value;
-use probl_engine::{ErrorKind, Limits, Options, Outcome, Weight};
+use probl_engine::{ErrorKind, Limits, Options, Outcome, Symbolic, Weight};
 use probl_oracle::{Measure, Stop, generate};
 use probl_sema::ir::Program;
 use probl_syntax::{SourceFile, render_all};
@@ -23,14 +27,22 @@ enum Verdict {
     Skipped,
 }
 
-/// The engine's configurations: default, and with merging or memoization
-/// turned off, which must not change any result.
-const CONFIGS: [(bool, bool); 4] = [(true, true), (false, true), (true, false), (false, false)];
+/// The engine's configurations: default, with merging or memoization turned
+/// off, and with decision diagrams where they're supported, none of which
+/// may change any result.
+const CONFIGS: [(bool, bool, Symbolic); 5] = [
+    (true, true, Symbolic::Off),
+    (false, true, Symbolic::Off),
+    (true, false, Symbolic::Off),
+    (false, false, Symbolic::Off),
+    (true, true, Symbolic::Prefer),
+];
 
-fn options(merge: bool, memoize: bool) -> Options {
+fn options((merge, memoize, symbolic): (bool, bool, Symbolic)) -> Options {
     Options {
         merge,
         memoize,
+        symbolic,
         // No loop is cut short: the oracle is exact, and the programs'
         // loops all end.
         epsilon: Some(0.0),
@@ -51,7 +63,7 @@ fn options(merge: bool, memoize: bool) -> Options {
 
 /// Run `src` through the oracle and the engine; `Err` describes how they
 /// disagree.
-fn check(src: &str, (merge, memoize): (bool, bool)) -> Result<Verdict, String> {
+fn check(src: &str, config: (bool, bool, Symbolic)) -> Result<Verdict, String> {
     let file = SourceFile::new("test.probl", src);
     let (program, diags) = probl_sema::compile(src);
     let Some(program) = program else {
@@ -63,7 +75,7 @@ fn check(src: &str, (merge, memoize): (bool, bool)) -> Result<Verdict, String> {
     };
     let oracle = probl_oracle::run_source(src, &limits);
     let mut print = |_: &str| {};
-    let engine = probl_engine::run(&program, &options(merge, memoize), &mut print);
+    let engine = probl_engine::run(&program, &options(config), &mut print);
     let describe = |e: &probl_engine::RuntimeError| e.to_diagnostic().render(&file, false);
     match (oracle, engine) {
         (Err(Stop::Unsupported(what)), _) => Err(format!("the oracle doesn't support {what}")),
@@ -230,11 +242,11 @@ fn generated_programs_agree() {
     for seed in first..first + cases {
         let src = generate::program(seed);
         // Each program in one configuration; the seeds take turns.
-        let config = CONFIGS[(seed % 4) as usize];
+        let config = CONFIGS[(seed % CONFIGS.len() as u64) as usize];
         match check(&src, config) {
             Ok(v) => *verdicts.entry(v).or_default() += 1,
             Err(why) => failures.push(format!(
-                "seed {seed} (merge, memoize: {config:?}): {why}\n{}",
+                "seed {seed} (merge, memoize, symbolic: {config:?}): {why}\n{}",
                 numbered(&src)
             )),
         }
@@ -622,7 +634,10 @@ fn corpus_agrees() {
         for config in CONFIGS {
             match check(src, config) {
                 Ok(v) => *verdicts.entry(v).or_default() += 1,
-                Err(why) => failures.push(format!("{name} (merge, memoize: {config:?}): {why}\n{}", numbered(src))),
+                Err(why) => failures.push(format!(
+                    "{name} (merge, memoize, symbolic: {config:?}): {why}\n{}",
+                    numbered(src)
+                )),
             }
         }
     }
@@ -633,4 +648,75 @@ fn corpus_agrees() {
         None,
         "no corpus program may be skipped"
     );
+}
+
+/// Boolean programs, answered with decision diagrams only: they must agree
+/// with the oracle, and print what enumeration prints.
+#[test]
+fn symbolic_answers_agree() {
+    let cases = env("PROBL_ORACLE_CASES", 400);
+    let first = env("PROBL_ORACLE_SEED", 1);
+    let symbolic = (true, true, Symbolic::Only);
+    let mut verdicts: BTreeMap<Verdict, u64> = BTreeMap::new();
+    let mut failures = Vec::new();
+    for seed in first..first + cases {
+        let src = generate::boolean(seed);
+        let verdict = check(&src, symbolic).and_then(|v| {
+            let (program, _) = probl_sema::compile(&src);
+            let program = program.expect("checked");
+            let text = |config| match probl_engine::run(&program, &options(config), &mut |_: &str| {}) {
+                Ok(outcome) => outcome.output,
+                Err(e) => format!("{}: {:?}", e.message, e.span),
+            };
+            let (enumerated, answered) = (text(CONFIGS[0]), text(symbolic));
+            if !same_text(&enumerated, &answered) {
+                return Err(format!("enumeration prints\n{enumerated}\nand diagrams\n{answered}"));
+            }
+            Ok(v)
+        });
+        match verdict {
+            Ok(v) => *verdicts.entry(v).or_default() += 1,
+            Err(why) => failures.push(format!("seed {seed}: {why}\n{}", numbered(&src))),
+        }
+        if failures.len() >= 3 {
+            break;
+        }
+    }
+    eprintln!("Boolean programs: {verdicts:#?}");
+    assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
+    let agree = verdicts.get(&Verdict::Agree).copied().unwrap_or(0);
+    assert!(
+        cases < 100 || agree * 10 >= cases * 7,
+        "only {agree} of {cases} programs were compared: {verdicts:#?}"
+    );
+}
+
+/// Whether two outputs say the same, but for rounding: their words are
+/// equal, or numbers within 10⁻⁹ of each other or one unit of their last
+/// digit. A sum of world weights can print as 99.99999999999997% where
+/// diagrams count 100.00%, 73.125% can round either way, and 10⁻⁴ can
+/// print as 0.01% or as 1.00e-4. (The oracle checks the numbers themselves.)
+fn same_text(a: &str, b: &str) -> bool {
+    // A number, as a fraction, and one unit of its last digit.
+    fn number(w: &str) -> Option<(f64, f64)> {
+        let (w, scale) = match w.strip_suffix('%') {
+            Some(w) => (w, 0.01),
+            None => (w, 1.0),
+        };
+        let w = w.replace(',', "");
+        let (mantissa, exponent) = match w.split_once('e') {
+            Some((m, e)) => (m.to_string(), e.parse::<i32>().ok()?),
+            None => (w.clone(), 0),
+        };
+        let decimals = mantissa.split_once('.').map_or(0, |(_, d)| d.len()) as i32;
+        let x = w.parse::<f64>().ok()?;
+        Some((x * scale, 10f64.powi(exponent - decimals) * scale))
+    }
+    let (a, b): (Vec<&str>, Vec<&str>) = (a.split_whitespace().collect(), b.split_whitespace().collect());
+    a.len() == b.len()
+        && a.iter().zip(&b).all(|(x, y)| {
+            x == y
+                || matches!((number(x), number(y)), (Some((u, du)), Some((v, dv)))
+                    if close(u, v) || (u - v).abs() <= du.max(dv) * 1.01)
+        })
 }

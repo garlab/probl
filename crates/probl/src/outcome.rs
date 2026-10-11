@@ -880,6 +880,8 @@ pub struct Stats {
     solved_calls: u64,
     call_rounds: u64,
     exact_updates: Vec<ExactUpdates>,
+    /// For `__internal::diagrams`.
+    pub(crate) diagrams: Option<(u64, u64)>,
 }
 
 impl Stats {
@@ -894,6 +896,7 @@ impl Stats {
             chain_states: s.chain_states,
             solved_calls: s.solved_calls,
             call_rounds: s.call_rounds,
+            diagrams: s.diagrams.map(|d| (d.variables, d.nodes)),
             exact_updates: outcome
                 .updates
                 .iter()

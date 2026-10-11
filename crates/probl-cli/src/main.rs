@@ -1,7 +1,7 @@
 //! The `probl` command-line tool.
 
 use clap::{Parser, Subcommand, ValueEnum};
-use probl::__internal::{EngineChecks, engine_checks};
+use probl::__internal::{EngineChecks, Symbolic, diagrams, engine_checks};
 use probl::{Cancel, Date, ErrorKind, FailureMode, Files, Limits, LocalFiles, Options, Program, Snapshots};
 use probl_cli::parse_size;
 use probl_engine::data::{self, InputLimits};
@@ -27,6 +27,15 @@ struct Cli {
 enum ModeArg {
     Enumerate,
     Sample,
+}
+
+/// When to answer a program with decision diagrams (experimental).
+#[derive(Clone, Copy, PartialEq, ValueEnum)]
+enum SymbolicArg {
+    /// Always, failing on a program they don't support.
+    Only,
+    /// When they support the program, enumerating it otherwise.
+    Prefer,
 }
 
 #[derive(Clone, Copy, PartialEq, ValueEnum)]
@@ -117,6 +126,9 @@ enum Command {
         /// Unroll loops that cycle instead of solving them (for checking the engine).
         #[arg(long, hide = true)]
         no_solve: bool,
+        /// Experimental: answer the program with decision diagrams instead of worlds, `only` (the default) or where they're supported (`prefer`).
+        #[arg(long, hide = true, value_enum, value_name = "WHEN", num_args = 0..=1, require_equals = true, default_missing_value = "only")]
+        symbolic: Option<SymbolicArg>,
     },
     /// Check a program for errors without running it.
     Check {
@@ -170,6 +182,7 @@ fn main() -> ExitCode {
             no_merge,
             no_memo,
             no_solve,
+            symbolic,
         } => {
             let today = match today.map(Ok).unwrap_or_else(execution_date) {
                 Ok(d) => d,
@@ -228,6 +241,11 @@ fn main() -> ExitCode {
                 merge: !no_merge,
                 memoize: !no_memo,
                 solve: !no_solve,
+                symbolic: match symbolic {
+                    Some(SymbolicArg::Only) => Symbolic::Only,
+                    Some(SymbolicArg::Prefer) => Symbolic::Prefer,
+                    None => Symbolic::Off,
+                },
             };
             options = engine_checks(options, checks);
             let cancel = timeout.map(|seconds| {
@@ -355,6 +373,13 @@ fn run_file(path: &Path, options: Options, cancel: Option<&Cancel>, stats: bool)
                         count(s.solved_calls(), "recursive call", "recursive calls"),
                         count(s.call_rounds(), "round", "rounds")
                     ));
+                }
+                if let Some((variables, nodes)) = diagrams(s) {
+                    line = format!(
+                        "stats: symbolic · {} · {}",
+                        count(variables, "variable", "variables"),
+                        count(nodes, "decision node", "decision nodes")
+                    );
                 }
                 eprintln!("{line}");
                 for u in s.exact_updates() {

@@ -230,6 +230,7 @@ impl Options {
             progress: self.progress.clone().map(probl_engine::Progress),
             on_error: self.on_error.map(FailureMode::engine),
             integrate: self.integrate,
+            symbolic: self.checks.symbolic,
         }
     }
 }
@@ -383,6 +384,8 @@ impl Limits {
             stack_size: self.stack_size,
             max_threads: self.max_threads.max(1),
             max_chain_states: self.max_chain_states,
+            // Only the experimental symbolic backend uses it.
+            max_nodes: probl_engine::Limits::default().max_nodes,
         }
     }
 

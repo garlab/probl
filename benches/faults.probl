@@ -1,0 +1,51 @@
+# Fault isolation: eighteen independent components, each failing with
+# probability 1%, and evidence that at least one failed. How likely is
+# each to be the one?
+#
+# Stresses: facts that all stay live through an observation, because each
+# is reported after it: merging can't combine any of the 2¹⁸ assignments,
+# and moving draws can't take them past the evidence. Each answer is
+# 1% / (1 − 99%¹⁸) = 6.04%. From docs/design/symbolic-inference.md.
+
+@mode enumerate
+
+let fault_0 ~ bernoulli(1%)
+let fault_1 ~ bernoulli(1%)
+let fault_2 ~ bernoulli(1%)
+let fault_3 ~ bernoulli(1%)
+let fault_4 ~ bernoulli(1%)
+let fault_5 ~ bernoulli(1%)
+let fault_6 ~ bernoulli(1%)
+let fault_7 ~ bernoulli(1%)
+let fault_8 ~ bernoulli(1%)
+let fault_9 ~ bernoulli(1%)
+let fault_10 ~ bernoulli(1%)
+let fault_11 ~ bernoulli(1%)
+let fault_12 ~ bernoulli(1%)
+let fault_13 ~ bernoulli(1%)
+let fault_14 ~ bernoulli(1%)
+let fault_15 ~ bernoulli(1%)
+let fault_16 ~ bernoulli(1%)
+let fault_17 ~ bernoulli(1%)
+
+observe fault_0 or fault_1 or fault_2 or fault_3 or fault_4 or fault_5 or fault_6 or fault_7 or fault_8 or
+  fault_9 or fault_10 or fault_11 or fault_12 or fault_13 or fault_14 or fault_15 or fault_16 or fault_17
+
+report fault_0
+report fault_1
+report fault_2
+report fault_3
+report fault_4
+report fault_5
+report fault_6
+report fault_7
+report fault_8
+report fault_9
+report fault_10
+report fault_11
+report fault_12
+report fault_13
+report fault_14
+report fault_15
+report fault_16
+report fault_17

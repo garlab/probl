@@ -2,7 +2,9 @@
 //! no compatibility promise between releases. `probl-cli` and `probl-bench`
 //! depend on the matching version of `probl`.
 
-use crate::Options;
+use crate::{Options, Stats};
+
+pub use probl_engine::Symbolic;
 
 /// The engine's switches for checking itself, all on by default. Turning one
 /// off changes how much work a run does, not what it finds.
@@ -16,6 +18,10 @@ pub struct EngineChecks {
     /// Solve loops that cycle as Markov chains, instead of unrolling them
     /// (`--no-solve`).
     pub solve: bool,
+    /// Experimental: answer programs with decision diagrams instead of
+    /// worlds (`--symbolic`, docs/design/symbolic-inference.md). Off by
+    /// default.
+    pub symbolic: Symbolic,
 }
 
 impl Default for EngineChecks {
@@ -24,6 +30,7 @@ impl Default for EngineChecks {
             merge: true,
             memoize: true,
             solve: true,
+            symbolic: Symbolic::Off,
         }
     }
 }
@@ -32,4 +39,10 @@ impl Default for EngineChecks {
 pub fn engine_checks(mut options: Options, checks: EngineChecks) -> Options {
     options.checks = checks;
     options
+}
+
+/// When a run was answered with decision diagrams: their variables and
+/// nodes.
+pub fn diagrams(stats: &Stats) -> Option<(u64, u64)> {
+    stats.diagrams
 }

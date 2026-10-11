@@ -21,6 +21,7 @@ mod ordering;
 pub mod quadrature;
 pub mod report;
 mod stats;
+pub mod symbolic;
 mod text;
 mod type_name;
 pub mod value;
@@ -31,6 +32,7 @@ pub use error::{ErrorKind, Fault, RuntimeError};
 pub use failure::{Failure, Failures};
 pub use interp::{Stats, Updates};
 pub use probl_sema::ir::FailureMode;
+pub use symbolic::{Diagrams, Symbolic};
 pub use weight::Weight;
 
 use continuous::Rng;
@@ -85,6 +87,9 @@ pub struct Limits {
     /// States of a loop solved as a Markov chain; a loop with more is
     /// unrolled instead.
     pub max_chain_states: usize,
+    /// Nodes of the decision diagrams of a program answered symbolically
+    /// (`Options::symbolic`).
+    pub max_nodes: usize,
 }
 
 impl Default for Limits {
@@ -105,6 +110,7 @@ impl Default for Limits {
             stack_size: 64 * 1024 * 1024,
             max_threads: std::thread::available_parallelism().map_or(1, |n| n.get()),
             max_chain_states: 50_000,
+            max_nodes: 10_000_000,
         }
     }
 }
@@ -152,6 +158,9 @@ pub struct Options {
     /// Turns on numerical integration, to this relative tolerance, as the
     /// program's `@integrate` does (docs/semantics.md, section 13).
     pub integrate: Option<f64>,
+    /// Experimental: when enumerating, answer programs with decision
+    /// diagrams instead of worlds (docs/design/symbolic-inference.md).
+    pub symbolic: Symbolic,
 }
 
 /// A function told how many runs are done, and how many there are.
@@ -181,6 +190,7 @@ impl Default for Options {
             progress: None,
             on_error: None,
             integrate: None,
+            symbolic: Symbolic::Off,
         }
     }
 }
@@ -372,9 +382,9 @@ fn run_here(
     };
     let epsilon = config.epsilon;
     let inputs = inputs(program, options)?;
-    let live = probl_sema::analyze(program);
-    let conj = probl_sema::conjugate::analyze(program);
     if let Some((runs, seed)) = sample {
+        let live = probl_sema::analyze(program);
+        let conj = probl_sema::conjugate::analyze(program);
         return sampled(program, &live, &conj, config, options, print, runs, seed, on_error);
     }
     let integrate = config.integrate;
@@ -384,6 +394,38 @@ fn run_here(
             format!("integration needs a relative tolerance above 0 and at most 0.001, not {t}"),
         ));
     }
+    if options.symbolic != Symbolic::Off {
+        let budget = config.budget.clone();
+        match symbolic::run(program, budget, limits.max_nodes, options.cancel.clone()) {
+            Ok(answer) => {
+                let run = Enumerated {
+                    sinks: answer.sinks,
+                    stats: Stats {
+                        diagrams: Some(answer.diagrams),
+                        ..Stats::default()
+                    },
+                    finished: answer.finished,
+                    unresolved: Weight::ZERO,
+                    failures: Failures::default(),
+                    observed: answer.observed,
+                    densities: false,
+                    integrated: None,
+                    last_ruling_out: answer.last_ruling_out,
+                };
+                return enumerated(program, options, run, on_error, epsilon, integrate);
+            }
+            Err(symbolic::Fallback::Stopped(e)) => return Err(e),
+            Err(symbolic::Fallback::Unsupported(e) | symbolic::Fallback::TooLarge(e))
+                if options.symbolic == Symbolic::Only =>
+            {
+                return Err(e);
+            }
+            // Enumerate it instead.
+            Err(_) => {}
+        }
+    }
+    let live = probl_sema::analyze(program);
+    let conj = probl_sema::conjugate::analyze(program);
     let mut engine = interp::Engine::new(program, &live, &conj, config, inputs, print);
     let finished = engine.run_main()?;
     let unresolved = engine.unresolved;
@@ -397,9 +439,61 @@ fn run_here(
         .help("the unresolved worlds could have any density at the value, so nothing would bound the evidence; sample the model with `@mode sample(runs: 10_000)`")
         .at(span));
     }
+    let run = Enumerated {
+        sinks: std::mem::take(&mut engine.sinks),
+        stats: engine.stats.clone(),
+        finished,
+        unresolved,
+        failures,
+        observed: engine.observed,
+        densities: engine.densities,
+        integrated: engine.integrated,
+        last_ruling_out: engine.last_ruling_out,
+    };
+    enumerated(program, options, run, on_error, epsilon, integrate)
+}
 
-    if engine.observed && finished.is_zero() && failures.is_empty() {
-        let span = engine.last_ruling_out.unwrap_or_default();
+/// What enumerating a program found, to make its outcome from.
+struct Enumerated {
+    sinks: Vec<Sink>,
+    stats: Stats,
+    /// The weight of the worlds that finished.
+    finished: Weight,
+    unresolved: Weight,
+    failures: Failures,
+    /// Whether an `observe` was reached.
+    observed: bool,
+    /// Whether an observation used a density.
+    densities: bool,
+    /// If numerical integration computed the worlds' weights: its tolerance.
+    integrated: Option<f64>,
+    /// The last `observe` that ruled out a world.
+    last_ruling_out: Option<Span>,
+}
+
+/// The outcome of an enumerated run: its summary line, its reports' results
+/// and their text.
+fn enumerated(
+    program: &Program,
+    options: &Options,
+    run: Enumerated,
+    on_error: FailureMode,
+    epsilon: f64,
+    integrate: Option<f64>,
+) -> Result<Outcome, RuntimeError> {
+    let Enumerated {
+        sinks,
+        stats,
+        finished,
+        unresolved,
+        failures,
+        observed,
+        densities,
+        integrated,
+        last_ruling_out,
+    } = run;
+    if observed && finished.is_zero() && failures.is_empty() {
+        let span = last_ruling_out.unwrap_or_default();
         return Err(if unresolved.is_zero() {
             RuntimeError::new(
                 span,
@@ -434,10 +528,10 @@ fn run_here(
         fractions: false,
         ..format
     };
-    let results = report::results(&program.reports, &engine.sinks, format, unresolved);
+    let results = report::results(&program.reports, &sinks, format, unresolved);
     // What a numerical integration computed, if anything: the worlds'
     // weights, or a mean or spread without a formula.
-    let integration = engine.integrated.or_else(|| {
+    let integration = integrated.or_else(|| {
         let numeric = |g: &report::GroupResult| g.numeric.as_ref().is_some_and(|n| n.integrated);
         results
             .iter()
@@ -461,11 +555,11 @@ fn run_here(
     }
     // With failures before later evidence, only the finished worlds'
     // contribution to the evidence is known.
-    let evidence = engine.observed.then_some(total);
+    let evidence = observed.then_some(total);
     let of = if comparable { "" } else { " of the finished worlds" };
     if let Some(z) = evidence {
         let (lo, hi) = (total.to_f64(), (total + unresolved).to_f64());
-        if engine.densities {
+        if densities {
             header.push_str(&format!(" · log evidence{of} {:.4}", z.ln()));
         } else if hi - lo >= 0.00005 {
             header.push_str(&format!(
@@ -495,11 +589,11 @@ fn run_here(
     Ok(Outcome {
         today: options.today,
         output,
-        stats: engine.stats.clone(),
+        stats,
         unresolved,
         evidence,
         integration,
-        reports: std::mem::take(&mut engine.sinks),
+        reports: sinks,
         results,
         format,
         sample: None,
@@ -508,7 +602,7 @@ fn run_here(
         on_error,
         failures,
         finished,
-        densities: engine.densities,
+        densities,
     })
 }
 

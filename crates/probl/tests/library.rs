@@ -719,6 +719,7 @@ fn the_engine_checks_change_the_work_not_the_answer() {
         merge: false,
         memoize: false,
         solve: false,
+        ..EngineChecks::default()
     };
     let unmerged = program.run(&engine_checks(Options::new(), checks)).unwrap();
     assert_eq!(merged.text(), unmerged.text());

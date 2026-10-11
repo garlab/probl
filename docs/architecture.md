@@ -53,6 +53,8 @@ Several optimizations preserve this model:
 
 Unbounded processes can finish with unresolved weight. Reports preserve that information and give probability bounds where available; a small unresolved tail does not establish a small error for an unbounded mean. See [termination and approximation](semantics.md#10-termination-and-approximation).
 
+An experimental backend, off by default, answers a small Boolean subset without worlds: draws from Boolean laws, Boolean expressions, `if`, observations and reports become binary decision diagrams, and each report two weighted model counts ([symbolic.rs](../crates/probl-engine/src/symbolic.rs)). It fills the same report sinks as enumeration, so results and their text are shared. It's selected with the hidden `probl run --symbolic` or the library's internal switches; programs outside the subset are enumerated or rejected. The [symbolic inference plan](design/symbolic-inference.md#stage-1-as-built) records what it supports and what it measured.
+
 ## Distributions and continuous outcomes
 
 Finite distributions store typed outcomes, weights and missing mass. Distribution algebra combines independent recipes; reusing a drawn outcome preserves its identity. Draw a joint record once before reading multiple correlated fields.
@@ -92,7 +94,7 @@ Runtime faults, errors that depend on a world's values such as a division by zer
 1. **Maintainability.** The crates are published from version tags. Next: automate the existing WASM/browser tests, measure native coverage, and check the `probl` API against its published version. See [library packaging](library.md#packaging-and-publication) and [testing](testing.md).
 2. **Static checking and explanations.** Catch distribution/value mistakes before execution, make effects visible, and explain lost conjugate updates and state growth. A formatter and standalone language server can build on the existing parser and editor symbols.
 3. **Reusable models and results.** Specify sampleable computations, joint transformations, optional data and modules; extend structured results to browser/JSON consumers. The [imports and tests proposal](design/imports-and-tests.md) defines a direction for reusable declarations and isolated model tests; neither feature is implemented. Keep inference uncertainty explicit. The [use cases](use-cases.md) motivate these gaps.
-4. **Inference guided by models.** Choose a difficult non-conjugate benchmark before specifying MCMC or particles. Evaluate a finite discrete symbolic backend separately, following the [research plan](design/symbolic-inference.md). Neither is implemented.
+4. **Inference guided by models.** Choose a difficult non-conjugate benchmark before specifying MCMC or particles. A finite discrete symbolic backend is prototyped (stage 1 of the [research plan](design/symbolic-inference.md#stage-1-as-built)), experimental and off by default; MCMC and particles aren't implemented.
 
 Bytecode execution, persistent collections, parallel enumeration and quantile sketches should follow measured bottlenecks. The [benchmarks](benchmarks.md) retain dated measurements and the optimizations they motivated. [Example 09](../examples/09_roadmap.probl) is an illustrative forecast of the original project plan, not the current release schedule.
 

@@ -19,6 +19,7 @@ All notable changes to the published crates are recorded here. The format follow
 - A loop that counts its rounds, or adds to a total that nothing else in the loop reads, is solved as a Markov chain over its other variables when enumerating, rather than unrolled world by world: the same results, much faster. Example 05's race runs in a sixth of the time, and a two-player snakes and ladders game 28 times faster. A loop whose worlds can never leave is found, rather than run to a limit.
 - `pmf` and `cdf` of `binomial`, `poisson` and `geometric` are exact, rather than rejected for the tail their listed outcomes leave out: `cdf(poisson(3), 2)` is 42.32%.
 - A count law too broad to list, like `geometric(1e-12)`, can be named and drawn from when sampling, and `mean`, `variance` and `sd` of it are exact (and `pmf`, `cdf`, quantiles and medians, for a geometric). Building one no longer fails on the outcome limit; listing it still does.
+- An experimental symbolic backend, off by default and not part of the supported API: `probl run --symbolic` answers programs made of Boolean draws, Boolean expressions, `if`, `observe`, `score` and reports with binary decision diagrams instead of worlds, with the same results. Eighteen independent faults with evidence that one failed take under a millisecond rather than 0.8 s, and two hundred, which enumeration can't hold, a few milliseconds. `--symbolic=prefer` enumerates the programs it doesn't support ([plan](docs/design/symbolic-inference.md#stage-1-as-built)).
 
 ### Changed
 

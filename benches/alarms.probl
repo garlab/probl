@@ -1,0 +1,106 @@
+# An outage: fifteen possible causes, and ten alarms that several causes
+# can set off, each through a link that works only some of the time, or
+# by themselves now and then (a noisy-or network). Four alarms fired and
+# six stayed quiet. How likely is each cause?
+#
+# Stresses: overlapping evidence about causes that stay live until they're
+# reported, so worlds can't merge: 2¹⁵ assignments of the causes, each
+# through every alarm. Each alarm is observed as soon as it's defined:
+# observed at the end, the alarms would stay live too, 2²⁵ assignments.
+
+@mode enumerate
+
+let power       ~ bernoulli(2%)
+let cooling     ~ bernoulli(3%)
+let disk        ~ bernoulli(4%)
+let memory      ~ bernoulli(2%)
+let network     ~ bernoulli(5%)
+let dns         ~ bernoulli(3%)
+let certificate ~ bernoulli(1%)
+let config      ~ bernoulli(6%)
+let deploy      ~ bernoulli(8%)
+let database    ~ bernoulli(3%)
+let cache       ~ bernoulli(4%)
+let queue       ~ bernoulli(2%)
+let firewall    ~ bernoulli(2%)
+let load        ~ bernoulli(5%)
+let auth        ~ bernoulli(2%)
+
+# An alarm fires when one of its causes gets through, or by itself.
+let latency = (network and ~bernoulli(80%)) or
+  (load and ~bernoulli(70%)) or
+  (database and ~bernoulli(50%)) or
+  (cache and ~bernoulli(40%)) or
+  ~bernoulli(2%)
+observe latency
+
+let errors = (deploy and ~bernoulli(70%)) or
+  (config and ~bernoulli(60%)) or
+  (database and ~bernoulli(50%)) or
+  (auth and ~bernoulli(40%)) or
+  (memory and ~bernoulli(30%)) or
+  ~bernoulli(1%)
+observe errors
+
+let disk_full = (disk and ~bernoulli(90%)) or
+  (deploy and ~bernoulli(10%)) or
+  ~bernoulli(0.5%)
+observe not disk_full
+
+let tls_failures = (certificate and ~bernoulli(95%)) or
+  (network and ~bernoulli(20%)) or
+  ~bernoulli(0.5%)
+observe not tls_failures
+
+let timeouts = (network and ~bernoulli(70%)) or
+  (firewall and ~bernoulli(80%)) or
+  (dns and ~bernoulli(60%)) or
+  (queue and ~bernoulli(30%)) or
+  ~bernoulli(1%)
+observe timeouts
+
+let crash_loop = (memory and ~bernoulli(80%)) or
+  (config and ~bernoulli(50%)) or
+  (deploy and ~bernoulli(40%)) or
+  ~bernoulli(1%)
+observe not crash_loop
+
+let overheating = (cooling and ~bernoulli(95%)) or
+  (power and ~bernoulli(30%)) or
+  (load and ~bernoulli(20%)) or
+  ~bernoulli(0.5%)
+observe not overheating
+
+let login_failures = (auth and ~bernoulli(90%)) or
+  (database and ~bernoulli(40%)) or
+  (cache and ~bernoulli(20%)) or
+  ~bernoulli(1%)
+observe not login_failures
+
+let backlog = (queue and ~bernoulli(90%)) or
+  (database and ~bernoulli(50%)) or
+  (load and ~bernoulli(40%)) or
+  ~bernoulli(2%)
+observe backlog
+
+let host_down = (power and ~bernoulli(95%)) or
+  (network and ~bernoulli(30%)) or
+  (cooling and ~bernoulli(20%)) or
+  ~bernoulli(0.5%)
+observe not host_down
+
+report power
+report cooling
+report disk
+report memory
+report network
+report dns
+report certificate
+report config
+report deploy
+report database
+report cache
+report queue
+report firewall
+report load
+report auth

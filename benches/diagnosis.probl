@@ -1,0 +1,79 @@
+# Diagnosing a pumping station: each part can only work if what it relies
+# on does, and sensors report the parts' states, now and then wrongly. The
+# station delivered too little water, and some sensors disagree. What
+# failed?
+#
+# Stresses: parts that stay live until they're reported, laws that depend
+# on other parts, and evidence that's only there on some paths (a log that
+# can only be read with power): 2¹⁷ assignments of the parts.
+
+@mode enumerate
+
+# Power: the grid, or the generator through the transfer switch.
+let grid      ~ bernoulli(97%)
+let generator ~ bernoulli(90%)
+let switch    ~ bernoulli(98%)
+let power = grid or (generator and switch)
+
+# The controller runs the pumps, when it has power.
+let controller ~ if power { bernoulli(99%) } else { bernoulli(0%) }
+
+# Three pumps; each runs if it has power, works, and the controller (or its
+# manual override) starts it.
+let override ~ bernoulli(20%)
+let pump_a ~ bernoulli(95%)
+let pump_b ~ bernoulli(95%)
+let pump_c ~ bernoulli(90%)
+let started = controller or override
+let running_a = power and started and pump_a
+let running_b = power and started and pump_b
+let running_c = power and pump_c
+
+# Water gets through when a running pump's line is open, and the main
+# pipe and the filter (or its bypass) are clear.
+let valve_a ~ bernoulli(98%)
+let valve_b ~ bernoulli(98%)
+let valve_c ~ bernoulli(97%)
+let main_pipe ~ bernoulli(99.5%)
+let filter    ~ bernoulli(96%)
+let bypass    ~ bernoulli(70%)
+let lines = (running_a and valve_a) or (running_b and valve_b) or (running_c and valve_c)
+let flow = lines and main_pipe and (filter or bypass)
+
+# Too little water came out.
+observe not flow
+
+# Sensors: each reads its part's state, and is wrong 2–5% of the time.
+let pressure_low = if lines { ~bernoulli(3%) } else { ~bernoulli(97%) }
+observe pressure_low
+let filter_alarm = if filter { ~bernoulli(2%) } else { ~bernoulli(95%) }
+observe not filter_alarm
+let current_a = if running_a { ~bernoulli(96%) } else { ~bernoulli(4%) }
+observe current_a
+let current_c = if running_c { ~bernoulli(96%) } else { ~bernoulli(4%) }
+observe not current_c
+
+# The controller's log can only be read when there's power: it shows no
+# start command, which a working controller writes 98% of the time.
+if power {
+  let logged = if controller { ~bernoulli(98%) } else { ~bernoulli(1%) }
+  observe not logged
+}
+
+report grid
+report generator
+report switch
+report controller
+report override
+report pump_a
+report pump_b
+report pump_c
+report valve_a
+report valve_b
+report valve_c
+report main_pipe
+report filter
+report bypass
+report power
+report lines
+report running_a

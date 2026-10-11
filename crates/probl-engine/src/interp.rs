@@ -50,6 +50,9 @@ pub struct Stats {
     /// When sampling: what happened to each variable whose draws may be
     /// delayed (`Conjugacy::variables`).
     pub updates: Vec<Updates>,
+    /// When the program was answered with decision diagrams instead of
+    /// worlds (`Options::symbolic`): their size.
+    pub diagrams: Option<crate::symbolic::Diagrams>,
 }
 
 /// How often a variable's draws were delayed and updated exactly

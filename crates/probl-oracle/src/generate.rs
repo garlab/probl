@@ -1037,3 +1037,178 @@ impl Gen {
         format!("{}({})", f.name, args.join(", "))
     }
 }
+
+// ── Boolean programs ─────────────────────────────────────────────────────
+
+/// A random program made only of what the engine's symbolic backend
+/// supports (docs/design/symbolic-inference.md): draws from constant
+/// Boolean laws, Boolean expressions, assignments, `if` on facts and on
+/// probabilities, observations of facts and reports without `by`. Some
+/// evidence is impossible, and some reports are never reached.
+pub fn boolean(seed: u64) -> String {
+    let mut g = Booleans {
+        rng: Rng::new(seed),
+        names: 0,
+        scopes: vec![Vec::new()],
+        recipes: vec![Vec::new()],
+    };
+    let mut out = String::new();
+    for _ in 0..2 + g.rng.below(4) {
+        out += &g.draw();
+        out.push('\n');
+    }
+    for _ in 0..1 + g.rng.below(6) {
+        out += &g.stmt(0, true);
+        out.push('\n');
+    }
+    // No observation may follow a report.
+    for _ in 0..1 + g.rng.below(4) {
+        out += &g.stmt(0, false);
+        out.push('\n');
+    }
+    out
+}
+
+struct Booleans {
+    rng: Rng,
+    names: usize,
+    /// Variables in scope, innermost scope last: each name, and whether
+    /// it's a `var`.
+    scopes: Vec<Vec<(String, bool)>>,
+    /// Boolean recipes, `let d = bernoulli(30%)`, drawn more than once, by
+    /// scope.
+    recipes: Vec<Vec<String>>,
+}
+
+impl Booleans {
+    fn fresh(&mut self, prefix: &str) -> String {
+        self.names += 1;
+        format!("{prefix}{}", self.names)
+    }
+
+    fn vars(&self, assignable: bool) -> Vec<String> {
+        self.scopes
+            .iter()
+            .flatten()
+            .filter(|(_, a)| *a || !assignable)
+            .map(|(n, _)| n.clone())
+            .collect()
+    }
+
+    fn declare(&mut self, name: &str, assignable: bool) {
+        self.scopes.last_mut().unwrap().push((name.to_string(), assignable));
+    }
+
+    /// A law of booleans.
+    fn law(&mut self) -> String {
+        let recipes: Vec<String> = self.recipes.iter().flatten().cloned().collect();
+        if !recipes.is_empty() && self.rng.chance(30) {
+            return self.rng.pick(&recipes).clone();
+        }
+        format!("bernoulli({})", self.rng.pick(PROBS))
+    }
+
+    /// A new variable drawn from a law, or a new recipe.
+    fn draw(&mut self) -> String {
+        if self.rng.chance(15) {
+            let name = self.fresh("law");
+            let law = format!("bernoulli({})", self.rng.pick(PROBS));
+            self.recipes.last_mut().unwrap().push(name.clone());
+            return format!("let {name} = {law}");
+        }
+        let name = self.fresh("x");
+        let law = self.law();
+        self.declare(&name, false);
+        format!("let {name} ~ {law}")
+    }
+
+    /// A Boolean expression, `d` levels deep at most.
+    fn expr(&mut self, d: u32) -> String {
+        let vars = self.vars(false);
+        if d == 0 || self.rng.chance(30) {
+            return match self.rng.below(10) {
+                0 => self.rng.pick(&["true", "false"]).to_string(),
+                1 => format!("~{}", self.law()),
+                _ if !vars.is_empty() => self.rng.pick(&vars).clone(),
+                _ => format!("~{}", self.law()),
+            };
+        }
+        match self.rng.below(8) {
+            0 => format!("not {}", self.expr(d - 1)),
+            1 | 2 => format!("({} and {})", self.expr(d - 1), self.expr(d - 1)),
+            3 | 4 => format!("({} or {})", self.expr(d - 1), self.expr(d - 1)),
+            5 => format!("({} == {})", self.expr(d - 1), self.expr(d - 1)),
+            6 => format!("({} != {})", self.expr(d - 1), self.expr(d - 1)),
+            _ => {
+                let cond = self.condition(d - 1);
+                format!("(if {cond} {{ {} }} else {{ {} }})", self.expr(d - 1), self.expr(d - 1))
+            }
+        }
+    }
+
+    /// A fact, or a probability for a fresh trial.
+    fn condition(&mut self, d: u32) -> String {
+        if self.rng.chance(20) {
+            self.rng.pick(PROBS).to_string()
+        } else {
+            self.expr(d)
+        }
+    }
+
+    fn block(&mut self, depth: usize, evidence: bool) -> String {
+        self.scopes.push(Vec::new());
+        self.recipes.push(Vec::new());
+        let stmts: Vec<String> = (0..1 + self.rng.below(3))
+            .map(|_| self.stmt(depth + 1, evidence))
+            .collect();
+        self.scopes.pop();
+        self.recipes.pop();
+        format!("{{\n{}\n}}", stmts.join("\n"))
+    }
+
+    /// A statement; observations only with `evidence`, reports only
+    /// without it.
+    fn stmt(&mut self, depth: usize, evidence: bool) -> String {
+        let assignable = self.vars(true);
+        match self.rng.below(10) {
+            0 | 1 if depth < 2 => {
+                let cond = self.condition(2);
+                let then = self.block(depth, evidence);
+                if self.rng.chance(60) {
+                    let otherwise = self.block(depth, evidence);
+                    format!("if {cond} {then} else {otherwise}")
+                } else {
+                    format!("if {cond} {then}")
+                }
+            }
+            2 | 3 if evidence && self.rng.chance(5) => "observe false".to_string(),
+            2 | 3 if evidence => format!("observe {}", self.expr(2)),
+            2 | 3 => self.report(),
+            4 | 5 if !assignable.is_empty() => {
+                let name = self.rng.pick(&assignable).clone();
+                format!("{name} = {}", self.expr(2))
+            }
+            4 | 5 => {
+                let name = self.fresh("v");
+                let value = self.expr(2);
+                self.declare(&name, true);
+                format!("var {name} = {value}")
+            }
+            6 => self.draw(),
+            _ => {
+                let name = self.fresh("b");
+                let value = self.expr(3);
+                self.declare(&name, false);
+                format!("let {name} = {value}")
+            }
+        }
+    }
+
+    fn report(&mut self) -> String {
+        match self.rng.below(12) {
+            0 => format!("report {}", self.rng.pick(PROBS)),
+            1 => format!("report {}", self.law()),
+            _ => format!("report {}", self.expr(2)),
+        }
+    }
+}

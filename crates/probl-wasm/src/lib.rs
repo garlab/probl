@@ -9,6 +9,7 @@
 //! the module's memory. Natively, they're ordinary Rust functions, which
 //! the tests call.
 
+use probl::__internal::{EngineChecks, Symbolic, diagrams, engine_checks};
 use probl::{Date, FailureMode, Limits, MemoryFiles, Options};
 use probl_sema::Builtin;
 use probl_sema::ir::Fault;
@@ -219,6 +220,10 @@ pub fn docs() -> String {
 /// - `"files"`: `{path: text}`, the files `read` may read.
 /// - `"today"`: `"YYYY-MM-DD"`, the date captured by the host for this execution.
 ///   Required when a program uses `today`; the JavaScript wrapper supplies UTC.
+/// - `"symbolic"`: `"only"` or `"prefer"`, to answer the program with
+///   decision diagrams, as `probl run --symbolic` does. Experimental, for
+///   checking the engine: the playground doesn't send it. The stats then
+///   have `"variables"` and `"nodes"`.
 ///
 /// `print` receives what the program prints, as it prints it, and
 /// `progress`, when sampling, how many runs are done after each batch, and
@@ -255,6 +260,18 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
     let mut options = mode(&request, Options::new())
         .limits(Limits::browser())
         .conjugate(request["conjugate"].as_bool().unwrap_or(true));
+    let symbolic = match request["symbolic"].as_str() {
+        Some("only") => Symbolic::Only,
+        Some("prefer") => Symbolic::Prefer,
+        _ => Symbolic::Off,
+    };
+    if symbolic != Symbolic::Off {
+        let checks = EngineChecks {
+            symbolic,
+            ..EngineChecks::default()
+        };
+        options = engine_checks(options, checks);
+    }
     if let Some(progress) = progress {
         options = options.progress(move |done, total| progress(done, total));
     }
@@ -300,6 +317,10 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
         if let Some(sampled) = outcome.sampling() {
             stats["runs"] = json!(sampled.runs());
             stats["effective_runs"] = json!(sampled.effective_runs());
+        }
+        if let Some((variables, nodes)) = diagrams(s) {
+            stats["variables"] = json!(variables);
+            stats["nodes"] = json!(nodes);
         }
         stats
     };
