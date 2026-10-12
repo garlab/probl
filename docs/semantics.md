@@ -287,7 +287,9 @@ Weights are unnormalized: they include every observation so far. Nothing is norm
 
 ## 6. Functions and effects
 
-A function may read any variable in scope; the values are copied in when it's called. It may assign only its own variables. A call runs the function's body as a set of worlds of its own and returns the distribution of results, **unnormalized**: splits and observations inside the function become part of the caller's weights. An ordinary call is not an inference boundary.
+**Declarations and lambdas.** A `fn` declaration is an item at the top level of a file. Its name is in scope in the whole file, above the declaration as well as below it and inside every function's body, so functions can call themselves and each other. Its parameters and result can declare types, which are checked on each call and each result. A lambda is an expression, made when it's evaluated, wherever an expression can be, including inside a function's body. It has no name of its own: a binding names it from the next statement on, never in its own initializer, so a lambda can't call itself. Its parameters take no types. The rest of this section applies to both.
+
+A function may read any variable in scope. Called by name, it gets the values as they are at the call; a function value, whether a lambda or a reference to a named function, has the values from when it was made (section 1). It may assign only its own variables. A call runs the function's body as a set of worlds of its own and returns the distribution of results, **unnormalized**: splits and observations inside the function become part of the caller's weights. An ordinary call is not an inference boundary.
 
 Because a function's result depends only on its arguments and the values it reads, the engine may compute it once and reuse it (memoization) when enumerating. It does so only when the function has no debug output: a function that calls `print`, directly or through other functions, runs every time it's called. When sampling, every call runs (section 14).
 

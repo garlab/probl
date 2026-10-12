@@ -365,6 +365,54 @@ Reduction folds left to right. Without an initial value, empty collections error
 
 Collection selectors retain the first element on ties and never combine recipes implicitly. Optional extrema defaults apply only to empty collections: `xs.maximum(compare, default: value)` also works, as does a third positional default after the comparator. All argument expressions are evaluated eagerly. Distribution bounds require fully resolved support and a finite endpoint; continuous bounds refer to closed support. See [extrema semantics](semantics.md) for the complete contract.
 
+### Named functions and lambdas
+
+`fn` declares a named function. `x -> …` and `(a, b) -> …` make a lambda: a function written where it's needed, whose body is an expression or a block. Use `fn` for anything you would give a name, and a lambda for a short function passed straight to `map`, `filter`, `count`, `reduce` or `sort`:
+
+```probl
+fn damage(roll: int, armor: int): int {    # named: typed, and usable anywhere in the file
+  max(roll - armor, 0)
+}
+
+let rolls = [3, 7, 12]
+report rolls.map(r -> damage(r, 4))        # [0, 3, 8]: a lambda adapts it for map
+report rolls.filter(r -> r > 5)            # [7, 12]
+report rolls.map(r -> { let hit = damage(r, 4); hit * hit })   # [0, 9, 64]
+```
+
+Both are values: they can be stored, passed and returned. Called directly, both can draw, observe and branch, splitting the caller's world, and both are held to the same rules as callbacks. The rest differs:
+
+| | `fn name(…) { … }` | `(a, b) -> …` |
+|---|---|---|
+| Written | At the top level of a file | Anywhere an expression can go, including inside a function |
+| Usable | Anywhere in the file, even above its declaration | After it's made, like any other value |
+| Calls itself | Yes, directly or through other functions | No |
+| Types | On its parameters and its result, all checked | None |
+| Variables it reads | Their values when it's called by name | Their values when it was made |
+| In the playground | Its parameters show as you type a call | Nothing shows |
+
+Recursion needs `fn`. In `let f = n -> f(n - 1)`, `f` doesn't exist yet when the lambda is made, so it's an error. Declared functions can call themselves and each other, in any order:
+
+```probl
+report is_even(10)                         # 100.00%, though is_even is declared below
+
+fn is_even(n: int): bool { if n == 0 { true } else { is_odd(n - 1) } }
+fn is_odd(n: int): bool { if n == 0 { false } else { is_even(n - 1) } }
+```
+
+A lambda keeps the values it reads from when it was made. Calling a named function by name reads them afresh, but referring to it as a value, as in `let f = fee`, keeps them as a lambda does:
+
+```probl
+var rate = 10%
+fn fee(amount: float): float { amount * rate }
+let charge = amount -> amount * rate       # keeps rate = 10%
+let fee_then = fee                         # so does a reference to fee
+rate = 20%
+report fee(100)                            # 20.0
+report charge(100)                         # 10.0
+report fee_then(100)                       # 10.0
+```
+
 ### Types
 
 ```probl

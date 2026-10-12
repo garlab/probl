@@ -74,6 +74,36 @@ fn builtin_values_support_optional_and_variadic_arities_and_higher_order_calls()
     }
 }
 
+/// docs/semantics.md, section 6: a declaration's name is in scope in the
+/// whole file; a lambda's binding only from the next statement on.
+#[test]
+fn declarations_are_in_scope_everywhere_and_lambdas_after_their_binding() {
+    for mode in MODES {
+        facts(
+            mode,
+            r#"
+            report is_even(10) and not is_even(7)
+            fn is_even(n: int): bool { if n == 0 { true } else { is_odd(n - 1) } }
+            fn is_odd(n: int): bool { if n == 0 { false } else { is_even(n - 1) } }
+            var rate = 1
+            fn fee(x) { x * rate }
+            let charge = x -> x * rate
+            rate = 2
+            report fee(10) == 20 and charge(10) == 10
+            fn scale(xs, k) { xs.map(x -> x * k) }
+            report scale([1, 2], 3) == [3, 6]
+        "#,
+        );
+    }
+    for src in [
+        "let f = n -> if n == 0 { 0 } else { f(n - 1) }",
+        "report f(1)\nlet f = x -> x",
+    ] {
+        assert!(compile_error(src).contains("unknown function `f`"), "{src}");
+    }
+    assert!(compile_error("fn outer() {\n  fn inner() { 1 }\n  inner()\n}").contains("only allowed at the top level"));
+}
+
 #[test]
 fn function_values_validate_runtime_arity_and_types() {
     for mode in MODES {

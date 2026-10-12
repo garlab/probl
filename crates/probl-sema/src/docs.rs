@@ -790,7 +790,7 @@ pub fn keyword(word: &str) -> Option<Doc> {
         ),
         "fn" => doc(
             "fn name(a, b: int): int { … }",
-            "Defines a function. Its result is its last expression, or what `return` gives. Calling it can split the caller's world. When enumerating, a result is reused for inputs it has already seen.",
+            "Defines a function, usable anywhere in the file. Its types are optional. Its result is its last expression, or what `return` gives. Calling it can split the caller's world. When enumerating, a result is reused for inputs it has already seen. For a short function passed to `map` or `sort`, a lambda is lighter: `x -> x * 2`.",
         ),
         "return" => doc("return e", "Leaves the function with this result."),
         "if" | "else" => doc(
