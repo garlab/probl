@@ -290,7 +290,7 @@ In WebAssembly, run by Bun with the playground's limits, the four benchmark mode
 - The order of the evidence stops mattering: a network enumeration can't finish when its observations come last takes diagrams 15 ms.
 - The order of the variables matters, as the paper says: 20 pairs take 440 nodes side by side and 3.1 million `x`s first, and 24 pairs `x`s first exceed the node limit, where with `prefer` the program is enumerated, and exceeds the world limit too. The order is the order of first use, which declarations and the expressions that first read the draws decide.
 - Where enumeration already does well, like `reliability` after moving draws, there's little to gain or lose.
-- The prototype adds nothing to a run that doesn't select it: the benchmark's 31 other models print the same and take the same time (66.82 s and 66.81 s in all; [enumeration support](enumeration-support.md#measurements-of-each-phase) has the comparison).
+- The prototype adds nothing to a run that doesn't select it: the benchmark's 31 other models print the same and take the same time (66.82 s and 66.81 s in all; [enumeration support](enumeration-support.md#how-its-checked) has the comparison).
 
 **Not done.**
 
