@@ -141,7 +141,7 @@ try {
 
   // Calls nested as deep as the playground allows, and deeper.
   const deep = (n) =>
-    `fn f(n: int) int {\n  if n == 0 { return 0 }\n  let rest = f(n - 1)\n  return rest + 1\n}\nreport f(${n})`;
+    `fn f(n: int): int {\n  if n == 0 { return 0 }\n  let rest = f(n - 1)\n  return rest + 1\n}\nreport f(${n})`;
   await page.evaluate((src) => window.playground.setSource(src), deep(149));
   answer = await run(page);
   expect(answer.result.includes('f(149)    149'), 'calls nest 149 deep', answer.result);
@@ -264,7 +264,7 @@ try {
     'let visitors = 250',
     '',
     '# Sign-ups over some days: a binomial count.',
-    'fn signups(days: int) int {',
+    'fn signups(days: int): int {',
     '  let n ~ binomial(days * visitors, rate)',
     '  return n',
     '}',
@@ -345,7 +345,7 @@ try {
   );
   card = await hover(offset('signups(14)', 0, 2));
   expect(
-    card.code === 'fn signups(days: int) int' && card.what === 'function, line 9' && card.doc === 'Sign-ups over some days: a binomial count.',
+    card.code === 'fn signups(days: int): int' && card.what === 'function, line 9' && card.doc === 'Sign-ups over some days: a binomial count.',
     'hovering a function shows its signature',
     JSON.stringify(card),
   );
@@ -538,10 +538,10 @@ try {
   // Blocks indent, and their closing braces line up.
   await editor.evaluate(() => window.playground.setSource(''));
   await cursor(0);
-  await editor.keyboard.type('fn f(x: int) int {\nif x > 1 {\nreturn x');
+  await editor.keyboard.type('fn f(x: int): int {\nif x > 1 {\nreturn x');
   text = await typed();
   expect(
-    text === 'fn f(x: int) int {\n  if x > 1 {\n    return x\n  }\n}',
+    text === 'fn f(x: int): int {\n  if x > 1 {\n    return x\n  }\n}',
     'blocks indent as you type',
     JSON.stringify(text),
   );
@@ -573,7 +573,7 @@ try {
 
   // While a call's arguments are typed, its signature shows, with the
   // parameter being typed in bold.
-  const own = 'fn total(days: int, rate: float) float {\n  return days * rate\n}\n';
+  const own = 'fn total(days: int, rate: float): float {\n  return days * rate\n}\n';
   await editor.evaluate((src) => window.playground.setSource(src), own);
   await cursor(own.length);
   const signatureHelp = async (expected) => {
@@ -600,7 +600,7 @@ try {
   await editor.keyboard.type('\nreport total(1, ');
   help = await signatureHelp(true);
   expect(
-    help?.signature === 'total(days: int, rate: float) float' && help.current === 'rate: float',
+    help?.signature === 'total(days: int, rate: float): float' && help.current === 'rate: float',
     'the program’s own functions show theirs',
     JSON.stringify(help),
   );

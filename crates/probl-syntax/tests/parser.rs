@@ -151,9 +151,9 @@ fn syntax_errors() {
 fn function_headers() {
     insta::assert_snapshot!(parse_ok(
         "fn a() { 1 }\n\
-         fn b(x: int, y) int { x }\n\
-         fn c() list[dist[int]] { [] }\n\
-         fn d() {\n  x: int\n} { { x: 1 } }\n\
+         fn b(x: int, y): int { x }\n\
+         fn c(): list[dist[int]] { [] }\n\
+         fn d(): {\n  x: int\n} { { x: 1 } }\n\
          fn e() { x }\n\
          fn f() {}"
     ), @"
@@ -167,17 +167,17 @@ fn function_headers() {
 }
 
 #[test]
-fn a_return_type_has_no_arrow() {
-    // Only the arrow is wrong: the rest still parses, and its errors show.
+fn a_return_type_follows_a_colon() {
+    // Only the `:` is missing: the rest still parses, and its errors show.
     insta::assert_snapshot!(parse_errors("fn f() -> int { 1 +* 2 }"), @"
-    Error: a return type comes straight after the parameters, without `->`
+    Error: expected `:` before the return type, found `->`
        ╭─[ test.probl:1:8 ]
        │
      1 │ fn f() -> int { 1 +* 2 }
        │        ─┬  
        │         ╰── here
        │ 
-       │ Help: remove the `->`
+       │ Help: a function's return type follows a `:`, like a variable's: `fn name(…): int { … }`
     ───╯
     Error: expected an expression, found `*`
        ╭─[ test.probl:1:20 ]
@@ -185,6 +185,17 @@ fn a_return_type_has_no_arrow() {
      1 │ fn f() -> int { 1 +* 2 }
        │                    ┬  
        │                    ╰── here
+    ───╯
+    ");
+    insta::assert_snapshot!(parse_errors("fn f() int { 1 }"), @"
+    Error: expected `:` before the return type, found `int`
+       ╭─[ test.probl:1:8 ]
+       │
+     1 │ fn f() int { 1 }
+       │        ─┬─  
+       │         ╰─── here
+       │ 
+       │ Help: a function's return type follows a `:`, like a variable's: `fn name(…): int { … }`
     ───╯
     ");
 }

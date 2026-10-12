@@ -221,11 +221,12 @@ fn check_gives_the_names_with_their_comments() {
 
 #[test]
 fn functions_fields_and_variants_describe_themselves() {
-    let src = "enum Market { Boom, Slump }\ntype Day = { visitors: int }\nfn f(d: Day) int {\n  return d.visitors\n}\n";
+    let src =
+        "enum Market { Boom, Slump }\ntype Day = { visitors: int }\nfn f(d: Day): int {\n  return d.visitors\n}\n";
     let answer: Value = serde_json::from_str(&probl_wasm::check(src)).unwrap();
     let definitions = answer["symbols"]["definitions"].as_array().unwrap().clone();
     let find = |name: &str| definitions.iter().find(|d| d["name"] == name).unwrap().clone();
-    assert_eq!(find("f")["detail"], "fn f(d: Day) int");
+    assert_eq!(find("f")["detail"], "fn f(d: Day): int");
     assert_eq!(find("d")["kind"], "parameter");
     assert_eq!(find("visitors")["detail"], "Day.visitors: int");
     assert_eq!(find("Slump")["owner"], "Market");

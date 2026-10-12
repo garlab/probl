@@ -21,7 +21,7 @@ let bases = [Rectilinear, Diagonal]
 
 # What measuring a photon shows: its bit, in the basis it was written in, or
 # a coin toss in the other one. Either way, that's what the photon holds now.
-fn measure(bit: int, written: Basis, measured: Basis) int {
+fn measure(bit: int, written: Basis, measured: Basis): int {
   if measured == written { return bit }
   return chance { 50% => 0, else => 1 }
 }
@@ -29,7 +29,7 @@ fn measure(bit: int, written: Basis, measured: Basis) int {
 # One photon from Alice to Bob, which Eve measures with probability `listening`.
 type Photon = { kept: bool, bob_wrong: bool, eve_right: bool }
 
-fn photon(listening: prob) Photon {
+fn photon(listening: prob): Photon {
   let bit ~ one_of([0, 1])
   let alice ~ one_of(bases)
   let bob ~ one_of(bases)
@@ -48,7 +48,7 @@ fn photon(listening: prob) Photon {
 }
 
 # The photons whose bits make the key: those Bob measured in Alice's basis.
-fn kept(listening: prob) Photon {
+fn kept(listening: prob): Photon {
   let p = photon(listening)
   observe p.kept
   return p

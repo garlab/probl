@@ -69,8 +69,8 @@ both_modes! {
             MODE,
             r#"
             fn argument(n: int) { typeof n == "int" and n == 2 }
-            fn result(n) int { n }
-            fn explicit(n) int { return n }
+            fn result(n): int { n }
+            fn explicit(n): int { return n }
             type Box = { n: int }
             let x = 2.0
             var b = Box { n: x }
@@ -256,7 +256,7 @@ both_modes! {
             "let n:int=-1.4",
             "let n:list[int]=[1.4]",
             "fn f(n:int) { n }; report f(1.4)",
-            "fn f() int { 1.4 }; report f()",
+            "fn f(): int { 1.4 }; report f()",
             "let n:int=if true {1.0} else {1.4}",
         ] {
             assert!(compile_error(source).contains("int"), "{source}");
@@ -274,7 +274,7 @@ both_modes! {
                 "let n:int=x",
                 "var n:int=0; n=x",
                 "fn f(n:int) { n }; let n=f(x)",
-                "fn f(x) int { x }; let n=f(x)",
+                "fn f(x): int { x }; let n=f(x)",
                 "type Box={n:int}; let b=Box {n:x}",
                 "let ns:list[int]=[x]",
                 "let ns:dist[int]=one_of([x])",

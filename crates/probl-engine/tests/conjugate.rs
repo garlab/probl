@@ -99,7 +99,7 @@ fn every_other_use_draws_the_variable_first() {
         "let e = \"{p}\"",
         "let xs = [p, 0.5]",
         "let f = x -> x * p",
-        "fn g() float { return p }\nlet y = g()",
+        "fn g(): float { return p }\nlet y = g()",
         "let d = simulate { p * 2 }",
         "observe 2 from binomial(10, prob(p * 1))",
         "observe p > 0.2",

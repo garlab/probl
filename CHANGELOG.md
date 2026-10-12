@@ -6,7 +6,7 @@ All notable changes to the published crates are recorded here. The format follow
 
 ### Changed
 
-- A function's return type comes straight after its parameters, without `->`: `fn explode() int { … }` rather than `fn explode() -> int { … }`. It's still optional. A program written the old way no longer compiles, and the error says how to write it.
+- A function's return type follows a `:`, like a variable's: `fn explode(): int { … }` rather than `fn explode() -> int { … }`. It's still optional. A program written the old way no longer compiles, and the error says how to write it.
 
 ## [0.2.2] - 2026-10-12
 

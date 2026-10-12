@@ -304,7 +304,7 @@ A loop with an uncertain condition runs until every world has left it. Some loop
 Recursion works the same way. A function can call itself, even with the same arguments, as in "roll again on a 6":
 
 ```probl
-fn explode() int {
+fn explode(): int {
   let r ~ d6
   if r == 6 { return 6 + explode() }
   return r
@@ -325,7 +325,7 @@ report rolls           # mean 6.00 · sd 5.48 · 5% 1 · median 4 · 95% 17
 ### Functions
 
 ```probl
-fn attack(a: Fighter, target: Fighter) int {
+fn attack(a: Fighter, target: Fighter): int {
   let roll ~ d20
   if roll > 1 and roll + a.to_hit >= target.ac {
     let dmg ~ a.dice + a.bonus
@@ -341,7 +341,7 @@ let largest = [-8, -3, -12].reduce(max) # starts with the first element
 let total = [].reduce((a,b)->a+b, 0)    # optional initial value handles empty lists
 ```
 
-A function's return type comes straight after its parameters, as in `fn attack(…) int`. Like the parameters' types, it is optional; when it's there, every `return` is checked against it.
+Parameter and return types are optional. A return type follows a `:`, as a variable's does, and every result is checked against it: `fn half(x: float): int { x / 2 }` fails for `half(3)`.
 
 Collection callbacks (`map`, `filter`, `count`, `reduce`, and ordering comparators) cannot execute draws, observations, scores or probabilistic branches in the caller's worlds. This restriction is the same in enumeration and sampling, including helper calls. Use a loop for random traversal. A callback can compute a local distribution with `simulate`, or transform an existing distribution without drawing it.
 
@@ -766,7 +766,7 @@ program      = { pragma } { item } ;
 pragma       = "@" IDENT [ expr ] NEWLINE ;      (* @mode enumerate · @mode sample(runs: 1000) · @epsilon 1e-9 · @on_error partial · @integrate 1e-9 *)
 item         = fn_decl | type_decl | enum_decl | import | stmt ;
 
-fn_decl      = "fn" IDENT "(" [ param { "," param } ] ")" [ "->" type ] block ;
+fn_decl      = "fn" IDENT "(" [ param { "," param } ] ")" [ ":" type ] block ;
 param        = IDENT [ ":" type ] ;
 type_decl    = "type" IDENT "=" type ;
 enum_decl    = "enum" IDENT "{" IDENT { "," IDENT } [ "," ] "}" ;

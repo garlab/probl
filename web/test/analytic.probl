@@ -1,5 +1,5 @@
 # Native/WASM parity for analytic reports, calls, conditioning and mixtures.
-fn shifted(x: float) float { x + 1 }
+fn shifted(x: float): float { x + 1 }
 let x ~ uniform(0, 4)
 let event = x < 1 or x > 3
 let y = shifted(x)

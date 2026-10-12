@@ -82,19 +82,19 @@ fn logical_intervals_and_negative_affine_quantiles() {
 #[test]
 fn calls_propagate_restrictions_even_when_they_return_plain_values() {
     let o = outcome(
-        "fn test(x: float) bool {if x>1 {true} else {false}}\nlet x ~ uniform(0,2)\nlet yes=test(x)\nobserve yes\nreport x",
+        "fn test(x: float): bool {if x>1 {true} else {false}}\nlet x ~ uniform(0,2)\nlet yes=test(x)\nobserve yes\nreport x",
     );
     stats(&o, 0, 1.5, 1.0 / 12.0, 1.0, 2.0);
     close(o.evidence.unwrap().to_f64(), 0.5);
     let o =
-        outcome("fn keep(x: float) float {observe x>1\nx+1}\nlet x ~ uniform(0,2)\nlet y=keep(x)\nreport x\nreport y");
+        outcome("fn keep(x: float): float {observe x>1\nx+1}\nlet x ~ uniform(0,2)\nlet y=keep(x)\nreport x\nreport y");
     stats(&o, 0, 1.5, 1.0 / 12.0, 1.0, 2.0);
     stats(&o, 1, 2.5, 1.0 / 12.0, 2.0, 3.0);
 }
 
 #[test]
 fn independent_calls_never_share_fresh_latent_ids() {
-    let src = "fn draw() float {let x ~ uniform(0,2)\nx}\nlet x=draw()\nlet y=draw()\nobserve x>1\nreport x\nreport y";
+    let src = "fn draw(): float {let x ~ uniform(0,2)\nx}\nlet x=draw()\nlet y=draw()\nobserve x>1\nreport x\nreport y";
     for memoizing in [true, false] {
         let o = exec(
             src,

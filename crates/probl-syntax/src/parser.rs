@@ -357,15 +357,16 @@ impl Parser {
             }
         }
         self.expect(&Tok::RParen, "after the parameters")?;
-        if self.at(&Tok::Arrow) {
-            // The old syntax: say so, then read on as if it weren't there.
-            let span = self.bump().span;
-            self.error(span, "a return type comes straight after the parameters, without `->`")
-                .help("remove the `->`");
-        }
-        // A `{` starts the body unless it starts a record type: a block
-        // can't begin with `name:`.
-        let ret = if matches!(self.peek(), Tok::Ident(_)) || (self.at(&Tok::LBrace) && self.record_ahead(0, false)) {
+        let ret = if self.eat(&Tok::Colon) {
+            Some(self.type_expr()?)
+        } else if matches!(self.peek(), Tok::Arrow | Tok::Ident(_)) {
+            // `-> int`, the old syntax, or `int`: say so, then read on as if
+            // the `:` were there.
+            let found = self.peek().describe();
+            let span = self.span();
+            self.error(span, format!("expected `:` before the return type, found {found}"))
+                .help("a function's return type follows a `:`, like a variable's: `fn name(…): int { … }`");
+            self.eat(&Tok::Arrow);
             Some(self.type_expr()?)
         } else {
             None

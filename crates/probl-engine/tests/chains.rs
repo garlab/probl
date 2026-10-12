@@ -161,7 +161,7 @@ fn a_loop_that_rules_out_all_its_worlds_is_impossible_evidence() {
 fn returns_breaks_and_continues_leave_or_go_round() {
     // A 6 first returns 1, a 1 first returns 2: 6/11 against 5/11.
     let out = outcome(
-        "fn race() int {
+        "fn race(): int {
   while true {
     if ({ let rolled ~ d6; rolled == 6 }) { return 1 }
     if ({ let rolled ~ d6; rolled == 1 }) { return 2 }

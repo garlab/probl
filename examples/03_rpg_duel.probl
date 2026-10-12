@@ -17,7 +17,7 @@ let monster = Fighter { hp: 7,  ac: 15, to_hit: 4, dice: 1d6, bonus: 2 }
 
 # Damage from one attack. A natural 20 always hits and rolls the damage dice
 # twice; a natural 1 always misses.
-fn attack(a: Fighter, target: Fighter) int {
+fn attack(a: Fighter, target: Fighter): int {
   let roll ~ d20
   if roll == 20 {
     let dmg ~ a.dice + a.dice + a.bonus    # each use of a.dice is its own roll
