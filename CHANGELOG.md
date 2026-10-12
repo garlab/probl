@@ -4,6 +4,8 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-12
+
 ### Added
 
 - More continuous calculations work when enumerating ([semantics](docs/semantics.md#analytic-outcomes-in-enumeration)). `abs`, `min`, `max`, `clamp`, and `minimum` and `maximum` of a list, are exact on a draw, including the probability at a bound: `max(x, 0) == 0` is the probability that `x` is negative. `sum` and `mean` of a list of outcomes of one draw, and the built-ins that move values without looking at them, such as `get`, `slice`, `reverse` and `pop`, keep the draw. `report x by x > 1` has a group for each side.
@@ -20,6 +22,7 @@ All notable changes to the published crates are recorded here. The format follow
 - `pmf` and `cdf` of `binomial`, `poisson` and `geometric` are exact, rather than rejected for the tail their listed outcomes leave out: `cdf(poisson(3), 2)` is 42.32%.
 - A count law too broad to list, like `geometric(1e-12)`, can be named and drawn from when sampling, and `mean`, `variance` and `sd` of it are exact (and `pmf`, `cdf`, quantiles and medians, for a geometric). Building one no longer fails on the outcome limit; listing it still does.
 - An experimental symbolic backend, off by default and not part of the supported API: `probl run --symbolic` answers programs made of Boolean draws, Boolean expressions, `if`, `observe`, `score` and reports with binary decision diagrams instead of worlds, with the same results. Eighteen independent faults with evidence that one failed take under a millisecond rather than 0.8 s, and two hundred, which enumeration can't hold, a few milliseconds. `--symbolic=prefer` enumerates the programs it doesn't support ([plan](docs/design/symbolic-inference.md#stage-1-as-built)).
+- Each GitHub release has a source archive, with the workspace's `Cargo.lock`, a manifest and checksums, all with build-provenance attestations, and the Homebrew tap updates its formula from it ([releases](docs/releases.md)).
 
 ### Changed
 
@@ -62,7 +65,8 @@ The first release.
 
 The [language overview](docs/language-overview.md) and the [reference semantics](docs/semantics.md) describe the language, and [status and limits](README.md#status-and-limits) lists what isn't implemented yet.
 
-[Unreleased]: https://github.com/garlab/probl/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/garlab/probl/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/garlab/probl/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/garlab/probl/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/garlab/probl/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/garlab/probl/tree/v0.1.0
