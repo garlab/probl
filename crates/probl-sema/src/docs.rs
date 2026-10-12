@@ -789,7 +789,7 @@ pub fn keyword(word: &str) -> Option<Doc> {
             "Declares a variable that can change, with `=`, `+=` or `~`. A function can only change its own variables.",
         ),
         "fn" => doc(
-            "fn name(a, b: int) -> int { … }",
+            "fn name(a, b: int) int { … }",
             "Defines a function. Its result is its last expression, or what `return` gives. Calling it can split the caller's world. When enumerating, a result is reused for inputs it has already seen.",
         ),
         "return" => doc("return e", "Leaves the function with this result."),

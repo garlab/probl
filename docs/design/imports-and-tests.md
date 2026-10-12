@@ -23,7 +23,7 @@ Suggested first syntax:
 let unit = 1
 export let step = one_of([-unit, unit])
 
-export fn walk(turns: int) -> int {
+export fn walk(turns: int) int {
   var position = 0
   repeat turns {
     position += ~step

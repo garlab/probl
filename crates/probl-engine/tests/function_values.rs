@@ -25,7 +25,7 @@ fn named_functions_capture_values_and_preserve_declared_boundaries() {
             mode,
             r#"
             var factor=2
-            fn scale(x:int)->int {x*factor}
+            fn scale(x:int) int {x*factor}
             let f=scale
             factor=3
             report f(4.0)==8 and scale(4)==12
@@ -33,7 +33,7 @@ fn named_functions_capture_values_and_preserve_declared_boundaries() {
             fn compare(a,b) {a-b}
             report [3,1,2].sort(compare)==[1,2,3]
             report [3,1,2].maximum(compare)==3
-            fn identity(x:prob)->prob {x}
+            fn identity(x:prob) prob {x}
             let g=identity
             report typeof g=="fn" and typeof g(50%)=="prob"
             fn outer(x) { x + factor }

@@ -6,7 +6,7 @@
 enum Market { Boom, Steady, Slump }
 
 # How the market moves from one month to the next.
-fn next_month(m: Market) -> Market {
+fn next_month(m: Market) Market {
   match m {
     Boom   => chance { 70% => Boom, 25% => Steady, else => Slump }
     Steady => chance { 10% => Boom, 80% => Steady, else => Slump }

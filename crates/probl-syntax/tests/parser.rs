@@ -148,6 +148,48 @@ fn syntax_errors() {
 }
 
 #[test]
+fn function_headers() {
+    insta::assert_snapshot!(parse_ok(
+        "fn a() { 1 }\n\
+         fn b(x: int, y) int { x }\n\
+         fn c() list[dist[int]] { [] }\n\
+         fn d() {\n  x: int\n} { { x: 1 } }\n\
+         fn e() { x }\n\
+         fn f() {}"
+    ), @"
+    (fn a () (block 1))
+    (fn b (x: int, y) -> int (block x))
+    (fn c () -> list[dist[int]] (block []))
+    (fn d () -> {x: int} (block (record (x 1))))
+    (fn e () (block x))
+    (fn f () (block))
+    ");
+}
+
+#[test]
+fn a_return_type_has_no_arrow() {
+    // Only the arrow is wrong: the rest still parses, and its errors show.
+    insta::assert_snapshot!(parse_errors("fn f() -> int { 1 +* 2 }"), @"
+    Error: a return type comes straight after the parameters, without `->`
+       ╭─[ test.probl:1:8 ]
+       │
+     1 │ fn f() -> int { 1 +* 2 }
+       │        ─┬  
+       │         ╰── here
+       │ 
+       │ Help: remove the `->`
+    ───╯
+    Error: expected an expression, found `*`
+       ╭─[ test.probl:1:20 ]
+       │
+     1 │ fn f() -> int { 1 +* 2 }
+       │                    ┬  
+       │                    ╰── here
+    ───╯
+    ");
+}
+
+#[test]
 fn a_failed_arm_is_skipped_whole() {
     let (program, diags) = parse_program("match x {\n  [1, 2 3, 4, 5] => 1\n  [a, b] => a + b\n}");
     assert_eq!(diags.len(), 1, "{diags:?}");

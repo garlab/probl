@@ -47,9 +47,9 @@ fn numbers_convert_at_typed_boundaries() {
         "let p: prob = 33%\nreport typeof p",
         "var p: prob = 0\np = 0.33\nreport typeof p",
         "fn f(p: prob) { typeof p }\nreport f(33%)",
-        "fn f() -> prob { 33% }\nreport typeof f()",
-        "fn f() -> prob { return 33% }\nreport typeof f()",
-        "fn f() -> prob { if true { 33% } else { 50% } }\nreport typeof f()",
+        "fn f() prob { 33% }\nreport typeof f()",
+        "fn f() prob { return 33% }\nreport typeof f()",
+        "fn f() prob { if true { 33% } else { 50% } }\nreport typeof f()",
         "fn f(p: prob) { typeof p }\nreport f(if 30% { 33% } else { 50% })",
         "let p: prob = { let x = true; if x { 33% } else { 50% } }\nreport typeof p",
         "let p: prob = chance { 30% => 33%, else => 50% }\nreport typeof p",
@@ -62,8 +62,8 @@ fn numbers_convert_at_typed_boundaries() {
         "let x = 0.33\nlet p: prob = x\nreport typeof p",
         "let p: prob = 0.3 + 0.03\nreport typeof p",
         "fn f(p: prob) { typeof p }\nlet x = 0.33\nreport f(x)",
-        "fn f() -> prob { let x = 0.33; x }\nreport typeof f()",
-        "fn f() -> prob { let x = 0.33; return x }\nreport typeof f()",
+        "fn f() prob { let x = 0.33; x }\nreport typeof f()",
+        "fn f() prob { let x = 0.33; return x }\nreport typeof f()",
         "let xs = [0.33]\nlet ps: list[prob] = xs\nreport typeof ps[0]",
         "let p: prob = euler_gamma\nreport typeof p",
         "type R = { p: prob }\nlet r = R { p: 33% }\nreport typeof (r with { p: euler_gamma }).p",
@@ -84,11 +84,11 @@ fn numbers_convert_at_typed_boundaries() {
 fn literal_context_survives_later_argument_effects() {
     for source in [
         "fn g() { 1 }\nfn f(xs: list[prob], n: int) { typeof xs[0] }\nreport f([33%], g())",
-        "fn g() -> prob { 50% }\nlet xs: list[list[prob]] = [[33%], [g()]]\nreport typeof xs[0][0]",
-        "fn g() -> prob { 50% }\nfn f() -> list[list[prob]] { [[33%], [g()]] }\nreport typeof f()[0][0]",
+        "fn g() prob { 50% }\nlet xs: list[list[prob]] = [[33%], [g()]]\nreport typeof xs[0][0]",
+        "fn g() prob { 50% }\nfn f() list[list[prob]] { [[33%], [g()]] }\nreport typeof f()[0][0]",
         "fn g() { 1 }\ntype R = { ps: list[prob], n: int }\nlet r = R { ps: [33%], n: g() }\nreport typeof r.ps[0]",
-        "fn g() -> prob { 50% }\nvar xs: list[list[prob]] = []\nxs.push([33%, g()])\nreport typeof xs[0][0]",
-        "fn g() -> prob { 50% }\nfn f(xs: list[list[prob]]) { typeof xs[0][0] }\nreport [[33%], [g()]].f()",
+        "fn g() prob { 50% }\nvar xs: list[list[prob]] = []\nxs.push([33%, g()])\nreport typeof xs[0][0]",
+        "fn g() prob { 50% }\nfn f(xs: list[list[prob]]) { typeof xs[0][0] }\nreport [[33%], [g()]].f()",
     ] {
         assert_eq!(value(source), Value::str("prob"), "{source}");
     }
@@ -148,7 +148,7 @@ fn nested_declared_probability_types_convert_numeric_values() {
         "var xs: bag[prob] = bag([0.3: 1, prob(0.3): 2]); let p = xs.take(); report typeof p",
         "let xs: dist[prob] = one_of([0.3, 0.7]); let p = ~xs; report typeof p",
         "let r = { p: 0.3 }; let s: { p: prob } = r; report typeof s.p",
-        "fn f() -> list[prob] { let xs = [0.3]; xs }; report typeof f()[0]",
+        "fn f() list[prob] { let xs = [0.3]; xs }; report typeof f()[0]",
         "let p: prob = ~one_of([0.3, 0.7]); report typeof p",
     ] {
         assert_eq!(value(source), Value::str("prob"), "{source}");
@@ -166,7 +166,7 @@ fn contextual_conversion_rejects_invalid_numbers_and_unrelated_types() {
             for body in [
                 "let p: prob = x; report p",
                 "fn f(p: prob) { p }; report f(x)",
-                "fn f() -> prob { x }; report f()",
+                "fn f() prob { x }; report f()",
                 "report binomial(10, x)",
                 "report bernoulli(x)",
                 "report if x { true } else { false }",

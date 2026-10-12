@@ -11,7 +11,7 @@ type Day = { visitors: int, signups: int }
 let price = 49
 var market = Boom
 
-fn earn(customers: int) -> int {
+fn earn(customers: int) int {
   let total = customers * price
   return total
 }

@@ -38,7 +38,7 @@ These choices retain phase and amplitude information as ordinary data, without c
 This program performs amplitude arithmetic explicitly. No quantum engine is involved:
 
 ```probl
-fn h(s: list[complex]) -> list[complex] {
+fn h(s: list[complex]) list[complex] {
     [(s[0] + s[1]) / sqrt(2), (s[0] - s[1]) / sqrt(2)]
 }
 

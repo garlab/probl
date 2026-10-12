@@ -9,7 +9,7 @@ let jumps = [
 ]
 
 # Turns one player needs to reach square 100. Overshooting 100 wastes the turn.
-fn race() -> int {
+fn race() int {
   var square = 0
   var turns = 0
   while square < 100 {       # a game can in principle last forever, so this runs

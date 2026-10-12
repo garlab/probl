@@ -451,12 +451,9 @@ fn constants() {
 #[test]
 fn declared_types_are_checked() {
     close(chance("let n: int = 3\nreport n == 3"), 1.0);
-    close(
-        chance("fn half(x: float) -> float { x / 2 }\nreport half(3) == 1.5"),
-        1.0,
-    );
+    close(chance("fn half(x: float) float { x / 2 }\nreport half(3) == 1.5"), 1.0);
     assert!(error("fn f(x: int) { x }\nreport f(\"a\") == 1").contains("`x` should be an int, but it's a str"));
-    assert!(error("fn f(x) -> int { x / 2 }\nreport f(3) == 1").contains("exactly integral finite float"));
+    assert!(error("fn f(x) int { x / 2 }\nreport f(3) == 1").contains("exactly integral finite float"));
     assert!(error("var n: int = 1\nn = n / 2").contains("exactly integral finite float"));
     assert!(error("let d: dist[int] = one_of([\"a\"])").contains("should be a dist[int]"));
     assert!(compile_error("let p: prob = \"x\"").contains("expected a probability, found a string"));
@@ -503,7 +500,7 @@ const DIFFERENTIAL: &[&str] = &[
 ];
 
 /// Two calls in a row, each result used up by an assignment.
-const HITS: &str = "fn hit() -> int {\n  let r ~ d6\n  r\n}\nvar f = 20\nvar g = 20\nrepeat 3 {\n  f -= hit()\n  g -= hit()\n}\nreport f + g";
+const HITS: &str = "fn hit() int {\n  let r ~ d6\n  r\n}\nvar f = 20\nvar g = 20\nrepeat 3 {\n  f -= hit()\n  g -= hit()\n}\nreport f + g";
 
 #[test]
 fn worlds_merge_once_a_call_s_result_is_used_up() {

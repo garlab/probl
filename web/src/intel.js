@@ -181,7 +181,7 @@ function describeDefinition(d) {
 }
 
 /** What a definition's declaration says after its name, shown beside it in
- * the completion list: `(days: int) -> int` for a function, `~ beta(2, 40)`
+ * the completion list: `(days: int) int` for a function, `~ beta(2, 40)`
  * for a variable; or a field's type, or a variant's enum. */
 function declaredAs(d) {
   const declared = new RegExp(`^(?:fn|let|var) ${d.name}\\b`).exec(d.detail);

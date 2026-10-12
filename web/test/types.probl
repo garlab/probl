@@ -60,7 +60,7 @@ report simulate { score churn; true }
 let raw_rates = [churn, 1 - churn]
 let checked_rates: list[prob] = raw_rates
 report [typeof raw_rates, typeof checked_rates]
-fn checked_result(x: prob) -> prob { 1 - x }
+fn checked_result(x: prob) prob { 1 - x }
 report [checked_result(churn), typeof checked_result(churn)]
 var updated: prob = churn
 updated += 1%

@@ -158,7 +158,7 @@ fn calendar_functions_lift_including_components_and_holidays() {
 #[test]
 fn today_is_one_snapshot_across_worlds_samples_calls_and_simulate() {
     let source = r#"
-        fn anchor() -> date { today }
+        fn anchor() date { today }
         let captured = today
         let n ~ d6
         let nested = simulate { let m ~ d6; today + days(m - m) }

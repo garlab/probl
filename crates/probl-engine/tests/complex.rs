@@ -115,7 +115,7 @@ fn complex_equality_is_numeric_but_storage_identity_stays_typed() {
 fn complex_values_work_in_typed_collections_functions_and_reports() {
     let source = r#"
 type Pair = { z: complex }
-fn rotate(z: complex) -> complex { z * complex(0, 1) }
+fn rotate(z: complex) complex { z * complex(0, 1) }
 let p = Pair { z: complex(1, 2) }
 let zs: list[complex] = [p.z, rotate(p.z)]
 let table: map[complex, str] = [p.z: "found"]
@@ -164,7 +164,7 @@ fn complex_distributions_are_classical_mixtures_in_both_modes() {
 #[test]
 fn a_phase_interference_calculation_works_as_ordinary_data() {
     let source = r#"
-fn h(s: list[complex]) -> list[complex] {
+fn h(s: list[complex]) list[complex] {
     [(s[0] + s[1]) / sqrt(2), (s[0] - s[1]) / sqrt(2)]
 }
 let first = h([complex(1), complex(0)])
