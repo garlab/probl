@@ -13,6 +13,69 @@ import release
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_find_release_includes_paginated_drafts(self):
+        draft = {'id': 7, 'tag_name': 'v1.2.3', 'draft': True}
+        responses = {
+            f'releases/tags/v1.2.3': None,
+            f'releases?per_page=100&page=1': [
+                {'tag_name': 'v0.0.1', 'draft': False}] * 100,
+            f'releases?per_page=100&page=2': [draft],
+        }
+        with patch.object(release, 'api', side_effect=lambda path, **kw: responses[path]):
+            self.assertEqual(release.find_release('v1.2.3'), draft)
+
+    def test_find_release_distinguishes_missing_and_published(self):
+        with patch.object(release, 'api', side_effect=[None, []]):
+            self.assertIsNone(release.find_release('v1.2.3'))
+        published = {'id': 7, 'draft': False}
+        with patch.object(release, 'api', return_value=published) as api:
+            self.assertEqual(release.find_release('v1.2.3'), published)
+            self.assertEqual(api.call_count, 1)
+
+    def test_find_release_rejects_ambiguous_drafts(self):
+        drafts = [{'id': n, 'tag_name': 'v1.2.3', 'draft': True} for n in [7, 8]]
+        with patch.object(release, 'api', side_effect=[None, drafts]):
+            with self.assertRaisesRegex(ValueError, 'Multiple releases'):
+                release.find_release('v1.2.3')
+
+    def test_publish_creates_or_resumes_draft_and_preserves_assets(self):
+        for already_exists in [False, True]:
+            with self.subTest(already_exists=already_exists), tempfile.TemporaryDirectory() as temporary:
+                folder = Path(temporary)
+                archive = folder / 'probl-1.2.3-source.tar.gz'
+                archive.write_bytes(b'source')
+                (folder / 'release.json').write_text(json.dumps({
+                    'commit': 'a' * 40, 'tag': 'v1.2.3', 'archive': archive.name,
+                    'sha256': release.digest(archive)}))
+                (folder / 'SHA256SUMS').write_text('fixture')
+                draft = {'id': 7, 'tag_name': 'v1.2.3', 'draft': True,
+                         'prerelease': False, 'assets': [{'name': archive.name}]}
+                created = already_exists
+                published = False
+                def api(path, **kwargs):
+                    if path == 'releases/tags/v1.2.3':
+                        return {'immutable': True} if published else None
+                    if path == 'releases?per_page=100&page=1':
+                        return [draft] if created else []
+                    raise AssertionError(path)
+                def command(*args):
+                    nonlocal created, published
+                    if args[2] == 'create':
+                        self.assertFalse(created)
+                        created = True
+                    elif args[2] == 'edit':
+                        published = True
+                    elif args[2] == 'download':
+                        (Path(args[args.index('--dir') + 1]) / archive.name).write_bytes(archive.read_bytes())
+                with patch.dict(os.environ, {'GITHUB_SHA': 'a' * 40}), \
+                     patch.object(release, 'check'), patch.object(release, 'api', side_effect=api), \
+                     patch.object(release, 'run', side_effect=command) as run:
+                    release.publish('v1.2.3', folder)
+                    uploads = [c.args for c in run.call_args_list if c.args[2] == 'upload']
+                    self.assertEqual(len(uploads), 2)
+                    self.assertTrue(all('--clobber' not in args for args in uploads))
+                    self.assertTrue(published)
+
     def test_rejects_unsafe_and_prerelease_tags(self):
         for tag in ['main', 'v1.2.3-rc.1', 'v01.2.3', '../v1.2.3', 'v1.2.3\n', 'v1.2.3;echo bad']:
             with self.subTest(tag=tag), self.assertRaises(ValueError):

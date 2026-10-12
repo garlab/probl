@@ -34,6 +34,25 @@ def api(path, missing=False):
         raise
 
 
+def find_release(tag):
+    # The by-tag endpoint only returns published releases. The authenticated
+    # list endpoint also includes drafts, including those from a failed run.
+    published = api(f'releases/tags/{tag}', missing=True)
+    if published is not None:
+        return published
+    matches = []
+    page = 1
+    while True:
+        releases = api(f'releases?per_page=100&page={page}')
+        matches.extend(item for item in releases if item['tag_name'] == tag)
+        if len(releases) < 100:
+            break
+        page += 1
+    if len(matches) > 1:
+        raise ValueError(f'Multiple releases found for {tag}; resolve duplicate drafts before retrying')
+    return matches[0] if matches else None
+
+
 def version(tag):
     if not re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag):
         raise ValueError("Use a stable version tag such as v0.2.2")
@@ -93,11 +112,13 @@ def publish(tag, directory):
         raise ValueError("Assets belong to a different release")
     if digest(directory / manifest['archive']) != manifest['sha256']:
         raise ValueError("Source archive checksum mismatch")
-    existing = api(f'releases/tags/{tag}', missing=True)
+    existing = find_release(tag)
     if not existing:
         run('gh', 'release', 'create', tag, '--repo', REPO, '--verify-tag',
             '--draft', '--title', tag, '--generate-notes')
-        existing = api(f'releases/tags/{tag}')
+        existing = find_release(tag)
+    if existing is None:
+        raise ValueError('Created release is not visible; check token access before retrying')
     if existing['prerelease']:
         raise ValueError("Refusing to replace an existing prerelease")
     known = {asset['name'] for asset in existing['assets']}
