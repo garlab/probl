@@ -468,7 +468,8 @@ impl TypeSpec {
             TypeSpec::Enum(e) => enums[*e as usize].name.clone(),
             TypeSpec::AnonRecord(fields) => {
                 let fields: Vec<String> = fields.iter().map(|(n, t)| format!("{n}: {}", describe(t))).collect();
-                format!("{{ {} }}", fields.join(", "))
+                // As `typeof` writes it.
+                format!("{{{}}}", fields.join(", "))
             }
         }
     }

@@ -455,7 +455,28 @@ fn declared_types_are_checked() {
     assert!(error("fn f(x: int) { x }\nreport f(\"a\") == 1").contains("`x` should be an int, but it's a str"));
     assert!(error("fn f(x): int { x / 2 }\nreport f(3) == 1").contains("exactly integral finite float"));
     assert!(error("var n: int = 1\nn = n / 2").contains("exactly integral finite float"));
-    assert!(error("let d: dist[int] = one_of([\"a\"])").contains("should be a dist[int]"));
+    assert!(error("let d: dist[int] = one_of([\"a\"])").contains("should be a dist[int], but it's a dist[str]"));
+    // A value that fails is described as `typeof` would describe it.
+    for (src, message) in [
+        (
+            "let b: bag[int] = [1, 1, 2]",
+            "`b` should be a bag[int], but it's a list[int]",
+        ),
+        (
+            "let r: {a: int} = {a: 1, b: 2}",
+            "`r` should be a {a: int}, but it's a {a: int, b: int}",
+        ),
+        (
+            "type P = { x: int }\nvar p = P { x: 1 }\np.x = [1]",
+            "assigned field should be int, found list[int]",
+        ),
+        (
+            "type P = { x: int }\nlet p = P { x: [\"a\"] }",
+            "field `x` should be int, found list[str]",
+        ),
+    ] {
+        assert!(error(src).contains(message), "{src}: {}", error(src));
+    }
     assert!(compile_error("let p: prob = \"x\"").contains("expected a probability, found a string"));
     assert!(compile_error("let p: probability = 1").contains("unknown type `probability`"));
 }

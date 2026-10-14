@@ -121,7 +121,7 @@ fn declared_types_check_what_goes_in() {
     for (src, message) in [
         (
             "var xs: list[int] = []\nxs.push(\"a\")",
-            "`xs` should be a list[int], but it's a list",
+            "`xs` should be a list[int], but it's a list[str]",
         ),
         (
             "var xs: list[list[int]] = [[]]\nlet h = 1.5\nxs[0].push(h)",
@@ -129,7 +129,7 @@ fn declared_types_check_what_goes_in() {
         ),
         (
             "var xs: list[list[int]] = [[]]\nxs[0].push(\"a\")",
-            "`xs` should be a list[list[int]], but it's a list",
+            "`xs` should be a list[list[int]], but it's a list[list[str]]",
         ),
         (
             "var m: map[int, str] = [2: \"a\"]\nm.insert(2.0, \"b\")",

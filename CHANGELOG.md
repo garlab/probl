@@ -4,6 +4,10 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+### Changed
+
+- A value that fails a declared type is described as `typeof` would describe it: "`b` should be a list[int], but it's a list[str]", rather than "but it's a list". A declared record type is written as `typeof` writes one, `{a: int}`.
+
 ## [0.3.0] - 2026-10-15
 
 ### Changed

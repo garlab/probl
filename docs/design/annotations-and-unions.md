@@ -84,7 +84,7 @@ Numeric literals are converted to probabilities during compilation. Other values
 
 `float` keeps an int as it is but converts a probability, and nothing documents either. So `let z: float = 1` reports `"int"`, and `let d: dist[float] = d6` reports `"dist[int]"`.
 
-Collections keep the kind they're built with. `let b: bag[int] = [1, 1, 2]` is an error, "`b` should be a bag[int], but it's a list", and there's no set type.
+Collections keep the kind they're built with. `let b: bag[int] = [1, 1, 2]` is an error, "`b` should be a bag[int], but it's a list[int]", and there's no set type.
 
 ## The proposal
 
@@ -142,7 +142,7 @@ let xs = [1, 2]                         # list[int]
 let s: set[int] = [1, 2, 2]             # set([1, 2])
 let b: bag[int] = [1, 1, 2]             # bag([1: 2, 2: 1])
 let deck: bag[str] = ["A": 4, "K": 4]
-let t: set[int] = xs                    # error: `t` should be a set[int], but it's a list
+let t: set[int] = xs                    # error: `t` should be a set[int], but it's a list[int]
 let u = set(xs)                         # set([1, 2])
 ```
 
@@ -210,10 +210,10 @@ c.push("bar")             # list[int or str]
 ```
 
 ```
-Error: `b` should be a list[int], but it's a list[int or str]
+Error: `b` should be a list[int], but it's a list[str]
 ```
 
-Today, that error ends with "but it's a list". A failed declaration should describe the value as `typeof` does.
+A failed declaration describes the value as `typeof` does (step 7, done). It used to say only "but it's a list".
 
 This works because probl's lists are values. After `var d = b`, `d.push(2)` leaves `b` unchanged, and a parameter can't be pushed to. So a list changes only through a variable, and if that variable is declared, every change is checked. Languages that keep an element type in the list itself, like Swift, C# and Julia, need it because two names can share one mutable list.
 
@@ -353,6 +353,6 @@ In a statically checked language, a trait or an interface also says which operat
 4. **Collection literals as bags.** In the engine, evaluate a function value before its arguments, so that literal arguments are built against its parameter types.
 5. **Sets:** `set[T]`, `set(xs)` and `list(xs)`.
 6. **Unions:** the grammar (`type { "or" type }`), a union in the compiler's types, the conversion steps, and the check for ambiguous record unions. `typeof` describes mixed contents with unions.
-7. **Errors that describe the value.** A failed declaration describes the value as `typeof` does: "but it's a list[any]", until unions exist. This doesn't depend on the rest, and can be done first.
+7. **Errors that describe the value.** Done: a failed declaration describes the value as `typeof` does, as in "but it's a list[any]" until unions exist. A declared record type is written as `typeof` writes one, `{a: int}`.
 
 Steps 1 to 3 break programs, and step 6 changes how `typeof` describes mixed contents. The rest only add.

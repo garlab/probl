@@ -3455,13 +3455,10 @@ impl<'p> Engine<'p> {
             Some(ty) => {
                 let v = self.coerce(v, &ty, span)?;
                 if !self.conforms(&v, &ty) {
+                    let found = self.described(&v);
                     return Err(RuntimeError::new(
                         span,
-                        format!(
-                            "assigned field should be {}, found {}",
-                            ty.describe(self.prog),
-                            v.kind()
-                        ),
+                        format!("assigned field should be {}, found {found}", ty.describe(self.prog)),
                     ));
                 }
                 v
@@ -3491,27 +3488,33 @@ impl<'p> Engine<'p> {
     /// Convert a variable to its declared type, or fail.
     fn check_slot(&mut self, f: FnId, slot: SlotId, ty: &TypeSpec, w: &mut World, span: Span) -> Result<()> {
         w.slots[slot as usize] = self.coerce(w.slots[slot as usize].clone(), ty, span)?;
-        if !self.conforms(&w.slots[slot as usize], ty) {
-            return Err(self.declared_type_error(f, slot, ty, w, span));
+        if self.conforms(&w.slots[slot as usize], ty) {
+            return Ok(());
         }
-        Ok(())
-    }
-
-    fn declared_type_error(&self, f: FnId, slot: SlotId, ty: &TypeSpec, w: &World, span: Span) -> RuntimeError {
         let name = &self.prog.functions[f as usize].slots[slot as usize].name;
         let what = if name == TEMP {
             "the result".to_string()
         } else {
             format!("`{name}`")
         };
-        RuntimeError::new(
+        let found = self.described(&w.slots[slot as usize]);
+        Err(RuntimeError::new(
             span,
             format!(
                 "{what} should be {}, but it's {}",
                 ops::article(&ty.describe(self.prog)),
-                ops::article(&w.slots[slot as usize].kind())
+                ops::article(&found)
             ),
-        )
+        ))
+    }
+
+    /// A value that fails a declared type, described as `typeof` would, or
+    /// by its kind if that's over a limit.
+    fn described(&mut self, v: &Value) -> String {
+        match crate::type_name::of(v, &self.prog.enums, &mut self.budget) {
+            Ok(Value::Str(s)) => s.to_string(),
+            _ => v.kind(),
+        }
     }
 
     /// `place = value`, where `value` applies a method like `push` to
@@ -3540,7 +3543,7 @@ impl<'p> Engine<'p> {
             None => Some(None),
         };
         if let (None, Some(types), true) = (&field, types, named.is_empty()) {
-            if self.in_place(f, place, *func, &mut values, types, check, w, span)? {
+            if self.in_place(f, place, *func, &mut values, types, w, span)? {
                 return Ok(());
             }
         }
@@ -3569,7 +3572,6 @@ impl<'p> Engine<'p> {
         func: Builtin,
         values: &mut [Value],
         types: Option<&[Option<TypeSpec>]>,
-        check: Option<&UpdateCheck>,
         w: &mut World,
         span: Span,
     ) -> Result<bool> {
@@ -3604,13 +3606,14 @@ impl<'p> Engine<'p> {
             Builtin::Remove if list => Some(ops::as_index(&values[1], len as u128, &mut self.budget).map_err(at)?),
             _ => None,
         };
-        if let (Some(types), Some(check)) = (types, check) {
+        if let Some(types) = types {
             for (i, ty) in types.iter().enumerate() {
                 let Some(ty) = ty else { continue };
                 let given = &values[i + 1];
                 let v = self.coerce(given.clone(), ty, span)?;
+                // The assignment's check of the whole variable reports it.
                 if !self.conforms(&v, ty) {
-                    return Err(self.declared_type_error(f, place.slot, &check.ty, w, span));
+                    return Ok(false);
                 }
                 // A key that converts could meet one already there, which the
                 // check of the whole map reports.
@@ -3898,13 +3901,10 @@ impl<'p> Engine<'p> {
                             let value = self.eval(f, v, w)?;
                             let value = self.coerce(value, &t, v.span)?;
                             if !self.conforms(&value, &t) {
+                                let found = self.described(&value);
                                 return Err(RuntimeError::new(
                                     v.span,
-                                    format!(
-                                        "field `{name}` should be {}, found {}",
-                                        t.describe(self.prog),
-                                        value.kind()
-                                    ),
+                                    format!("field `{name}` should be {}, found {found}", t.describe(self.prog)),
                                 ));
                             }
                             value
@@ -3936,13 +3936,10 @@ impl<'p> Engine<'p> {
                         Some(ty) => {
                             let value = self.eval_expected(f, v, w, &ty)?;
                             if !self.conforms(&value, &ty) {
+                                let found = self.described(&value);
                                 return Err(RuntimeError::new(
                                     v.span,
-                                    format!(
-                                        "field `{name}` should be {}, found {}",
-                                        ty.describe(self.prog),
-                                        value.kind()
-                                    ),
+                                    format!("field `{name}` should be {}, found {found}", ty.describe(self.prog)),
                                 ));
                             }
                             value
