@@ -85,7 +85,7 @@ Measure with `probl-bench` before and after the change, using release builds on 
 
 ## Releases
 
-A maintainer releases by setting the version in `Cargo.toml`, then publishing a `vX.Y.Z` pre-release on GitHub as a dry run, and making it a release once that passes. [release.yml](.github/workflows/release.yml) then publishes the crates to crates.io and the command's container image to `ghcr.io/garlab/probl`. Every published crate shares the workspace version, and the internal dependencies are pinned to it exactly; see [packaging](docs/library.md#packaging-and-publication).
+A maintainer releases from `main`. One commit sets the new version in `Cargo.toml`, both the workspace's and the exact pins of the internal dependencies, and updates `Cargo.lock`, the changelog and the version that `README.md` and `docs/library.md` mention. Once that commit passes `cargo test --all --locked` and `cargo publish --workspace --dry-run --locked`, pushing a `vX.Y.Z` tag on it starts [release.yml](.github/workflows/release.yml). The workflow checks that the tag matches the version and is on `main`, then publishes the crates to crates.io, the command's container image to `ghcr.io/garlab/probl`, and an immutable GitHub release with the source archive, before notifying the Homebrew tap. Dispatching it on an existing tag with `dry_run` checks everything without publishing. Every published crate shares the workspace version, and the internal dependencies are pinned to it exactly; see [releases](docs/releases.md) and [packaging](docs/library.md#packaging-and-publication).
 
 ## License
 
