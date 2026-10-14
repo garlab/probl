@@ -4,6 +4,8 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-15
+
 ### Changed
 
 - A function's return type follows a `:`, like a variable's: `fn explode(): int { … }` rather than `fn explode() -> int { … }`. It's still optional. A program written the old way no longer compiles, and the error says how to write it.
@@ -71,7 +73,8 @@ The first release.
 
 The [language overview](docs/language-overview.md) and the [reference semantics](docs/semantics.md) describe the language, and [status and limits](README.md#status-and-limits) lists what isn't implemented yet.
 
-[Unreleased]: https://github.com/garlab/probl/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/garlab/probl/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/garlab/probl/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/garlab/probl/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/garlab/probl/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/garlab/probl/compare/v0.1.0...v0.2.0
