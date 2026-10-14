@@ -10,6 +10,7 @@ import sys
 import tempfile
 import tomllib
 import urllib.error
+import urllib.parse
 import urllib.request
 
 REPO = "garlab/probl"
@@ -19,11 +20,16 @@ def run(*args, **kwargs):
     return subprocess.check_output(args, **kwargs).decode().strip()
 
 
-def api(path, missing=False):
+def api(path, missing=False, method='GET', body=None, url=None, content_type='application/json'):
+    headers = {"Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+               "Accept": "application/vnd.github+json"}
+    data = None
+    if body is not None:
+        data = body if isinstance(body, bytes) else json.dumps(body).encode()
+        headers["Content-Type"] = content_type
     request = urllib.request.Request(
-        f"https://api.github.com/repos/{REPO}/{path}",
-        headers={"Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-                 "Accept": "application/vnd.github+json"},
+        url or f"https://api.github.com/repos/{REPO}/{path}",
+        data=data, headers=headers, method=method,
     )
     try:
         with urllib.request.urlopen(request) as response:
@@ -61,6 +67,13 @@ def version(tag):
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def upload(release, path):
+    # The upload URL is a URI template: .../releases/7/assets{?name,label}.
+    url = release['upload_url'].split('{', 1)[0] + '?' + urllib.parse.urlencode({'name': path.name})
+    kind = {'.gz': 'application/gzip', '.json': 'application/json'}.get(path.suffix, 'application/octet-stream')
+    api(None, method='POST', url=url, body=path.read_bytes(), content_type=kind)
 
 
 def check(tag):
@@ -114,11 +127,12 @@ def publish(tag, directory):
         raise ValueError("Source archive checksum mismatch")
     existing = find_release(tag)
     if not existing:
-        run('gh', 'release', 'create', tag, '--repo', REPO, '--verify-tag',
-            '--draft', '--title', tag, '--generate-notes')
-        existing = find_release(tag)
-    if existing is None:
-        raise ValueError('Created release is not visible; check token access before retrying')
+        # A draft is never found by its tag, and may not be listed yet right
+        # after it's created: keep the release the API returns, and change it
+        # by its id. check() has verified that the tag names this commit.
+        existing = api('releases', method='POST', body={
+            'tag_name': tag, 'target_commitish': manifest['commit'], 'name': tag,
+            'draft': True, 'generate_release_notes': True})
     if existing['prerelease']:
         raise ValueError("Refusing to replace an existing prerelease")
     known = {asset['name'] for asset in existing['assets']}
@@ -130,12 +144,12 @@ def publish(tag, directory):
                 if digest(Path(temporary) / asset) != digest(directory / asset):
                     raise ValueError(f"Existing {asset} differs; never overwrite release assets")
         elif existing['draft']:
-            run('gh', 'release', 'upload', tag, str(directory / asset), '--repo', REPO)
+            upload(existing, directory / asset)
         else:
             raise ValueError(f"Published release is missing {asset}; use a new version")
     if existing['draft']:
-        run('gh', 'release', 'edit', tag, '--repo', REPO, '--draft=false', '--latest')
-    if not api(f'releases/tags/{tag}').get('immutable'):
+        api(f"releases/{existing['id']}", method='PATCH', body={'draft': False, 'make_latest': 'true'})
+    if not api(f"releases/{existing['id']}").get('immutable'):
         raise ValueError("Enable immutable releases before releasing; this release is not immutable")
 
 

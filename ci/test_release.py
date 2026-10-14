@@ -48,33 +48,65 @@ class ReleaseTests(unittest.TestCase):
                     'commit': 'a' * 40, 'tag': 'v1.2.3', 'archive': archive.name,
                     'sha256': release.digest(archive)}))
                 (folder / 'SHA256SUMS').write_text('fixture')
-                draft = {'id': 7, 'tag_name': 'v1.2.3', 'draft': True,
-                         'prerelease': False, 'assets': [{'name': archive.name}]}
-                created = already_exists
+                upload_url = 'https://uploads.github.com/repos/garlab/probl/releases/7/assets'
+                draft = {'id': 7, 'tag_name': 'v1.2.3', 'draft': True, 'prerelease': False,
+                         'upload_url': upload_url + '{?name,label}', 'assets': []}
+                earlier = dict(draft, assets=[{'name': archive.name}])
+                uploads = []
                 published = False
-                def api(path, **kwargs):
-                    if path == 'releases/tags/v1.2.3':
-                        return {'immutable': True} if published else None
-                    if path == 'releases?per_page=100&page=1':
-                        return [draft] if created else []
-                    raise AssertionError(path)
-                def command(*args):
-                    nonlocal created, published
-                    if args[2] == 'create':
-                        self.assertFalse(created)
-                        created = True
-                    elif args[2] == 'edit':
+                def api(path, missing=False, method='GET', body=None, url=None, content_type=None):
+                    nonlocal published
+                    if (method, path) == ('GET', 'releases/tags/v1.2.3'):
+                        return None  # never a draft
+                    if (method, path) == ('GET', 'releases?per_page=100&page=1'):
+                        # A draft from an earlier run is listed; the one this
+                        # run creates isn't, as can happen right after.
+                        return [earlier] if already_exists else []
+                    if (method, path) == ('POST', 'releases'):
+                        self.assertFalse(already_exists)
+                        self.assertEqual((body['tag_name'], body['target_commitish'], body['draft']),
+                                         ('v1.2.3', 'a' * 40, True))
+                        return draft
+                    if method == 'POST' and url and url.startswith(upload_url + '?name='):
+                        uploads.append(url)
+                        return {}
+                    if (method, path) == ('PATCH', 'releases/7'):
+                        self.assertEqual(body, {'draft': False, 'make_latest': 'true'})
                         published = True
-                    elif args[2] == 'download':
-                        (Path(args[args.index('--dir') + 1]) / archive.name).write_bytes(archive.read_bytes())
+                        return {}
+                    if (method, path) == ('GET', 'releases/7'):
+                        return {'immutable': published}
+                    raise AssertionError((method, path, url))
+                def command(*args):
+                    self.assertEqual(args[2], 'download')
+                    (Path(args[args.index('--dir') + 1]) / archive.name).write_bytes(archive.read_bytes())
                 with patch.dict(os.environ, {'GITHUB_SHA': 'a' * 40}), \
                      patch.object(release, 'check'), patch.object(release, 'api', side_effect=api), \
-                     patch.object(release, 'run', side_effect=command) as run:
+                     patch.object(release, 'run', side_effect=command):
                     release.publish('v1.2.3', folder)
-                    uploads = [c.args for c in run.call_args_list if c.args[2] == 'upload']
-                    self.assertEqual(len(uploads), 2)
-                    self.assertTrue(all('--clobber' not in args for args in uploads))
-                    self.assertTrue(published)
+                names = [url.split('?name=')[1] for url in uploads]
+                expected = ['release.json', 'SHA256SUMS']
+                self.assertEqual(names, expected if already_exists else [archive.name] + expected)
+                self.assertTrue(published)
+
+    def test_publish_refuses_to_replace_a_published_asset(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            archive = folder / 'probl-1.2.3-source.tar.gz'
+            archive.write_bytes(b'source')
+            (folder / 'release.json').write_text(json.dumps({
+                'commit': 'a' * 40, 'tag': 'v1.2.3', 'archive': archive.name,
+                'sha256': release.digest(archive)}))
+            (folder / 'SHA256SUMS').write_text('fixture')
+            published = {'id': 7, 'tag_name': 'v1.2.3', 'draft': False, 'prerelease': False,
+                         'upload_url': 'unused{?name,label}', 'assets': [{'name': archive.name}]}
+            def command(*args):
+                (Path(args[args.index('--dir') + 1]) / archive.name).write_bytes(b'other bytes')
+            with patch.dict(os.environ, {'GITHUB_SHA': 'a' * 40}), \
+                 patch.object(release, 'check'), patch.object(release, 'api', return_value=published), \
+                 patch.object(release, 'run', side_effect=command):
+                with self.assertRaisesRegex(ValueError, 'never overwrite'):
+                    release.publish('v1.2.3', folder)
 
     def test_rejects_unsafe_and_prerelease_tags(self):
         for tag in ['main', 'v1.2.3-rc.1', 'v01.2.3', '../v1.2.3', 'v1.2.3\n', 'v1.2.3;echo bad']:
