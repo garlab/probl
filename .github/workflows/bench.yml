@@ -13,10 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       base:
-        description: >-
-          Commit or tag to compare main with, rather than the commit the last
-          run measured. Builds before the runner's --time-limit= option cancel
-          snakes_three after 60 s.
+        description: Commit or tag to compare main with, rather than the commit the last run measured
         type: string
         default: ''
 
@@ -95,9 +92,9 @@ jobs:
           mkdir results
           for _ in 1 2; do
             if [ -n "$BASE" ]; then
-              "$RUNNER_TEMP/bench-base" --json --time-limit=600 >> results/base.jsonl
+              "$RUNNER_TEMP/bench-base" --json >> results/base.jsonl
             fi
-            "$RUNNER_TEMP/bench-main" --json --time-limit=600 >> results/main.jsonl
+            "$RUNNER_TEMP/bench-main" --json >> results/main.jsonl
           done
       - name: Compare
         if: steps.base.outputs.skip != 'true'

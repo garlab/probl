@@ -20,10 +20,9 @@ cargo run --release -p probl-bench -- --quick   # one timed run each
 cargo run --release -p probl-bench -- --threads=1   # sample on one thread
 cargo run --release -p probl-bench -- --no-conjugate   # sample without exact updates for conjugate priors
 cargo run --release -p probl-bench -- --symbolic   # decision diagrams for the models they support (experimental)
-cargo run --release -p probl-bench -- --time-limit=300   # cancel a run after 300 seconds rather than 60
 ```
 
-For each model, the runner reports the median time of up to five runs, the engine's statistics, the peak heap (from a separate run that counts allocations, and isn't timed), and for enumerated models the same run without merging worlds. Sampling uses every core unless `--threads=` says otherwise. A run that takes more than 60 seconds, or `--time-limit=`, is cancelled and reported as such. Models that use `today` see 2026-09-29, as the example tests do. `cargo test` checks that every model still compiles.
+For each model, the runner reports the median time of up to five runs, the engine's statistics, the peak heap (from a separate run that counts allocations, and isn't timed), and for enumerated models the same run without merging worlds. Sampling uses every core unless `--threads=` says otherwise. A run that takes more than 60 seconds is cancelled and reported as such. Models that use `today` see 2026-09-29, as the example tests do. `cargo test` checks that every model still compiles.
 
 ### Comparing two builds
 
@@ -47,9 +46,9 @@ With the release profile's 16 codegen units, how the compiler splits the engine 
 
 ### Nightly
 
-[A workflow](../.github/workflows/bench.yml) compares `main` with the commit its last run measured, every night at 03:17 UTC (03:17 in the UK in winter, 04:17 in summer), and does nothing if `main` hasn't changed. It builds both commits as above on one GitHub runner, runs each build's own models twice, alternately, with `--time-limit=600`, and compares them with a 10% threshold and `--warn-costs`. A changed output or world-steps count fails the run. Time and memory only go in the run's summary: a shared runner is too noisy to fail on, though its two builds share the noise. The records are kept as an artifact for 90 days.
+[A workflow](../.github/workflows/bench.yml) compares `main` with the commit its last run measured, every night at 03:17 UTC (03:17 in the UK in winter, 04:17 in summer), and does nothing if `main` hasn't changed. It builds both commits as above on one GitHub runner, runs each build's own models twice, alternately, and compares them with a 10% threshold and `--warn-costs`. A changed output or world-steps count fails the run. Time and memory only go in the run's summary: a shared runner is too noisy to fail on, though its two builds share the noise. The records are kept as an artifact for 90 days.
 
-Run it by hand from the Actions tab, optionally with a commit or tag to compare with. Its first run has nothing to compare with, and only measures `main` for the next one. A build from before `--time-limit=` ignores the option, so `snakes_three` is cancelled after 60 seconds on the runner, and its output differs.
+Run it by hand from the Actions tab, optionally with a commit or tag to compare with. Its first run has nothing to compare with, and only measures `main` for the next one. `snakes_three` is cancelled at the time limit in both builds, as it is everywhere: its output, the cancellation, is the same. If a change lets it finish, its output differs, and the run fails until the next one.
 
 ### Build profiles
 

@@ -138,7 +138,7 @@ Measured on a release build, with loops of n changes:
 
 40,000 pushes followed by 40,000 pops take 0.04 s. The new tests in `crates/probl-engine/tests/updates.rs` pass on the engine before the change too: results are the same, only costs differ.
 
-On the benchmarks, no output or world-steps changed, and the total went from 68.54 s to 69.14 s (+0.9%), mostly `snakes_three`'s 1.2%. `15_service_queue`, which pushes and sorts, is 14% faster and its peak heap 22% smaller. The one model measured more than 5% slower, `benches/diagnosis`, doesn't use these methods, and was 1.1% slower measured again, alternately with the build before.
+On the benchmarks, no output or world-steps changed, and the total of the models that finish went from 8.45 s to 8.31 s (−1.6%); `snakes_three` is cancelled at the time limit in both builds. `15_service_queue`, which pushes and sorts, is 14% faster and its peak heap 22% smaller. The one model measured more than 5% slower, `benches/diagnosis`, doesn't use these methods, and was 1.1% slower measured again, alternately with the build before.
 
 Left to do:
 

@@ -9,7 +9,6 @@
 //! cargo run --release -p probl-bench -- --no-conjugate # no exact updates for conjugate priors
 //! cargo run --release -p probl-bench -- --no-solve   # unroll loops that cycle instead of solving them
 //! cargo run --release -p probl-bench -- --symbolic   # decision diagrams for the models they support (experimental)
-//! cargo run --release -p probl-bench -- --time-limit=300 # cancel a run after 300 s, not 60
 //! cargo run --release -p probl-bench -- --json > after.jsonl    # one JSON record per model
 //! cargo run --release -p probl-bench -- compare before.jsonl after.jsonl
 //! cargo run --release -p probl-bench -- compare before.jsonl after.jsonl --warn-costs
@@ -96,8 +95,7 @@ static ALLOCATOR: Counting = Counting;
 
 // ── Running models ───────────────────────────────────────────────────────
 
-/// How long one run may take before it's cancelled, unless `--time-limit=`
-/// says otherwise.
+/// How long one run may take before it's cancelled.
 const TIME_LIMIT: Duration = Duration::from_secs(60);
 
 struct Run {
@@ -121,8 +119,6 @@ struct Settings {
     symbolic: bool,
     /// The model's data, read once before the runs.
     data: Option<Data>,
-    /// How long one run may take before it's cancelled.
-    time_limit: Duration,
 }
 
 fn run_once(program: &Program, settings: &Settings, merge: bool, limit: Duration) -> Run {
@@ -193,18 +189,18 @@ fn measure(name: &str, program: &Program, settings: &Settings) -> Measured {
     IN_USE.store(0, Ordering::Relaxed);
     PEAK.store(0, Ordering::Relaxed);
     COUNTING.store(true, Ordering::Relaxed);
-    let counted = run_once(program, settings, true, settings.time_limit);
+    let counted = run_once(program, settings, true, TIME_LIMIT);
     COUNTING.store(false, Ordering::Relaxed);
     let peak_heap = PEAK.load(Ordering::Relaxed);
     // A failed run isn't repeated, and neither is a long one.
     let first = match counted.result {
-        Ok(_) => run_once(program, settings, true, settings.time_limit),
+        Ok(_) => run_once(program, settings, true, TIME_LIMIT),
         Err(_) => counted,
     };
     let mut times = vec![first.time];
     if first.result.is_ok() && first.time < Duration::from_secs(5) && !settings.quick {
         for _ in 0..4 {
-            times.push(run_once(program, settings, true, settings.time_limit).time);
+            times.push(run_once(program, settings, true, TIME_LIMIT).time);
         }
     }
     times.sort();
@@ -521,15 +517,6 @@ fn main() -> std::process::ExitCode {
         solve: !args.iter().any(|a| a == "--no-solve"),
         symbolic: args.iter().any(|a| a == "--symbolic"),
         data: None,
-        time_limit: args
-            .iter()
-            .find_map(|a| a.strip_prefix("--time-limit="))
-            .map_or(TIME_LIMIT, |t| {
-                Duration::from_secs(
-                    t.parse()
-                        .unwrap_or_else(|_| panic!("--time-limit= needs seconds, not {t:?}")),
-                )
-            }),
     };
     let filter: Vec<String> = args.into_iter().filter(|a| !a.starts_with("--")).collect();
     if !json {
