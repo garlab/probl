@@ -342,6 +342,7 @@ In a statically checked language, a trait or an interface also says which operat
 ## Open questions
 
 - **Bare collection types.** `let s: set = [1, 2]` and `let xs: list = …` are errors today, since `list` needs its element type. Allowing a bare name to check only the kind seems reasonable. The elements would keep their own types.
+- **Typed equality inside collections.** `1 == 1.0` is true, but `[1] == [1.0]` is false, since equality inside a collection is typed. So after `let ys: list[float] = [1, 2]`, `ys == [1, 2]` would be false, though `ys[0] == 1` is true. Equality inside collections could compare numbers by value, as `contains` already does, while map keys and bag elements keep typed identity.
 - **Set operations** beyond size, membership and iteration: union, intersection and difference, and whether they're operators.
 
 ## Implementation order and validation
