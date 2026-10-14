@@ -29,7 +29,7 @@ The [examples directory](../examples) contains runnable models with expected out
 - [Extending enumeration](design/enumeration-support.md): what enumeration computes beyond explicit worlds and how, what's left with first estimates, and how each phase was checked.
 - [Imports and model tests](design/imports-and-tests.md): static reusable definitions, acyclic dependencies, isolated `.test.probl` files and explicit assertions over weighted populations.
 - [Error handling](design/error-handling.md): a near-term proposal for specific local catches and total/partial failure modes (partial by default when sampling), with explicit failure accounting and partial-result reporting.
-- [Type annotations and unions](design/annotations-and-unions.md): a proposal for annotations that check rather than convert, explicit `int`, `float` and `prob` conversions, and union types written `A or B`.
+- [Type annotations and unions](design/annotations-and-unions.md): a proposal for annotations that give a value its declared type, converting only between close numeric types; collection literals that take their kind from the declaration; and union types written `A or B`.
 - [Portals and external effects](design/portals-and-effects.md): a deferred proposal for an implicit prologue, read-only joint population views and midway host interaction; better reporting comes first.
 - [Symbolic inference](design/symbolic-inference.md): assessment of the Dice paper and an evaluation plan; no symbolic backend is implemented.
 - [Complex values and quantum simulation](design/quantum-and-complex.md): the implemented scalar foundation and an unimplemented quantum-engine proposal.
