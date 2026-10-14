@@ -611,9 +611,9 @@ async function main() {
     history.replaceState(null, '', `#code=${code}`);
     try {
       await navigator.clipboard.writeText(location.href);
-      $('status').textContent = 'Link copied. It holds the program itself: nothing is stored anywhere.';
+      $('status').textContent = 'Link copied. It contains your program; anyone with the link can read it.';
     } catch {
-      $('status').textContent = 'The link is in the address bar. It holds the program itself: nothing is stored anywhere.';
+      $('status').textContent = 'The link is in the address bar. It contains your program; anyone with the link can read it.';
     }
   });
 

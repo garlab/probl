@@ -230,6 +230,7 @@ button.link { font: inherit; color: var(--accent); background: none; border: non
 .cm-tooltip.cm-completionInfo { padding: 0; }
 
 footer { padding: 8px 16px; border-top: 1px solid var(--line); color: var(--faint); font-size: 12.5px; }
+footer a { color: var(--accent); }
 
 @media (max-width: 760px) {
   body { grid-template-rows: auto auto auto; height: auto; min-height: 100%; }
