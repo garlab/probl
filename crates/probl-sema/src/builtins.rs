@@ -232,6 +232,24 @@ impl Builtin {
     pub fn is_mutating(self) -> bool {
         matches!(self, Builtin::Push | Builtin::Insert | Builtin::Remove | Builtin::Pop)
     }
+
+    /// Built-ins that can call a function they're given, like `map`.
+    pub fn calls_functions(self) -> bool {
+        use Builtin as B;
+        matches!(
+            self,
+            B::Map
+                | B::Filter
+                | B::Reduce
+                | B::Count
+                | B::Minimum
+                | B::Maximum
+                | B::Sort
+                | B::SortDesc
+                | B::Highest
+                | B::Lowest
+        )
+    }
 }
 
 /// A named value. A program's own variables, variants and functions hide

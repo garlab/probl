@@ -353,6 +353,10 @@ fn uses(expr: &Expr, live: &mut SlotSet) {
         ExprKind::Closure { capture_args, .. } | ExprKind::Simulate { capture_args, .. } => {
             capture_args.iter().for_each(|&s| live.insert(s))
         }
+        ExprKind::Bind { value, globals } => {
+            uses(value, live);
+            globals.iter().for_each(|&(_, s)| live.insert(s));
+        }
         ExprKind::Interp(parts) => parts.iter().for_each(|p| {
             if let InterpPart::Expr(e) = p {
                 uses(e, live)

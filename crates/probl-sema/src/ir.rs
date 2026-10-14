@@ -226,6 +226,10 @@ pub struct Capture {
     /// Where the value goes in this function's frame.
     pub slot: SlotId,
     pub source: CaptureSource,
+    /// A global held only for the named functions this function may call
+    /// as values. It may have no value yet; that's an error only if a
+    /// function that reads it is called.
+    pub for_values: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -513,6 +517,15 @@ pub enum ExprKind {
     Simulate {
         func: FnId,
         capture_args: Vec<SlotId>,
+    },
+    /// `value`, about to be called, or passed to a built-in that calls it.
+    /// If it's a named function, it reads the globals it uses now, as a
+    /// call by name does, rather than when it was referred to: `globals`
+    /// pairs each global (a slot of the main frame), in order, with the slot
+    /// of this frame that holds it.
+    Bind {
+        value: Box<Expr>,
+        globals: Vec<(SlotId, SlotId)>,
     },
     Interp(Vec<InterpPart>),
     /// The value of the program's input with this number (`read`).

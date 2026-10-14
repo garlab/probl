@@ -2577,6 +2577,7 @@ pub fn renamed(v: &Value, map: &BTreeMap<u64, u64>) -> Value {
         Value::Closure(f) => Value::Closure(Arc::new(Closure {
             func: f.func,
             captured: f.captured.iter().map(|v| renamed(v, map)).collect(),
+            named: f.named,
         })),
         Value::Dist(d) => crate::dist::Dist::from_pairs(
             d.outcomes.iter().map(|(v, p)| (renamed(v, map), *p)).collect(),
@@ -2777,6 +2778,7 @@ fn resolve_at(v: &Value, c: &Constraints, b: &mut Budget, depth: usize) -> OpRes
         ),
         Value::Closure(f) => Value::Closure(Arc::new(Closure {
             func: f.func,
+            named: f.named,
             captured: f
                 .captured
                 .iter()

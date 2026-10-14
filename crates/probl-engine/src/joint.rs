@@ -168,6 +168,7 @@ fn with_truths(v: &Value, events: &[Arc<Event>], mask: u32) -> Value {
         Value::Closure(c) => Value::Closure(Arc::new(crate::value::Closure {
             func: c.func,
             captured: c.captured.iter().map(child).collect(),
+            named: c.named,
         })),
         v => v.clone(),
     }
@@ -303,6 +304,7 @@ fn concrete(v: &Value, at: &BTreeMap<u64, (f64, f64)>) -> Value {
         Value::Closure(c) => Value::Closure(Arc::new(crate::value::Closure {
             func: c.func,
             captured: c.captured.iter().map(child).collect(),
+            named: c.named,
         })),
         v => v.clone(),
     }

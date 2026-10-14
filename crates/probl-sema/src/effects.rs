@@ -339,6 +339,7 @@ impl Direct {
     fn expr(&mut self, e: &Expr) {
         match &e.kind {
             ExprKind::Closure { func, .. } => self.references.push(*func),
+            ExprKind::Bind { value, .. } => self.expr(value),
             ExprKind::Lit(Lit::Builtin(Builtin::Print)) => self.references_print = true,
             ExprKind::Lit(_) | ExprKind::Slot(_) | ExprKind::Input(_) => {}
             ExprKind::Unary(_, x) | ExprKind::Field(x, _) => self.expr(x),

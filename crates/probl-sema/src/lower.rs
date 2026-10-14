@@ -71,6 +71,8 @@ struct FnBuild {
     /// Globals held by this function: main slot → slot here.
     global_slots: BTreeMap<SlotId, SlotId>,
     calls: BTreeSet<FnId>,
+    /// Named functions referred to as values here.
+    refs: BTreeSet<FnId>,
     children: Vec<FnId>,
     body: Block,
     captures: Vec<Capture>,
@@ -125,6 +127,8 @@ struct Lowerer<'a> {
     diags: Vec<Diagnostic>,
     funcs: Vec<FnBuild>,
     fn_by_name: FxHashMap<String, FnId>,
+    /// Named functions referred to as values, as in `let f = fee`.
+    fn_values: BTreeSet<FnId>,
     records: Vec<RecordType>,
     record_by_name: FxHashMap<String, u32>,
     enums: Vec<EnumType>,
@@ -161,6 +165,7 @@ impl<'a> Lowerer<'a> {
             diags: Vec::new(),
             funcs: Vec::new(),
             fn_by_name: FxHashMap::default(),
+            fn_values: BTreeSet::new(),
             records: Vec::new(),
             record_by_name: FxHashMap::default(),
             enums: Vec::new(),
@@ -233,6 +238,7 @@ impl<'a> Lowerer<'a> {
             parent_captures: Vec::new(),
             global_slots: BTreeMap::new(),
             calls: BTreeSet::new(),
+            refs: BTreeSet::new(),
             children: Vec::new(),
             body: Block::default(),
             captures: Vec::new(),
@@ -2497,7 +2503,8 @@ impl<'a> Lowerer<'a> {
                 self.refer(span, def);
             }
             let caller = self.cur_func();
-            self.funcs[caller as usize].calls.insert(func);
+            self.funcs[caller as usize].refs.insert(func);
+            self.fn_values.insert(func);
             return Expr {
                 kind: ExprKind::Closure {
                     func,
@@ -3052,25 +3059,42 @@ impl<'a> Lowerer<'a> {
             .map(|f| f.global_slots.keys().copied().collect())
             .collect();
         needed[MAIN as usize].clear();
-        loop {
-            let mut changed = false;
+        // A named function used as a value reads its globals when it's
+        // called, as a call by name does. So a function that calls function
+        // values, itself or through a built-in like `map`, needs every global
+        // that such named functions read.
+        let calls_values: Vec<bool> = self
+            .funcs
+            .iter_mut()
+            .map(|f| {
+                let mut found = false;
+                visit_block(&mut f.body, &mut |site| found |= matches!(site, CallSite::Value(_)));
+                found
+            })
+            .collect();
+        // What a function needs to run its own calls; what it also holds for
+        // the named functions it refers to or calls as values may have no
+        // value yet.
+        propagate(&self.funcs, &mut needed, false);
+        let own = needed.clone();
+        let bound = loop {
+            propagate(&self.funcs, &mut needed, true);
+            let bound: BTreeSet<SlotId> = self
+                .fn_values
+                .iter()
+                .flat_map(|&g| needed[g as usize].iter().copied())
+                .collect();
+            let mut grew = false;
             for f in 1..n {
-                let mut acc = needed[f].clone();
-                for &g in &self.funcs[f].calls {
-                    acc.extend(needed[g as usize].iter().copied());
-                }
-                for &c in &self.funcs[f].children {
-                    acc.extend(needed[c as usize].iter().copied());
-                }
-                if acc != needed[f] {
-                    needed[f] = acc;
-                    changed = true;
+                if calls_values[f] && !bound.is_subset(&needed[f]) {
+                    needed[f].extend(bound.iter().copied());
+                    grew = true;
                 }
             }
-            if !changed {
-                break;
+            if !grew {
+                break bound;
             }
-        }
+        };
 
         // Give every function a slot for each global it needs. Parents are
         // created before their lambdas, so they're handled first.
@@ -3094,42 +3118,68 @@ impl<'a> Lowerer<'a> {
             }
         }
 
-        for f in &mut self.funcs {
-            f.captures = match f.kind {
+        for (f, func) in self.funcs.iter_mut().enumerate() {
+            let for_values = |slot: SlotId| {
+                func.global_slots
+                    .iter()
+                    .any(|(g, &s)| s == slot && !own[f].contains(g))
+            };
+            func.captures = match func.kind {
                 FnKind::Main => Vec::new(),
-                FnKind::Named => f
+                FnKind::Named => func
                     .global_slots
                     .iter()
                     .map(|(&g, &slot)| Capture {
                         slot,
                         source: CaptureSource::Global(g),
+                        for_values: !own[f].contains(&g),
                     })
                     .collect(),
-                FnKind::Lambda | FnKind::Simulate => f
+                FnKind::Lambda | FnKind::Simulate => func
                     .parent_captures
                     .iter()
                     .map(|&(slot, source)| Capture {
                         slot,
                         source: CaptureSource::Parent(source),
+                        for_values: for_values(slot),
                     })
                     .collect(),
             };
         }
 
-        // Fill in the arguments that supply captures at calls and closures.
+        // Fill in the arguments that supply captures at calls and closures,
+        // and the globals read where function values are called.
         let captures: Vec<Vec<Capture>> = self.funcs.iter().map(|f| f.captures.clone()).collect();
         let global_slots: Vec<BTreeMap<SlotId, SlotId>> = self.funcs.iter().map(|f| f.global_slots.clone()).collect();
         for (f, func) in self.funcs.iter_mut().enumerate() {
             let slot_of_global = |g: SlotId| -> SlotId { if f == MAIN as usize { g } else { global_slots[f][&g] } };
-            let mut fill = |site: &mut CallSite| {
-                let (CallSite::Call(callee, args) | CallSite::Closure(callee, args)) = site;
-                **args = captures[*callee as usize]
-                    .iter()
-                    .map(|c| match c.source {
-                        CaptureSource::Global(g) => slot_of_global(g),
-                        CaptureSource::Parent(s) => s,
-                    })
-                    .collect();
+            let globals: Vec<(SlotId, SlotId)> = if calls_values[f] {
+                bound.iter().map(|&g| (g, slot_of_global(g))).collect()
+            } else {
+                Vec::new()
+            };
+            let mut fill = |site: &mut CallSite| match site {
+                CallSite::Call(callee, args) | CallSite::Closure(callee, args) => {
+                    **args = captures[*callee as usize]
+                        .iter()
+                        .map(|c| match c.source {
+                            CaptureSource::Global(g) => slot_of_global(g),
+                            CaptureSource::Parent(s) => s,
+                        })
+                        .collect();
+                }
+                CallSite::Value(e) if !globals.is_empty() && !matches!(e.kind, ExprKind::Lit(_)) => {
+                    let span = e.span;
+                    let value = std::mem::replace(*e, lit(Lit::Unit, span));
+                    **e = Expr {
+                        kind: ExprKind::Bind {
+                            value: Box::new(value),
+                            globals: globals.clone(),
+                        },
+                        span,
+                    };
+                }
+                CallSite::Value(_) => {}
             };
             visit_block(&mut func.body, &mut fill);
         }
@@ -3164,9 +3214,37 @@ impl<'a> Lowerer<'a> {
     }
 }
 
+/// Which globals each function needs, given what it needs itself: those of
+/// the functions it calls and the lambdas it creates, too, and with `refs`,
+/// those of the named functions it refers to as values.
+fn propagate(funcs: &[FnBuild], needed: &mut [BTreeSet<SlotId>], refs: bool) {
+    loop {
+        let mut changed = false;
+        for f in 1..funcs.len() {
+            let mut acc = needed[f].clone();
+            let refs = funcs[f].refs.iter().filter(|_| refs);
+            for &g in funcs[f].calls.iter().chain(refs) {
+                acc.extend(needed[g as usize].iter().copied());
+            }
+            for &c in &funcs[f].children {
+                acc.extend(needed[c as usize].iter().copied());
+            }
+            if acc != needed[f] {
+                needed[f] = acc;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
 enum CallSite<'a> {
     Call(FnId, &'a mut Vec<SlotId>),
     Closure(FnId, &'a mut Vec<SlotId>),
+    /// A value that's called, or given to a built-in that may call it.
+    Value(&'a mut Expr),
 }
 
 fn visit_block(block: &mut Block, f: &mut impl FnMut(&mut CallSite)) {
@@ -3191,11 +3269,19 @@ fn visit_stmt(stmt: &mut Stmt, f: &mut impl FnMut(&mut CallSite)) {
         }
         StmtKind::Call { dest, callee, args } => {
             visit_place(dest, f);
+            let by_value = matches!(callee, Callee::Value(..));
             match callee {
                 Callee::Fn { func, capture_args } => f(&mut CallSite::Call(*func, capture_args)),
-                Callee::Value(e, _) => visit_expr(e, f),
+                Callee::Value(e, _) => {
+                    f(&mut CallSite::Value(e));
+                    visit_expr(e, f);
+                }
             }
             for a in args {
+                // A function value may be a built-in like `map`.
+                if by_value {
+                    f(&mut CallSite::Value(a));
+                }
                 visit_expr(a, f);
             }
         }
@@ -3263,13 +3349,19 @@ fn visit_expr(expr: &mut Expr, f: &mut impl FnMut(&mut CallSite)) {
             visit_expr(base, f);
             fields.iter_mut().for_each(|(_, e)| visit_expr(e, f));
         }
-        ExprKind::Builtin { args, named, .. } => {
-            args.iter_mut().for_each(|e| visit_expr(e, f));
-            named.iter_mut().for_each(|(_, e)| visit_expr(e, f));
+        ExprKind::Builtin { func, args, named } => {
+            let calls = func.calls_functions();
+            for e in args.iter_mut().chain(named.iter_mut().map(|(_, e)| e)) {
+                if calls {
+                    f(&mut CallSite::Value(e));
+                }
+                visit_expr(e, f);
+            }
         }
         ExprKind::Closure { func, capture_args } | ExprKind::Simulate { func, capture_args } => {
             f(&mut CallSite::Closure(*func, capture_args))
         }
+        ExprKind::Bind { value, .. } => visit_expr(value, f),
         ExprKind::Interp(parts) => parts.iter_mut().for_each(|p| {
             if let InterpPart::Expr(e) = p {
                 visit_expr(e, f)

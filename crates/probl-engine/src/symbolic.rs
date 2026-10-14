@@ -193,7 +193,7 @@ fn check_expr(e: &Expr) -> Result<(), Fallback> {
             Err(unsupported("a collection", e.span))
         }
         ExprKind::Field(..) | ExprKind::Index(..) => Err(unsupported("a field or an index", e.span)),
-        ExprKind::Closure { .. } => Err(unsupported("a function value", e.span)),
+        ExprKind::Closure { .. } | ExprKind::Bind { .. } => Err(unsupported("a function value", e.span)),
         ExprKind::Simulate { .. } => Err(unsupported("`simulate`", e.span)),
         ExprKind::Interp(_) => Err(unsupported("string interpolation", e.span)),
         ExprKind::Input(_) => Err(unsupported("data", e.span)),

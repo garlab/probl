@@ -274,6 +274,10 @@ impl Printer<'_> {
                 let caps: Vec<String> = capture_args.iter().map(|&c| self.slot(c)).collect();
                 format!("simulate fn#{func} [{}]", caps.join(", "))
             }
+            ExprKind::Bind { value, globals } => {
+                let globals: Vec<String> = globals.iter().map(|&(_, s)| self.slot(s)).collect();
+                format!("bind({}, [{}])", self.expr(value), globals.join(", "))
+            }
             ExprKind::Interp(parts) => {
                 let parts: Vec<String> = parts
                     .iter()

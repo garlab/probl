@@ -1683,9 +1683,7 @@ impl<'p> Engine<'p> {
                     each!(self, at, world w, evaluated);
                     let func = match callee {
                         Callee::Fn { func, capture_args } => {
-                            for &s in capture_args {
-                                key.push(self.slot(f, s, &w, span)?);
-                            }
+                            self.capture(&mut key, f, *func, capture_args, &w, span, false)?;
                             *func
                         }
                         Callee::Value(e, named) => match each!(self, at, world w, self.eval(f, e, &w)) {
@@ -3513,6 +3511,32 @@ impl<'p> Engine<'p> {
         Ok(v)
     }
 
+    /// Add the values `callee` captures to `out`, from the slots of `f` that
+    /// hold them. A global it holds only for the function values it may call
+    /// can have no value yet, as can any, with `lenient`: that's an error
+    /// only where the global is read.
+    #[allow(clippy::too_many_arguments)]
+    fn capture(
+        &mut self,
+        out: &mut Vec<Value>,
+        f: FnId,
+        callee: FnId,
+        args: &[SlotId],
+        w: &World,
+        span: Span,
+        lenient: bool,
+    ) -> Result<()> {
+        let prog = self.prog;
+        let captures = &prog.functions[callee as usize].captures;
+        for (&s, capture) in args.iter().zip(captures) {
+            out.push(match &w.slots[s as usize] {
+                Value::Dead if lenient || capture.for_values => Value::Dead,
+                _ => self.slot(f, s, w, span)?,
+            });
+        }
+        Ok(())
+    }
+
     fn slot(&mut self, f: FnId, s: SlotId, w: &World, span: Span) -> Result<Value> {
         match &w.slots[s as usize] {
             Value::Dead => Err(self.no_value(f, s, span)),
@@ -3759,18 +3783,48 @@ impl<'p> Engine<'p> {
                 self.check_updated_records(value, span)
             }
             ExprKind::Builtin { func, args, named } => self.builtin(f, *func, args, named, w, span),
-            ExprKind::Closure { func, capture_args } => Ok(Value::Closure(Arc::new(Closure {
-                func: *func,
-                captured: capture_args
-                    .iter()
-                    .map(|&s| self.slot(f, s, w, span))
-                    .collect::<Result<_>>()?,
-            }))),
+            ExprKind::Closure { func, capture_args } => {
+                // A named function reads its globals when it's called, so a
+                // reference to it doesn't need them yet.
+                let named = self.prog.functions[*func as usize].kind == FnKind::Named;
+                let mut captured = Vec::with_capacity(capture_args.len());
+                self.capture(&mut captured, f, *func, capture_args, w, span, named)?;
+                Ok(Value::Closure(Arc::new(Closure { func: *func, captured, named })))
+            }
+            ExprKind::Bind { value, globals } => {
+                let v = self.eval(f, value, w)?;
+                let Value::Closure(c) = &v else {
+                    return Ok(v);
+                };
+                if !c.named {
+                    return Ok(v);
+                }
+                // A named function reads its globals now, as a call by name
+                // does.
+                let prog = self.prog;
+                let captures = &prog.functions[c.func as usize].captures;
+                let mut captured = Vec::with_capacity(captures.len());
+                for capture in captures {
+                    let CaptureSource::Global(g) = capture.source else {
+                        return Err(RuntimeError::new(span, "internal error: a named function captures a local"));
+                    };
+                    let Ok(i) = globals.binary_search_by_key(&g, |&(g, _)| g) else {
+                        return Err(RuntimeError::new(
+                            span,
+                            "internal error: a function value's globals aren't available here",
+                        ));
+                    };
+                    captured.push(self.slot(f, globals[i].1, w, span)?);
+                }
+                Ok(Value::Closure(Arc::new(Closure {
+                    func: c.func,
+                    captured,
+                    named: true,
+                })))
+            }
             ExprKind::Simulate { func, capture_args } => {
-                let key = capture_args
-                    .iter()
-                    .map(|&s| self.slot(f, s, w, span))
-                    .collect::<Result<_>>()?;
+                let mut key = Vec::with_capacity(capture_args.len());
+                self.capture(&mut key, f, *func, capture_args, w, span, false)?;
                 self.simulate(*func, key, span)
             }
             ExprKind::Interp(parts) => {

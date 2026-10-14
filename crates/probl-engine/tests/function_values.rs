@@ -19,7 +19,7 @@ fn facts(mode: Mode, src: &str) {
 }
 
 #[test]
-fn named_functions_capture_values_and_preserve_declared_boundaries() {
+fn named_function_values_read_globals_when_called_and_preserve_declared_boundaries() {
     for mode in MODES {
         facts(
             mode,
@@ -28,8 +28,8 @@ fn named_functions_capture_values_and_preserve_declared_boundaries() {
             fn scale(x:int): int {x*factor}
             let f=scale
             factor=3
-            report f(4.0)==8 and scale(4)==12
-            report [1,2].map(f)==[2,4]
+            report f(4.0)==12 and scale(4)==12
+            report [1,2].map(f)==[3,6]
             fn compare(a,b) {a-b}
             report [3,1,2].sort(compare)==[1,2,3]
             report [3,1,2].maximum(compare)==3
@@ -43,6 +43,64 @@ fn named_functions_capture_values_and_preserve_declared_boundaries() {
         "#,
         );
     }
+}
+
+/// docs/semantics.md, section 6: a named function reads the variables it
+/// uses when it's called, whether by name or as a value. A lambda keeps
+/// them from when it was made, including for the functions it calls.
+#[test]
+fn named_function_values_read_globals_when_called() {
+    for mode in MODES {
+        facts(
+            mode,
+            r#"
+            var rate = 1
+            fn fee(x) { x * rate }
+            let f = fee
+            fn apply(g, x) { g(x) }
+            let m = map
+            rate = 2
+            report f(10) == 20 and f == fee
+            report apply(f, 10) == 20 and m([10], f) == [20] and [f][0](10) == 20
+            report [10].map(f) == [20] and [3, 1, 2].sort((a, b) -> f(a) - f(b)) == [1, 2, 3]
+            let keeps = x -> f(x)
+            let calls = x -> fee(x)
+            rate = 3
+            report keeps(10) == 20 and calls(10) == 20 and f(10) == 30
+            report pick()(10) == 30
+            fn pick() { fee }
+            let d ~ d2
+            fn plus_d(y) { y + d }
+            let p = plus_d
+            report p(10) == 10 + d
+        "#,
+        );
+    }
+    // A function that calls function values holds the globals of every named
+    // function used as one, but only a call that reads a global needs it.
+    assert_eq!(
+        exec_raw(
+            "fn apply(g) { g() }\nfn one() { 1 }\nreport apply(one)\nfn late() { later }\nlet l = late\nlet later = 2\nreport apply(l)",
+            &Options::default()
+        )
+        .unwrap()
+        .reports
+        .iter()
+        .map(|r| r.distribution())
+        .collect::<Vec<_>>(),
+        vec![vec![(Value::Int(1.into()), 1.0)], vec![(Value::Int(2.into()), 1.0)]]
+    );
+    // Nor does referring to one: only calling it reads its globals.
+    facts(
+        Mode::Enumerate,
+        "fn late() { later }\nfn pick() { late }\nlet g = pick()\nlet later = 2\nreport g() == 2 and pick()() == 2",
+    );
+    let e = exec_raw(
+        "fn apply(g) { g() }\nfn late() { later }\nlet l = late\nreport apply(l)\nlet later = 2",
+        &Options::default(),
+    )
+    .unwrap_err();
+    assert!(e.message.contains("`later` has no value here"), "{e:?}");
 }
 
 #[test]

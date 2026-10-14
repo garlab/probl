@@ -282,6 +282,10 @@ fn expr_reads(e: &Expr, f: &mut impl FnMut(SlotId), include_type_reads: bool) {
         ExprKind::Closure { capture_args, .. } | ExprKind::Simulate { capture_args, .. } => {
             capture_args.iter().for_each(|&s| f(s))
         }
+        ExprKind::Bind { value, globals } => {
+            recurse(value, f);
+            globals.iter().for_each(|&(_, s)| f(s));
+        }
         ExprKind::Interp(parts) => parts.iter().for_each(|p| {
             if let InterpPart::Expr(x) = p {
                 recurse(x, f)

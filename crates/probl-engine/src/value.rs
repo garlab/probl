@@ -291,10 +291,46 @@ pub struct EnumValue {
     pub name: Arc<str>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Debug)]
 pub struct Closure {
     pub func: u32,
     pub captured: Vec<Value>,
+    /// A named function, rather than a lambda. It reads its globals when
+    /// it's called, so the values it holds don't make it a different
+    /// function: `f == fee` after `let f = fee`, whatever has changed since.
+    pub named: bool,
+}
+
+impl Closure {
+    fn identity(&self) -> (u32, &[Value]) {
+        (self.func, if self.named { &[] } else { &self.captured })
+    }
+}
+
+impl PartialEq for Closure {
+    fn eq(&self, other: &Closure) -> bool {
+        self.identity() == other.identity()
+    }
+}
+
+impl Eq for Closure {}
+
+impl Hash for Closure {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.identity().hash(state)
+    }
+}
+
+impl PartialOrd for Closure {
+    fn partial_cmp(&self, other: &Closure) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Closure {
+    fn cmp(&self, other: &Closure) -> Ordering {
+        self.identity().cmp(&other.identity())
+    }
 }
 
 impl Value {

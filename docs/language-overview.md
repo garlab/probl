@@ -388,7 +388,7 @@ Both are values: they can be stored, passed and returned. Called directly, both 
 | Usable | Anywhere in the file, even above its declaration | After it's made, like any other value |
 | Calls itself | Yes, directly or through other functions | No |
 | Types | On its parameters and its result, all checked | None |
-| Variables it reads | Their values when it's called by name | Their values when it was made |
+| Variables it reads | Their values when it's called | Their values when it was made |
 | In the playground | Its parameters show as you type a call | Nothing shows |
 
 Recursion needs `fn`. In `let f = n -> f(n - 1)`, `f` doesn't exist yet when the lambda is made, so it's an error. Declared functions can call themselves and each other, in any order:
@@ -400,17 +400,17 @@ fn is_even(n: int): bool { if n == 0 { true } else { is_odd(n - 1) } }
 fn is_odd(n: int): bool { if n == 0 { false } else { is_even(n - 1) } }
 ```
 
-A lambda keeps the values it reads from when it was made. Calling a named function by name reads them afresh, but referring to it as a value, as in `let f = fee`, keeps them as a lambda does:
+A lambda keeps the values it reads from when it was made. A named function reads them when it's called, whether by name or as a value, as in `let f = fee`:
 
 ```probl
 var rate = 10%
 fn fee(amount: float): float { amount * rate }
 let charge = amount -> amount * rate       # keeps rate = 10%
-let fee_then = fee                         # so does a reference to fee
+let f = fee                                # reads rate when it's called
 rate = 20%
 report fee(100)                            # 20.0
 report charge(100)                         # 10.0
-report fee_then(100)                       # 10.0
+report f(100)                              # 20.0
 ```
 
 ### Types
