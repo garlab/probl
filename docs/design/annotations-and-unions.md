@@ -4,19 +4,20 @@
 
 ## Recommendation
 
-1. **A declared type is the type the value has.** After `let z: float = 1`, `typeof z` is `"float"`. Until the program converts it explicitly, a value given a declared type reports that type, or one of a union's types.
+1. **A declared type is the type the value has.** After `let z: float = 1`, `typeof z` is `"float"`. Until the program converts it explicitly, a value given a declared type reports that type, or one of a union's types. For a collection, it reports a type the declaration allows (item 5).
 2. **Close numeric types convert automatically. The type changes, the number doesn't.** An int becomes a float when a float holds the same number, and a probability becomes a float. A number in [0, 1] becomes a probability, as it already does in `if 50%` and `bernoulli(rate)`. Nothing becomes an int automatically. Text, booleans, dates and collections never convert to another kind.
 3. **Literals follow the same rule**, and are checked during compilation. `let z: float = 1` makes a float, and `let y: int = 1.0` is an error before the program runs.
 4. **A collection literal takes its kind from the declared type.** `[1, 2]` is a list unless a set or a bag is declared. An existing collection never changes kind automatically: `set(xs)` converts it.
-5. **Unions, `A or B`.** A value that has one of the types is kept. Otherwise it converts to `float` if it can, then to `prob`. Each step has at most one candidate, so the order of the types doesn't matter.
-6. **Explicit conversions** cover what doesn't happen automatically: `int(x)`, `float(x)` and `prob(x)`, and `set(xs)`, `list(xs)` and `bag(xs)`.
+5. **A collection's `typeof` describes its elements. A declaration limits the variable, not the value.** This is today's rule, kept. After `var c = [1]`, `c.push("bar")` works, and `typeof c` becomes `"list[int or str]"`. For `var b: list[int]`, the same push is an error. An empty list reports `"list[unknown]"`, which fits any declared list.
+6. **Unions, `A or B`.** A value that has one of the types is kept. Otherwise it converts to `float` if it can, then to `prob`. Each step has at most one candidate, so the order of the types doesn't matter. `typeof` uses unions to describe mixed contents, in place of `any`.
+7. **Explicit conversions** cover what doesn't happen automatically: `int(x)`, `float(x)` and `prob(x)`, and `set(xs)`, `list(xs)` and `bag(xs)`.
 
-Two things break. A float no longer becomes an int where an int is declared: `let n: int = 4 / 2` is an error. And an int becomes a float where a float is declared, so `typeof` says `"float"` and it prints as `1.0`. Measured, the first happens only in a playground test program written to test it. The second happens in one documentation example, whose output doesn't change ([measurement](#what-would-break)).
+Two things break. A float no longer becomes an int where an int is declared: `let n: int = 4 / 2` is an error. And an int becomes a float where a float is declared, so `typeof` says `"float"` and it prints as `1.0`. Measured, the first happens only in a playground test program written to test it. The second happens in one documentation example, whose output doesn't change ([measurement](#what-would-break)). `typeof` also describes mixed contents differently: `"list[int or str]"` rather than `"list[any]"`.
 
 ## Requirements
 
 - **`typeof` runs with the program.** Types can differ between worlds, and a later version may let them depend on what a program reads. For example, if probl could read files, `let x = if read("x.txt").length mod 2 == 1 { "A" } else { -1 }`. So the compiler can't answer `typeof`.
-- **`typeof` matches the annotation**, unless the program converts the value explicitly in between. After `let z: float = 1`, `typeof z` is `"float"`. Today it's `"int"`.
+- **`typeof` matches the annotation**, unless the program converts the value explicitly in between. After `let z: float = 1`, `typeof z` is `"float"`. Today it's `"int"`. A collection's `typeof` describes its elements, so it names a type the declaration allows: an empty `list[int]` reports `"list[unknown]"`.
 - **A union's order doesn't matter**, and no value fits a union in two ways.
 - **No automatic conversion parses text.**
 
@@ -191,9 +192,60 @@ A collection or a record fits a type at the latest step that any of its parts ne
 
 `typeof` describes a value, not its declaration, so it never names a union: `typeof fifty()` is `"float"`.
 
-### What `typeof` reports
+### Collections and their element types
 
-For a number, a string or another single value, `typeof` reports the declared type, or one of a union's types. For a collection or a distribution, it describes the contents, so it can be narrower than the declared type. An empty `list[int]` reports `"list[unknown]"` today, and `[1]` declared as `list[int or str]` would report `"list[int]"`. The guarantee there is that `typeof` names a type the declaration allows. To name the declared type exactly, collections would have to store their element types when the program runs ([open question](#open-questions)).
+A collection has no element type of its own. `typeof` describes the elements it holds, and a declaration limits the variable. Every change to a declared variable is checked, including a `push`, and a change inside one of its fields or elements. That's today's rule, and it stays:
+
+```probl
+# Proposed: today, `a` and `c` end as "list[any]".
+var a = []                # list[unknown]
+a.push(1)                 # list[int]
+a.push("foo")             # list[int or str]
+
+var b: list[int] = []     # list[unknown]
+b.push("bar")             # error
+
+var c = [1]               # list[int]
+c.push("bar")             # list[int or str]
+```
+
+```
+Error: `b` should be a list[int], but it's a list[int or str]
+```
+
+Today, that error ends with "but it's a list". A failed declaration should describe the value as `typeof` does.
+
+This works because probl's lists are values. After `var d = b`, `d.push(2)` leaves `b` unchanged, and a parameter can't be pushed to. So a list changes only through a variable, and if that variable is declared, every change is checked. Languages that keep an element type in the list itself, like Swift, C# and Julia, need it because two names can share one mutable list.
+
+A declaration also stops a variable from changing kind. Pushing to a list already needs `var`, as in Swift, and a `var` can be given any value: after `var lst = [1]`, `lst = 5` is allowed. `var lst: list[int] = [1]` rules out both `lst = 5` and `lst.push("bar")`.
+
+With unions, `typeof` describes mixed contents exactly, in place of `any`:
+
+| Value | `typeof` today | Proposed |
+|---|---|---|
+| `[1, "a"]` | `"list[any]"` | `"list[int or str]"` |
+| `[1, 2.0]` | `"list[any]"` | `"list[int or float]"` |
+| `[[], [1]]` | `"list[any]"` | `"list[list[int]]"` |
+| `[[1], ["a"]]` | `"list[any]"` | `"list[list[int] or list[str]]"` |
+| `one_of([1, "x"])` | `"dist[any]"` | `"dist[int or str]"` |
+| `[]` | `"list[unknown]"` | Unchanged |
+
+`unknown` merges into the type beside it: an empty list is also a `list[int]`, so `[[], [1]]` is a `list[list[int]]`. A union's types are listed in a fixed order, so the same contents always give the same string. Five lines of the engine's type tests compare against `any`, and the reference semantics and the language overview describe it.
+
+For a single value, `typeof` reports the declared type, or one of a union's types. For a collection or a distribution, it names a type the declaration allows, which can be narrower than the declaration. An empty `list[int]` reports `"list[unknown]"`, and `[1]` declared as `list[int or str]` reports `"list[int]"`.
+
+Other languages split the same way:
+
+| Language | A list's element type when the program runs | `[1]`, then push `"bar"` |
+|---|---|---|
+| JavaScript, Python | None: `typeof []` is `"object"`, and `type([1])` is `list` | Works. Python's checkers reject it before the program runs |
+| TypeScript | None, since types are erased. `let a = []` widens as elements are pushed | An error before the program runs |
+| Java, Kotlin | None, since types are erased | An error before the program runs |
+| Swift, C# | Fixed: `Array<Int>`, `List<int>` | An error |
+| Julia | Fixed: `Vector{Int64}`, and `[]` is a `Vector{Any}` | An error. Pushing `2.0` converts it to `2` |
+| R, NumPy | One type for the whole vector | Converts every element: `c(1, "bar")` is `"1" "bar"` |
+
+Probl is in the first group, with a `typeof` that reads the elements.
 
 ### Explicit conversions
 
@@ -225,6 +277,7 @@ Today a built-in's integer arguments accept a whole float, like `xs.get(1.0)` an
 | `fn f(x: float)`, with `f(2)` | `x` is `2.0` |
 | `let d: dist[float] = d6` gives a `dist[int]` | A `dist[float]` |
 | `let b: bag[int] = [1, 1, 2]` is an error | A bag |
+| `typeof [1, "a"]` is `"list[any]"` | `"list[int or str]"` |
 | `xs.get(1.0)`, `factorial(5.0)` | Errors, if built-ins follow |
 | `let p: prob = 33%`, `let p: prob = rate`, `f(30%)` for `p: prob` | Unchanged |
 | `let x: float = p`, for a prob `p` | Unchanged: a float |
@@ -259,15 +312,36 @@ This is today's rule, and Julia's. It fits "the type changes, the number doesn't
 
 `prob or float` would give a prob, and `float or prob` a float. Order shouldn't matter.
 
+### Element types stored in collections
+
+As in Swift, C# and Julia, a list would keep its element type, and `typeof b` would be `"list[int]"` even when empty. But `var c = [1]; c.push("bar")` would fail unless `c` is declared `list[int or str]`. `var a = []` would stay a `list[any]` after `a.push(1)`, which tells less than today. The type would follow copies: after `var d = b`, `d.push("x")` would fail, though `d` has no declaration. And every built-in that returns a collection, such as `map` or `filter`, would have to choose an element type. Probl's lists are values, so a variable's declaration already gives the same protection.
+
+### Element types that widen
+
+This is TypeScript's empty array, kept when the program runs: a list without a declaration would widen its type as elements are added. For such a list, that's today's rule with a memory: after the string is popped, it would still say `int or str`. The only gain is that a declared empty list reports its declared type, and that type would then follow copies, as above.
+
+### No element types in `typeof`
+
+As in JavaScript and Python, `typeof [1]` would be `"list"`, which always matches the declaration's kind. But probl uses the detail: the language overview shows `typeof d6` as `"dist[int]"`, and `typeof` across worlds shows it, as in `list[int] 50.00% · list[str] 50.00%`. 19 lines in tests and documentation compare element types.
+
 ### Collections that change kind
 
 `let s: set[int] = xs` would convert a list. That changes the value, and when `xs` has duplicates in only some worlds, they'd be dropped there without any sign.
 
+## Later: families of types
+
+A function can accept any list of ints, `fn total(xs: list[int])`, or anything at all, `fn total(xs)`. It can't accept "any collection of ints". The same goes for "any number" and "any record with an `x` field". This isn't needed now, but unions and conversions should leave room for it.
+
+- **Unions.** `list[int] or set[int] or bag[int]` works as soon as unions do. It's long, and a shorthand like `(list or set or bag)[int]` would apply the element type to each kind.
+- **Aliases.** `type Ints = list[int] or set[int] or bag[int]` would name a union without a new concept. A family over any element type needs a type parameter: `type collection[T] = list[T] or set[T] or bag[T]`. `type` already declares records and enums, so an alias would be its third use.
+- **Built-in families,** such as `collection[T]` and `number`, for `int or float`. With the conversions above, `x: float` already accepts any number by converting it. `number` would be for a function that keeps an int an int.
+- **Record shapes.** Today an anonymous record type accepts only a record with exactly its fields: `let p: {x: int} = {x: 1, y: 2}` is an error. A shape type, written something like `{x: int, ..}`, would accept any record with at least those fields, named or not, and keep the others.
+
+In a statically checked language, a trait or an interface also says which operations a function may use on the value. Probl checks types when the program runs: using an operation the value doesn't have is an error where it runs, as for a parameter with no declared type. So a family needs only a membership test, and a named union can express what a trait would. Conversions follow the union steps: `collection[float]`, given a list of ints, converts the elements and keeps the list.
+
 ## Open questions
 
 - **Bare collection types.** `let s: set = [1, 2]` and `let xs: list = …` are errors today, since `list` needs its element type. Allowing a bare name to check only the kind seems reasonable. The elements would keep their own types.
-- **Element types when the program runs.** If a collection stored its declared element type, `typeof` could name it exactly, even for an empty collection. That's a larger change, to every collection.
-- **Containers in `typeof`.** `typeof [1, "a"]` is `"list[any]"`, and `any` isn't a type that can be written. With unions, it could be `"list[int or str]"`, and every `typeof` result would also be a valid annotation. That changes results that programs may compare against.
 - **Set operations** beyond size, membership and iteration: union, intersection and difference, and whether they're operators.
 
 ## Implementation order and validation
@@ -277,6 +351,7 @@ This is today's rule, and Julia's. It fits "the type changes, the number doesn't
 3. **Built-in integer arguments**, if adopted, as a separate breaking change.
 4. **Collection literals as bags.** In the engine, evaluate a function value before its arguments, so that literal arguments are built against its parameter types.
 5. **Sets:** `set[T]`, `set(xs)` and `list(xs)`.
-6. **Unions:** the grammar (`type { "or" type }`), a union in the compiler's types, the conversion steps, and the check for ambiguous record unions.
+6. **Unions:** the grammar (`type { "or" type }`), a union in the compiler's types, the conversion steps, and the check for ambiguous record unions. `typeof` describes mixed contents with unions.
+7. **Errors that describe the value.** A failed declaration describes the value as `typeof` does: "but it's a list[any]", until unions exist. This doesn't depend on the rest, and can be done first.
 
-Steps 1 to 3 break programs. The rest only add.
+Steps 1 to 3 break programs, and step 6 changes how `typeof` describes mixed contents. The rest only add.
