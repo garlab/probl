@@ -63,7 +63,10 @@ fn worlds_change_their_own_copies() {
     assert_eq!(
         distribution(src),
         vec![
-            (Value::list(vec![Value::Int(1.into()), Value::Int(2.into()), Value::Int(3.into())]), 0.5),
+            (
+                Value::list(vec![Value::Int(1.into()), Value::Int(2.into()), Value::Int(3.into())]),
+                0.5
+            ),
             (Value::list(vec![Value::Int(1.into()), Value::Int(3.into())]), 0.5),
         ]
     );
@@ -116,12 +119,30 @@ fn declared_types_check_what_goes_in() {
         );
     }
     for (src, message) in [
-        ("var xs: list[int] = []\nxs.push(\"a\")", "`xs` should be a list[int], but it's a list"),
-        ("var xs: list[list[int]] = [[]]\nlet h = 1.5\nxs[0].push(h)", "needs an int (or an exactly integral finite float), found the float 1.5"),
-        ("var xs: list[list[int]] = [[]]\nxs[0].push(\"a\")", "`xs` should be a list[list[int]], but it's a list"),
-        ("var m: map[int, str] = [2: \"a\"]\nm.insert(2.0, \"b\")", "map key collision during type conversion"),
-        ("var ps: list[prob] = []\nlet h = 1.5\nps.push(h)", "prob needs a finite number between 0 and 1"),
-        ("type Hand = { cards: list[int] }\nvar h = Hand { cards: [] }\nh.cards.push(\"a\")", "should be"),
+        (
+            "var xs: list[int] = []\nxs.push(\"a\")",
+            "`xs` should be a list[int], but it's a list",
+        ),
+        (
+            "var xs: list[list[int]] = [[]]\nlet h = 1.5\nxs[0].push(h)",
+            "needs an int (or an exactly integral finite float), found the float 1.5",
+        ),
+        (
+            "var xs: list[list[int]] = [[]]\nxs[0].push(\"a\")",
+            "`xs` should be a list[list[int]], but it's a list",
+        ),
+        (
+            "var m: map[int, str] = [2: \"a\"]\nm.insert(2.0, \"b\")",
+            "map key collision during type conversion",
+        ),
+        (
+            "var ps: list[prob] = []\nlet h = 1.5\nps.push(h)",
+            "prob needs a finite number between 0 and 1",
+        ),
+        (
+            "type Hand = { cards: list[int] }\nvar h = Hand { cards: [] }\nh.cards.push(\"a\")",
+            "should be",
+        ),
     ] {
         let e = exec_raw(src, &Options::default()).unwrap_err();
         assert_eq!(e.kind, ErrorKind::Language, "{src}: {e:?}");

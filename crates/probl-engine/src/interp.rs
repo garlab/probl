@@ -3574,7 +3574,11 @@ impl<'p> Engine<'p> {
         span: Span,
     ) -> Result<bool> {
         let plain = |v: &Value| {
-            !v.is_uncertain() && !matches!(v, Value::Analytic(_) | Value::Event(_) | Value::Delayed(_) | Value::Dead)
+            !v.is_uncertain()
+                && !matches!(
+                    v,
+                    Value::Analytic(_) | Value::Event(_) | Value::Delayed(_) | Value::Dead
+                )
         };
         let len = match (func, &values[0]) {
             (Builtin::Push | Builtin::Insert | Builtin::Remove | Builtin::DropLast, Value::List(items)) => items.len(),
@@ -3591,7 +3595,9 @@ impl<'p> Engine<'p> {
             Builtin::Push | Builtin::Insert => {
                 self.budget.collection(len as u128 + 1).map_err(at)?;
                 match (func, list) {
-                    (Builtin::Insert, true) => Some(ops::as_index(&values[1], len as u128 + 1, &mut self.budget).map_err(at)?),
+                    (Builtin::Insert, true) => {
+                        Some(ops::as_index(&values[1], len as u128 + 1, &mut self.budget).map_err(at)?)
+                    }
                     _ => None,
                 }
             }
@@ -3632,10 +3638,13 @@ impl<'p> Engine<'p> {
         values[0] = Value::Unit;
         let target = place_mut(&mut w.slots[place.slot as usize], &keys, &mut self.budget).map_err(at)?;
         match (func, target) {
-            (Builtin::Push, Value::List(items)) => Arc::make_mut(items).push(std::mem::replace(&mut values[1], Value::Unit)),
-            (Builtin::Insert, Value::List(items)) => {
-                Arc::make_mut(items).insert(index.unwrap_or_default() as usize, std::mem::replace(&mut values[2], Value::Unit))
+            (Builtin::Push, Value::List(items)) => {
+                Arc::make_mut(items).push(std::mem::replace(&mut values[1], Value::Unit))
             }
+            (Builtin::Insert, Value::List(items)) => Arc::make_mut(items).insert(
+                index.unwrap_or_default() as usize,
+                std::mem::replace(&mut values[2], Value::Unit),
+            ),
             (Builtin::Remove, Value::List(items)) => {
                 Arc::make_mut(items).remove(index.unwrap_or_default() as usize);
             }
@@ -3649,7 +3658,12 @@ impl<'p> Engine<'p> {
             (Builtin::Remove, Value::Map(m)) => {
                 Arc::make_mut(m).remove(&values[1]);
             }
-            _ => return Err(RuntimeError::new(span, "internal error: an update found another collection")),
+            _ => {
+                return Err(RuntimeError::new(
+                    span,
+                    "internal error: an update found another collection",
+                ));
+            }
         }
         Ok(true)
     }
@@ -3947,7 +3961,11 @@ impl<'p> Engine<'p> {
                 let named = self.prog.functions[*func as usize].kind == FnKind::Named;
                 let mut captured = Vec::with_capacity(capture_args.len());
                 self.capture(&mut captured, f, *func, capture_args, w, span, named)?;
-                Ok(Value::Closure(Arc::new(Closure { func: *func, captured, named })))
+                Ok(Value::Closure(Arc::new(Closure {
+                    func: *func,
+                    captured,
+                    named,
+                })))
             }
             ExprKind::Bind { value, globals } => {
                 let v = self.eval(f, value, w)?;
@@ -3964,7 +3982,10 @@ impl<'p> Engine<'p> {
                 let mut captured = Vec::with_capacity(captures.len());
                 for capture in captures {
                     let CaptureSource::Global(g) = capture.source else {
-                        return Err(RuntimeError::new(span, "internal error: a named function captures a local"));
+                        return Err(RuntimeError::new(
+                            span,
+                            "internal error: a named function captures a local",
+                        ));
                     };
                     let Ok(i) = globals.binary_search_by_key(&g, |&(g, _)| g) else {
                         return Err(RuntimeError::new(

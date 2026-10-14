@@ -2770,11 +2770,8 @@ impl<'a> Lowerer<'a> {
             .and_then(|b| b.ty);
         let check = declared.map(|ty| UpdateCheck {
             ty,
-            args: matches!(receiver_type, Some(TypeSpec::List(_) | TypeSpec::Map(..))).then(|| {
-                (1..all.len())
-                    .map(|i| types.get(i).cloned().flatten())
-                    .collect()
-            }),
+            args: matches!(receiver_type, Some(TypeSpec::List(_) | TypeSpec::Map(..)))
+                .then(|| (1..all.len()).map(|i| types.get(i).cloned().flatten()).collect()),
         });
         if b == Builtin::Pop {
             let t = self.temp(span);
@@ -3125,11 +3122,7 @@ impl<'a> Lowerer<'a> {
         }
 
         for (f, func) in self.funcs.iter_mut().enumerate() {
-            let for_values = |slot: SlotId| {
-                func.global_slots
-                    .iter()
-                    .any(|(g, &s)| s == slot && !own[f].contains(g))
-            };
+            let for_values = |slot: SlotId| func.global_slots.iter().any(|(g, &s)| s == slot && !own[f].contains(g));
             func.captures = match func.kind {
                 FnKind::Main => Vec::new(),
                 FnKind::Named => func
