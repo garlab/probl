@@ -1,0 +1,129 @@
+# Every night, benchmark main against the commit the last run measured, both
+# built and run on the same runner, alternately (docs/benchmarks.md#nightly).
+# A changed output or world-steps count fails the run. Time and memory are
+# only reported, in the run's summary: shared runners are too noisy for a
+# threshold to fail on.
+name: Nightly benchmarks
+
+on:
+  schedule:
+    # 03:17 UTC: 03:17 in the UK in winter, 04:17 in summer. Off the hour,
+    # when GitHub delays scheduled runs the most.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      base:
+        description: >-
+          Commit or tag to compare main with, rather than the commit the last
+          run measured. Builds before the runner's --time-limit= option cancel
+          snakes_three after 60 s.
+        type: string
+        default: ''
+
+# Read the repository, and the earlier runs of this workflow.
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: nightly-benchmarks
+  cancel-in-progress: false
+
+env:
+  # How benchmarks compare builds: one codegen unit, so that what's inlined
+  # doesn't depend on how the compiler splits the engine.
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
+  CARGO_PROFILE_RELEASE_LTO: fat
+  CARGO_TERM_COLOR: never
+
+jobs:
+  bench:
+    # Pinned, so that one night's machine is like the last.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Choose the commit to compare with
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED: ${{ inputs.base }}
+        run: |
+          head=$(git rev-parse HEAD)
+          if [ -n "$REQUESTED" ]; then
+            base=$(git rev-parse --verify "$REQUESTED^{commit}")
+          else
+            # The run in progress isn't completed, so isn't among these.
+            base=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/bench.yml/runs?branch=main&status=completed&per_page=50" \
+              --jq '[.workflow_runs[] | select(.conclusion == "success" or .conclusion == "failure")][0].head_sha // ""')
+          fi
+          if [ "$base" = "$head" ]; then
+            echo "main is at $(git rev-parse --short "$head"), which the last run measured: nothing to do." >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "commit=$base" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        if: steps.base.outputs.skip != 'true'
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: steps.base.outputs.skip != 'true'
+        with:
+          shared-key: bench
+      - name: Build main and the commit to compare with
+        if: steps.base.outputs.skip != 'true'
+        env:
+          BASE: ${{ steps.base.outputs.commit }}
+        run: |
+          cargo build --release --locked -p probl-bench
+          cp target/release/probl-bench "$RUNNER_TEMP/bench-main"
+          if [ -n "$BASE" ]; then
+            # Each build runs the models of its own commit.
+            git worktree add --detach "$RUNNER_TEMP/base" "$BASE"
+            cargo build --release --locked -p probl-bench \
+              --manifest-path "$RUNNER_TEMP/base/Cargo.toml" --target-dir "$GITHUB_WORKSPACE/target"
+            cp target/release/probl-bench "$RUNNER_TEMP/bench-base"
+          fi
+      - name: Run the benchmarks, alternating the builds
+        if: steps.base.outputs.skip != 'true'
+        env:
+          BASE: ${{ steps.base.outputs.commit }}
+        run: |
+          mkdir results
+          for _ in 1 2; do
+            if [ -n "$BASE" ]; then
+              "$RUNNER_TEMP/bench-base" --json --time-limit=600 >> results/base.jsonl
+            fi
+            "$RUNNER_TEMP/bench-main" --json --time-limit=600 >> results/main.jsonl
+          done
+      - name: Compare
+        if: steps.base.outputs.skip != 'true'
+        env:
+          BASE: ${{ steps.base.outputs.commit }}
+        run: |
+          main=$(git rev-parse --short HEAD)
+          if [ -z "$BASE" ]; then
+            echo "No earlier run to compare with: main at $main is measured for the next one." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          base=$(git rev-parse --short "$BASE")
+          commits=$(git rev-list --count "$BASE..HEAD")
+          status=0
+          "$RUNNER_TEMP/bench-main" compare results/base.jsonl results/main.jsonl --threshold=10 --warn-costs \
+            > results/compare.md || status=$?
+          {
+            echo "## main at $main against $base ($commits commits)"
+            echo
+            cat results/compare.md
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && steps.base.outputs.skip != 'true'
+        with:
+          name: benchmarks-${{ github.run_id }}
+          path: results/
+          if-no-files-found: ignore
+          retention-days: 90

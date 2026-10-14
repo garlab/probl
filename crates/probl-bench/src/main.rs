@@ -9,8 +9,10 @@
 //! cargo run --release -p probl-bench -- --no-conjugate # no exact updates for conjugate priors
 //! cargo run --release -p probl-bench -- --no-solve   # unroll loops that cycle instead of solving them
 //! cargo run --release -p probl-bench -- --symbolic   # decision diagrams for the models they support (experimental)
+//! cargo run --release -p probl-bench -- --time-limit=300 # cancel a run after 300 s, not 60
 //! cargo run --release -p probl-bench -- --json > after.jsonl    # one JSON record per model
 //! cargo run --release -p probl-bench -- compare before.jsonl after.jsonl
+//! cargo run --release -p probl-bench -- compare before.jsonl after.jsonl --warn-costs
 //! ```
 //!
 //! For each model: the median time of a few runs, the engine's statistics,
@@ -21,9 +23,10 @@
 //!
 //! `compare` checks one build against another, from `--json` records: a
 //! model whose output or work changed, or that got slower or used more
-//! memory than the threshold allows (`--threshold=5`, in percent). A file
-//! can hold several runs of the suite; each model's fastest time and
-//! smallest heap count.
+//! memory than the threshold allows (`--threshold=5`, in percent). With
+//! `--warn-costs`, time and memory are flagged but don't fail it, for
+//! machines too noisy to time on. A file can hold several runs of the
+//! suite; each model's fastest time and smallest heap count.
 
 use probl::__internal::{EngineChecks, Symbolic, diagrams, engine_checks};
 use probl::{Cancel, Data, Date, Limits, LocalFiles, Mode, Options, Outcome, Program};
@@ -93,7 +96,8 @@ static ALLOCATOR: Counting = Counting;
 
 // ── Running models ───────────────────────────────────────────────────────
 
-/// How long one run may take before it's cancelled.
+/// How long one run may take before it's cancelled, unless `--time-limit=`
+/// says otherwise.
 const TIME_LIMIT: Duration = Duration::from_secs(60);
 
 struct Run {
@@ -117,6 +121,8 @@ struct Settings {
     symbolic: bool,
     /// The model's data, read once before the runs.
     data: Option<Data>,
+    /// How long one run may take before it's cancelled.
+    time_limit: Duration,
 }
 
 fn run_once(program: &Program, settings: &Settings, merge: bool, limit: Duration) -> Run {
@@ -187,18 +193,18 @@ fn measure(name: &str, program: &Program, settings: &Settings) -> Measured {
     IN_USE.store(0, Ordering::Relaxed);
     PEAK.store(0, Ordering::Relaxed);
     COUNTING.store(true, Ordering::Relaxed);
-    let counted = run_once(program, settings, true, TIME_LIMIT);
+    let counted = run_once(program, settings, true, settings.time_limit);
     COUNTING.store(false, Ordering::Relaxed);
     let peak_heap = PEAK.load(Ordering::Relaxed);
     // A failed run isn't repeated, and neither is a long one.
     let first = match counted.result {
-        Ok(_) => run_once(program, settings, true, TIME_LIMIT),
+        Ok(_) => run_once(program, settings, true, settings.time_limit),
         Err(_) => counted,
     };
     let mut times = vec![first.time];
     if first.result.is_ok() && first.time < Duration::from_secs(5) && !settings.quick {
         for _ in 0..4 {
-            times.push(run_once(program, settings, true, TIME_LIMIT).time);
+            times.push(run_once(program, settings, true, settings.time_limit).time);
         }
     }
     times.sort();
@@ -419,8 +425,9 @@ fn change(before: f64, after: f64) -> String {
 }
 
 /// Compare two builds' records: exit with failure if a model's output or
-/// work changed, or it got slower or bigger than `threshold` percent.
-fn compare(before: &str, after: &str, threshold: f64) -> std::process::ExitCode {
+/// work changed, or, unless `warn_costs`, it got slower or bigger than
+/// `threshold` percent.
+fn compare(before: &str, after: &str, threshold: f64, warn_costs: bool) -> std::process::ExitCode {
     let (before, after) = (read_records(before), read_records(after));
     let limit = 1.0 + threshold / 100.0;
     println!("| model | time before | after | change | peak heap before | after | change | |");
@@ -443,11 +450,16 @@ fn compare(before: &str, after: &str, threshold: f64) -> std::process::ExitCode 
             flags.push("**work differs**");
         }
         // Small differences are noise, whatever their share.
+        let (slower, bigger) = if warn_costs {
+            ("slower", "more memory")
+        } else {
+            ("**slower**", "**more memory**")
+        };
         if a.seconds > b.seconds * limit && a.seconds - b.seconds > 0.002 {
-            flags.push("**slower**");
+            flags.push(slower);
         }
         if a.peak_heap as f64 > b.peak_heap as f64 * limit && a.peak_heap - b.peak_heap > 64 * 1024 {
-            flags.push("**more memory**");
+            flags.push(bigger);
         }
         problems += flags.iter().filter(|f| f.starts_with("**")).count();
         total_before += b.seconds;
@@ -467,10 +479,15 @@ fn compare(before: &str, after: &str, threshold: f64) -> std::process::ExitCode 
         println!("| {name} | | | | | | | new |");
     }
     println!(
-        "\nTotal time {} → {} ({}); {problems} problem(s) at a {threshold}% threshold.",
+        "\nTotal time {} → {} ({}); {problems} problem(s){} at a {threshold}% threshold.",
         seconds(Duration::from_secs_f64(total_before)),
         seconds(Duration::from_secs_f64(total_after)),
-        change(total_before, total_after)
+        change(total_before, total_after),
+        if warn_costs {
+            ", not counting time and memory,"
+        } else {
+            ""
+        }
     );
     if problems == 0 {
         std::process::ExitCode::SUCCESS
@@ -490,7 +507,8 @@ fn main() -> std::process::ExitCode {
         let [before, after] = files[..] else {
             panic!("compare needs two files: before.jsonl after.jsonl");
         };
-        return compare(before, after, threshold);
+        let warn_costs = args.iter().any(|a| a == "--warn-costs");
+        return compare(before, after, threshold, warn_costs);
     }
     let json = args.iter().any(|a| a == "--json");
     let mut settings = Settings {
@@ -503,6 +521,15 @@ fn main() -> std::process::ExitCode {
         solve: !args.iter().any(|a| a == "--no-solve"),
         symbolic: args.iter().any(|a| a == "--symbolic"),
         data: None,
+        time_limit: args
+            .iter()
+            .find_map(|a| a.strip_prefix("--time-limit="))
+            .map_or(TIME_LIMIT, |t| {
+                Duration::from_secs(
+                    t.parse()
+                        .unwrap_or_else(|_| panic!("--time-limit= needs seconds, not {t:?}")),
+                )
+            }),
     };
     let filter: Vec<String> = args.into_iter().filter(|a| !a.starts_with("--")).collect();
     if !json {
