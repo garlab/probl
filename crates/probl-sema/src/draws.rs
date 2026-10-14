@@ -147,7 +147,7 @@ fn stops(s: &Stmt, slot: SlotId, functions: &[Function], callable_prints: bool) 
 /// `leaves` if it can leave its block early.
 fn visit(s: &Stmt, f: &mut impl FnMut(SlotId), leaves: &mut bool) {
     match &s.kind {
-        StmtKind::Set { place, value } => {
+        StmtKind::Set { place, value } | StmtKind::Update { place, value, .. } => {
             self::place(place, f);
             expr(value, f);
         }

@@ -168,7 +168,7 @@ impl Pass<'_> {
             // `if` that joins its branches, the loop at its next iteration,
             // or the function's return.
             let last = i + 1 == block.stmts.len();
-            if let (StmtKind::Set { place, .. }, false) = (&stmt.kind, last) {
+            if let (StmtKind::Set { place, .. } | StmtKind::Update { place, .. }, false) = (&stmt.kind, last) {
                 let overwritten = before.contains(place.slot) && live.contains(place.slot);
                 let lost = before.iter().filter(|&s| !live.contains(s)).count() + usize::from(overwritten);
                 self.live.narrows[id] = lost > usize::from(live.contains(place.slot));
@@ -181,7 +181,7 @@ impl Pass<'_> {
 
     fn stmt(&mut self, stmt: &Stmt, out: SlotSet, lc: &LoopCtx) -> SlotSet {
         match &stmt.kind {
-            StmtKind::Set { place, value } => {
+            StmtKind::Set { place, value } | StmtKind::Update { place, value, .. } => {
                 let mut live = out;
                 define(place, &mut live);
                 uses(value, &mut live);
@@ -303,7 +303,10 @@ impl Pass<'_> {
 /// The variable a statement assigns, if any.
 fn written(stmt: &Stmt) -> Option<SlotId> {
     match &stmt.kind {
-        StmtKind::Set { place, .. } | StmtKind::Draw { place, .. } | StmtKind::Take { place, .. } => Some(place.slot),
+        StmtKind::Set { place, .. }
+        | StmtKind::Update { place, .. }
+        | StmtKind::Draw { place, .. }
+        | StmtKind::Take { place, .. } => Some(place.slot),
         StmtKind::Call { dest, .. } => Some(dest.slot),
         _ => None,
     }

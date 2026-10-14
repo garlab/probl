@@ -210,7 +210,7 @@ fn each_stmt(b: &Block, f: &mut impl FnMut(&Stmt)) {
 /// read it.
 fn own_reads(s: &Stmt, f: &mut impl FnMut(SlotId)) {
     match &s.kind {
-        StmtKind::Set { place, value } => {
+        StmtKind::Set { place, value } | StmtKind::Update { place, value, .. } => {
             self::place(place, f);
             draws::value_reads(value, f);
         }

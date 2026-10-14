@@ -1,6 +1,6 @@
 # Collection values: updates, equality and sorting
 
-> Draft, 14 October 2026. Describes how the engine stores and changes lists, maps and bags, as measured at commit `35b4dd4`, and proposes fixes. Nothing proposed is implemented. No program's result changes. Only costs do, and counting more work against the work limit can stop a program that finishes today.
+> Draft, 14 October 2026. Describes how the engine stores and changes lists, maps and bags, as measured at commit `35b4dd4`, and proposes fixes. The first two recommendations are implemented ([as built](#as-built)); the others aren't. No program's result changes. Only costs do, and counting more work against the work limit can stop a program that finishes today.
 
 ## Recommendation
 
@@ -117,6 +117,34 @@ Two things could make `==` cheaper without changing any result:
 - **Copy less.** Each pass copies the whole buffer back. Alternating between the two buffers would avoid that.
 
 Neither is urgent without a program that sorts large lists.
+
+## As built
+
+Recommendations 1 and 2 are implemented.
+
+- **Changes in place.** `push`, `pop`, `insert` and `remove` compile to an `Update` statement. It means the assignment they always meant, and every analysis treats it as one. The engine changes a plain list or map in place, copying each level of the path only if something else holds it. Anything else runs as the assignment, as before: a distribution argument, which the method lifts over; a range or a bag; a field of a declared record type; and a key that converts to a map's declared key type, which could meet one already there.
+- **Only what goes in is checked.** On a variable with a declared type, the method's new elements are converted and checked against the element types, with the errors the check of the whole variable gave.
+- **Built-in calls.** Before a built-in ran, the engine searched every collection argument for an analytic outcome, even for the built-ins that handle them themselves. Those no longer search, so `pop`, which reads the last element through a built-in, takes constant time, and `get`, `len` and `slice` no longer pay for the whole list.
+
+Measured on a release build, with loops of n changes:
+
+| Loop | n = 20,000, before | n = 20,000, after | n = 40,000, after |
+|---|---|---|---|
+| `xs.push(i)` | 0.97 s | 0.02 s | 0.02 s |
+| `xs.push(i)`, with `xs` declared `list[int]` | 2.9 s | 0.01 s | 0.02 s |
+| `b[0].push(i)` | 0.97 s | 0.01 s | 0.02 s |
+| `m.insert(i, i)` | 3.5 s | 0.01 s | 0.02 s |
+| `xs.get(0)`, on a 40,000-element list | | | 0.03 s, from 1.56 s |
+
+40,000 pushes followed by 40,000 pops take 0.04 s. The new tests in `crates/probl-engine/tests/updates.rs` pass on the engine before the change too: results are the same, only costs differ.
+
+On the benchmarks, no output or world-steps changed, and the total went from 68.54 s to 69.14 s (+0.9%), mostly `snakes_three`'s 1.2%. `15_service_queue`, which pushes and sorts, is 14% faster and its peak heap 22% smaller. The one model measured more than 5% slower, `benches/diagnosis`, doesn't use these methods, and was 1.1% slower measured again, alternately with the build before.
+
+Left to do:
+
+- A built-in that doesn't handle analytic outcomes still searches its collection arguments for one on every call. That's at most a constant factor for those that go through the collection anyway, but `xs.contains(1)` on a 40,000-element list takes 79 µs even when 1 comes first. A collection could keep whether it holds one, as it keeps its hash.
+- `deck.take()` still copies the bag it draws from.
+- Recommendations 3 to 5.
 
 ## Implementation order and validation
 

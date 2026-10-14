@@ -1553,12 +1553,21 @@ impl<'p> Engine<'p> {
             }
         }
         match &stmt.kind {
-            StmtKind::Set { place, value } => {
+            StmtKind::Set { place, value } | StmtKind::Update { place, value, .. } => {
+                let update = match &stmt.kind {
+                    StmtKind::Update { check, .. } => Some(check.as_ref()),
+                    _ => None,
+                };
                 let mut worlds = worlds;
                 let mut failed = Vec::new();
                 let mut discrete = false;
                 for (i, w) in worlds.iter_mut().enumerate() {
                     let mut saved = self.snapshot(w);
+                    if let Some(check) = update {
+                        let updated = self.update(f, place, value, check, w, span);
+                        each!(self, At::new(f, stmt, w), saved saved, updated, { failed.push(i) });
+                        continue;
+                    }
                     let v = match self.record_place_type(place, w) {
                         Some(ty) => self.eval_expected(f, value, w, &ty),
                         None => self.eval(f, value, w),
@@ -2112,24 +2121,7 @@ impl<'p> Engine<'p> {
                         }
                         self.draw_delayed(w, *slot);
                     }
-                    w.slots[*slot as usize] = self.coerce(w.slots[*slot as usize].clone(), ty, span)?;
-                    let v = &w.slots[*slot as usize];
-                    if !self.conforms(v, ty) {
-                        let name = &self.prog.functions[f as usize].slots[*slot as usize].name;
-                        let what = if name == TEMP {
-                            "the result".to_string()
-                        } else {
-                            format!("`{name}`")
-                        };
-                        return Err(RuntimeError::new(
-                            span,
-                            format!(
-                                "{what} should be {}, but it's {}",
-                                ops::article(&ty.describe(self.prog)),
-                                ops::article(&v.kind())
-                            ),
-                        ));
-                    }
+                    self.check_slot(f, *slot, ty, w, span)?;
                 }
                 Ok(Flow::next(worlds))
             }
@@ -3496,6 +3488,172 @@ impl<'p> Engine<'p> {
         update(target, &keys, v, &mut self.budget).map_err(|e| e.at(span))
     }
 
+    /// Convert a variable to its declared type, or fail.
+    fn check_slot(&mut self, f: FnId, slot: SlotId, ty: &TypeSpec, w: &mut World, span: Span) -> Result<()> {
+        w.slots[slot as usize] = self.coerce(w.slots[slot as usize].clone(), ty, span)?;
+        if !self.conforms(&w.slots[slot as usize], ty) {
+            return Err(self.declared_type_error(f, slot, ty, w, span));
+        }
+        Ok(())
+    }
+
+    fn declared_type_error(&self, f: FnId, slot: SlotId, ty: &TypeSpec, w: &World, span: Span) -> RuntimeError {
+        let name = &self.prog.functions[f as usize].slots[slot as usize].name;
+        let what = if name == TEMP {
+            "the result".to_string()
+        } else {
+            format!("`{name}`")
+        };
+        RuntimeError::new(
+            span,
+            format!(
+                "{what} should be {}, but it's {}",
+                ops::article(&ty.describe(self.prog)),
+                ops::article(&w.slots[slot as usize].kind())
+            ),
+        )
+    }
+
+    /// `place = value`, where `value` applies a method like `push` to
+    /// `place`, then the check of a variable with a declared type. Out of
+    /// line: every statement runs the statement loop.
+    #[inline(never)]
+    fn update(
+        &mut self,
+        f: FnId,
+        place: &Place,
+        value: &Expr,
+        check: Option<&UpdateCheck>,
+        w: &mut World,
+        span: Span,
+    ) -> Result<()> {
+        let ExprKind::Builtin { func, args, named } = &value.kind else {
+            return Err(RuntimeError::new(span, "internal error: an update that isn't a method"));
+        };
+        let mut values = Vec::with_capacity(args.len() + named.len());
+        for a in args.iter().chain(named.iter().map(|(_, a)| a)) {
+            values.push(self.eval(f, a, w)?);
+        }
+        let field = self.record_place_type(place, w);
+        let types = match check {
+            Some(c) => c.args.as_deref().map(Some),
+            None => Some(None),
+        };
+        if let (None, Some(types), true) = (&field, types, named.is_empty()) {
+            if self.in_place(f, place, *func, &mut values, types, check, w, span)? {
+                return Ok(());
+            }
+        }
+        let names: Vec<String> = named.iter().map(|(n, _)| n.clone()).collect();
+        let mut v = self.builtin_values(*func, &values, &names, w.weight, span)?;
+        if let Some(ty) = field {
+            v = self.coerce(v, &ty, value.span)?;
+        }
+        self.assign(f, place, v, w, span)?;
+        if let Some(c) = check {
+            self.check_slot(f, place.slot, &c.ty, w, span)?;
+        }
+        Ok(())
+    }
+
+    /// Change the list or map at `place` as `func` would, given the values
+    /// of its arguments, the collection first, without copying it unless
+    /// something else holds it. What it adds is checked against `types`, as
+    /// a check of the whole variable would. False, with nothing changed,
+    /// where it can't, as for a distribution, which the method lifts over.
+    #[allow(clippy::too_many_arguments)]
+    fn in_place(
+        &mut self,
+        f: FnId,
+        place: &Place,
+        func: Builtin,
+        values: &mut [Value],
+        types: Option<&[Option<TypeSpec>]>,
+        check: Option<&UpdateCheck>,
+        w: &mut World,
+        span: Span,
+    ) -> Result<bool> {
+        let plain = |v: &Value| {
+            !v.is_uncertain() && !matches!(v, Value::Analytic(_) | Value::Event(_) | Value::Delayed(_) | Value::Dead)
+        };
+        let len = match (func, &values[0]) {
+            (Builtin::Push | Builtin::Insert | Builtin::Remove | Builtin::DropLast, Value::List(items)) => items.len(),
+            (Builtin::Insert | Builtin::Remove, Value::Map(m)) => m.len(),
+            _ => return Ok(false),
+        };
+        if !values[1..].iter().all(plain) {
+            return Ok(false);
+        }
+        let at = |e: OpError| e.at(span);
+        // Whatever can fail does before anything changes.
+        let list = matches!(values[0], Value::List(_));
+        let index = match func {
+            Builtin::Push | Builtin::Insert => {
+                self.budget.collection(len as u128 + 1).map_err(at)?;
+                match (func, list) {
+                    (Builtin::Insert, true) => Some(ops::as_index(&values[1], len as u128 + 1, &mut self.budget).map_err(at)?),
+                    _ => None,
+                }
+            }
+            Builtin::Remove if list => Some(ops::as_index(&values[1], len as u128, &mut self.budget).map_err(at)?),
+            _ => None,
+        };
+        if let (Some(types), Some(check)) = (types, check) {
+            for (i, ty) in types.iter().enumerate() {
+                let Some(ty) = ty else { continue };
+                let given = &values[i + 1];
+                let v = self.coerce(given.clone(), ty, span)?;
+                if !self.conforms(&v, ty) {
+                    return Err(self.declared_type_error(f, place.slot, &check.ty, w, span));
+                }
+                // A key that converts could meet one already there, which the
+                // check of the whole map reports.
+                if !list && i == 0 && v != *given {
+                    return Ok(false);
+                }
+                values[i + 1] = v;
+            }
+        }
+        let mut keys = Vec::with_capacity(place.path.len());
+        for elem in &place.path {
+            keys.push(match elem {
+                PathElem::Field(name) => PathKey::Field(name.as_str()),
+                PathElem::Index(e) => {
+                    let key = self.eval(f, e, w)?;
+                    if analytic::contains(&key) {
+                        return Ok(false);
+                    }
+                    PathKey::Index(key)
+                }
+            });
+        }
+        // The value read for the method is another reference to the
+        // collection, which would make changing it copy it.
+        values[0] = Value::Unit;
+        let target = place_mut(&mut w.slots[place.slot as usize], &keys, &mut self.budget).map_err(at)?;
+        match (func, target) {
+            (Builtin::Push, Value::List(items)) => Arc::make_mut(items).push(std::mem::replace(&mut values[1], Value::Unit)),
+            (Builtin::Insert, Value::List(items)) => {
+                Arc::make_mut(items).insert(index.unwrap_or_default() as usize, std::mem::replace(&mut values[2], Value::Unit))
+            }
+            (Builtin::Remove, Value::List(items)) => {
+                Arc::make_mut(items).remove(index.unwrap_or_default() as usize);
+            }
+            (Builtin::DropLast, Value::List(items)) => {
+                Arc::make_mut(items).pop();
+            }
+            (Builtin::Insert, Value::Map(m)) => {
+                let value = std::mem::replace(&mut values[2], Value::Unit);
+                Arc::make_mut(m).insert(std::mem::replace(&mut values[1], Value::Unit), value);
+            }
+            (Builtin::Remove, Value::Map(m)) => {
+                Arc::make_mut(m).remove(&values[1]);
+            }
+            _ => return Err(RuntimeError::new(span, "internal error: an update found another collection")),
+        }
+        Ok(true)
+    }
+
     fn read_place(&mut self, f: FnId, place: &Place, w: &World, span: Span) -> Result<Value> {
         let mut v = self.slot(f, place.slot, w, span)?;
         for elem in &place.path {
@@ -3971,7 +4129,9 @@ impl<'p> Engine<'p> {
         };
         let at = |err: OpError| err.at(span);
         builtins::check_query_input(b, values).map_err(at)?;
-        if values.iter().any(analytic::contains) && !handles_analytic(b, values) {
+        // Asking the built-in first spares a search of every collection
+        // argument, on every call, for those that move values unseen.
+        if !handles_analytic(b, values) && values.iter().any(analytic::contains) {
             // Internal built-ins stand for the syntax that uses them.
             let name = match b {
                 Builtin::ScoreLaw => "score",
@@ -4338,6 +4498,41 @@ fn update(target: &mut Value, keys: &[PathKey], v: Value, budget: &mut Budget) -
                 .get_mut(k)
                 .ok_or_else(|| OpError::new(format!("the key {k:?} isn't in the map")))?;
             update(slot, rest, v, budget)
+        }
+        (PathKey::Field(name), other) => Err(OpError::new(format!(
+            "can't set the field `{name}` of {}",
+            ops::article(&other.kind())
+        ))),
+        (PathKey::Index(_), other) => Err(OpError::new(format!(
+            "can't set an element of {}",
+            ops::article(&other.kind())
+        ))),
+    }
+}
+
+/// The value at `keys` in `target`, to change in place: each level is
+/// copied only if something else holds it.
+fn place_mut<'v>(target: &'v mut Value, keys: &[PathKey], budget: &mut Budget) -> OpResult<&'v mut Value> {
+    let Some((first, rest)) = keys.split_first() else {
+        return Ok(target);
+    };
+    match (first, target) {
+        (PathKey::Field(name), Value::Record(r)) => {
+            let slot = Arc::make_mut(r)
+                .get_mut(name)
+                .ok_or_else(|| OpError::new(format!("this record has no field `{name}`")))?;
+            place_mut(slot, rest, budget)
+        }
+        (PathKey::Index(i), Value::List(items)) => {
+            let items = Arc::make_mut(items);
+            let k = ops::as_index(i, items.len() as u128, budget)? as usize;
+            place_mut(&mut items[k], rest, budget)
+        }
+        (PathKey::Index(k), Value::Map(m)) => {
+            let slot = Arc::make_mut(m)
+                .get_mut(k)
+                .ok_or_else(|| OpError::new(format!("the key {k:?} isn't in the map")))?;
+            place_mut(slot, rest, budget)
         }
         (PathKey::Field(name), other) => Err(OpError::new(format!(
             "can't set the field `{name}` of {}",

@@ -8,6 +8,7 @@ All notable changes to the published crates are recorded here. The format follow
 
 - A function's return type follows a `:`, like a variable's: `fn explode(): int { … }` rather than `fn explode() -> int { … }`. It's still optional. A program written the old way no longer compiles, and the error says how to write it.
 - A named function used as a value reads the variables it uses when it's called, as a call by name does: after `let f = fee` and a change to the `rate` that `fee` reads, `f(100)` uses the new rate, where it used the old one. `f == fee` stays true. Lambdas still keep the values from when they were made.
+- `push`, `pop`, `insert` and `remove` change a list or map in place, rather than copying all of it on every call, unless something else holds it: 20,000 pushes in a loop take 0.01 s rather than 0.97 s. On a variable with a declared type, they check only what they add, rather than the whole variable. Built-ins like `get` no longer look through every element of a list on every call.
 
 ## [0.2.2] - 2026-10-12
 

@@ -267,7 +267,7 @@ impl Direct {
 
     fn stmt(&mut self, s: &Stmt) {
         match &s.kind {
-            StmtKind::Set { place, value } => {
+            StmtKind::Set { place, value } | StmtKind::Update { place, value, .. } => {
                 self.place(place);
                 self.expr(value);
             }

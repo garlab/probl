@@ -124,7 +124,7 @@ fn each_stmt(b: &Block, f: &mut impl FnMut(&Stmt)) {
 /// The slots a statement itself writes.
 fn writes(s: &Stmt, f: &mut impl FnMut(SlotId)) {
     match &s.kind {
-        StmtKind::Set { place, .. } | StmtKind::Draw { place, .. } => f(place.slot),
+        StmtKind::Set { place, .. } | StmtKind::Update { place, .. } | StmtKind::Draw { place, .. } => f(place.slot),
         StmtKind::Take { place, bag } => {
             f(place.slot);
             f(bag.slot);
@@ -150,7 +150,7 @@ fn own_reads(s: &Stmt, f: &mut impl FnMut(SlotId)) {
         }
     };
     match &s.kind {
-        StmtKind::Set { place: p, value } => {
+        StmtKind::Set { place: p, value } | StmtKind::Update { place: p, value, .. } => {
             place(p, f);
             crate::draws::expr(value, f);
         }

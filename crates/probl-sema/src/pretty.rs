@@ -71,7 +71,7 @@ impl Printer<'_> {
     fn stmt(&self, s: &Stmt, depth: usize, out: &mut String) {
         let indent = "  ".repeat(depth);
         match &s.kind {
-            StmtKind::Set { place, value } => {
+            StmtKind::Set { place, value } | StmtKind::Update { place, value, .. } => {
                 self.line(s, depth, format!("{} = {}", self.place(place), self.expr(value)), out)
             }
             StmtKind::Draw { place, dist } => {

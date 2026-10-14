@@ -221,6 +221,19 @@ impl Function {
     }
 }
 
+/// What an `Update` checks when `place` is in a variable with a declared
+/// type.
+#[derive(Clone, Debug)]
+pub struct UpdateCheck {
+    /// The variable's declared type, which the whole variable is checked
+    /// against after an assignment.
+    pub ty: TypeSpec,
+    /// The declared types of the method's arguments after the collection,
+    /// when the collection's type is known. Changed in place, checking what
+    /// goes into it is enough.
+    pub args: Option<Vec<Option<TypeSpec>>>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capture {
     /// Where the value goes in this function's frame.
@@ -264,6 +277,15 @@ pub enum StmtKind {
     Set {
         place: Place,
         value: Expr,
+    },
+    /// `place = value`, where `value` applies a method that changes a
+    /// collection, like `push`, to `place`. Its meaning is the assignment's;
+    /// the engine changes the collection in place when it can, rather than
+    /// copying it.
+    Update {
+        place: Place,
+        value: Expr,
+        check: Option<UpdateCheck>,
     },
     /// `place ~ dist`: one world per outcome.
     Draw {

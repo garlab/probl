@@ -133,7 +133,7 @@ fn check_block(block: &Block) -> Result<(), Fallback> {
     for stmt in &block.stmts {
         let span = stmt.span;
         match &stmt.kind {
-            StmtKind::Set { place, value } | StmtKind::Draw { place, dist: value } => {
+            StmtKind::Set { place, value } | StmtKind::Update { place, value, .. } | StmtKind::Draw { place, dist: value } => {
                 if !place.path.is_empty() {
                     return Err(unsupported("assigning part of a variable", span));
                 }
@@ -254,7 +254,7 @@ impl Run {
                 return Ok(());
             }
             match &stmt.kind {
-                StmtKind::Set { place, value } => {
+                StmtKind::Set { place, value } | StmtKind::Update { place, value, .. } => {
                     let v = self.eval(value)?;
                     self.assign(place.slot, v);
                 }

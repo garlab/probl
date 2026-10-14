@@ -2761,6 +2761,21 @@ impl<'a> Lowerer<'a> {
         let all = self.positional_expected(vec![place_read(&place, receiver.span)], args, &types, out);
         self.check_arity(b, all.len(), span);
         let current = place_read(&place, receiver.span);
+        let root_name = self.funcs[self.cur_func() as usize].slots[place.slot as usize]
+            .name
+            .clone();
+        let declared = self
+            .lookup(&root_name)
+            .filter(|b| b.slot == place.slot)
+            .and_then(|b| b.ty);
+        let check = declared.map(|ty| UpdateCheck {
+            ty,
+            args: matches!(receiver_type, Some(TypeSpec::List(_) | TypeSpec::Map(..))).then(|| {
+                (1..all.len())
+                    .map(|i| types.get(i).cloned().flatten())
+                    .collect()
+            }),
+        });
         if b == Builtin::Pop {
             let t = self.temp(span);
             let take_last = self.stmt(
@@ -2772,9 +2787,10 @@ impl<'a> Lowerer<'a> {
             );
             let shorten = self.stmt(
                 span,
-                StmtKind::Set {
+                StmtKind::Update {
                     place,
                     value: builtin(Builtin::DropLast, vec![current], span),
+                    check: None,
                 },
             );
             out.push(take_last);
@@ -2783,23 +2799,13 @@ impl<'a> Lowerer<'a> {
         }
         let st = self.stmt(
             span,
-            StmtKind::Set {
-                place: place.clone(),
+            StmtKind::Update {
+                place,
                 value: builtin(b, all, span),
+                check,
             },
         );
         out.push(st);
-        let root_name = self.funcs[self.cur_func() as usize].slots[place.slot as usize]
-            .name
-            .clone();
-        if let Some(ty) = self
-            .lookup(&root_name)
-            .filter(|b| b.slot == place.slot)
-            .and_then(|b| b.ty)
-        {
-            let check = self.check(place.slot, &ty, span);
-            out.push(check);
-        }
         lit(Lit::Unit, span)
     }
 
@@ -3255,7 +3261,7 @@ fn visit_block(block: &mut Block, f: &mut impl FnMut(&mut CallSite)) {
 
 fn visit_stmt(stmt: &mut Stmt, f: &mut impl FnMut(&mut CallSite)) {
     match &mut stmt.kind {
-        StmtKind::Set { place, value } => {
+        StmtKind::Set { place, value } | StmtKind::Update { place, value, .. } => {
             visit_place(place, f);
             visit_expr(value, f);
         }
