@@ -4,6 +4,8 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-16
+
 ### Added
 
 - `prime_factors(n)` lists the primes whose product is `n`, smallest first and repeated as often as they divide it: `prime_factors(360)` is `[2, 2, 2, 3, 3, 5]`. `is_prime(n)` and `is_squarefree(n)` say whether `n` is prime, and whether no prime divides it twice. Like the other integer functions they work on bigints and apply to each outcome of a distribution: `is_prime(d1000)` is 16.80%. `is_prime` is exact below 3.3 × 10²⁴ and uses the Baillie–PSW test above, which no known composite passes ([semantics](docs/semantics.md#1-values-and-types)).
@@ -84,7 +86,8 @@ The first release.
 
 The [language overview](docs/language-overview.md) and the [reference semantics](docs/semantics.md) describe the language, and [status and limits](README.md#status-and-limits) lists what isn't implemented yet.
 
-[Unreleased]: https://github.com/garlab/probl/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/garlab/probl/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/garlab/probl/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/garlab/probl/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/garlab/probl/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/garlab/probl/compare/v0.2.0...v0.2.1
