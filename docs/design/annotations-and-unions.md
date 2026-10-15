@@ -1,15 +1,15 @@
 # Type annotations: conversions, literals and unions
 
-> Draft proposal, revised 14 October 2026. Nothing here is implemented. Today's behavior is in the [reference semantics](../semantics.md#1-values-and-types). The examples marked as proposed don't run yet. The first draft proposed annotations that only check; [why that changed](#annotations-that-only-check).
+> Draft proposal, revised 15 October 2026. Nothing here is implemented. Today's behavior is in the [reference semantics](../semantics.md#1-values-and-types). The examples marked as proposed don't run yet. The first draft proposed annotations that only check; [why that changed](#annotations-that-only-check).
 
 ## Recommendation
 
 1. **A declared type is the type the value has.** After `let z: float = 1`, `typeof z` is `"float"`. Until the program converts it explicitly, a value given a declared type reports that type, or one of a union's types. For a collection, it reports a type the declaration allows (item 5).
 2. **Close numeric types convert automatically. The type changes, the number doesn't.** An int becomes a float when a float holds the same number, and a probability becomes a float. A number in [0, 1] becomes a probability, as it already does in `if 50%` and `bernoulli(rate)`. Nothing becomes an int automatically. Text, booleans, dates and collections never convert to another kind.
 3. **Literals follow the same rule**, and are checked during compilation. `let z: float = 1` makes a float, and `let y: int = 1.0` is an error before the program runs.
-4. **A collection literal takes its kind from the declared type.** `[1, 2]` is a list unless a set or a bag is declared. An existing collection never changes kind automatically: `set(xs)` converts it.
+4. **A collection literal takes its kind from the declared type.** `[1, 2]` is a list unless a set or a bag is declared, or a union with one of them and no list. An existing collection never changes kind automatically: `set(xs)` converts it.
 5. **A collection's `typeof` describes its elements. A declaration limits the variable, not the value.** This is today's rule, kept. After `var c = [1]`, `c.push("bar")` works, and `typeof c` becomes `"list[int or str]"`. For `var b: list[int]`, the same push is an error. An empty list reports `"list[unknown]"`, which fits any declared list.
-6. **Unions, `A or B`.** A value that has one of the types is kept. Otherwise it converts to `float` if it can, then to `prob`. Each step has at most one candidate, so the order of the types doesn't matter. `typeof` uses unions to describe mixed contents, in place of `any`.
+6. **Unions, `A or B`.** A value that has one of the types is kept. Otherwise it converts to `float` if it can, then to `prob`. Each step has at most one candidate, so the order of the types doesn't matter. A union has at most one type of each collection kind, so a collection's parts convert in only one way. `typeof` uses unions to describe mixed contents, in place of `any`.
 7. **Explicit conversions** cover what doesn't happen automatically: `int(x)`, `float(x)` and `prob(x)`, and `set(xs)`, `list(xs)` and `bag(xs)`.
 
 Two things break. A float no longer becomes an int where an int is declared: `let n: int = 4 / 2` is an error. And an int becomes a float where a float is declared, so `typeof` says `"float"` and it prints as `1.0`. Measured, the first happens only in a playground test program written to test it. The second happens in one documentation example, whose output doesn't change ([measurement](#what-would-break)). `typeof` also describes mixed contents differently: `"list[int or str]"` rather than `"list[any]"`.
@@ -82,7 +82,7 @@ Wherever a type is declared (bindings, parameters, return types, record fields, 
 
 Numeric literals are converted to probabilities during compilation. Other values are converted when the program runs. An expected type also flows into the branches of `if`, `chance`, `match` and blocks: `let x: prob = if c { 30% } else { 1 }` is a prob either way.
 
-`float` keeps an int as it is but converts a probability, and nothing documents either. So `let z: float = 1` reports `"int"`, and `let d: dist[float] = d6` reports `"dist[int]"`.
+`float` keeps an int as it is but converts a probability, and nothing documents either. So `let z: float = 1` reports `"int"`, and `let d: dist[float] = d6` reports `"dist[int]"`. A count law too broad to list, like `geometric(1e-16)`, fails a `dist[float]` declaration: "`d` should be a dist[float], but it's a dist[int]".
 
 Collections keep the kind they're built with. `let b: bag[int] = [1, 1, 2]` is an error, "`b` should be a bag[int], but it's a list[int]", and there's no set type.
 
@@ -126,6 +126,18 @@ Converting to `prob` changes behavior, not just the type. `~p` draws a trial fro
 
 In the other direction, a prob becomes a float wherever a float is declared. So a function declared with `x: float` always gets a float.
 
+### Distributions
+
+A declared `dist[T]` converts a distribution's outcomes, as `list[T]` converts a list's elements: `let d: dist[float] = d6` has the outcomes 1.0 to 6.0. An outcome converts where it exists, and that depends on the distribution:
+
+- **Listed outcomes** convert at the declaration, and one that can't stops the run there. A count law like `poisson(3)` or `geometric(0.5)` is listed up to a tail it cuts off, too small to matter. The tail is never an outcome, when enumerating or sampling, so nothing in it needs to convert.
+- **A count law too broad to list**, like `geometric(1e-16)`, has no outcomes until one is drawn. The declaration keeps the law, with float outcomes. When sampling, each draw converts as it's drawn, and one that no float holds stops the run there, as a failed declaration does. `geometric(1e-16)` draws past 2^53, where floats start skipping integers, four times in ten. Enumerating lists the law, which fails on the outcome limit, with or without the declaration. `mean`, `sd`, `pmf`, `cdf` and the other queries the law answers by formula don't draw, so they give the law's answers, as floats.
+- **An int computed from a continuous draw**, like `floor(x)` when enumerating, converts if every int it can be does: its bounds must be within 2^53 of zero. Otherwise the declaration is an error.
+
+So no conversion lists an infinite support, and the two modes agree where both run: a listed distribution gives both the same outcomes, and a law too broad to list can only be sampled.
+
+Rejecting every law that could draw an int no float holds would be stricter. But it would reject `geometric(1e-12)`, which draws one with probability e^−9007, and accept `geometric(0.5)`, whose listing cuts that tail off. Whether a law is listed depends on its spread, and a declaration shouldn't.
+
 ### Literals
 
 A literal is a value like any other, so the same rule gives it its type: `let z: float = 1` makes a float, `let p: prob = 50%` makes a prob, and `let y: int = 1.0` is an error. Literals are checked during compilation, so these are errors before the program runs: `let y: int = 1.0`, `let p: prob = 2`, `let s: str = 1`, and `let x: float = 9007199254740993`, which no float holds.
@@ -148,7 +160,13 @@ let u = set(xs)                         # set([1, 2])
 
 An existing collection never changes kind automatically: turning a list into a set drops its order and its duplicates, which changes the value. Within a kind, elements convert as above.
 
-The kind is decided where the literal is built, from the declared type known there. That can be a binding, an assignment, a return, a record field, an element of another literal, or a branch of a typed `if`, `match`, `chance` or block. When a function is called by name, the compiler knows its parameter types. Through a function value, it doesn't, so the engine evaluates the function first and builds the literal arguments against its parameter types. It already builds a `with` update's values against the record's field types in the same way. `f([1, 2])` and `g([1, 2])` then behave the same.
+In a union, a literal takes its kind from the union's types that it could be. `[…]` could be a list, a set or a bag, and a union has at most one of each ([unions](#unions)). If the union has a list, or none of the three, it's a list, as by default. Otherwise it's the union's set or bag. A union with both can't choose: `let x: set[int] or bag[int] = [1, 1, 2]` would be a set of two elements or a bag of three, so it's an error, which asks for `set([1, 1, 2])` or `bag([1, 1, 2])`. `[k: v, …]` is a map if the union has one, and otherwise a bag if it has one.
+
+The kind is decided where the literal is built, from the declared type known there. That can be a binding, an assignment, a return, a record field, an element of another literal, or a branch of a typed `if`, `match`, `chance` or block: the type flows through each, as an expected type does today for numbers.
+
+When a function is called by name, the compiler knows its parameter types. Through a function value, or in a `with` on a record whose type the compiler doesn't know, the type is known only when the program runs, from a value: the function, or the record. The language already evaluates that value first, before the arguments or the new field values. So the compiler marks each literal that the type would reach, through branches and nested literals, with where its type is: in that value, and along which path, like the elements of the second parameter. When the engine builds the literal, in each world, it reads the type there. With `fn f(b: bag[int])` and `let g = f`, `f(if c { [1, 2] } else { [3] })` and `g(if c { [1, 2] } else { [3] })` build the same bags, and evaluation order doesn't change.
+
+Converting the argument at the call, as numbers are converted today, wouldn't do: by then the branches have built lists, and the call can't tell them from a list held in a variable, which never changes kind automatically. The engine already builds a `with`'s values against the record's field types when the program runs, but only for literals written in place, not in branches, for the same reason.
 
 A set literal drops duplicates rather than reporting them. Elements are often computed, and they may be equal in only some worlds: `let s: set[int] = [x, y]`.
 
@@ -188,7 +206,11 @@ fn fifty(): prob or float {
 }
 ```
 
-A collection or a record fits a type at the latest step that any of its parts needs. `[1, 2.5]` fits `list[int] or list[float]` at step 2, as a list of floats. Two record types that differ only in which fields are floats and which are probabilities can both fit at the same step, with different results: `{a: float, b: prob} or {a: prob, b: float}`. The compiler rejects such a union.
+A collection, a distribution or a record fits the union's type of its kind, and each of its parts then fits its own declared type by the same steps: `[1, 2.5]` fits `list[float] or str` as `[1.0, 2.5]`, and `list[int or float]` as it is.
+
+Two types of one kind could both take a value by converting different parts of it. `[1: 1]` would fit `map[int, float] or map[float, int]` by converting its value in one and its key in the other, with different results. So a union has at most one type of each kind, at any depth. The compiler rejects two list types, two map types, or two of any other collection or distribution, and two record types with the same fields unless both are named: `map[int, float] or map[float, int]`, `list[float] or list[prob or float]`, and `{a: float, b: prob} or {a: prob, b: float}`. Its help suggests the union inside: `map[int or float, float or int]`. A record of a named type has that type and no other, so `Point or Vector`, with the same fields, is allowed. `Point or {x: float, y: float}` isn't, since a `Point` fits both.
+
+It also rules out some unions that would be unambiguous, like `list[int] or list[str]`, a list of all ints or all strings. `list[int or str]` takes both, and mixed lists. A later version could allow two types of one kind when no part could fit both ([alternatives](#types-of-one-kind-in-a-union)).
 
 `typeof` describes a value, not its declaration, so it never names a union: `typeof fifty()` is `"float"`.
 
@@ -226,11 +248,11 @@ With unions, `typeof` describes mixed contents exactly, in place of `any`:
 | `[1, "a"]` | `"list[any]"` | `"list[int or str]"` |
 | `[1, 2.0]` | `"list[any]"` | `"list[int or float]"` |
 | `[[], [1]]` | `"list[any]"` | `"list[list[int]]"` |
-| `[[1], ["a"]]` | `"list[any]"` | `"list[list[int] or list[str]]"` |
+| `[[1], ["a"]]` | `"list[any]"` | `"list[list[int or str]]"` |
 | `one_of([1, "x"])` | `"dist[any]"` | `"dist[int or str]"` |
 | `[]` | `"list[unknown]"` | Unchanged |
 
-`unknown` merges into the type beside it: an empty list is also a `list[int]`, so `[[], [1]]` is a `list[list[int]]`. A union's types are listed in a fixed order, so the same contents always give the same string. Five lines of the engine's type tests compare against `any`, and the reference semantics and the language overview describe it.
+`unknown` merges into the type beside it: an empty list is also a `list[int]`, so `[[], [1]]` is a `list[list[int]]`. Types of one kind merge too, with a union inside, so `typeof` always gives a type that could be declared, and that the value fits: `[[1], ["a"]]` is a `list[list[int or str]]`. A union's types are listed in a fixed order, so the same contents always give the same string. Five lines of the engine's type tests compare against `any`, and the reference semantics and the language overview describe it.
 
 For a single value, `typeof` reports the declared type, or one of a union's types. For a collection or a distribution, it names a type the declaration allows, which can be narrower than the declaration. An empty `list[int]` reports `"list[unknown]"`, and `[1]` declared as `list[int or str]` reports `"list[int]"`.
 
@@ -312,6 +334,10 @@ This is today's rule, and Julia's. It fits "the type changes, the number doesn't
 
 `prob or float` would give a prob, and `float or prob` a float. Order shouldn't matter.
 
+### Types of one kind in a union
+
+The previous draft let a union have several types of one kind, and a collection fitted at the latest step any of its parts needed: `[1, 2.5]` fitted `list[int] or list[float]` at step 2, as a list of floats. The compiler would reject a union only where two types could fit one value at the same step with different results. That allows `list[int] or list[str]`, but the line between the unions it allows and those it rejects is hard to see: `list[int] or list[float]` passes, and `list[float] or list[prob or float]` fails, since a list of a prob and an int fits both at step 2, keeping the prob in one and converting it in the other. A change could also convert what's already there: on a variable declared `list[int] or list[float]` holding `[1, 2]`, `push(2.5)` would give `[1.0, 2.0, 2.5]`, so a push would check the whole list, rather than only what it adds.
+
 ### Element types stored in collections
 
 As in Swift, C# and Julia, a list would keep its element type, and `typeof b` would be `"list[int]"` even when empty. But `var c = [1]; c.push("bar")` would fail unless `c` is declared `list[int or str]`. `var a = []` would stay a `list[any]` after `a.push(1)`, which tells less than today. The type would follow copies: after `var d = b`, `d.push("x")` would fail, though `d` has no declaration. And every built-in that returns a collection, such as `map` or `filter`, would have to choose an element type. Probl's lists are values, so a variable's declaration already gives the same protection.
@@ -347,12 +373,12 @@ In a statically checked language, a trait or an interface also says which operat
 
 ## Implementation order and validation
 
-1. **Numeric conversions.** In the engine's declared-type conversion, an int becomes a float, or it's an error if no float holds it. A float no longer becomes an int. Symbolic int outcomes become float outcomes. The compiler gets the matching literal checks. Add `int(x)` and `float(x)`. The oracle (`probl-oracle`) converts declared types too, and changes with the engine. Its generated programs then check the new rules against the engine, as before.
+1. **Numeric conversions.** In the engine's declared-type conversion, an int becomes a float, or it's an error if no float holds it. A float no longer becomes an int. A distribution converts its listed outcomes. A count law too broad to list keeps its law, and its draws convert when sampling. An int computed from a continuous draw converts if its bounds are within 2^53 ([distributions](#distributions)). The compiler gets the matching literal checks. Add `int(x)` and `float(x)`. The oracle (`probl-oracle`) converts declared types too, and changes with the engine. Its generated programs then check the new rules against the engine, as before.
 2. **Programs and documents.** Update `web/test/integers.probl`, the reference semantics (section 1's conversion paragraphs) and the language overview, and record the breaking change.
 3. **Built-in integer arguments**, if adopted, as a separate breaking change.
-4. **Collection literals as bags.** In the engine, evaluate a function value before its arguments, so that literal arguments are built against its parameter types.
+4. **Collection literals as bags.** The compiler flows a declared type into collection literals, through branches and nested literals, and chooses a union's kind ([collection literals](#collection-literals)). Where the type is known only when the program runs, through a function value or a `with`, it marks each literal the type reaches with the value and the path to read the type from. It keeps that value in a temporary while the arguments run, as it already does when they have statements. Test that a literal in a branch or in another literal builds the same value by name and through a function value.
 5. **Sets:** `set[T]`, `set(xs)` and `list(xs)`.
-6. **Unions:** the grammar (`type { "or" type }`), a union in the compiler's types, the conversion steps, and the check for ambiguous record unions. `typeof` describes mixed contents with unions.
+6. **Unions:** the grammar (`type { "or" type }`), a union in the compiler's types, the conversion steps, and the check that a union has at most one type of each kind, at any depth. `typeof` describes mixed contents with unions, merging types of one kind.
 7. **Errors that describe the value.** Done: a failed declaration describes the value as `typeof` does, as in "but it's a list[any]" until unions exist. A declared record type is written as `typeof` writes one, `{a: int}`.
 
 Steps 1 to 3 break programs, and step 6 changes how `typeof` describes mixed contents. The rest only add.
