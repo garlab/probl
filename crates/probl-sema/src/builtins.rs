@@ -81,6 +81,7 @@ builtins! {
     BitNot = "bit_not", 1..=1, Lift, true;
     BitCount = "bit_count", 1..=1, Lift, true;
     ILog2 = "ilog2", 1..=1, Lift, true;
+    ISqrt = "isqrt", 1..=1, Lift, true;
     Choose = "choose", 2..=2, Lift, true;
     Factorial = "factorial", 1..=1, Lift, true;
     Gcd = "gcd", 2..=2, Lift, true;
@@ -89,6 +90,12 @@ builtins! {
     PrimeFactors = "prime_factors", 1..=1, Lift, true;
     IsPrime = "is_prime", 1..=1, Lift, true;
     IsSquarefree = "is_squarefree", 1..=1, Lift, true;
+    Divisors = "divisors", 1..=1, Lift, true;
+    Primes = "primes", 1..=2, Lift, true;
+    NextPrime = "next_prime", 1..=1, Lift, true;
+    PrevPrime = "prev_prime", 1..=1, Lift, true;
+    ModPow = "mod_pow", 3..=3, Lift, true;
+    ModInverse = "mod_inverse", 2..=2, Lift, true;
     LnGamma = "ln_gamma", 1..=1, Lift, true;
     Erf = "erf", 1..=1, Lift, true;
     Erfc = "erfc", 1..=1, Lift, true;

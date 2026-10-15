@@ -376,6 +376,57 @@ fn primes_factorizations_and_squarefree_numbers() {
 }
 
 #[test]
+fn divisors_ranges_of_primes_roots_and_modular_arithmetic() {
+    for expression in [
+        "divisors(1) == [1] and divisors(12) == [1, 2, 3, 4, 6, 12]",
+        "divisors(97) == [1, 97] and len(divisors(720720)) == 240",
+        "divisors((2^61 - 1)^2) == [1, 2^61 - 1, (2^61 - 1)^2]",
+        "(1..300).count(n -> divisors(n) != (1..n).filter(d -> n mod d == 0)) == 0",
+        "(1..10000).filter(n -> sum(divisors(n)) == 2 * n) == [6, 28, 496, 8128]",
+        "primes(20) == [2, 3, 5, 7, 11, 13, 17, 19]",
+        "primes(1) == [] and primes(-10) == [] and primes(2) == [2]",
+        "primes(90, 110) == [97, 101, 103, 107, 109] and primes(110, 90) == []",
+        "primes(-10, 10) == [2, 3, 5, 7] and primes(24, 28) == []",
+        "len(primes(10^6)) == 78498",
+        "primes(3000) == (1..3000).filter(is_prime)",
+        "primes(10^6, 10^6 + 2000) == (10^6..10^6 + 2000).filter(is_prime)",
+        "primes(10^20, 10^20 + 200) == [10^20 + 39, 10^20 + 129, 10^20 + 151, 10^20 + 193]",
+        "next_prime(-5) == 2 and next_prime(2) == 3 and next_prime(7) == 11",
+        "prev_prime(3) == 2 and prev_prime(8) == 7 and prev_prime(11) == 7",
+        "next_prime(10^100) == 10^100 + 267",
+        "next_prime(2^64 - 59) == 2^64 + 13 and prev_prime(2^64 + 13) == 2^64 - 59",
+        "(1..300).count(n -> next_prime(n) != primes(n + 1, 2 * n + 2)[0]) == 0",
+        "(3..300).count(n -> prev_prime(n) != primes(n - 1).reverse()[0]) == 0",
+        "isqrt(0) == 0 and isqrt(99) == 9 and isqrt(100) == 10",
+        "isqrt(10^400) == 10^200 and isqrt(10^400 - 1) == 10^200 - 1",
+        "isqrt(2^64) == 2^32 and isqrt(9.0) == 3",
+        "(0..3000).count(n -> isqrt(n)^2 > n or (isqrt(n) + 1)^2 <= n) == 0",
+        "mod_pow(3, 10^20, 7) == 4 and mod_pow(2, 2^127 - 2, 2^127 - 1) == 1",
+        "mod_pow(5, 0, 7) == 1 and mod_pow(5, 0, 1) == 0 and mod_pow(0, 0, 7) == 1",
+        "mod_pow(-3, 5, -7) == -5 and mod_pow(2, -1, -7) == -3 and mod_pow(3, -2, 10) == 9",
+        "(-6..6).count(b -> (-5..6).filter(m -> m != 0).count(m -> (0..6).count(e -> mod_pow(b, e, m) != b^e mod m) > 0) > 0) == 0",
+        "mod_inverse(3, 7) == 5 and mod_inverse(2, -7) == -3 and mod_inverse(5, 1) == 0",
+        "mod_inverse(10^30 + 1, 2^89 - 1) * (10^30 + 1) mod (2^89 - 1) == 1",
+        "(1..100).count(a -> gcd(a, 101) == 1 and a * mod_inverse(a, 101) mod 101 != 1) == 0",
+    ] {
+        assert_eq!(chance(&format!("report {expression}")), 1.0, "{expression}");
+    }
+    for mode in ["enumerate", "sample(runs: 1000, seed: 1)"] {
+        for (expression, expected) in [
+            ("len(divisors(d6))", 14.0 / 6.0),
+            ("len(primes(d10))", 2.7),
+            ("next_prime(d6)", 29.0 / 6.0),
+            ("prev_prime(d4 + 2)", 3.25),
+            ("isqrt(one_of([3, 4, 15, 16]))", 2.5),
+            ("mod_pow(2, d6, 7)", 7.0 / 3.0),
+            ("mod_inverse(d6, 7)", 3.5),
+        ] {
+            close(mean(&format!("@mode {mode}\nreport {expression}")), expected);
+        }
+    }
+}
+
+#[test]
 fn special_functions_match_known_values_and_identities() {
     close(mean("report ln_gamma(1)"), 0.0);
     close(mean("report ln_gamma(2)"), 0.0);
@@ -407,6 +458,15 @@ fn domains_types_arity_and_overflow_are_checked() {
         "euler_phi(0)",
         "prime_factors(0)",
         "prime_factors(-12)",
+        "divisors(0)",
+        "divisors(-12)",
+        "prev_prime(2)",
+        "prev_prime(-7)",
+        "isqrt(-1)",
+        "mod_pow(2, 3, 0)",
+        "mod_pow(6, -1, 9)",
+        "mod_inverse(6, 9)",
+        "mod_inverse(3, 0)",
     ] {
         assert!(error(&format!("report {source}")).contains("needs"), "{source}");
     }
@@ -421,6 +481,13 @@ fn domains_types_arity_and_overflow_are_checked() {
         "prime_factors(1.4)",
         "is_prime(2.5)",
         "is_squarefree(true)",
+        "divisors(1.5)",
+        "primes(10, 20.5)",
+        "next_prime(2.5)",
+        "prev_prime(\"7\")",
+        "isqrt(4.5)",
+        "mod_pow(2, 0.5, 7)",
+        "mod_inverse(3, 7.5)",
     ] {
         assert!(error(&format!("report {source}")).contains("needs an int"), "{source}");
     }
@@ -442,6 +509,14 @@ fn domains_types_arity_and_overflow_are_checked() {
         "prime_factors()",
         "is_prime(1, 2)",
         "is_squarefree()",
+        "divisors()",
+        "primes()",
+        "primes(1, 2, 3)",
+        "next_prime()",
+        "prev_prime(1, 2)",
+        "isqrt()",
+        "mod_pow(2, 3)",
+        "mod_inverse(3)",
         "ln_gamma()",
         "erf(1, 2)",
     ] {
@@ -463,6 +538,10 @@ fn integer_work_respects_host_limits() {
         "is_prime(1000000007)",
         "is_squarefree(2^127 - 1)",
         "prime_factors(2^67 - 1)",
+        "divisors(2^67 - 1)",
+        "primes(10^4)",
+        "next_prime(10^30)",
+        "mod_pow(3, 2^200, 2^127 - 1)",
     ] {
         let err = exec_raw(&format!("report {source}"), &options).unwrap_err();
         assert_eq!(err.kind, ErrorKind::Limit, "{source}");

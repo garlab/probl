@@ -268,6 +268,55 @@ impl Integer {
         }
         Self::from_big(self.big().pow(exponent))
     }
+    /// The floor of the square root, for a nonnegative integer.
+    pub fn isqrt(&self) -> Option<Self> {
+        match &self.0 {
+            Repr::Small(n) => u64::try_from(*n).ok().map(|n| n.isqrt().into()),
+            Repr::Large(n) if n.value.is_negative() => None,
+            Repr::Large(n) => Some(Self::from_big(n.value.sqrt()).expect("a root is no larger than its square")),
+        }
+    }
+    /// `self` to the power `exponent`, modulo `modulus`, as `mod` gives it:
+    /// on the modulus's side of 0. A negative exponent takes powers of the
+    /// inverse, and gives `None` when there's none.
+    pub fn mod_pow(&self, exponent: &Self, modulus: &Self) -> Result<Option<Self>, IntError> {
+        let m = modulus.abs();
+        let mut base = self.div_mod(&m)?.1;
+        if exponent.is_negative() {
+            match base.mod_inverse(&m)? {
+                Some(inverse) => base = inverse,
+                None => return Ok(None),
+            }
+        }
+        let e = exponent.abs();
+        let power = match (base.to_u64(), e.to_u64(), m.to_u64()) {
+            (Some(b), Some(e), Some(m)) => primes::pow_mod(b, e, m).into(),
+            _ => {
+                let power = base.big().magnitude().modpow(e.big().magnitude(), m.big().magnitude());
+                Self::from_big(power.into())?
+            }
+        };
+        Ok(Some(power.remainder_for(modulus)?))
+    }
+    /// The inverse of `self` modulo `modulus`, as `mod` gives it, if they're
+    /// coprime.
+    pub fn mod_inverse(&self, modulus: &Self) -> Result<Option<Self>, IntError> {
+        let m = modulus.abs();
+        let a = self.div_mod(&m)?.1;
+        match a.big().magnitude().modinv(m.big().magnitude()) {
+            Some(inverse) => Ok(Some(Self::from_big(inverse.into())?.remainder_for(modulus)?)),
+            None => Ok(None),
+        }
+    }
+    /// Move a remainder from 0 up to `|m|` to `m`'s side of 0, as `div_mod`
+    /// places it.
+    fn remainder_for(self, m: &Self) -> Result<Self, IntError> {
+        if m.is_negative() && !self.is_zero() {
+            self.add(m)
+        } else {
+            Ok(self)
+        }
+    }
     /// Convert the quotient jointly: individually converting huge operands
     /// would turn a finite ratio into infinity / infinity.
     pub fn ratio(&self, denominator: &Self) -> Option<f64> {
@@ -451,6 +500,100 @@ impl fmt::Debug for Integer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn integer_square_roots_are_exact_floors() {
+        for n in 0..10_000u64 {
+            let root = Integer::from(n).isqrt().unwrap().to_u64().unwrap();
+            assert!(root * root <= n && (root + 1) * (root + 1) > n, "{n}");
+        }
+        for n in [u64::MAX, u64::MAX - 1, (1 << 32) * (1 << 31)] {
+            let root = u128::from(Integer::from(n).isqrt().unwrap().to_u64().unwrap());
+            assert!(
+                root * root <= u128::from(n) && (root + 1) * (root + 1) > u128::from(n),
+                "{n}"
+            );
+        }
+        let big = Integer::from(10).pow(200).unwrap();
+        let square = big.mul(&big).unwrap();
+        assert_eq!(square.isqrt(), Some(big.clone()));
+        assert_eq!(
+            square.sub(&Integer::ONE).unwrap().isqrt(),
+            Some(big.sub(&Integer::ONE).unwrap())
+        );
+        assert_eq!(Integer::from(-1).isqrt(), None);
+        assert_eq!(square.negated().isqrt(), None);
+    }
+
+    #[test]
+    fn modular_powers_and_inverses_agree_with_mod() {
+        let int = |s: &str| s.parse::<Integer>().unwrap();
+        for b in -12..=12i64 {
+            for m in (-10..=10i64).filter(|&m| m != 0) {
+                let m = Integer::from(m);
+                for e in 0..8u32 {
+                    let expected = Integer::from(b).pow(e).unwrap().div_mod(&m).unwrap().1;
+                    let found = Integer::from(b).mod_pow(&e.into(), &m).unwrap();
+                    assert_eq!(found, Some(expected), "{b}^{e} mod {m}");
+                }
+                // An inverse, multiplied back, leaves what 1 leaves.
+                let one = Integer::ONE.div_mod(&m).unwrap().1;
+                let coprime = m.abs() == 1 || (2..=12).all(|d| b % d != 0 || m.div_mod(&d.into()).unwrap().1 != 0);
+                match Integer::from(b).mod_inverse(&m).unwrap() {
+                    Some(x) => {
+                        assert!(coprime, "{b} mod {m}");
+                        assert_eq!(x.mul(&b.into()).unwrap().div_mod(&m).unwrap().1, one, "{b} mod {m}");
+                        assert_eq!(x.div_mod(&m).unwrap().1, x, "{b} mod {m}");
+                        let cube = Integer::from(b).mod_pow(&(-3).into(), &m).unwrap().unwrap();
+                        assert_eq!(cube, x.pow(3).unwrap().div_mod(&m).unwrap().1, "{b} mod {m}");
+                    }
+                    None => {
+                        assert!(!coprime, "{b} mod {m}");
+                        assert_eq!(Integer::from(b).mod_pow(&(-1).into(), &m), Ok(None));
+                    }
+                }
+            }
+        }
+        // Python's three-argument pow, which places remainders as `mod` does.
+        let m127 = int("170141183460469231731687303715884105727");
+        let twenty = Integer::from(10).pow(20).unwrap();
+        for (b, e, m, expected) in [
+            (int("3"), twenty.clone(), int("7"), "4"),
+            (
+                int("123456789"),
+                Integer::from(10).pow(30).unwrap(),
+                m127.clone(),
+                "122595712604757454617202977651078910759",
+            ),
+            (
+                int("-987654321987654321987654321"),
+                int("1267650600228229401496703205383"),
+                int("-1000000000000000000000000000057"),
+                "-293969698994636477086079925553",
+            ),
+            (int("2"), m127.sub(&Integer::ONE).unwrap(), m127.clone(), "1"),
+            (
+                int("10000000000000000000000003"),
+                int("-1"),
+                int("618970019642690137449562111"),
+                "71994936398798874148776713",
+            ),
+            (int("2"), int("-1"), int("-7"), "-3"),
+            (int("3"), int("-2"), int("10"), "9"),
+            (int("-3"), int("5"), int("-7"), "-5"),
+            (int("5"), int("0"), int("1"), "0"),
+            (int("5"), twenty, int("-1"), "0"),
+        ] {
+            assert_eq!(b.mod_pow(&e, &m), Ok(Some(int(expected))), "{b}^{e} mod {m}");
+        }
+        assert_eq!(int("6").mod_inverse(&int("9")), Ok(None));
+        assert_eq!(int("0").mod_inverse(&int("1")), Ok(Some(Integer::ZERO)));
+        assert_eq!(
+            int("2").mod_pow(&int("3"), &Integer::ZERO),
+            Err(IntError::DivisionByZero)
+        );
+        assert_eq!(int("2").mod_inverse(&Integer::ZERO), Err(IntError::DivisionByZero));
+    }
 
     #[test]
     fn radix_parsing_is_exact_and_checks_limits_before_allocation() {

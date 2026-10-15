@@ -7,6 +7,7 @@ All notable changes to the published crates are recorded here. The format follow
 ### Added
 
 - `prime_factors(n)` lists the primes whose product is `n`, smallest first and repeated as often as they divide it: `prime_factors(360)` is `[2, 2, 2, 3, 3, 5]`. `is_prime(n)` and `is_squarefree(n)` say whether `n` is prime, and whether no prime divides it twice. Like the other integer functions they work on bigints and apply to each outcome of a distribution: `is_prime(d1000)` is 16.80%. `is_prime` is exact below 3.3 × 10²⁴ and uses the Baillie–PSW test above, which no known composite passes ([semantics](docs/semantics.md#1-values-and-types)).
+- `divisors(n)` lists the divisors of `n`, and `primes(hi)` or `primes(lo, hi)` the primes in a range, both ends included: all 5,761,455 primes below 10⁸ take 0.3 s. `next_prime(n)` and `prev_prime(n)` find the nearest prime above and below `n`. `isqrt(n)` is the exact floor of a square root, without a float: `isqrt(10^400)` is `10^200`. `mod_pow(b, e, m)` is `b^e mod m` without forming `b^e`, so `mod_pow(3, 10^20, 7)` is 4, and `mod_inverse(a, m)` is the `x` with `a * x mod m` equal to 1. Both place results on the modulus's side of 0, as `mod` does.
 
 ### Changed
 

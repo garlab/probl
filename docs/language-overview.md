@@ -206,9 +206,23 @@ let n ~ d1000
 report len(prime_factors(n))      # mean 2.88 · … · 95% 6
 ```
 
+`divisors(n)` lists every positive divisor of a positive `n`, and `primes(hi)` or `primes(lo, hi)` the primes in a range, both ends included. `next_prime(n)` and `prev_prime(n)` find the nearest prime above or below `n`:
+
+```probl
+report divisors(12)                 # [1, 2, 3, 4, 6, 12]
+report sum(divisors(28)) == 2 * 28  # 100.00%: 28 is a perfect number
+report primes(90, 110)              # [97, 101, 103, 107, 109]
+report len(primes(10^6))            # 78,498
+report next_prime(10^100) - 10^100  # 267
+```
+
 `is_prime` is exact below 3.3 × 10²⁴ and uses the Baillie–PSW test above that, which no known composite passes. Factoring is quick when all prime factors but the largest are below about 10¹²; a number with two much larger ones can reach the work limit. See [integer functions](semantics.md#1-values-and-types) for the methods.
 
 `bit_length(n)` counts binary digits in an integer's magnitude: `bit_length(0)` is 0 and `bit_length(-7)` is 3. `ilog2(n)` gives the exact floor of the base-2 logarithm of a positive integer. Both work directly on bigints in constant time; `ilog2(2^100 - 1)` is exactly 99.
+
+`isqrt(n)` gives the exact floor of the square root of a nonnegative integer, without converting to a float: `isqrt(10^400)` is `10^200`, where `sqrt(10^400)` is an error. `isqrt(n)^2 == n` tests for a perfect square.
+
+`mod_pow(b, e, m)` is `b^e mod m`, computed without forming `b^e`, so the exponent can be huge: `mod_pow(3, 10^20, 7)` is 4, while `3^(10^20)` is beyond the integer size limit. `mod_inverse(a, m)` is the `x` with `a * x mod m` equal to 1: `mod_inverse(3, 7)` is 5, and it's an error when `a` and `m` share a factor. A negative exponent takes powers of the inverse, so `mod_pow(3, -1, 7)` is also 5. Both place results on the modulus's side of 0, as `mod` does.
 
 Binary (`0b`/`0B`) and hexadecimal (`0x`/`0X`) literals produce ordinary integers, regardless of size. Underscores may separate digits, as in `0b1111_0000`; hexadecimal digits accept either case. Use `-0xff` for a negative value. Prefixes and leading zeros do not fix a width: `bit_length(0x000f)` is 4. Reports still show integers in decimal.
 
@@ -928,7 +942,7 @@ From loosest to tightest binding:
 | Queries | `P` `mean` `sd` `variance` `median` `median_low` `median_high` `quantile` `support` `cdf` `pmf` `pdf` |
 | Probability | `odds(p)` `logit(p)` `inv_logit(x)` |
 | Math | `abs` `min` `max` `clamp` `floor` `ceil` `trunc` `round(x, digits?)` `sqrt` `cbrt` `hypot(x, y)` `exp` `exp2` `expm1` `ln` `log1p` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `sinh` `cosh` `tanh` `asinh` `acosh` `atanh` |
-| Integer and special functions | `choose(n, k)` `factorial(n)` `gcd(a, b)` `lcm(a, b)` `euler_phi(n)` `prime_factors(n)` `is_prime(n)` `is_squarefree(n)` `ln_gamma(x)` `erf(x)` `erfc(x)` |
+| Integer and special functions | `choose(n, k)` `factorial(n)` `gcd(a, b)` `lcm(a, b)` `euler_phi(n)` `prime_factors(n)` `is_prime(n)` `is_squarefree(n)` `divisors(n)` `primes(lo?, hi)` `next_prime(n)` `prev_prime(n)` `isqrt(n)` `mod_pow(b, e, m)` `mod_inverse(a, m)` `ln_gamma(x)` `erf(x)` `erfc(x)` |
 | Complex numbers | `complex(re, im?)` `real(z)` `imag(z)` `conj(z)` `abs(z)` `abs2(z)` `arg(z)` `cis(theta)` |
 | Constants | `pi` `e` `euler_gamma` `today`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
 | Collections | `len` `slice(xs, start, end?)` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `minimum` `maximum` `highest(n, compare?)` `lowest(n, compare?)` `sort` `sort_desc` `reverse` `enumerate` `zip` |

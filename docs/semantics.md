@@ -161,6 +161,7 @@ For real inputs, `cbrt(x)` returns the real cube root as a float, including for 
 | `bit_not(n)` | Integer. Bitwise complement, equal to `-n - 1`: `bit_not(0) = -1`. |
 | `bit_count(n)` | Integer, signs ignored. The number of set bits in its magnitude: `bit_count(0) = 0`, `bit_count(-0b1011) = 3`. |
 | `ilog2(n)` | Positive integer. The exact floor of its base-2 logarithm; `ilog2(1) = 0`, `ilog2(31) = 4`, `ilog2(32) = 5`. Zero and negatives are errors. |
+| `isqrt(n)` | Nonnegative integer. The exact floor of its square root; `isqrt(99) = 9`, `isqrt(10^400) = 10^200`. Negatives are errors. |
 | `choose(n, k)` | Nonnegative integers. The binomial coefficient, counting selections without order or replacement. `k > n` gives 0; `choose(n, 0)` is 1. |
 | `factorial(n)` | Nonnegative integer. The product 1 × … × n, with `factorial(0) = 1`. `factorial(30)` is exactly 265252859812191058636308480000000; size and work limits apply. |
 | `gcd(a, b)` | Two integers, signs ignored. The nonnegative greatest common divisor; `gcd(0, 0) = 0`. |
@@ -169,11 +170,19 @@ For real inputs, `cbrt(x)` returns the real cube root as a float, including for 
 | `prime_factors(n)` | Positive integer. The list of primes whose product is n, in increasing order, each repeated as many times as it divides n: `prime_factors(360) = [2, 2, 2, 3, 3, 5]`, `prime_factors(1) = []`. |
 | `is_prime(n)` | Integer. Whether n is prime; integers below 2 aren't. |
 | `is_squarefree(n)` | Integer, sign ignored. Whether no prime divides n more than once; 1 is squarefree, and 0, which every square divides, isn't. |
+| `divisors(n)` | Positive integer. The list of positive integers that divide n, in increasing order: `divisors(12) = [1, 2, 3, 4, 6, 12]`. |
+| `primes(hi)`, `primes(lo, hi)` | Integers. The list of primes from 2, or from lo, through hi, both included, in increasing order; empty when there are none. |
+| `next_prime(n)` | Integer. The smallest prime above n; 2 for any n below 2. |
+| `prev_prime(n)` | Integer above 2. The largest prime below n. |
+| `mod_pow(b, e, m)` | Integers, m nonzero. `b^e mod m`, computed without forming bᵉ, on the modulus's side of 0 as `mod` places remainders. A negative e takes powers of b's inverse modulo m, so b must then be coprime to m. |
+| `mod_inverse(a, m)` | Integers, m nonzero and coprime to a. The x from 0 toward m with `a * x mod m == 1 mod m`. |
 | `ln_gamma(x)` | Positive finite number. Returns a float approximating ln Γ(x), with `ln_gamma(n + 1) = ln(n!)` for nonnegative integers n. Nonpositive arguments and non-finite results are errors. This does not change the `gamma(shape, scale)` distribution constructor. |
 | `erf(x)` | Finite number. Returns the error function as a float: (2 / √π) ∫₀ˣ exp(−t²) dt, from −1 to 1. |
 | `erfc(x)` | Finite number. Returns the complementary error function as a float, from 0 to 2. Computes 1 − erf(x) directly to preserve small tails; extremely small results may underflow to zero. For the standard normal, the probability above x is `erfc(x / sqrt(2)) / 2`. |
 
 `is_prime` is exact below 3.3 × 10²⁴: it divides by the primes below 1000, then applies Miller–Rabin with the first prime bases, as many as are proven to recognize every composite below that bound. Above it, a strong Lucas test is added, which with Miller–Rabin to base 2 makes the Baillie–PSW test, the one SymPy and Mathematica also rely on: no composite is known to pass it, but none is proven not to. `prime_factors` and `is_squarefree` split what trial division leaves with Pollard's rho method, after testing for primes and, above 2⁶⁴, perfect powers. That is quick when every prime factor but the largest is below about 10¹²; each factor of 100 above that takes about 10 times as long, until the work limit. The results, and the work charged, depend only on n.
+
+`divisors` and `primes` build lists that the collection limit bounds: `primes(10^9)` has more elements than the default 10,000,000. `primes` sieves a range at least as wide as √hi, 65,536 numbers at a time, up to hi of about 2.8 × 10¹⁴; it tests each odd number of a narrower range, or one beyond that. `next_prime` and `prev_prime` test numbers in turn. `isqrt`, `mod_pow` and `mod_inverse` work directly on bigints. `mod_pow` charges work for each bit of the exponent rather than forming the power, so `mod_pow(3, 10^1000, 7)` is quick where `3^(10^1000)` exceeds the integer size limit.
 
 `bit_length` and `ilog2` inspect the stored integer magnitude in constant time, including for bigints, and each charges one unit of work for that inspection. For positive integers, `ilog2(n) = bit_length(n) - 1`. Both accept ints or exactly integral finite floats and lift over finite distributions. Integer inputs never convert through a float: `ilog2(2^100 - 1)` is 99 even though `floor(log2(2^100 - 1))` rounds to 100. The approximate `log2` function retains its float and complex behavior.
 

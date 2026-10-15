@@ -189,6 +189,9 @@ both_modes! {
             report mean(factorial(one_of([2.0,3.0]))) == 4
             report gcd(12.0,18.0) == 6 and lcm(4.0,6.0) == 12 and euler_phi(9.0) == 6
             report prime_factors(12.0) == [2,2,3] and is_prime(7.0) and is_squarefree(6.0)
+            report divisors(6.0) == [1,2,3,6] and primes(2.0,5.0) == [2,3,5] and primes(5.0) == [2,3,5]
+            report next_prime(7.0) == 11 and prev_prime(7.0) == 5 and isqrt(16.0) == 4
+            report mod_pow(2.0,3.0,5.0) == 3 and mod_inverse(3.0,7.0) == 5
             report bit_length(8.0) == 4 and ilog2(8.0) == 3 and bit_count(7.0) == 3
             report bit_and(6.0,3.0) == 2 and bit_or(6.0,3.0) == 7
             report bit_xor(6.0,3.0) == 5 and bit_not(0.0) == -1
@@ -224,6 +227,18 @@ both_modes! {
                 "prime_factors(x)",
                 "is_prime(x)",
                 "is_squarefree(x)",
+                "divisors(x)",
+                "primes(x)",
+                "primes(x,10)",
+                "primes(1,x)",
+                "next_prime(x)",
+                "prev_prime(x)",
+                "isqrt(x)",
+                "mod_pow(x,2,5)",
+                "mod_pow(2,x,5)",
+                "mod_pow(2,2,x)",
+                "mod_inverse(x,5)",
+                "mod_inverse(2,x)",
                 "bit_length(x)",
                 "ilog2(x)",
                 "bit_and(2,x)",

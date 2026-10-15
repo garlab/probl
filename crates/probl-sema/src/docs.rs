@@ -59,6 +59,7 @@ pub fn category(b: Builtin) -> &'static str {
         | B::BitNot
         | B::BitCount
         | B::ILog2
+        | B::ISqrt
         | B::Choose
         | B::Factorial
         | B::Gcd
@@ -67,6 +68,12 @@ pub fn category(b: Builtin) -> &'static str {
         | B::PrimeFactors
         | B::IsPrime
         | B::IsSquarefree
+        | B::Divisors
+        | B::Primes
+        | B::NextPrime
+        | B::PrevPrime
+        | B::ModPow
+        | B::ModInverse
         | B::LnGamma
         | B::Erf
         | B::Erfc
@@ -333,6 +340,10 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "ilog2(n: int) -> int",
             "The exact floor of log base 2 of a positive integer: `ilog2(31)` is 4, and `ilog2(32)` is 5. Zero and negatives are errors. Uses integer bits, with no float conversion; constant-time even for bigints.",
         ),
+        B::ISqrt => doc(
+            "isqrt(n: int) -> int",
+            "The exact floor of the square root of a nonnegative integer: `isqrt(99)` is 9, and `isqrt(10^400)` is `10^200`. Negatives are errors. It never converts through a float, and `isqrt(n)^2 == n` tests for a perfect square.",
+        ),
         B::Choose => doc(
             "choose(n: int, k: int) -> int",
             "The number of ways to choose `k` items from `n`, without order or replacement. Both must be nonnegative; `k > n` gives 0. The result is an arbitrary-precision int; size and work limits apply.",
@@ -364,6 +375,30 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::IsSquarefree => doc(
             "is_squarefree(n: int) -> bool",
             "Whether no prime divides `n` more than once: `is_squarefree(30)` is true, and `is_squarefree(12)` is false. 1 is squarefree, 0 isn't, and the sign doesn't matter. It factors `n`, so a large `n` can reach the run's work limit.",
+        ),
+        B::Divisors => doc(
+            "divisors(n: int) -> list[int]",
+            "The positive integers that divide `n`, in increasing order: `divisors(12)` is `[1, 2, 3, 4, 6, 12]`. `n` must be positive. `len` and `sum` of the list count and add them. Factoring large inputs can reach the run's work limit.",
+        ),
+        B::Primes => doc(
+            "primes(hi: int) -> list[int] or primes(lo: int, hi: int) -> list[int]",
+            "The primes up to `hi`, or from `lo` to `hi`, both included, in increasing order: `primes(20)` is `[2, 3, 5, 7, 11, 13, 17, 19]`. A wide range is sieved; a narrow one high up tests each number. The list must fit the collection limit.",
+        ),
+        B::NextPrime => doc(
+            "next_prime(n: int) -> int",
+            "The smallest prime above `n`: `next_prime(7)` is 11, and `next_prime(-5)` is 2.",
+        ),
+        B::PrevPrime => doc(
+            "prev_prime(n: int) -> int",
+            "The largest prime below `n`: `prev_prime(7)` is 5. `n` must be above 2.",
+        ),
+        B::ModPow => doc(
+            "mod_pow(b: int, e: int, m: int) -> int",
+            "`b^e mod m`, without forming `b^e`: `mod_pow(3, 10^20, 7)` is 4. The result has the modulus's sign, as `mod` gives it, and `m` must not be 0. A negative `e` takes powers of `b`'s inverse, so `b` must be coprime to `m`.",
+        ),
+        B::ModInverse => doc(
+            "mod_inverse(a: int, m: int) -> int",
+            "The `x` for which `a * x mod m` equals `1 mod m`: `mod_inverse(3, 7)` is 5. `a` must be coprime to `m`, and `m` must not be 0. The result has the modulus's sign, as `mod` gives it.",
         ),
         B::LnGamma => doc(
             "ln_gamma(x) -> float",

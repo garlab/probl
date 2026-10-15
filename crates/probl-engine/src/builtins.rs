@@ -126,6 +126,13 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         )),
         B::BitNot => Ok(Value::Int(integer(a(0), b.name(), budget)?.bit_not()?)),
         B::BitCount => Ok(Value::Int(integer(a(0), b.name(), budget)?.bit_count().into())),
+        B::ISqrt => {
+            let n = nonnegative_int(a(0), "isqrt", budget)?;
+            // Newton's method takes about log₂ of the bit count divisions.
+            let w = n.bits().div_ceil(64).max(1);
+            budget.work(w * w * u64::from(64 - n.bits().leading_zeros()).max(1))?;
+            Ok(Value::Int(n.isqrt().expect("a nonnegative integer")))
+        }
         B::ILog2 => {
             let n = integer(a(0), "ilog2", budget)?;
             if n.is_zero() || n.is_negative() {
@@ -165,6 +172,54 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::IsSquarefree => {
             let n = integer(a(0), "is_squarefree", budget)?;
             Ok(Value::Bool(primes::is_squarefree(&n, &mut |units| budget.work(units))?))
+        }
+        B::Divisors => divisors(integer(a(0), "divisors", budget)?.as_ref(), budget),
+        B::Primes => {
+            let hi = integer(a(args.len() - 1), "primes", budget)?;
+            let lo = match args.len() {
+                2 => integer(a(0), "primes", budget)?,
+                _ => Cow::Owned(Integer::from(2)),
+            };
+            primes_between(&lo, &hi, budget)
+        }
+        B::NextPrime => {
+            let n = integer(a(0), "next_prime", budget)?;
+            match primes::next_prime(&n, &mut |units| budget.work(units))? {
+                Some(p) => Ok(Value::Int(p)),
+                None => Err(probl_number::IntError::TooLarge.into()),
+            }
+        }
+        B::PrevPrime => {
+            let n = integer(a(0), "prev_prime", budget)?;
+            match primes::prev_prime(&n, &mut |units| budget.work(units))? {
+                Some(p) => Ok(Value::Int(p)),
+                None => Err(OpError::fault(
+                    Fault::DomainError,
+                    "`prev_prime` needs an integer above 2",
+                )),
+            }
+        }
+        B::ModPow => mod_pow(a(0), a(1), a(2), budget),
+        B::ModInverse => {
+            let (x, m) = (
+                integer(a(0), "mod_inverse", budget)?,
+                integer(a(1), "mod_inverse", budget)?,
+            );
+            if m.is_zero() {
+                return Err(OpError::fault(
+                    Fault::DivisionByZero,
+                    "`mod_inverse` needs a nonzero modulus",
+                ));
+            }
+            budget.integer_work(&x, &m, true)?;
+            budget.work(euclid_work(&m))?;
+            match x.mod_inverse(&m)? {
+                Some(inverse) => Ok(Value::Int(inverse)),
+                None => Err(OpError::fault(
+                    Fault::DomainError,
+                    "`mod_inverse` needs a number coprime to the modulus",
+                )),
+            }
         }
         B::LnGamma => float1(a(0), "ln_gamma", |x| (x > 0.0).then(|| libm::lgamma(x))),
         B::Erf => float1(a(0), "erf", |x| Some(libm::erf(x))),
@@ -1471,6 +1526,73 @@ fn prime_factors(n: &Integer, budget: &mut Budget) -> OpResult<Value> {
         items.extend(std::iter::repeat_n(Value::Int(p), k as usize));
     }
     Ok(Value::list(items))
+}
+
+fn divisors(n: &Integer, budget: &mut Budget) -> OpResult<Value> {
+    if n.is_zero() || n.is_negative() {
+        return Err(OpError::fault(
+            Fault::DomainError,
+            "`divisors` needs a positive integer",
+        ));
+    }
+    let factors = primes::factorize(n, &mut |units| budget.work(units))?;
+    let count = factors
+        .iter()
+        .fold(1u128, |count, &(_, k)| count.saturating_mul(u128::from(k) + 1));
+    budget.collection(count)?;
+    // Each divisor takes a product, and sorting compares each about log₂ count times.
+    let count = count as u64;
+    let w = n.bits().div_ceil(64).max(1);
+    budget.work(count.saturating_mul(w * w + w * u64::from(64 - count.leading_zeros())))?;
+    budget.integer_allocation(n.bits(), count)?;
+    Ok(Value::list(
+        primes::divisors(&factors).into_iter().map(Value::Int).collect(),
+    ))
+}
+
+fn primes_between(lo: &Integer, hi: &Integer, budget: &mut Budget) -> OpResult<Value> {
+    let mut primes = primes::Primes::new(lo, hi);
+    let mut items = Vec::new();
+    while let Some(p) = primes.next(&mut |units| budget.work(units))? {
+        budget.collection(items.len() as u128 + 1)?;
+        budget.integer_allocation(p.bits(), 1)?;
+        items.push(Value::Int(p));
+    }
+    Ok(Value::list(items))
+}
+
+/// The work of Euclid's algorithm modulo `m`: about twice its bit count in
+/// steps, each a division of numbers below it.
+fn euclid_work(m: &Integer) -> u64 {
+    m.bits().max(1).saturating_mul(2 * m.bits().div_ceil(64).max(1))
+}
+
+fn mod_pow(b: &Value, e: &Value, m: &Value, budget: &mut Budget) -> OpResult<Value> {
+    let (b, e, m) = (
+        integer(b, "mod_pow", budget)?,
+        integer(e, "mod_pow", budget)?,
+        integer(m, "mod_pow", budget)?,
+    );
+    if m.is_zero() {
+        return Err(OpError::fault(
+            Fault::DivisionByZero,
+            "`mod_pow` needs a nonzero modulus",
+        ));
+    }
+    budget.integer_work(&b, &m, true)?;
+    if e.is_negative() {
+        budget.work(euclid_work(&m))?;
+    }
+    // A squaring for each bit of the exponent, and a product for some.
+    let w = m.bits().div_ceil(64).max(1);
+    budget.work(e.bits().saturating_mul(2 * w * w))?;
+    match b.mod_pow(&e, &m)? {
+        Some(power) => Ok(Value::Int(power)),
+        None => Err(OpError::fault(
+            Fault::DomainError,
+            "`mod_pow` with a negative exponent needs a base coprime to the modulus",
+        )),
+    }
 }
 
 fn text(v: &Value, func: &str) -> OpResult<Arc<str>> {

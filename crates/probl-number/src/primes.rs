@@ -68,6 +68,179 @@ pub fn factorize<E>(n: &Integer, work: Work<E>) -> Result<Vec<(Integer, u32)>, E
     Ok(f.finish())
 }
 
+/// The divisors of the number with this factorization, in increasing order.
+/// There's one for each choice of exponents, so the caller should check
+/// their count first.
+pub fn divisors(factors: &[(Integer, u32)]) -> Vec<Integer> {
+    let mut divisors = vec![Integer::ONE];
+    for (p, k) in factors {
+        let smaller = divisors.len();
+        let mut power = Integer::ONE;
+        for _ in 0..*k {
+            power = power.mul(p).expect("a divisor is no larger than its multiple");
+            for i in 0..smaller {
+                let d = divisors[i]
+                    .mul(&power)
+                    .expect("a divisor is no larger than its multiple");
+                divisors.push(d);
+            }
+        }
+    }
+    divisors.sort_unstable();
+    divisors
+}
+
+/// The smallest prime above `n`, or `None` if it's past the integer size
+/// ceiling.
+pub fn next_prime<E>(n: &Integer, work: Work<E>) -> Result<Option<Integer>, E> {
+    if *n < 2 {
+        return Ok(Some(2.into()));
+    }
+    let Ok(mut candidate) = n.add(&Integer::from(if n.is_odd() { 2 } else { 1 })) else {
+        return Ok(None);
+    };
+    loop {
+        work(1)?;
+        if is_prime(&candidate, work)? {
+            return Ok(Some(candidate));
+        }
+        match candidate.add(&Integer::from(2)) {
+            Ok(next) => candidate = next,
+            Err(_) => return Ok(None),
+        }
+    }
+}
+
+/// The largest prime below `n`, or `None` if `n` is 2 or less.
+pub fn prev_prime<E>(n: &Integer, work: Work<E>) -> Result<Option<Integer>, E> {
+    if *n <= 3 {
+        return Ok((*n == 3).then(|| 2.into()));
+    }
+    let step = |n: &Integer, by: i64| n.sub(&by.into()).expect("a smaller positive integer");
+    let mut candidate = step(n, if n.is_odd() { 2 } else { 1 });
+    // The search ends at 3 at the latest.
+    loop {
+        work(1)?;
+        if is_prime(&candidate, work)? {
+            return Ok(Some(candidate));
+        }
+        candidate = step(&candidate, 2);
+    }
+}
+
+/// The primes from `lo` to `hi`, both included, in increasing order, found
+/// as they're asked for. A range at least as wide as √hi is sieved a segment
+/// at a time, with the primes up to √hi; a narrower one, or one beyond the
+/// sieve's reach, is searched by testing each odd number.
+pub struct Primes {
+    /// The next number to look at, or `None` once past `hi`.
+    next: Option<Integer>,
+    hi: Integer,
+    sieve: bool,
+    /// The primes up to √hi, once the sieve needs them.
+    base: Vec<u32>,
+    /// Primes found by the sieve and not yet asked for.
+    found: std::vec::IntoIter<u64>,
+}
+
+/// The largest √hi the sieve takes base primes up to: their sieve takes
+/// 16 MB.
+const MAX_BASE: u64 = 1 << 24;
+
+/// Numbers sieved at a time.
+const SEGMENT: u64 = 1 << 16;
+
+impl Primes {
+    pub fn new(lo: &Integer, hi: &Integer) -> Self {
+        let lo = if *lo < 2 { 2.into() } else { lo.clone() };
+        let sieve = match (lo.to_u64(), hi.to_u64()) {
+            (Some(lo), Some(hi)) if lo <= hi => {
+                let root = hi.isqrt();
+                root <= MAX_BASE && root <= hi - lo + 1
+            }
+            _ => false,
+        };
+        Primes {
+            next: (lo <= *hi).then_some(lo),
+            hi: hi.clone(),
+            sieve,
+            base: Vec::new(),
+            found: Vec::new().into_iter(),
+        }
+    }
+
+    /// The next prime in the range, or `None` after the last.
+    pub fn next<E>(&mut self, work: Work<E>) -> Result<Option<Integer>, E> {
+        loop {
+            if let Some(p) = self.found.next() {
+                return Ok(Some(p.into()));
+            }
+            let Some(n) = self.next.take() else {
+                return Ok(None);
+            };
+            if self.sieve {
+                self.sieve_segment(&n, work)?;
+                continue;
+            }
+            // Past 2, only odd numbers can be prime.
+            let step = Integer::from(if n == 2 || !n.is_odd() { 1 } else { 2 });
+            self.next = n.add(&step).ok().filter(|next| *next <= self.hi);
+            work(1)?;
+            if (n.is_odd() || n == 2) && is_prime(&n, work)? {
+                return Ok(Some(n));
+            }
+        }
+    }
+
+    /// Sieves the segment starting at `lo`, and moves past it.
+    fn sieve_segment<E>(&mut self, lo: &Integer, work: Work<E>) -> Result<(), E> {
+        let lo = lo.to_u64().expect("a sieved range fits in a word");
+        let hi = self.hi.to_u64().expect("a sieved range fits in a word");
+        if self.base.is_empty() {
+            let root = hi.isqrt();
+            work(root.max(1))?;
+            self.base = sieve_up_to(root);
+        }
+        let end = hi.min(lo + SEGMENT - 1);
+        work(end - lo + 1)?;
+        let mut composite = vec![false; (end - lo + 1) as usize];
+        let mut marks = 0;
+        for p in self.base.iter().map(|&p| u64::from(p)) {
+            if p * p > end {
+                break;
+            }
+            let mut multiple = (p * p).max(lo.div_ceil(p) * p);
+            while multiple <= end {
+                composite[(multiple - lo) as usize] = true;
+                multiple += p;
+                marks += 1;
+            }
+        }
+        work(marks)?;
+        let found: Vec<u64> = (lo..=end).filter(|&n| !composite[(n - lo) as usize]).collect();
+        self.found = found.into_iter();
+        self.next = (end < hi).then(|| (end + 1).into());
+        Ok(())
+    }
+}
+
+/// The primes up to `n`, at most [`MAX_BASE`], by the sieve of Eratosthenes.
+fn sieve_up_to(n: u64) -> Vec<u32> {
+    let mut composite = vec![false; n as usize + 1];
+    let mut primes = Vec::new();
+    for i in 2..=n {
+        if !composite[i as usize] {
+            primes.push(i as u32);
+            let mut multiple = i * i;
+            while multiple <= n {
+                composite[multiple as usize] = true;
+                multiple += i;
+            }
+        }
+    }
+    primes
+}
+
 const SMALL_PRIMES: [u32; 168] = small_primes();
 
 /// A number below this with no prime factor below 1000 is prime: the
@@ -246,8 +419,8 @@ fn mul_mod(a: u64, b: u64, m: u64) -> u64 {
     (u128::from(a) * u128::from(b) % u128::from(m)) as u64
 }
 
-fn pow_mod(mut base: u64, mut exponent: u64, m: u64) -> u64 {
-    let mut result = 1;
+pub(crate) fn pow_mod(mut base: u64, mut exponent: u64, m: u64) -> u64 {
+    let mut result = 1 % m;
     base %= m;
     while exponent > 0 {
         if exponent & 1 == 1 {
@@ -688,6 +861,107 @@ mod tests {
         assert!(!squarefree(&int(
             "6277101735386680777106801733124266500526464379673737431189"
         )));
+    }
+
+    #[test]
+    fn divisors_are_every_number_that_divides() {
+        for n in 1..3000u64 {
+            let expected: Vec<Integer> = (1..=n).filter(|d| n % d == 0).map(Integer::from).collect();
+            assert_eq!(divisors(&factors(&n.into())), expected, "{n}");
+        }
+        let m61 = int("2305843009213693951");
+        let square = m61.mul(&m61).unwrap();
+        assert_eq!(divisors(&factors(&square)), vec![Integer::ONE, m61, square]);
+    }
+
+    fn primes_between(lo: &Integer, hi: &Integer, sieve: Option<bool>) -> Vec<Integer> {
+        let mut primes = Primes::new(lo, hi);
+        if let Some(sieve) = sieve {
+            primes.sieve = sieve;
+        }
+        let mut found = Vec::new();
+        while let Some(p) = primes.next(&mut free).unwrap() {
+            found.push(p);
+        }
+        found
+    }
+
+    #[test]
+    fn sieved_and_tested_ranges_list_the_same_primes() {
+        let primes = sieve(400_000);
+        for (lo, hi) in [
+            (-5, 30),
+            (0, 1),
+            (2, 2),
+            (3, 2),
+            (24, 28),
+            (0, 300_000),
+            (65_530, 65_540),
+            (131_071, 131_072),
+            (399_000, 399_999),
+            (399_900, 399_999),
+        ] {
+            let expected: Vec<Integer> = (lo.max(0)..=hi)
+                .filter(|&n| primes[n as usize])
+                .map(Integer::from)
+                .collect();
+            for sieve in [None, Some(true), Some(false)] {
+                if sieve == Some(true) && lo > hi {
+                    continue;
+                }
+                assert_eq!(
+                    primes_between(&lo.into(), &hi.into(), sieve),
+                    expected,
+                    "{lo}..{hi} {sieve:?}"
+                );
+            }
+        }
+        let primes = |lo: &str, hi: &str| primes_between(&int(lo), &int(hi), None);
+        let ints = |xs: &[&str]| xs.iter().map(|x| int(x)).collect::<Vec<_>>();
+        assert_eq!(
+            primes("18446744073709551516", "18446744073709551715"),
+            ints(&[
+                "18446744073709551521",
+                "18446744073709551533",
+                "18446744073709551557",
+                "18446744073709551629",
+                "18446744073709551653",
+                "18446744073709551667",
+                "18446744073709551697",
+                "18446744073709551709",
+            ])
+        );
+        assert_eq!(
+            primes("100000000000000000000", "100000000000000000299"),
+            ints(&[
+                "100000000000000000039",
+                "100000000000000000129",
+                "100000000000000000151",
+                "100000000000000000193",
+                "100000000000000000207",
+            ])
+        );
+    }
+
+    #[test]
+    fn next_and_previous_primes_skip_to_the_nearest() {
+        let primes = sieve(20_000);
+        for n in -5..19_000i64 {
+            let next = (n + 1..).find(|&m| m >= 0 && primes[m as usize]).unwrap();
+            assert_eq!(next_prime(&n.into(), &mut free).unwrap(), Some(next.into()), "{n}");
+            let previous = (0..n.max(0)).rev().find(|&m| primes[m as usize]).map(Integer::from);
+            assert_eq!(prev_prime(&n.into(), &mut free).unwrap(), previous, "{n}");
+        }
+        let (below, above) = (int("18446744073709551557"), int("18446744073709551629"));
+        assert_eq!(next_prime(&below, &mut free).unwrap(), Some(above.clone()));
+        assert_eq!(prev_prime(&above, &mut free).unwrap(), Some(below.clone()));
+        assert_eq!(
+            prev_prime(&int("18446744073709551616"), &mut free).unwrap(),
+            Some(below)
+        );
+        let m127 = int("170141183460469231731687303715884105727");
+        let before = m127.sub(&Integer::ONE).unwrap();
+        assert_eq!(next_prime(&before, &mut free).unwrap(), Some(m127));
     }
 
     #[test]

@@ -54,3 +54,7 @@ report [len(combined), combined.get(1)]
 report [prime_factors(360), prime_factors(1000003 * 1000033), prime_factors(2^64 + 1), prime_factors((2^61 - 1)^2 * 3)]
 report [is_prime(2^61 - 1), is_prime(2^127 - 1), is_prime(3317044064679887385961981), is_squarefree(-30), is_squarefree((2^61 - 1)^2)]
 report is_squarefree(one_of(1..100))
+report [divisors(720720)[100], primes(10^12, 10^12 + 100), next_prime(2^64 - 59), prev_prime(2^64), primes(10^20, 10^20 + 200)]
+report [isqrt(2^64 - 1), isqrt(10^400) == 10^200, mod_pow(3, 10^20, 7), mod_pow(-987654321987654321987654321, 2^100 + 7, -(10^30 + 57))]
+report [mod_inverse(10^25 + 3, 2^89 - 1), mod_pow(2, -1, -7), len(primes(10^5))]
+report len(primes(d20))
