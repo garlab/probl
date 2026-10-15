@@ -196,6 +196,18 @@ report ln_gamma(101)       # ln(100!), approximately 363.74
 report erf(1)              # approximately 0.8427
 ```
 
+`prime_factors(n)` lists the primes whose product is a positive `n`, smallest first, each as many times as it divides `n`. `is_prime(n)` and `is_squarefree(n)` accept any int: numbers below 2 aren't prime, and a number is squarefree when no prime divides it twice, so 1 is and 0 isn't. Like the other integer functions, they apply to each outcome of a finite distribution:
+
+```probl
+report prime_factors(360)         # [2, 2, 2, 3, 3, 5]
+report is_prime(2^127 - 1)        # 100.00%: a Mersenne prime
+report is_squarefree(d1000)       # 60.80%
+let n ~ d1000
+report len(prime_factors(n))      # mean 2.88 · … · 95% 6
+```
+
+`is_prime` is exact below 3.3 × 10²⁴ and uses the Baillie–PSW test above that, which no known composite passes. Factoring is quick when all prime factors but the largest are below about 10¹²; a number with two much larger ones can reach the work limit. See [integer functions](semantics.md#1-values-and-types) for the methods.
+
 `bit_length(n)` counts binary digits in an integer's magnitude: `bit_length(0)` is 0 and `bit_length(-7)` is 3. `ilog2(n)` gives the exact floor of the base-2 logarithm of a positive integer. Both work directly on bigints in constant time; `ilog2(2^100 - 1)` is exactly 99.
 
 Binary (`0b`/`0B`) and hexadecimal (`0x`/`0X`) literals produce ordinary integers, regardless of size. Underscores may separate digits, as in `0b1111_0000`; hexadecimal digits accept either case. Use `-0xff` for a negative value. Prefixes and leading zeros do not fix a width: `bit_length(0x000f)` is 4. Reports still show integers in decimal.
@@ -916,7 +928,7 @@ From loosest to tightest binding:
 | Queries | `P` `mean` `sd` `variance` `median` `median_low` `median_high` `quantile` `support` `cdf` `pmf` `pdf` |
 | Probability | `odds(p)` `logit(p)` `inv_logit(x)` |
 | Math | `abs` `min` `max` `clamp` `floor` `ceil` `trunc` `round(x, digits?)` `sqrt` `cbrt` `hypot(x, y)` `exp` `exp2` `expm1` `ln` `log1p` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `sinh` `cosh` `tanh` `asinh` `acosh` `atanh` |
-| Integer and special functions | `choose(n, k)` `factorial(n)` `gcd(a, b)` `lcm(a, b)` `euler_phi(n)` `ln_gamma(x)` `erf(x)` `erfc(x)` |
+| Integer and special functions | `choose(n, k)` `factorial(n)` `gcd(a, b)` `lcm(a, b)` `euler_phi(n)` `prime_factors(n)` `is_prime(n)` `is_squarefree(n)` `ln_gamma(x)` `erf(x)` `erfc(x)` |
 | Complex numbers | `complex(re, im?)` `real(z)` `imag(z)` `conj(z)` `abs(z)` `abs2(z)` `arg(z)` `cis(theta)` |
 | Constants | `pi` `e` `euler_gamma` `today`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
 | Collections | `len` `slice(xs, start, end?)` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `minimum` `maximum` `highest(n, compare?)` `lowest(n, compare?)` `sort` `sort_desc` `reverse` `enumerate` `zip` |

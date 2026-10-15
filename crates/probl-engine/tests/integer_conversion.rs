@@ -188,6 +188,7 @@ both_modes! {
             report factorial(5.0) == 120 and choose(5.0,2.0) == 10
             report mean(factorial(one_of([2.0,3.0]))) == 4
             report gcd(12.0,18.0) == 6 and lcm(4.0,6.0) == 12 and euler_phi(9.0) == 6
+            report prime_factors(12.0) == [2,2,3] and is_prime(7.0) and is_squarefree(6.0)
             report bit_length(8.0) == 4 and ilog2(8.0) == 3 and bit_count(7.0) == 3
             report bit_and(6.0,3.0) == 2 and bit_or(6.0,3.0) == 7
             report bit_xor(6.0,3.0) == 5 and bit_not(0.0) == -1
@@ -220,6 +221,9 @@ both_modes! {
                 "gcd(x,2)",
                 "lcm(2,x)",
                 "euler_phi(x)",
+                "prime_factors(x)",
+                "is_prime(x)",
+                "is_squarefree(x)",
                 "bit_length(x)",
                 "ilog2(x)",
                 "bit_and(2,x)",

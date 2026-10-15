@@ -331,6 +331,51 @@ fn totients_match_counting_coprime_integers() {
 }
 
 #[test]
+fn primes_factorizations_and_squarefree_numbers() {
+    for expression in [
+        "prime_factors(360) == [2, 2, 2, 3, 3, 5]",
+        "prime_factors(1) == []",
+        "prime_factors(997) == [997]",
+        "prime_factors(2^64) == (1..64).map(i -> 2)",
+        "prime_factors(2^64 + 1) == [274177, 67280421310721]",
+        "prime_factors(2^67 - 1) == [193707721, 761838257287]",
+        "prime_factors((2^61 - 1)^2 * 6) == [2, 3, 2^61 - 1, 2^61 - 1]",
+        "not is_prime(-7) and not is_prime(0) and not is_prime(1)",
+        "is_prime(2) and is_prime(97) and not is_prime(91)",
+        "is_prime(2^61 - 1) and is_prime(2^127 - 1) and not is_prime(2^127 + 1)",
+        // A composite that fools Miller–Rabin with the first 13 prime bases.
+        "not is_prime(3317044064679887385961981)",
+        "is_squarefree(1) and is_squarefree(30) and is_squarefree(-30)",
+        "not is_squarefree(0) and not is_squarefree(12) and not is_squarefree(-12)",
+        "is_squarefree(2^127 - 1) and not is_squarefree((2^61 - 1)^2)",
+        "euler_phi(2^127 - 1) == 2^127 - 2",
+        // Each number is the product of its prime factors, and squarefree
+        // exactly when none repeats.
+        "(1..3000).count(n -> prime_factors(n).reduce((a, b) -> a * b, 1) != n) == 0",
+        "(1..3000).count(n -> prime_factors(n).count(p -> not is_prime(p)) > 0) == 0",
+        "(1..3000).count(n -> { let f = prime_factors(n); f.sort() != f }) == 0",
+        "(2..3000).count(n -> { let f = prime_factors(n); is_squarefree(n) != (enumerate(f).count(e -> e[0] > 0 and f[e[0] - 1] == e[1]) == 0) }) == 0",
+    ] {
+        assert_eq!(chance(&format!("report {expression}")), 1.0, "{expression}");
+    }
+    for mode in ["enumerate", "sample(runs: 1000, seed: 1)"] {
+        close(
+            chance(&format!("@mode {mode}\nreport is_prime(one_of(1..1000))")),
+            0.168,
+        );
+        close(
+            chance(&format!("@mode {mode}\nreport is_squarefree(one_of(1..1000))")),
+            0.608,
+        );
+    }
+    // One world for each face: the factors of each roll, and the facts about it.
+    let source = "let n ~ d1000\nlet f = prime_factors(n)\nreport len(f) == 1 as \"prime\"\nreport is_prime(n) and is_squarefree(n)";
+    for report in &outcome(source).reports {
+        close(report.chance().unwrap(), 0.168);
+    }
+}
+
+#[test]
 fn special_functions_match_known_values_and_identities() {
     close(mean("report ln_gamma(1)"), 0.0);
     close(mean("report ln_gamma(2)"), 0.0);
@@ -360,6 +405,8 @@ fn domains_types_arity_and_overflow_are_checked() {
         "factorial(-1)",
         "euler_phi(-1)",
         "euler_phi(0)",
+        "prime_factors(0)",
+        "prime_factors(-12)",
     ] {
         assert!(error(&format!("report {source}")).contains("needs"), "{source}");
     }
@@ -371,6 +418,9 @@ fn domains_types_arity_and_overflow_are_checked() {
         "gcd(5.4, 1)",
         "lcm(1, 50%)",
         "euler_phi(1.4)",
+        "prime_factors(1.4)",
+        "is_prime(2.5)",
+        "is_squarefree(true)",
     ] {
         assert!(error(&format!("report {source}")).contains("needs an int"), "{source}");
     }
@@ -389,6 +439,9 @@ fn domains_types_arity_and_overflow_are_checked() {
         "gcd(1)",
         "lcm(1)",
         "euler_phi()",
+        "prime_factors()",
+        "is_prime(1, 2)",
+        "is_squarefree()",
         "ln_gamma()",
         "erf(1, 2)",
     ] {
@@ -405,9 +458,31 @@ fn integer_work_respects_host_limits() {
         },
         ..Options::default()
     };
-    let err = exec_raw("report euler_phi(1000000007)", &options).unwrap_err();
+    for source in [
+        "euler_phi(1000000007)",
+        "is_prime(1000000007)",
+        "is_squarefree(2^127 - 1)",
+        "prime_factors(2^67 - 1)",
+    ] {
+        let err = exec_raw(&format!("report {source}"), &options).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Limit, "{source}");
+        assert!(err.message.contains("work budget"), "{source}");
+    }
+    // Rho can't split a product of two 20-digit primes in reasonable time:
+    // the run stops at its work limit rather than searching on.
+    let options = Options {
+        limits: Limits {
+            max_work: 10_000_000,
+            ..Limits::default()
+        },
+        ..Options::default()
+    };
+    let err = exec_raw(
+        "report prime_factors(10000000000000000051 * 10000000000000000087)",
+        &options,
+    )
+    .unwrap_err();
     assert_eq!(err.kind, ErrorKind::Limit);
-    assert!(err.message.contains("work budget"));
     // Enormous arguments must overflow promptly rather than loop up to n or k.
     for source in [
         "factorial(9223372036854775807)",
@@ -437,6 +512,7 @@ fn functions_lift_over_distributions_in_both_modes() {
             ("gcd(d2, d2)", 1.25),
             ("lcm(d2, d2)", 1.75),
             ("euler_phi(d4)", 1.5),
+            ("len(prime_factors(d4))", 1.0),
             ("ln_gamma(one_of([1, 6]))", 0.5 * 120.0f64.ln()),
             ("erf(one_of([-1, 1]))", 0.0),
         ] {

@@ -64,6 +64,9 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Gcd
         | B::Lcm
         | B::EulerPhi
+        | B::PrimeFactors
+        | B::IsPrime
+        | B::IsSquarefree
         | B::LnGamma
         | B::Erf
         | B::Erfc
@@ -349,6 +352,18 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::EulerPhi => doc(
             "euler_phi(n: int) -> int",
             "Euler's totient: how many integers from 1 through `n` are coprime to `n`. `n` must be positive; `euler_phi(1)` is 1. Factoring large inputs can reach the run's work limit.",
+        ),
+        B::PrimeFactors => doc(
+            "prime_factors(n: int) -> list[int]",
+            "The primes whose product is `n`, smallest first, each as many times as it divides `n`: `prime_factors(360)` is `[2, 2, 2, 3, 3, 5]`, and `prime_factors(1)` is `[]`. `n` must be positive. A number with two large prime factors, like a product of two 20-digit primes, can reach the run's work limit.",
+        ),
+        B::IsPrime => doc(
+            "is_prime(n: int) -> bool",
+            "Whether `n` is prime: `is_prime(97)` is true. Numbers below 2 aren't. Exact below 3.3 × 10²⁴; above, it's the Baillie–PSW test, which no known composite passes.",
+        ),
+        B::IsSquarefree => doc(
+            "is_squarefree(n: int) -> bool",
+            "Whether no prime divides `n` more than once: `is_squarefree(30)` is true, and `is_squarefree(12)` is false. 1 is squarefree, 0 isn't, and the sign doesn't matter. It factors `n`, so a large `n` can reach the run's work limit.",
         ),
         B::LnGamma => doc(
             "ln_gamma(x) -> float",

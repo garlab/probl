@@ -4,8 +4,13 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+### Added
+
+- `prime_factors(n)` lists the primes whose product is `n`, smallest first and repeated as often as they divide it: `prime_factors(360)` is `[2, 2, 2, 3, 3, 5]`. `is_prime(n)` and `is_squarefree(n)` say whether `n` is prime, and whether no prime divides it twice. Like the other integer functions they work on bigints and apply to each outcome of a distribution: `is_prime(d1000)` is 16.80%. `is_prime` is exact below 3.3 × 10²⁴ and uses the Baillie–PSW test above, which no known composite passes ([semantics](docs/semantics.md#1-values-and-types)).
+
 ### Changed
 
+- `euler_phi` factors with Miller–Rabin and Pollard's rho method rather than trial division: `euler_phi(2^61 - 1)` takes milliseconds rather than 9.7 s, and summing it over 1 to 1,000,000 takes 1.0 s rather than 2.1 s. A large prime no longer reaches the work limit; a number with two large prime factors still can.
 - A value that fails a declared type is described as `typeof` would describe it: "`b` should be a list[int], but it's a list[str]", rather than "but it's a list". A declared record type is written as `typeof` writes one, `{a: int}`.
 - Comparing collections, and copying one to change it while something else holds it, count against the work limit: a unit for each pair of elements compared, or each element copied. A program that compares long lists in a loop can now reach the limit, which before let it run unbounded.
 

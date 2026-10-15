@@ -50,3 +50,7 @@ let large_converted:int = 2.0^100
 report large_converted
 let combined:bag[int] = bag([1,1.0])
 report [len(combined), combined.get(1)]
+# Factoring takes machine words, 128-bit products and bigints.
+report [prime_factors(360), prime_factors(1000003 * 1000033), prime_factors(2^64 + 1), prime_factors((2^61 - 1)^2 * 3)]
+report [is_prime(2^61 - 1), is_prime(2^127 - 1), is_prime(3317044064679887385961981), is_squarefree(-30), is_squarefree((2^61 - 1)^2)]
+report is_squarefree(one_of(1..100))

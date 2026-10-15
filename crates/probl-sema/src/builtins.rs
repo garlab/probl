@@ -86,6 +86,9 @@ builtins! {
     Gcd = "gcd", 2..=2, Lift, true;
     Lcm = "lcm", 2..=2, Lift, true;
     EulerPhi = "euler_phi", 1..=1, Lift, true;
+    PrimeFactors = "prime_factors", 1..=1, Lift, true;
+    IsPrime = "is_prime", 1..=1, Lift, true;
+    IsSquarefree = "is_squarefree", 1..=1, Lift, true;
     LnGamma = "ln_gamma", 1..=1, Lift, true;
     Erf = "erf", 1..=1, Lift, true;
     Erfc = "erfc", 1..=1, Lift, true;

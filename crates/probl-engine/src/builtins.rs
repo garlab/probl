@@ -7,7 +7,7 @@ use crate::dist::{Budget, Counts, Dist};
 use crate::error::{Fault, OpError, OpResult};
 use crate::ops::{self, article, as_index, integer, range_count, range_len, to_prob};
 use crate::value::{Value, fmt_float};
-use probl_number::Integer;
+use probl_number::{Integer, primes};
 use probl_sema::Builtin;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -157,6 +157,15 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             Ok(Value::Int(result))
         }
         B::EulerPhi => euler_phi(nonnegative_int(a(0), "euler_phi", budget)?.as_ref(), budget),
+        B::PrimeFactors => prime_factors(integer(a(0), "prime_factors", budget)?.as_ref(), budget),
+        B::IsPrime => {
+            let n = integer(a(0), "is_prime", budget)?;
+            Ok(Value::Bool(primes::is_prime(&n, &mut |units| budget.work(units))?))
+        }
+        B::IsSquarefree => {
+            let n = integer(a(0), "is_squarefree", budget)?;
+            Ok(Value::Bool(primes::is_squarefree(&n, &mut |units| budget.work(units))?))
+        }
         B::LnGamma => float1(a(0), "ln_gamma", |x| (x > 0.0).then(|| libm::lgamma(x))),
         B::Erf => float1(a(0), "erf", |x| Some(libm::erf(x))),
         B::Erfc => float1(a(0), "erfc", |x| Some(libm::erfc(x))),
@@ -1437,35 +1446,31 @@ fn euler_phi(n: &Integer, budget: &mut Budget) -> OpResult<Value> {
             "`euler_phi` needs a positive integer",
         ));
     }
-    let mut n = n.clone();
     let mut result = n.clone();
-    let mut divisor = Integer::from(2);
-    loop {
-        budget.integer_work(&n, &divisor, true)?;
-        let (q, rem) = n.div_mod(&divisor)?;
-        if divisor > q {
-            break;
-        }
-        if rem.is_zero() {
-            budget.integer_work(&result, &divisor, true)?;
-            result = result.sub(&result.div_mod(&divisor)?.0)?;
-            n = q;
-            loop {
-                budget.integer_work(&n, &divisor, true)?;
-                let (q, rem) = n.div_mod(&divisor)?;
-                if !rem.is_zero() {
-                    break;
-                }
-                n = q;
-            }
-        }
-        divisor = divisor.add(&if divisor == 2 { Integer::ONE } else { 2.into() })?;
-    }
-    if n > 1 {
-        budget.integer_work(&result, &n, true)?;
-        result = result.sub(&result.div_mod(&n)?.0)?;
+    for (p, _) in primes::factorize(n, &mut |units| budget.work(units))? {
+        budget.integer_work(&result, &p, true)?;
+        result = result.sub(&result.div_mod(&p)?.0)?;
     }
     Ok(Value::Int(result))
+}
+
+fn prime_factors(n: &Integer, budget: &mut Budget) -> OpResult<Value> {
+    if n.is_zero() || n.is_negative() {
+        return Err(OpError::fault(
+            Fault::DomainError,
+            "`prime_factors` needs a positive integer",
+        ));
+    }
+    let factors = primes::factorize(n, &mut |units| budget.work(units))?;
+    let count: u64 = factors.iter().map(|&(_, k)| u64::from(k)).sum();
+    budget.collection(u128::from(count))?;
+    budget.work(count)?;
+    let mut items = Vec::with_capacity(count as usize);
+    for (p, k) in factors {
+        budget.integer_allocation(p.bits(), u64::from(k))?;
+        items.extend(std::iter::repeat_n(Value::Int(p), k as usize));
+    }
+    Ok(Value::list(items))
 }
 
 fn text(v: &Value, func: &str) -> OpResult<Arc<str>> {
