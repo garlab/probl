@@ -64,7 +64,7 @@ The native Rust tests cover the adapter. `test/examples.mjs` executes the actual
 
 The browser test defaults to macOS application paths. Set `PROBL_CHROME` to the Chrome executable on another installation. For Firefox, set `PROBL_FIREFOX` if needed and run `bun test/page.mjs firefox`. The browser must be installed separately.
 
-The current GitHub Actions workflow runs the Rust checks only. Adding WASM parity and browser tests to CI remains a priority; see [testing](testing.md).
+CI runs both on every push and pull request, on Ubuntu with Chrome: the `playground` job in [ci.yml](../.github/workflows/ci.yml). Firefox runs only locally.
 
 ## Hosting and deployment
 
