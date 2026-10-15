@@ -78,11 +78,14 @@ jobs:
           cargo build --release --locked -p probl-bench
           cp target/release/probl-bench "$RUNNER_TEMP/bench-main"
           if [ -n "$BASE" ]; then
-            # Each build runs the models of its own commit.
+            # Each build runs the models of its own commit. Cargo takes two
+            # checkouts of one workspace for the same crates, and goes by
+            # file times to rebuild them, so the other has a target
+            # directory of its own.
             git worktree add --detach "$RUNNER_TEMP/base" "$BASE"
             cargo build --release --locked -p probl-bench \
-              --manifest-path "$RUNNER_TEMP/base/Cargo.toml" --target-dir "$GITHUB_WORKSPACE/target"
-            cp target/release/probl-bench "$RUNNER_TEMP/bench-base"
+              --manifest-path "$RUNNER_TEMP/base/Cargo.toml" --target-dir "$RUNNER_TEMP/base-target"
+            cp "$RUNNER_TEMP/base-target/release/probl-bench" "$RUNNER_TEMP/bench-base"
           fi
       - name: Run the benchmarks, alternating the builds
         if: steps.base.outputs.skip != 'true'
