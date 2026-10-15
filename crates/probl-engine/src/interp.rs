@@ -3640,26 +3640,31 @@ impl<'p> Engine<'p> {
         // collection, which would make changing it copy it.
         values[0] = Value::Unit;
         let target = place_mut(&mut w.slots[place.slot as usize], &keys, &mut self.budget).map_err(at)?;
+        let budget = &mut self.budget;
         match (func, target) {
-            (Builtin::Push, Value::List(items)) => {
-                Arc::make_mut(items).push(std::mem::replace(&mut values[1], Value::Unit))
-            }
-            (Builtin::Insert, Value::List(items)) => Arc::make_mut(items).insert(
+            (Builtin::Push, Value::List(items)) => unshared(items, |items| items.len(), budget)
+                .map_err(at)?
+                .push(std::mem::replace(&mut values[1], Value::Unit)),
+            (Builtin::Insert, Value::List(items)) => unshared(items, |items| items.len(), budget).map_err(at)?.insert(
                 index.unwrap_or_default() as usize,
                 std::mem::replace(&mut values[2], Value::Unit),
             ),
             (Builtin::Remove, Value::List(items)) => {
-                Arc::make_mut(items).remove(index.unwrap_or_default() as usize);
+                unshared(items, |items| items.len(), budget)
+                    .map_err(at)?
+                    .remove(index.unwrap_or_default() as usize);
             }
             (Builtin::DropLast, Value::List(items)) => {
-                Arc::make_mut(items).pop();
+                unshared(items, |items| items.len(), budget).map_err(at)?.pop();
             }
             (Builtin::Insert, Value::Map(m)) => {
                 let value = std::mem::replace(&mut values[2], Value::Unit);
-                Arc::make_mut(m).insert(std::mem::replace(&mut values[1], Value::Unit), value);
+                unshared(m, |m| m.len(), budget)
+                    .map_err(at)?
+                    .insert(std::mem::replace(&mut values[1], Value::Unit), value);
             }
             (Builtin::Remove, Value::Map(m)) => {
-                Arc::make_mut(m).remove(&values[1]);
+                unshared(m, |m| m.len(), budget).map_err(at)?.remove(&values[1]);
             }
             _ => {
                 return Err(RuntimeError::new(
@@ -4495,19 +4500,19 @@ fn update(target: &mut Value, keys: &[PathKey], v: Value, budget: &mut Budget) -
     };
     match (first, target) {
         (PathKey::Field(name), Value::Record(r)) => {
-            let r = Arc::make_mut(r);
+            let r = unshared(r, |r| r.fields.len(), budget)?;
             let slot = r
                 .get_mut(name)
                 .ok_or_else(|| OpError::new(format!("this record has no field `{name}`")))?;
             update(slot, rest, v, budget)
         }
         (PathKey::Index(i), Value::List(items)) => {
-            let items = Arc::make_mut(items);
+            let items = unshared(items, |items| items.len(), budget)?;
             let k = ops::as_index(i, items.len() as u128, budget)? as usize;
             update(&mut items[k], rest, v, budget)
         }
         (PathKey::Index(k), Value::Map(m)) => {
-            let m = Arc::make_mut(m);
+            let m = unshared(m, |m| m.len(), budget)?;
             if rest.is_empty() {
                 m.insert(k.clone(), v);
                 return Ok(());
@@ -4528,6 +4533,15 @@ fn update(target: &mut Value, keys: &[PathKey], v: Value, budget: &mut Budget) -
     }
 }
 
+/// `Arc::make_mut`, counting a unit of work for each element of the copy
+/// it makes when something else holds the value.
+fn unshared<'a, T: Clone>(arc: &'a mut Arc<T>, size: impl Fn(&T) -> usize, budget: &mut Budget) -> OpResult<&'a mut T> {
+    if Arc::get_mut(arc).is_none() {
+        budget.work(size(arc) as u64)?;
+    }
+    Ok(Arc::make_mut(arc))
+}
+
 /// The value at `keys` in `target`, to change in place: each level is
 /// copied only if something else holds it.
 fn place_mut<'v>(target: &'v mut Value, keys: &[PathKey], budget: &mut Budget) -> OpResult<&'v mut Value> {
@@ -4536,18 +4550,18 @@ fn place_mut<'v>(target: &'v mut Value, keys: &[PathKey], budget: &mut Budget) -
     };
     match (first, target) {
         (PathKey::Field(name), Value::Record(r)) => {
-            let slot = Arc::make_mut(r)
+            let slot = unshared(r, |r| r.fields.len(), budget)?
                 .get_mut(name)
                 .ok_or_else(|| OpError::new(format!("this record has no field `{name}`")))?;
             place_mut(slot, rest, budget)
         }
         (PathKey::Index(i), Value::List(items)) => {
-            let items = Arc::make_mut(items);
+            let items = unshared(items, |items| items.len(), budget)?;
             let k = ops::as_index(i, items.len() as u128, budget)? as usize;
             place_mut(&mut items[k], rest, budget)
         }
         (PathKey::Index(k), Value::Map(m)) => {
-            let slot = Arc::make_mut(m)
+            let slot = unshared(m, |m| m.len(), budget)?
                 .get_mut(k)
                 .ok_or_else(|| OpError::new(format!("the key {k:?} isn't in the map")))?;
             place_mut(slot, rest, budget)

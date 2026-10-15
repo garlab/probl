@@ -312,6 +312,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::Push => {
             let items = list(a(0), "push")?;
             budget.collection(items.len() as u128 + 1)?;
+            budget.work(items.len() as u64)?;
             let mut items = items.to_vec();
             items.push(a(1).clone());
             Ok(Value::list(items))
@@ -332,6 +333,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::DropLast => {
             let items = list(a(0), "pop")?;
             let n = items.len().saturating_sub(1);
+            budget.work(n as u64)?;
             Ok(Value::list(items[..n].to_vec()))
         }
         B::Prob => ops::make_prob(a(0)),
@@ -1920,6 +1922,7 @@ fn insert(coll: &Value, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<V
     match coll {
         Value::List(items) => {
             budget.collection(items.len() as u128 + 1)?;
+            budget.work(items.len() as u64)?;
             let mut items = items.to_vec();
             let i = as_index(a, items.len() as u128 + 1, budget)? as usize;
             items.insert(i, b.clone());
@@ -1927,6 +1930,7 @@ fn insert(coll: &Value, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<V
         }
         Value::Map(m) => {
             budget.collection(m.len() as u128 + 1)?;
+            budget.work(m.len() as u64)?;
             let mut m = BTreeMap::clone(m);
             m.insert(a.clone(), b.clone());
             Ok(Value::map(m))
@@ -1938,12 +1942,14 @@ fn insert(coll: &Value, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<V
 fn remove(coll: &Value, key: &Value, budget: &mut Budget) -> OpResult<Value> {
     match coll {
         Value::List(items) => {
+            budget.work(items.len() as u64)?;
             let mut items = items.to_vec();
             let i = as_index(key, items.len() as u128, budget)? as usize;
             items.remove(i);
             Ok(Value::list(items))
         }
         Value::Map(m) => {
+            budget.work(m.len() as u64)?;
             let mut m = BTreeMap::clone(m);
             m.remove(key);
             Ok(Value::map(m))

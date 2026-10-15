@@ -94,7 +94,7 @@ impl<T> Hashed<T> {
         }
     }
 
-    fn known_hash(&self) -> u64 {
+    pub(crate) fn known_hash(&self) -> u64 {
         self.hash.load(Atomic::Relaxed)
     }
 }
@@ -578,6 +578,92 @@ fn eq_other(x: &Value, y: &Value) -> bool {
 }
 
 impl Eq for Value {}
+
+/// `a == b`, counting a unit of work for each pair of elements of
+/// collections it compares, which `==` can't: it has no budget. It takes
+/// the same shortcuts.
+pub fn eq_counted(a: &Value, b: &Value, budget: &mut crate::dist::Budget) -> crate::error::OpResult<bool> {
+    // Different hashes, both known, decide it, as `Hashed`'s `==` does.
+    fn differ<T>(x: &Hashed<T>, y: &Hashed<T>) -> bool {
+        let (p, q) = (x.known_hash(), y.known_hash());
+        p != 0 && q != 0 && p != q
+    }
+    fn same(p: &Value, q: &Value, budget: &mut crate::dist::Budget) -> crate::error::OpResult<bool> {
+        match p {
+            Value::List(_) | Value::Map(_) | Value::Bag(_) | Value::Record(_) => eq_counted(p, q, budget),
+            _ => Ok(p == q),
+        }
+    }
+    // Elements are counted as they're compared, then charged together: a
+    // charge for each costs as much as comparing two ints.
+    let mut compared = 0;
+    let mut equal = true;
+    match (a, b) {
+        (Value::List(x), Value::List(y)) => {
+            if Arc::ptr_eq(x, y) {
+                return Ok(true);
+            }
+            if x.len() != y.len() || differ(x, y) {
+                return Ok(false);
+            }
+            for (p, q) in x.iter().zip(y.iter()) {
+                compared += 1;
+                if !same(p, q, budget)? {
+                    equal = false;
+                    break;
+                }
+            }
+        }
+        (Value::Map(x), Value::Map(y)) => {
+            if Arc::ptr_eq(x, y) {
+                return Ok(true);
+            }
+            if x.len() != y.len() || differ(x, y) {
+                return Ok(false);
+            }
+            for ((k, v), (l, u)) in x.iter().zip(y.iter()) {
+                compared += 1;
+                if !same(k, l, budget)? || !same(v, u, budget)? {
+                    equal = false;
+                    break;
+                }
+            }
+        }
+        (Value::Bag(x), Value::Bag(y)) => {
+            if Arc::ptr_eq(x, y) {
+                return Ok(true);
+            }
+            if x.sum != y.sum || x.entries.len() != y.entries.len() || differ(x, y) {
+                return Ok(false);
+            }
+            for ((v, n), (u, m)) in x.entries.iter().zip(y.entries.iter()) {
+                compared += 1;
+                if n != m || !same(v, u, budget)? {
+                    equal = false;
+                    break;
+                }
+            }
+        }
+        (Value::Record(x), Value::Record(y)) => {
+            if Arc::ptr_eq(x, y) {
+                return Ok(true);
+            }
+            if x.ty != y.ty || x.fields.len() != y.fields.len() || differ(x, y) {
+                return Ok(false);
+            }
+            for ((n, v), (m, u)) in x.fields.iter().zip(y.fields.iter()) {
+                compared += 1;
+                if n != m || !same(v, u, budget)? {
+                    equal = false;
+                    break;
+                }
+            }
+        }
+        _ => return Ok(a == b),
+    }
+    budget.work(compared)?;
+    Ok(equal)
+}
 
 impl Hash for Value {
     /// Like equality: small values inlined, the rest out of line.

@@ -491,10 +491,10 @@ fn binary_plain(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResul
         }
     }
     match op {
-        BinOp::Eq => Ok(Value::Bool(equals(a, b))),
-        BinOp::Ne => Ok(Value::Bool(!equals(a, b))),
+        BinOp::Eq => Ok(Value::Bool(equals_counted(a, b, budget)?)),
+        BinOp::Ne => Ok(Value::Bool(!equals_counted(a, b, budget)?)),
         BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-            let ord = compare(a, b)?;
+            let ord = compare_counted(a, b, Some(budget))?;
             Ok(Value::Bool(match op {
                 BinOp::Lt => ord.is_lt(),
                 BinOp::Le => ord.is_le(),
@@ -837,14 +837,28 @@ fn numeric_compare(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
 
 /// The language's `==`: numbers compare by value across int, float and prob.
 pub fn equals(a: &Value, b: &Value) -> bool {
+    equal_numbers(a, b).unwrap_or_else(|| a == b)
+}
+
+/// `equals`, counting a unit of work for each pair of elements of
+/// collections it compares.
+pub fn equals_counted(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<bool> {
+    match equal_numbers(a, b) {
+        Some(equal) => Ok(equal),
+        None => crate::value::eq_counted(a, b, budget),
+    }
+}
+
+/// Whether two numbers are equal, by value; `None` unless one is a number.
+fn equal_numbers(a: &Value, b: &Value) -> Option<bool> {
     if let (Value::Complex(x), Value::Complex(y)) = (a, b) {
-        return x == y;
+        return Some(x == y);
     }
     if let (Value::Complex(z), real) | (real, Value::Complex(z)) = (a, b) {
         if z.im() != 0.0 {
-            return false;
+            return Some(false);
         }
-        return match real {
+        return Some(match real {
             // Compare integers without rounding them through f64.
             Value::Int(n) => {
                 let x = z.re();
@@ -852,21 +866,27 @@ pub fn equals(a: &Value, b: &Value) -> bool {
             }
             Value::Float(x) | Value::Prob(x) => z.re() == *x,
             _ => false,
-        };
+        });
     }
     if let Some(c) = numeric_compare(a, b) {
-        return c.is_eq();
+        return Some(c.is_eq());
     }
     if matches!(a, Value::Float(x) | Value::Prob(x) if x.is_nan())
         || matches!(b, Value::Float(x) | Value::Prob(x) if x.is_nan())
     {
-        return false;
+        return Some(false);
     }
-    a == b
+    None
 }
 
 /// Ordering for `<`, `>` and friends.
 pub fn compare(a: &Value, b: &Value) -> OpResult<std::cmp::Ordering> {
+    compare_counted(a, b, None)
+}
+
+/// `compare`, counting a unit of work for each pair of list elements it
+/// compares, given a budget.
+pub fn compare_counted(a: &Value, b: &Value, mut budget: Option<&mut Budget>) -> OpResult<std::cmp::Ordering> {
     if matches!(a, Value::Complex(_)) || matches!(b, Value::Complex(_)) {
         return Err(OpError::new("complex values have no ordering").help("compare `abs(z)`, `real(z)` or `imag(z)`"));
     }
@@ -883,13 +903,22 @@ pub fn compare(a: &Value, b: &Value) -> OpResult<std::cmp::Ordering> {
         (Value::Date(x), Value::Date(y)) => Ok(x.cmp(y)),
         (Value::Enum(x), Value::Enum(y)) if x.ty == y.ty => Ok(x.variant.cmp(&y.variant)),
         (Value::List(x), Value::List(y)) => {
+            // Elements are counted as they're compared, then charged
+            // together.
+            let mut order = x.len().cmp(&y.len());
+            let mut compared = 0;
             for (p, q) in x.iter().zip(y.iter()) {
-                let c = compare(p, q)?;
+                compared += 1;
+                let c = compare_counted(p, q, budget.as_deref_mut())?;
                 if c.is_ne() {
-                    return Ok(c);
+                    order = c;
+                    break;
                 }
             }
-            Ok(x.len().cmp(&y.len()))
+            if let Some(budget) = budget {
+                budget.work(compared)?;
+            }
+            Ok(order)
         }
         _ => Err(OpError::new(format!(
             "can't compare {} with {}",
@@ -911,7 +940,19 @@ pub fn contains(coll: &Value, item: &Value, budget: &mut Budget) -> OpResult<boo
         }
     }
     Ok(match coll {
-        Value::List(items) => items.iter().any(|x| equals(x, item)),
+        Value::List(items) => {
+            let mut found = false;
+            let mut compared = 0;
+            for x in items.iter() {
+                compared += 1;
+                if equals_counted(x, item, budget)? {
+                    found = true;
+                    break;
+                }
+            }
+            budget.work(compared)?;
+            found
+        }
         Value::Map(m) => m.contains_key(item),
         Value::Bag(b) => b.get(item).is_some_and(|n| *n > 0),
         Value::Range(lo, hi) => match item {

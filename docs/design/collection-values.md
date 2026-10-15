@@ -1,6 +1,6 @@
 # Collection values: updates, equality and sorting
 
-> Draft, 14 October 2026. Describes how the engine stores and changes lists, maps and bags, as measured at commit `35b4dd4`, and proposes fixes. The first two recommendations are implemented ([as built](#as-built)); the others aren't. No program's result changes. Only costs do, and counting more work against the work limit can stop a program that finishes today.
+> Draft, 14 October 2026. Describes how the engine stores and changes lists, maps and bags, as measured at commit `35b4dd4`, and proposes fixes. The first three recommendations are implemented ([as built](#as-built)); the others aren't. No program's result changes. Only costs do, and counting more work against the work limit can stop a program that finishes today.
 
 ## Recommendation
 
@@ -120,7 +120,7 @@ Neither is urgent without a program that sorts large lists.
 
 ## As built
 
-Recommendations 1 and 2 are implemented.
+Recommendations 1, 2 and 3 are implemented.
 
 - **Changes in place.** `push`, `pop`, `insert` and `remove` compile to an `Update` statement. It means the assignment they always meant, and every analysis treats it as one. The engine changes a plain list or map in place, copying each level of the path only if something else holds it. Anything else runs as the assignment, as before: a distribution argument, which the method lifts over; a range or a bag; a field of a declared record type; and a key that converts to a map's declared key type, which could meet one already there.
 - **Only what goes in is checked.** On a variable with a declared type, the method's new elements are converted and checked against the element types, with the errors the check of the whole variable gave.
@@ -140,11 +140,13 @@ Measured on a release build, with loops of n changes:
 
 On the benchmarks, no output or world-steps changed, and the total of the models that finish went from 8.45 s to 8.31 s (−1.6%); `snakes_three` is cancelled at the time limit in both builds. `15_service_queue`, which pushes and sorts, is 14% faster and its peak heap 22% smaller. The one model measured more than 5% slower, `benches/diagnosis`, doesn't use these methods, and was 1.1% slower measured again, alternately with the build before.
 
+**Comparisons and copies are work.** `==`, `!=` and orderings of collections, and a list's `contains`, charge a unit for each pair of elements they compare, keeping their shortcuts: the same collection, different lengths, or different known hashes, cost nothing. Copying a collection to change it, because something else holds it, charges a unit for each element copied, as concatenation already did. The 4,000 comparisons of two equal 200,000-element lists now count 8 × 10⁸ units, and take 3.0 s rather than 2.7 s: the elements are counted as they're compared, and charged once per collection.
+
 Left to do:
 
 - A built-in that doesn't handle analytic outcomes still searches its collection arguments for one on every call. That's at most a constant factor for those that go through the collection anyway, but `xs.contains(1)` on a 40,000-element list takes 79 µs even when 1 comes first. A collection could keep whether it holds one, as it keeps its hash.
 - `deck.take()` still copies the bag it draws from.
-- Recommendations 3 to 5.
+- Recommendations 4 and 5.
 
 ## Implementation order and validation
 
