@@ -34,7 +34,8 @@ may not include the manifest or attestations.
 After publication, the [Homebrew tap](https://github.com/garlab/homebrew-tap)
 verifies the source checksum and provenance, then opens a formula-update PR.
 The tap builds and tests prebuilt packages (Homebrew's *bottles*) on Apple Silicon
-macOS, Intel macOS and Linux x86-64.
+macOS and Linux x86-64. Intel macOS installations build from source; Homebrew
+may also need to build the Rust dependency.
 
 Packages are published only after checks pass for the exact update being
 published. Build jobs do not receive publishing credentials. Changes to the
