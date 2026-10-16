@@ -125,6 +125,13 @@ def publish(tag, directory):
         raise ValueError("Assets belong to a different release")
     if digest(directory / manifest['archive']) != manifest['sha256']:
         raise ValueError("Source archive checksum mismatch")
+    browser = f'probl-{tag[1:]}-browser.json'
+    data = json.loads((directory / browser).read_text())
+    if data.get('schema') != 1 or data.get('tag') != tag or data.get('commit') != manifest['commit']:
+        raise ValueError('Browser bundle belongs to a different release')
+    expected = f'{digest(directory / browser)}  {browser}\n'
+    if (directory / f'{browser}.sha256').read_text() != expected:
+        raise ValueError('Browser bundle checksum mismatch')
     existing = find_release(tag)
     if not existing:
         # A draft is never found by its tag, and may not be listed yet right
@@ -136,7 +143,7 @@ def publish(tag, directory):
     if existing['prerelease']:
         raise ValueError("Refusing to replace an existing prerelease")
     known = {asset['name'] for asset in existing['assets']}
-    for asset in [manifest['archive'], 'release.json', 'SHA256SUMS']:
+    for asset in [manifest['archive'], 'release.json', 'SHA256SUMS', browser, f'{browser}.sha256']:
         if asset in known:
             with tempfile.TemporaryDirectory() as temporary:
                 run('gh', 'release', 'download', tag, '--repo', REPO,

@@ -12,6 +12,12 @@ from unittest.mock import patch
 import release
 
 
+def browser_fixture(folder, commit='a' * 40):
+    name = 'probl-1.2.3-browser.json'
+    (folder / name).write_text(json.dumps({'schema': 1, 'tag': 'v1.2.3', 'commit': commit}))
+    (folder / f'{name}.sha256').write_text(f'{release.digest(folder / name)}  {name}\n')
+
+
 class ReleaseTests(unittest.TestCase):
     def test_find_release_includes_paginated_drafts(self):
         draft = {'id': 7, 'tag_name': 'v1.2.3', 'draft': True}
@@ -48,6 +54,7 @@ class ReleaseTests(unittest.TestCase):
                     'commit': 'a' * 40, 'tag': 'v1.2.3', 'archive': archive.name,
                     'sha256': release.digest(archive)}))
                 (folder / 'SHA256SUMS').write_text('fixture')
+                browser_fixture(folder)
                 upload_url = 'https://uploads.github.com/repos/garlab/probl/releases/7/assets'
                 draft = {'id': 7, 'tag_name': 'v1.2.3', 'draft': True, 'prerelease': False,
                          'upload_url': upload_url + '{?name,label}', 'assets': []}
@@ -85,7 +92,7 @@ class ReleaseTests(unittest.TestCase):
                      patch.object(release, 'run', side_effect=command):
                     release.publish('v1.2.3', folder)
                 names = [url.split('?name=')[1] for url in uploads]
-                expected = ['release.json', 'SHA256SUMS']
+                expected = ['release.json', 'SHA256SUMS', 'probl-1.2.3-browser.json', 'probl-1.2.3-browser.json.sha256']
                 self.assertEqual(names, expected if already_exists else [archive.name] + expected)
                 self.assertTrue(published)
 
@@ -98,6 +105,7 @@ class ReleaseTests(unittest.TestCase):
                 'commit': 'a' * 40, 'tag': 'v1.2.3', 'archive': archive.name,
                 'sha256': release.digest(archive)}))
             (folder / 'SHA256SUMS').write_text('fixture')
+            browser_fixture(folder)
             published = {'id': 7, 'tag_name': 'v1.2.3', 'draft': False, 'prerelease': False,
                          'upload_url': 'unused{?name,label}', 'assets': [{'name': archive.name}]}
             def command(*args):
@@ -107,6 +115,24 @@ class ReleaseTests(unittest.TestCase):
                  patch.object(release, 'run', side_effect=command):
                 with self.assertRaisesRegex(ValueError, 'never overwrite'):
                     release.publish('v1.2.3', folder)
+
+    def test_publish_rejects_another_browser_bundle_before_any_release_change(self):
+        for case, error in [('commit', 'different release'), ('checksum', 'Browser bundle checksum')]:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                folder = Path(temporary)
+                archive = folder / 'probl-1.2.3-source.tar.gz'
+                archive.write_bytes(b'source')
+                (folder / 'release.json').write_text(json.dumps({
+                    'commit': 'a' * 40, 'tag': 'v1.2.3', 'archive': archive.name,
+                    'sha256': release.digest(archive)}))
+                browser_fixture(folder, commit='b' * 40 if case == 'commit' else 'a' * 40)
+                if case == 'checksum':
+                    (folder / 'probl-1.2.3-browser.json.sha256').write_text('0' * 64 + '  probl-1.2.3-browser.json\n')
+                with patch.dict(os.environ, {'GITHUB_SHA': 'a' * 40}), \
+                     patch.object(release, 'check'), patch.object(release, 'api') as api:
+                    with self.assertRaisesRegex(ValueError, error):
+                        release.publish('v1.2.3', folder)
+                    api.assert_not_called()
 
     def test_rejects_unsafe_and_prerelease_tags(self):
         for tag in ['main', 'v1.2.3-rc.1', 'v01.2.3', '../v1.2.3', 'v1.2.3\n', 'v1.2.3;echo bad']:

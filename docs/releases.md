@@ -21,6 +21,8 @@ Each GitHub release includes:
 | `probl-X.Y.Z-source.tar.gz` | Source files from the release commit |
 | `release.json` | Version tag, source commit, archive filename and SHA-256 |
 | `SHA256SUMS` | SHA-256 checksums of the archive and manifest |
+| `probl-X.Y.Z-browser.json` | The engine and playground for browsers ([browser distribution](#browser-distribution)) |
+| `probl-X.Y.Z-browser.json.sha256` | SHA-256 checksum of the browser bundle |
 
 These assets receive build-provenance attestations identifying the repository,
 workflow, tag and commit that produced them. Assets are attached before the
@@ -72,3 +74,31 @@ A failed run can leave some destinations published before others; retries reuse
 the same version and verify existing assets. The current automation publishes
 versions in increasing order and does not publish older maintenance releases
 over a newer release.
+
+## Browser distribution
+
+New releases also contain `probl-X.Y.Z-browser.json` and its `.sha256` checksum
+file. The versioned bundle contains the matching WASM, JavaScript adapter and
+highlighter, the built playground (which uses the same WASM, packaged once),
+changelog, licenses and native reference results for the bundled examples. Files are base64-encoded with individual
+SHA-256 hashes; the schema is versioned. No package installation or Rust compiler
+is needed to consume a bundle.
+
+The release workflow builds with the committed lockfiles, compares native and
+WASM results, runs the full playground Chrome tests, then packages the output.
+A separate job attests the exact bundle. Publication waits for these checks and
+attestation, and includes the browser assets before making the release immutable.
+The existing source manifest and source checksums retain their format.
+
+The bundle is built with the current stable Rust. Re-running only a failed run's
+failed jobs reuses the bundle it built. Re-running all jobs builds it again; after
+a Rust release that WASM can differ, and publication then refuses to replace the
+bundle already uploaded to the draft.
+
+The website deployment workflow checks daily for stable releases. It verifies
+the bundle's checksum and provenance against this repository, release workflow,
+tag and commit, tests website examples and the packaged playground, and publishes
+both sites only after success. Playground source remains here in `web/`; this
+repository does not need website deployment credentials. Older immutable releases
+without browser assets are not modified; this distribution starts with the first
+release containing these workflow changes.

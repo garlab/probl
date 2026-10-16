@@ -17,7 +17,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const dist = `${web}dist`;
 
 const cargo = Bun.spawnSync(
-  ['cargo', 'build', '-q', '-p', 'probl-wasm', '--target', 'wasm32-unknown-unknown', '--profile', 'wasm'],
+  ['cargo', 'build', '--locked', '-q', '-p', 'probl-wasm', '--target', 'wasm32-unknown-unknown', '--profile', 'wasm'],
   { cwd: root, stdio: ['inherit', 'inherit', 'inherit'] },
 );
 if (!cargo.success) process.exit(1);
