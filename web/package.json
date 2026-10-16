@@ -6,8 +6,7 @@
   "scripts": {
     "build": "bun build.mjs",
     "serve": "bun serve.mjs",
-    "test": "bun test/examples.mjs && bun test/page.mjs",
-    "deploy": "bun deploy.mjs"
+    "test": "bun test/examples.mjs && bun test/page.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -21,7 +20,6 @@
   },
   "devDependencies": {
     "marked": "^18.0.14",
-    "puppeteer-core": "^24.0.0",
-    "wrangler": "^4.142.0"
+    "puppeteer-core": "^24.0.0"
   }
 }

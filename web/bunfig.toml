@@ -1,3 +1,2 @@
-# Don't load web/.env into every command: it holds the Cloudflare token,
-# which only deploy.mjs needs, and reads itself.
+# No command here needs a .env: don't load one into every command.
 env = false

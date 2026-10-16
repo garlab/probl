@@ -68,22 +68,9 @@ CI runs both on every push and pull request, on Ubuntu with Chrome: the `playgro
 
 ## Hosting and deployment
 
-The build is static and can be served by a host that serves `.wasm` as `application/wasm`. The project's deployment script targets Cloudflare Pages using wrangler, a development dependency in `web/`. Production is served at [playground.probl.dev](https://playground.probl.dev), a custom domain of the `probl-playground` Pages project; `probl-playground.pages.dev` serves the same deployment.
+The build is static and can be served by a host that serves `.wasm` as `application/wasm`. Production is served at [playground.probl.dev](https://playground.probl.dev), on Cloudflare Pages; `probl-playground.pages.dev` serves the same deployment.
 
-Credentials come from environment variables or the ignored `web/.env`:
-
-- `CLOUDFLARE_API_TOKEN`: an API token with Account · Cloudflare Pages · Edit permission.
-- `CLOUDFLARE_ACCOUNT_ID`: the account ID.
-- `CLOUDFLARE_PAGES_PROJECT`: optional project name; defaults to `probl-playground`.
-
-From `web/`, when ready to publish:
-
-```sh
-bun run deploy
-bun run deploy --preview
-```
-
-The first command deploys the working tree to production. The second deploys a preview named after the current branch. The script checks credentials, creates the Pages project if missing, builds and uploads `web/dist`. New projects use `main` as the production branch. Uncommitted changes are included and produce a warning.
+The hosted playground is deployed from releases, not from this repository: each release contains a browser bundle with the tested playground build ([browser distribution](releases.md#browser-distribution)), and the hosted playground serves the newest stable release's. A change to `web/` reaches it with the next release. This repository has no deployment script or credentials.
 
 To test an existing deployment:
 
@@ -91,4 +78,4 @@ To test an existing deployment:
 PROBL_URL=https://playground.probl.dev bun test/page.mjs
 ```
 
-Automatic deployment is not configured in the current CI workflow. Charts, user-supplied data files, structured JSON reports and parallel browser sampling remain future work. The Rust library's structured results provide a foundation, but are not yet exposed as a full browser result schema.
+Charts, user-supplied data files, structured JSON reports and parallel browser sampling remain future work. The Rust library's structured results provide a foundation, but are not yet exposed as a full browser result schema.
