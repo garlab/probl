@@ -83,7 +83,7 @@ probl schema examples/data/pilot.csv          # suggest an input type
 probl repl
 ```
 
-Models using `today` get one immutable UTC date snapshot from the host. Add `--today 2026-09-29` to reproduce the calendar examples' documented output. Successful runs are reproducible for the same program, data, date, seed and engine version.
+Models using `today` get one immutable UTC date snapshot from the host. Add `--today 2026-09-29` to reproduce the calendar examples' documented output. Likewise, `env` is the environment variables, an immutable `map[str, str]` captured once: `env.get("REGION", "eu")` reads one, and `--env REGION=us` sets one in place of the shell's. Successful runs are reproducible for the same program, data, environment, date, seed and engine version.
 
 ## Explore the examples
 

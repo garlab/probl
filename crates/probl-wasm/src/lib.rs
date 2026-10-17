@@ -220,6 +220,8 @@ pub fn docs() -> String {
 /// - `"files"`: `{path: text}`, the files `read` may read.
 /// - `"today"`: `"YYYY-MM-DD"`, the date captured by the host for this execution.
 ///   Required when a program uses `today`; the JavaScript wrapper supplies UTC.
+/// - `"env"`: `{name: text}`, the environment that `env` stands for. The
+///   module has no environment of its own, and the playground sends none.
 /// - `"symbolic"`: `"only"` or `"prefer"`, to answer the program with
 ///   decision diagrams, as `probl run --symbolic` does. Experimental, for
 ///   checking the engine: the playground doesn't send it. The stats then
@@ -287,6 +289,25 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
                 error["kind"] = json!("language");
                 return failed(error);
             }
+        }
+    }
+    if let Some(env) = request.get("env") {
+        let vars = env.as_object().and_then(|vars| {
+            vars.iter()
+                .map(|(name, text)| Some((name, text.as_str()?)))
+                .collect::<Option<Vec<_>>>()
+        });
+        let Some(vars) = vars else {
+            let message = "env must be an object whose values are strings";
+            let mut error = compiler_diagnostic(
+                &probl_syntax::Diagnostic::error(Span::default(), message),
+                &SourceFile::new(FILE, source),
+            );
+            error["kind"] = json!("language");
+            return failed(error);
+        };
+        for (name, text) in vars {
+            options = options.env(name, text);
         }
     }
     if program.reads_data() {

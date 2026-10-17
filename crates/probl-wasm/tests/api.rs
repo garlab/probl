@@ -37,6 +37,20 @@ fn execution_date_is_supplied_by_the_host_and_returned_for_replay() {
 }
 
 #[test]
+fn the_environment_is_supplied_by_the_host() {
+    let source = "report env.get(\"REGION\", \"eu\") as \"region\"";
+    let (out, _) = run(json!({ "source": source, "env": { "REGION": "us" } }));
+    assert!(out["output"].as_str().unwrap().contains("region    us"), "{out}");
+    // The module has no environment of its own.
+    let (out, _) = run(json!({ "source": source }));
+    assert!(out["output"].as_str().unwrap().contains("region    eu"), "{out}");
+    for bad in [json!({ "REGION": 1 }), json!(["REGION"]), json!("REGION=us")] {
+        let (out, _) = run(json!({ "source": source, "env": bad }));
+        assert_eq!(out["error"]["kind"], "language", "{bad}");
+    }
+}
+
+#[test]
 fn the_examples_print_what_the_command_line_prints() {
     let all = examples();
     assert_eq!(all.len(), 19);

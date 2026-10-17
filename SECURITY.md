@@ -14,7 +14,7 @@ Include the Probl version or commit, the smallest program or input that shows th
 
 Probl runs models that someone else may have written: a shared playground link, or a service that embeds the `probl` crate. A model has no file, network or process access of its own, and the host sets its resource budgets. A vulnerability is a way around those boundaries, for example:
 
-- a program that reads data its host didn't grant: through `MemoryFiles` or another restricted `Files` provider, or in the playground;
+- a program that reads data its host didn't grant: through `MemoryFiles` or another restricted `Files` provider, or in the playground, or an environment variable its host didn't give;
 - a program or data file that raises a host's limits, runs past its budgets or cancellation, or crashes the host through a panic the library doesn't catch;
 - a program, its output or a share link that runs script in the playground page;
 - a problem in the release workflows or the published packages.
@@ -22,5 +22,6 @@ Probl runs models that someone else may have written: a shared playground link, 
 These are documented limits, not vulnerabilities:
 
 - `LocalFiles`, which the command line uses, follows the local filesystem's rules: a program can read any file the user running it can read. It isn't a sandbox.
+- The command line gives a program its whole environment as `env`, and a program can print or report it. Don't run an untrusted program with secrets in the environment. A host using the library or the WebAssembly module gives only the variables it chooses.
 - Running out of memory, a stack overflow or a WebAssembly trap can end the process even within the budgets. A service that runs untrusted models should isolate each one in its own process, as [host boundaries](docs/architecture.md#host-boundaries) explains.
 - A wrong probability or estimate is a correctness bug. Please report it as an ordinary [issue](https://github.com/garlab/probl/issues).

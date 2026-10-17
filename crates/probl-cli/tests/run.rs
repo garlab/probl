@@ -123,3 +123,66 @@ fn a_partial_result_prints_the_other_worlds_and_exits_with_3() {
         "{out}{err}"
     );
 }
+
+#[test]
+fn env_is_the_process_s_environment_with_env_flags_on_top() {
+    let source = "report env.get(\"PROBL_TEST_REGION\", \"eu\") as \"region\"\n\
+                  report env.get(\"PROBL_TEST_OTHER\", \"none\") as \"other\"";
+    let dir = std::env::temp_dir().join(format!("probl-cli-env-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("env.probl");
+    std::fs::write(&path, source).unwrap();
+    let probl = |region: Option<&str>, args: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_probl"));
+        command
+            .arg("run")
+            .arg(&path)
+            .args(args)
+            .env_remove("PROBL_TEST_REGION")
+            .env_remove("PROBL_TEST_OTHER");
+        if let Some(region) = region {
+            command.env("PROBL_TEST_REGION", region);
+        }
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let out = probl(None, &[]);
+    assert!(out.contains("region    eu") && out.contains("other     none"), "{out}");
+    let out = probl(Some("us"), &[]);
+    assert!(out.contains("region    us"), "{out}");
+    // `--env` takes the place of the process's variable, or adds one.
+    let out = probl(
+        Some("us"),
+        &["--env", "PROBL_TEST_REGION=apac", "--env", "PROBL_TEST_OTHER=x=y"],
+    );
+    assert!(out.contains("region    apac") && out.contains("other     x=y"), "{out}");
+    let output = Command::new(env!("CARGO_BIN_EXE_probl"))
+        .args(["run", path.to_str().unwrap(), "--env", "PROBL_TEST_REGION"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("expected NAME=VALUE"));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_repl_has_the_environment_and_can_t_change_it() {
+    use std::io::Write;
+    let mut repl = Command::new(env!("CARGO_BIN_EXE_probl"))
+        .arg("repl")
+        .env("PROBL_TEST_REGION", "us")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let input = "env[\"PROBL_TEST_REGION\"]\nenv = [\"a\": \"b\"]\nenv.get(\"PROBL_TEST_REGION\", \"eu\")\n";
+    repl.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let output = repl.wait_with_output().unwrap();
+    let out = String::from_utf8_lossy(&output.stdout);
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(out.contains("env[\"PROBL_TEST_REGION\"]    us"), "{out}");
+    assert!(out.contains("env.get(\"PROBL_TEST_REGION\", \"eu\")    us"), "{out}");
+    assert!(err.contains("can't assign to `env`: it's a constant"), "{err}");
+}

@@ -93,6 +93,8 @@ impl Stats {
 #[derive(Clone, Debug)]
 pub struct Config {
     pub today: Option<i32>,
+    /// The host's environment snapshot, for `env`.
+    pub env: Arc<BTreeMap<String, String>>,
     pub epsilon: f64,
     pub merging: bool,
     pub memoizing: bool,
@@ -298,6 +300,9 @@ pub struct Engine<'p> {
     /// Nesting depth of local `simulate` inference (in either outer mode).
     nested: usize,
     next_latent: u64,
+    /// `env` as a map, once it's been read: each engine makes its own, so
+    /// that sampling threads don't share its reference counts.
+    env: Option<Value>,
     /// Dynamic effect boundary for collection callbacks. Effects inside an
     /// explicit `simulate` are local to that computation instead.
     callback: Option<&'static str>,
@@ -427,6 +432,7 @@ impl<'p> Engine<'p> {
             sampler,
             nested: 0,
             next_latent: 0,
+            env: None,
             callback: None,
             failures: Failures::default(),
             evidence: probl_sema::effects::evidence_order(prog),
@@ -3283,6 +3289,33 @@ impl<'p> Engine<'p> {
         }
     }
 
+    /// `env`: the host's environment snapshot, as a `map[str, str]`. It's
+    /// the same value every time, so it's made once.
+    fn env(&mut self, span: Span) -> Result<Value> {
+        if let Some(env) = &self.env {
+            return Ok(env.clone());
+        }
+        if self.config.env.len() > self.budget.max_collection {
+            return Err(RuntimeError::limit(
+                span,
+                "the environment has more variables than the collection size limit",
+            ));
+        }
+        let mut entries = BTreeMap::new();
+        for (name, text) in self.config.env.iter() {
+            if name.len().max(text.len()) > self.budget.max_string_bytes {
+                return Err(RuntimeError::limit(
+                    span,
+                    format!("the environment variable `{name}` is longer than the string size limit"),
+                ));
+            }
+            entries.insert(Value::str(name), Value::str(text));
+        }
+        let env = Value::map(entries);
+        self.env = Some(env.clone());
+        Ok(env)
+    }
+
     /// `simulate { … }`: run a block as a separate model and return its
     /// normalized distribution (docs/semantics.md, section 8).
     fn simulate(&mut self, func: FnId, key: Vec<Value>, span: Span) -> Result<Value> {
@@ -4170,6 +4203,7 @@ impl<'p> Engine<'p> {
                 RuntimeError::new(span, "the host did not supply an execution date for `today`")
                     .with_help("set Options.today, or supply today in the WASM request")
             }),
+            Builtin::RunEnv => self.env(span),
             Builtin::Print => {
                 let mut text = String::new();
                 for (i, value) in values.iter().enumerate() {

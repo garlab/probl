@@ -224,6 +224,8 @@ builtins! {
     Last = "$last", 1..=1, Raw, false;
     /// A list without its last element (for `pop`).
     DropLast = "$drop_last", 1..=1, Raw, false;
+    /// The `env` constant: the host's environment snapshot.
+    RunEnv = "$run_env", 0..=0, Raw, false;
 }
 
 impl Builtin {
@@ -270,10 +272,17 @@ pub enum Constant {
     E,
     EulerGamma,
     Today,
+    Env,
 }
 
 impl Constant {
-    pub const ALL: &'static [Constant] = &[Constant::Pi, Constant::E, Constant::EulerGamma, Constant::Today];
+    pub const ALL: &'static [Constant] = &[
+        Constant::Pi,
+        Constant::E,
+        Constant::EulerGamma,
+        Constant::Today,
+        Constant::Env,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -281,17 +290,19 @@ impl Constant {
             Constant::E => "e",
             Constant::EulerGamma => "euler_gamma",
             Constant::Today => "today",
+            Constant::Env => "env",
         }
     }
 
-    /// Static numeric values; `today` is supplied by the execution context.
+    /// Static numeric values; `today` and `env` are supplied by the
+    /// execution context.
     pub fn value(self) -> Option<f64> {
         Some(match self {
             Constant::Pi => std::f64::consts::PI,
             Constant::E => std::f64::consts::E,
             // The Euler–Mascheroni constant: `std::f64::consts::EGAMMA` isn't stable yet.
             Constant::EulerGamma => 0.577_215_664_901_532_9,
-            Constant::Today => return None,
+            Constant::Today | Constant::Env => return None,
         })
     }
 

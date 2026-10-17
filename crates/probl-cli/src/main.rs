@@ -69,6 +69,9 @@ enum Command {
         /// Pin the execution-date snapshot (`today`); defaults to the UTC date at launch.
         #[arg(long, value_parser = parse_execution_date, value_name = "YYYY-MM-DD")]
         today: Option<Date>,
+        /// Set a variable in the program's `env`, in place of the process's (repeatable).
+        #[arg(long = "env", value_parser = parse_env_var, value_name = "NAME=VALUE")]
+        env: Vec<(String, String)>,
         /// Also print the simplest fraction near each probability, like ≈ 244/495 (a hint, not a proof).
         #[arg(long)]
         fractions: bool,
@@ -163,6 +166,7 @@ fn main() -> ExitCode {
         Command::Run {
             file,
             today,
+            env,
             fractions,
             epsilon,
             integrate,
@@ -191,7 +195,7 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            let mut options = Options::new()
+            let mut options = environment(Options::new(), &env)
                 .today(today)
                 .fractions(fractions)
                 .conjugate(!no_conjugate);
@@ -276,6 +280,24 @@ fn main() -> ExitCode {
 
 fn parse_execution_date(s: &str) -> Result<Date, String> {
     s.parse().map_err(|e: probl::ParseDateError| e.to_string())
+}
+
+fn parse_env_var(s: &str) -> Result<(String, String), String> {
+    match s.split_once('=') {
+        Some((name, value)) if !name.is_empty() => Ok((name.to_string(), value.to_string())),
+        _ => Err("expected NAME=VALUE".to_string()),
+    }
+}
+
+/// `options`, with the environment a program's `env` stands for: the
+/// process's, captured once when the command starts, then `given` (`--env`),
+/// which takes precedence. A variable whose name or value isn't valid UTF-8
+/// is left out. Neither the compiler nor the engine reads the environment.
+fn environment(options: Options, given: &[(String, String)]) -> Options {
+    std::env::vars_os()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+        .chain(given.iter().cloned())
+        .fold(options, |options, (name, value)| options.env(name, value))
 }
 
 /// The CLI reads the clock once. Neither the compiler nor engine reads it.
@@ -530,6 +552,8 @@ fn repl() -> ExitCode {
     // running the session again doesn't change earlier bindings. Standard
     // input is the session, not data.
     let mut files = Snapshots::new(LocalFiles::new("."));
+    // One date and one environment for the whole session.
+    let options = environment(Options::new().today(today), &[]);
     loop {
         let mut input = String::new();
         let mut prompt = "probl> ";
@@ -560,7 +584,7 @@ fn repl() -> ExitCode {
         let Some(program) = compile("<repl>", &candidate) else {
             continue;
         };
-        let Some(options) = load(&program, &mut files, Options::new().today(today)) else {
+        let Some(options) = load(&program, &mut files, options.clone()) else {
             continue;
         };
         let mut print = |line: &str| println!("{line}");

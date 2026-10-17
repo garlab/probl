@@ -4,6 +4,11 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+### Added
+
+- `env` is the environment variables, a `map[str, str]` constant that the host captures once, like `today`: `env.get("REGION", "eu")` reads a variable with a default, and `"CI" in env` says whether one is set. Every world, run and thread sees the same map, and a program can't change it: `env = …`, `env["A"] = …` and `env.insert(…)` are compile errors, and `var copy = env` makes a copy that can change. A program's own `env` hides it. Values are text; `date(…)` reads a date from one, and there's no conversion to numbers yet ([semantics](docs/semantics.md#1-values-and-types)).
+- `probl run` and the REPL give a program their whole environment, captured when they start; `probl run --env NAME=VALUE` sets a variable in place of the process's. In the library, `Options::env` gives a variable, and the library never reads the process's environment. The WebAssembly request takes an `env` object. The playground has none, so `env` is empty there.
+
 ## [0.3.1] - 2026-10-16
 
 ### Added

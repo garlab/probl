@@ -83,7 +83,7 @@ The deferred [portal proposal](design/portals-and-effects.md) explores explicit 
 
 ## Host boundaries
 
-The engine has no ambient filesystem or network access. A host supplies data through a resolver, and loading validates the declared schemas before simulation. `LocalFiles` deliberately follows local CLI filesystem rules; it is not a directory sandbox. Hosted applications should grant only the inputs they intend to expose, for example through `MemoryFiles`.
+The engine has no ambient filesystem, network or environment access. A host supplies data through a resolver, and loading validates the declared schemas before simulation. The environment variables a model sees as `env` are the ones the host gives; the command line gives its own. `LocalFiles` deliberately follows local CLI filesystem rules; it is not a directory sandbox. Hosted applications should grant only the inputs they intend to expose, for example through `MemoryFiles`.
 
 Hosts set budgets for worlds, work, outcomes, integers, collections, calls, input and output, plus cancellation. Program pragmas can lower host limits, never raise them. The native library executes on a configured thread and converts caught panics into internal errors. Out-of-memory failures, stack overflow and WASM traps are not all recoverable this way. The playground runs in replaceable workers; services running untrusted models should also use process isolation and host-enforced resource limits.
 

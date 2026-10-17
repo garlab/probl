@@ -4,6 +4,7 @@ use crate::__internal::EngineChecks;
 use crate::files::Data;
 use probl_engine::data::InputLimits;
 use probl_sema::ir;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -20,6 +21,7 @@ pub struct Options {
     runs: Option<u64>,
     seed: Option<u64>,
     today: Option<Date>,
+    env: Arc<BTreeMap<String, String>>,
     epsilon: Option<f64>,
     integrate: Option<f64>,
     fractions: bool,
@@ -75,6 +77,7 @@ impl Default for Options {
             runs: None,
             seed: None,
             today: None,
+            env: Arc::default(),
             epsilon: None,
             integrate: None,
             fractions: false,
@@ -125,6 +128,22 @@ impl Options {
     /// `today`: the engine never reads a clock.
     pub fn today(mut self, date: Date) -> Options {
         self.today = Some(date);
+        self
+    }
+
+    /// Set a variable in the environment that the program's `env` stands for,
+    /// a `map[str, str]`. The engine never reads the process's environment:
+    /// `env` has only the variables given here, and is empty without them.
+    ///
+    /// ```
+    /// let source = "report env.get(\"REGION\", \"eu\") as \"region\"";
+    /// let program = probl::compile("region.probl", source)?;
+    /// let outcome = program.run(&probl::Options::new().env("REGION", "us"))?;
+    /// assert_eq!(outcome.text(), "enumerated\n\nregion    us\n");
+    /// # Ok::<(), probl::Error>(())
+    /// ```
+    pub fn env(mut self, name: impl Into<String>, value: impl Into<String>) -> Options {
+        Arc::make_mut(&mut self.env).insert(name.into(), value.into());
         self
     }
 
@@ -217,6 +236,7 @@ impl Options {
     pub(crate) fn engine(&self, program: &ir::Program) -> probl_engine::Options {
         probl_engine::Options {
             today: self.today.map(|d| d.0),
+            env: self.env.clone(),
             merge: self.checks.merge,
             memoize: self.checks.memoize,
             epsilon: self.epsilon,
@@ -242,6 +262,7 @@ impl fmt::Debug for Options {
             .field("runs", &self.runs)
             .field("seed", &self.seed)
             .field("today", &self.today)
+            .field("env", &self.env.keys().collect::<Vec<_>>())
             .field("epsilon", &self.epsilon)
             .field("integrate", &self.integrate)
             .field("fractions", &self.fractions)

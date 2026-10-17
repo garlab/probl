@@ -46,7 +46,7 @@ The adapter uses [`probl`](library.md) for loading, execution and reporting, and
 
 [`Limits::browser()`](../crates/probl/src/options.rs) sets lower ceilings than native execution, including 1,000,000 worlds, 2 × 10⁹ work units, 150 nested calls, 20,000 chain states, 1 MiB output and 8 MiB input. The source definition is authoritative for the full list. The page's timeout is additional to engine budgets.
 
-The resolver serves only supplied in-memory files. The page currently supplies bundled example data; it has no arbitrary local-file picker or stdin. The language has no general network access. Output is displayed as text.
+The resolver serves only supplied in-memory files. The page currently supplies bundled example data; it has no arbitrary local-file picker or stdin. Nor does it have environment variables: a WASM request may carry an `env` object, but the page sends none, so a model's `env` is empty. The language has no general network access. Output is displayed as text.
 
 ## Tests
 

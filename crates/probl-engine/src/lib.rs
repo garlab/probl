@@ -123,6 +123,11 @@ pub struct Options {
     /// it once or supplies a replay date. The engine never reads a clock.
     /// Required only when the program evaluates the `today` constant.
     pub today: Option<i32>,
+    /// The environment snapshot that the `env` constant stands for: each
+    /// variable's text, by name. The host captures it once; the engine never
+    /// reads the process's environment, so it's empty unless the host gives
+    /// one.
+    pub env: Arc<BTreeMap<String, String>>,
     /// Merge worlds that reach the same state (turning it off is only useful
     /// for testing that merging doesn't change results).
     pub merge: bool,
@@ -177,6 +182,7 @@ impl Default for Options {
     fn default() -> Options {
         Options {
             today: None,
+            env: Arc::default(),
             merge: true,
             memoize: true,
             epsilon: None,
@@ -353,6 +359,7 @@ fn run_here(
     let limits = &options.limits;
     let config = interp::Config {
         today: options.today,
+        env: options.env.clone(),
         epsilon: options.epsilon.unwrap_or(settings.epsilon),
         merging: options.merge,
         memoizing: options.memoize,

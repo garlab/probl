@@ -407,6 +407,21 @@ fn data_must_be_the_program_s() {
 }
 
 #[test]
+fn env_has_only_the_variables_the_host_gives() {
+    let source = "report env.get(\"REGION\", \"eu\") as \"region\"\nreport len(env) as \"count\"";
+    // Nothing comes from the process's environment.
+    let outcome = run(source, &Options::new());
+    assert_eq!(outcome.text(), "enumerated\n\nregion    eu\ncount     0\n");
+    // The last value given for a name is the one used.
+    let options = Options::new()
+        .env("REGION", "us")
+        .env("REGION", "apac")
+        .env("RUNS", "10");
+    let outcome = run(source, &options);
+    assert_eq!(outcome.text(), "enumerated\n\nregion    apac\ncount     2\n");
+}
+
+#[test]
 fn the_run_s_limits_still_apply_to_loaded_data() {
     let program = probl::compile(
         "names.probl",

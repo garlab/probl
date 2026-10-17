@@ -2495,6 +2495,7 @@ impl<'a> Lowerer<'a> {
         if let Some(c) = Constant::from_name(name).filter(|_| !self.fn_by_name.contains_key(name)) {
             return match c.value() {
                 Some(value) => lit(Lit::FloatConstant(value), span),
+                None if c == Constant::Env => builtin(Builtin::RunEnv, vec![], span),
                 None => builtin(Builtin::RunDate, vec![], span),
             };
         }

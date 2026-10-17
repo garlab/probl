@@ -170,6 +170,7 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Day
         | B::Weekday => "Dates",
         B::RunDate
+        | B::RunEnv
         | B::IterItems
         | B::RepeatCount
         | B::IsFalse
@@ -741,6 +742,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "The day of the week: `\"Monday\"` to `\"Sunday\"`.",
         ),
         B::RunDate
+        | B::RunEnv
         | B::IterItems
         | B::RepeatCount
         | B::IsFalse
@@ -770,6 +772,10 @@ pub fn constant(c: Constant) -> Doc {
         Constant::Today => (
             "today = execution date (date)",
             "The immutable date captured once by the host for this execution, shared by every world, sample, function and simulate block. The CLI and playground use UTC by default; --today YYYY-MM-DD or a host-supplied date makes reruns reproducible. This is a value, not a function. A program's own bindings may hide it.",
+        ),
+        Constant::Env => (
+            "env = environment variables (map[str, str])",
+            "The environment variables, by name, captured once by the host for this execution and the same in every world, sample, function and simulate block. A program can't change it. `env.get(\"REGION\", \"eu\")` gives a default for a variable that isn't set. The CLI gives its own environment, and --env NAME=VALUE sets a variable; the playground has none, so `env` is empty there. A program's own bindings may hide it.",
         ),
     };
     Doc { signature, summary }

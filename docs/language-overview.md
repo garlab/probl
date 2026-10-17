@@ -484,6 +484,22 @@ let counts: list[int] = read("-")                  # standard input, one value p
 
 `read` loads CSV (as a list of records), JSON (as any type data can have) and plain lines. The declared type decides how the data is read. Fields match columns and keys ignoring case and punctuation, and unused columns are ignored. Data that doesn't fit the type is an error before the program runs, with the line it's on. The data is read once, and is the same in every world and every run. `probl schema FILE` suggests a type. The details are in [reading data](data-input.md).
 
+`env` is the environment variables, a `map[str, str]` captured once when the program starts, like `today`:
+
+```probl
+let region = env.get("REGION", "eu")                  # "eu" when REGION isn't set
+let start = date(env.get("START", "2026-01-01"))
+report region
+report "CI" in env as "in CI"
+```
+
+```sh
+REGION=us probl run model.probl
+probl run model.probl --env REGION=apac            # --env takes the place of the shell's
+```
+
+The environment is immutable: every world and run sees the same map, and `env = …`, `env["A"] = …` and `env.insert(…)` are compile errors. `var copy = env` makes a copy to change. Values are text, and there's no conversion from text to numbers yet. The command line gives a program its whole environment; the playground has none, so `env` is empty there. See [the environment](semantics.md#1-values-and-types).
+
 Three of these types describe uncertainty, and keeping them apart is what lets `and` and `or` mean what they say:
 
 - `bool` is a **fact**: `true` or `false` in each world. Comparisons of settled values give facts, and so do `and`, `or`, `not` and `in` on facts.
@@ -944,7 +960,7 @@ From loosest to tightest binding:
 | Math | `abs` `min` `max` `clamp` `floor` `ceil` `trunc` `round(x, digits?)` `sqrt` `cbrt` `hypot(x, y)` `exp` `exp2` `expm1` `ln` `log1p` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `sinh` `cosh` `tanh` `asinh` `acosh` `atanh` |
 | Integer and special functions | `choose(n, k)` `factorial(n)` `gcd(a, b)` `lcm(a, b)` `euler_phi(n)` `prime_factors(n)` `is_prime(n)` `is_squarefree(n)` `divisors(n)` `primes(lo?, hi)` `next_prime(n)` `prev_prime(n)` `isqrt(n)` `mod_pow(b, e, m)` `mod_inverse(a, m)` `ln_gamma(x)` `erf(x)` `erfc(x)` |
 | Complex numbers | `complex(re, im?)` `real(z)` `imag(z)` `conj(z)` `abs(z)` `abs2(z)` `arg(z)` `cis(theta)` |
-| Constants | `pi` `e` `euler_gamma` `today`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
+| Constants | `pi` `e` `euler_gamma` `today` `env`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
 | Collections | `len` `slice(xs, start, end?)` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `minimum` `maximum` `highest(n, compare?)` `lowest(n, compare?)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
 | Text | `str` `upper` `lower` `trim(s, chars?)` `trim_start(s, chars?)` `trim_end(s, chars?)` `starts_with` `ends_with` `chars` `split` `join` |
 | Dates | `date("2027-01-31")` or `date(year, month, day)`; `days(n)` `weeks(n)` `add_workdays(d, n, holidays?)` `is_workday(d, holidays?)` `weekday(d)` `add_months(d, n)` `add_years(d, n)` `start_of_month(d)` `end_of_month(d)` `year(d)` `month(d)` `day(d)` |
