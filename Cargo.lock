@@ -386,7 +386,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "probl"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "probl-engine",
  "probl-sema",
@@ -395,7 +395,7 @@ dependencies = [
 
 [[package]]
 name = "probl-bench"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "probl",
  "serde_json",
@@ -403,7 +403,7 @@ dependencies = [
 
 [[package]]
 name = "probl-cli"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "clap",
  "libtest-mimic",
@@ -415,7 +415,7 @@ dependencies = [
 
 [[package]]
 name = "probl-engine"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "csv",
  "libm",
@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "probl-number"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "num-bigint",
  "num-rational",
@@ -440,7 +440,7 @@ dependencies = [
 
 [[package]]
 name = "probl-oracle"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "num-bigint",
  "num-rational",
@@ -452,7 +452,7 @@ dependencies = [
 
 [[package]]
 name = "probl-sema"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "insta",
  "probl-number",
@@ -462,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "probl-syntax"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "ariadne",
  "insta",
@@ -471,7 +471,7 @@ dependencies = [
 
 [[package]]
 name = "probl-wasm"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "probl",
  "probl-sema",

@@ -4,10 +4,13 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-17
+
 ### Added
 
 - `env` is the environment variables, a `map[str, str]` constant that the host captures once, like `today`: `env.get("REGION", "eu")` reads a variable with a default, and `"CI" in env` says whether one is set. Every world, run and thread sees the same map, and a program can't change it: `env = …`, `env["A"] = …` and `env.insert(…)` are compile errors, and `var copy = env` makes a copy that can change. A program's own `env` hides it. Values are text; `date(…)` reads a date from one, and there's no conversion to numbers yet ([semantics](docs/semantics.md#1-values-and-types)).
 - `probl run` and the REPL give a program their whole environment, captured when they start; `probl run --env NAME=VALUE` sets a variable in place of the process's. In the library, `Options::env` gives a variable, and the library never reads the process's environment. The WebAssembly request takes an `env` object. The playground has none, so `env` is empty there.
+- Each GitHub release has a browser bundle, `probl-X.Y.Z-browser.json` with its checksum: the WebAssembly engine, its JavaScript adapter and highlighter, the built playground, the changelog, licenses and native reference results. The release tests it in Chrome and attests it like the source archive, and the hosted playground is deployed from it ([releases](docs/releases.md#browser-distribution)).
 
 ## [0.3.1] - 2026-10-16
 
@@ -91,7 +94,8 @@ The first release.
 
 The [language overview](docs/language-overview.md) and the [reference semantics](docs/semantics.md) describe the language, and [status and limits](README.md#status-and-limits) lists what isn't implemented yet.
 
-[Unreleased]: https://github.com/garlab/probl/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/garlab/probl/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/garlab/probl/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/garlab/probl/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/garlab/probl/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/garlab/probl/compare/v0.2.1...v0.2.2
