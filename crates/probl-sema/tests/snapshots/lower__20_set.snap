@@ -7,8 +7,7 @@ fn#0 the top level ()
   deck_1 = bag(cards_0)    [live: deck_1]
   $2 = deck_1.take(12)    [live: $2]
   hand_3 = $2    [live: hand_3]
-  sets_4 = count(combinations(hand_3, 3), closure fn#1 [])    [live: sets_4]
-  report (== sets_4 0) as "no set in 12 cards"    [live: ]
+  report (not any(combinations(hand_3, 3), closure fn#1 [])) as "no set in 12 cards"    [live: ]
 fn#1 is_set (cards_0)
   $1 = cards_0    [live: $1]
   if $is_list_of_len($1, 3) {

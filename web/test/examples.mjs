@@ -55,6 +55,7 @@ for (const mode of ['enumerate', 'sample']) {
     'report [1, 2].map(x -> { let r ~ d6; x + r })',
     'report [1].filter(x -> { observe true; true })',
     'report [1].count(x -> { let r ~ d1; true })',
+    'report [1].any(x -> { let r ~ d1; true })',
     'report [1].map(x -> ~d6)',
     'report [2,1].sort((a,b) -> { let r ~ d1; a-b })',
     'report [2,1].sort_desc((a,b) -> { observe true; a-b })',

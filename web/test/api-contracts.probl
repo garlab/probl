@@ -81,3 +81,9 @@ report empty.take(0)
 var short = bag([1])
 report try { short.take(2) } catch EmptyCollection { [] }
 report len(short)
+
+# Existential predicates stop before later errors; inputs still lift normally.
+report [0,1].any(x -> if x==0 { true } else { 1/0 > 0 })
+report not [].any(x -> 1/0)
+report "a🙂é".any(x -> x=="🙂")
+report any(one_of([[1,2],[3,4]]), x -> x==1)

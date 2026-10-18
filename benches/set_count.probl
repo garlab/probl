@@ -1,0 +1,23 @@
+# Exhaustive SET baseline: keep counting all triples to compare with examples/20_set.probl.
+# A full deck has 81 distinct cards: four attributes with three values each.
+# Every hand is drawn uniformly without replacement from a fresh deck.
+
+@mode sample(runs: 10_000, seed: 42)
+
+# Encode number, color, shape and shading as four values from 0 to 2.
+let cards = (0..<81).map(n -> [n mod 3, (n div 3) mod 3, (n div 9) mod 3, n div 27])
+var deck = bag(cards)
+let hand = deck.take(12)
+let sets = hand.combinations(3).count(is_set)
+report sets == 0 as "no set in 12 cards"
+
+# Each attribute must be all the same or all different across the three cards.
+fn is_set(cards) {
+  let [a, b, c] = cards
+  for attribute in 0..<4 {
+    let same = a[attribute] == b[attribute] and b[attribute] == c[attribute]
+    let different = a[attribute] != b[attribute] and a[attribute] != c[attribute] and b[attribute] != c[attribute]
+    if not (same or different) { return false }
+  }
+  true
+}

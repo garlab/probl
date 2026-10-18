@@ -102,6 +102,7 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Combinations
         | B::Sum
         | B::Count
+        | B::Any
         | B::Map
         | B::Filter
         | B::Reduce
@@ -500,6 +501,10 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Count => doc(
             "count(xs) -> int or count(xs, test) -> int",
             "How many items there are, or how many pass `test`: `count(rolls, r -> r == 6)`. The test cannot draw, observe or branch on uncertainty outside a local simulate scope, in either execution mode.",
+        ),
+        B::Any => doc(
+            "any(xs, test) -> bool",
+            "Whether any element of a list, range or string passes test. Checks in input order and stops at the first true; an empty input gives false. The callback must take one argument and return a fact (true or false). Unvisited elements do not call it. As with count, the callback cannot draw, observe or branch on uncertainty outside a local simulate scope.",
         ),
         B::Map => doc(
             "map(xs, f) -> list",

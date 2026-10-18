@@ -363,7 +363,9 @@ impl Direct {
             ExprKind::Builtin { func, args, named } => {
                 match func {
                     Builtin::Print => self.prints = true,
-                    Builtin::Map | Builtin::Filter | Builtin::Count | Builtin::Reduce => self.calls_closures = true,
+                    Builtin::Map | Builtin::Filter | Builtin::Count | Builtin::Any | Builtin::Reduce => {
+                        self.calls_closures = true
+                    }
                     Builtin::Minimum | Builtin::Maximum if args.len() >= 2 => self.calls_closures = true,
                     Builtin::Sort | Builtin::SortDesc if args.len() == 2 => self.calls_closures = true,
                     Builtin::Highest | Builtin::Lowest if args.len() == 3 => self.calls_closures = true,

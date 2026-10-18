@@ -4307,7 +4307,7 @@ impl<'p> Engine<'p> {
                 }
                 Ok(Value::Unit)
             }
-            Builtin::Map | Builtin::Filter | Builtin::Reduce => self.higher_order(b, values, span),
+            Builtin::Map | Builtin::Filter | Builtin::Reduce | Builtin::Any => self.higher_order(b, values, span),
             Builtin::Count if values.len() == 2 => self.higher_order(b, values, span),
             Builtin::Minimum | Builtin::Maximum => {
                 if values.len() == 2 {
@@ -4487,11 +4487,15 @@ impl<'p> Engine<'p> {
                 }
                 Ok(Value::list(out))
             }
-            Builtin::Filter | Builtin::Count => {
+            Builtin::Filter | Builtin::Count | Builtin::Any => {
+                if b == Builtin::Any {
+                    self.check_function_arity(&values[1], 1, span)?;
+                }
                 let mut kept = Vec::new();
                 for x in items {
                     let test = self.call_pure(&values[1], vec![x.clone()], b.name(), span)?;
                     match test {
+                        Value::Bool(true) if b == Builtin::Any => return Ok(Value::Bool(true)),
                         Value::Bool(true) => kept.push(x),
                         Value::Bool(false) => {}
                         other => {
@@ -4503,7 +4507,9 @@ impl<'p> Engine<'p> {
                         }
                     }
                 }
-                Ok(if b == Builtin::Count {
+                Ok(if b == Builtin::Any {
+                    Value::Bool(false)
+                } else if b == Builtin::Count {
                     Value::Int((kept.len() as i64).into())
                 } else {
                     Value::list(kept)
@@ -4716,7 +4722,15 @@ fn handles_analytic(b: Builtin, values: &[Value]) -> bool {
     let number = |v: &Value| matches!(v, Value::Analytic(_) | Value::Int(_) | Value::Float(_) | Value::Prob(_));
     let numbers = |v: &Value| matches!(v, Value::List(xs) if xs.iter().all(number));
     match b {
-        B::Map | B::Filter | B::Reduce | B::Len | B::IterItems | B::Settled | B::BooleanLaw | B::IsListOfLen => true,
+        B::Map
+        | B::Filter
+        | B::Reduce
+        | B::Any
+        | B::Len
+        | B::IterItems
+        | B::Settled
+        | B::BooleanLaw
+        | B::IsListOfLen => true,
         // They move values without looking at them.
         B::Slice
         | B::Combinations

@@ -125,3 +125,17 @@ fn set_example_rules_match_exact_counts() {
         1.0 / 7.0,
     );
 }
+
+#[test]
+fn set_any_and_count_give_identical_seeded_results() {
+    let source = include_str!("../../../examples/20_set.probl").replace("10_000", "1_000");
+    let counted = source.replace(
+        "not hand.combinations(3).any(is_set)",
+        "hand.combinations(3).count(is_set) == 0",
+    );
+    assert_ne!(source, counted);
+    let fast = outcome(&source);
+    let full = outcome(&counted);
+    assert_eq!(fast.reports[0].distribution(), full.reports[0].distribution());
+    assert!(fast.stats.calls < full.stats.calls);
+}

@@ -9,6 +9,7 @@ All notable changes to the published crates are recorded here. The format follow
 - `deck.take(n)` draws a list of items without replacement from a mutable bag, in draw order. `take()` still returns one item; zero returns an empty list, and an insufficient bag fails before removing items.
 - `combinations(xs, n)` lists groups from lists, ranges and strings in input-index order, preserving duplicate positions. It supports method syntax, checked counts, and collection/work limits.
 - A SET example in the CLI examples and playground uses `take(12)` and `combinations(3)` to estimate the probability that a hand contains no set.
+- `any(xs, test)` checks lists, ranges and strings in order, stopping at the first match. The SET example uses it to skip unnecessary rule checks while keeping the same trials and seeded result: [about 2.7× faster in WebAssembly](docs/benchmarks.md#since-stopping-at-the-first-set-match).
 
 ## [0.3.2] - 2026-10-17
 

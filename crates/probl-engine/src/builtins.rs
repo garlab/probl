@@ -543,6 +543,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         | B::RunDate
         | B::RunEnv
         | B::Count
+        | B::Any
         | B::Map
         | B::Filter
         | B::Reduce

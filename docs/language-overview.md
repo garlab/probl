@@ -95,7 +95,7 @@ report chars("a🙂")                # ["a", "🙂"]
 
 Trimming removes Unicode whitespace by default, including tabs and newlines. An optional second argument supplies the set of scalars to remove instead. It is not a substring: order and repetition in the set do not matter. An empty set removes nothing. These functions return new values and leave their inputs unchanged. `upper` and `lower` use Unicode mappings independent of locale and may change length, such as `"ß".upper()` giving `"SS"`.
 
-`map`, `filter`, `reduce`, `count`, sorting, `enumerate` and `zip` also accept strings, using scalar elements. `map`, `filter` and sorting return lists; use `join` to turn a list back into text. `reverse` of a string returns a string. Functions lift over finite distributions, and integer ranges stay compact until an operation needs to materialize their elements.
+`map`, `filter`, `reduce`, `count`, `any`, sorting, `enumerate` and `zip` also accept strings, using scalar elements. `map`, `filter` and sorting return lists; use `join` to turn a list back into text. `reverse` of a string returns a string. Functions lift over finite distributions, and integer ranges stay compact until an operation needs to materialize their elements.
 
 ```probl
 report "aß".map(c -> upper(c))          # ["A", "SS"]
@@ -118,6 +118,15 @@ report (1..4).combinations(3).count(xs -> sum(xs) >= 8)  # 2
 ```
 
 The result is a list of lists. Equal values at different positions count separately; `[1,1,2].combinations(2)` includes `[1,2]` twice. Zero gives `[[]]`; a count above the length gives `[]`; negative counts are errors. Counts accept integral floats with the usual integer checks. The operation leaves its input unchanged and checks collection and work limits before building the result. Use `choose(n, k)` when you only need the number of groups.
+
+When you only need to know whether a match exists, use `any(xs, test)` or `xs.any(test)`. It checks elements in order and stops at the first `true`, avoiding the remaining callback calls. An empty input returns `false`. The callback takes one argument and returns a fact:
+
+```probl
+report [1,2,3].any(x -> x > 2)       # true
+report not [1,2,3].any(x -> x > 3)   # true: no matches
+```
+
+The input is still built eagerly; `any` saves predicate calls, not construction of the collection.
 
 ### Dates
 
@@ -380,7 +389,7 @@ let total = [].reduce((a,b)->a+b, 0)    # optional initial value handles empty l
 
 Parameter and return types are optional. A return type follows a `:`, as a variable's does, and every result is checked against it: `fn half(x: float): int { x / 2 }` fails for `half(3)`.
 
-Collection callbacks (`map`, `filter`, `count`, `reduce`, and ordering comparators) cannot execute draws, observations, scores or probabilistic branches in the caller's worlds. This restriction is the same in enumeration and sampling, including helper calls. Use a loop for random traversal. A callback can compute a local distribution with `simulate`, or transform an existing distribution without drawing it.
+Collection callbacks (`map`, `filter`, `count`, `any`, `reduce`, and ordering comparators) cannot execute draws, observations, scores or probabilistic branches in the caller's worlds. This restriction is the same in enumeration and sampling, including helper calls. Use a loop for random traversal. A callback can compute a local distribution with `simulate`, or transform an existing distribution without drawing it.
 
 Functions can branch, draw and observe, so calling one can split the caller's world. A call doesn't normalize anything: the splits and observations inside a function become part of the caller's weights. There is one restriction: **a function can read anything in scope, but it can only assign its own local variables.** It returns whatever it changes. That keeps every function a *probabilistic function of its inputs*, so the engine can compute the distribution of `attack(hero, goblin)` once and reuse it in every world and every round. (A function that calls `print`, directly or not, runs every time instead: its output is debug output, one line per world that runs it.)
 
@@ -404,7 +413,7 @@ Collection selectors retain the first element on ties and never combine recipes 
 
 ### Named functions and lambdas
 
-`fn` declares a named function. `x -> …` and `(a, b) -> …` make a lambda: a function written where it's needed, whose body is an expression or a block. Use `fn` for anything you would give a name, and a lambda for a short function passed straight to `map`, `filter`, `count`, `reduce` or `sort`:
+`fn` declares a named function. `x -> …` and `(a, b) -> …` make a lambda: a function written where it's needed, whose body is an expression or a block. Use `fn` for anything you would give a name, and a lambda for a short function passed straight to `map`, `filter`, `count`, `any`, `reduce` or `sort`:
 
 ```probl
 fn damage(roll: int, armor: int): int {    # named: typed, and usable anywhere in the file
@@ -536,7 +545,7 @@ Three of these types describe uncertainty, and keeping them apart is what lets `
 
 Continuous distributions can't list their outcomes, so what you can do with them depends on the mode. Drawing one (`let x ~ normal(0, 1)`) produces a float: a concrete value in sampling, or an analytic outcome in enumeration. Enumeration supports affine arithmetic on a shared draw, `abs`, `min`, `max` and `clamp` of it, threshold conditions, exact updates of a beta, gamma or normal draw by a conjugate observation (`let p ~ beta(2, 3); observe 3 from binomial(5, p)` makes `p` a beta(5, 5)), rounding a bounded draw into ints (`floor(x)`), squares, roots, exponentials, logarithms and reciprocals of it (`x * x`, `exp(x)`), events of independent draws (`x > 0 and y > 0`), sums of normal draws (`x + y`, and `let y ~ normal(mu, 1)`) with their covariance through normal observations, and numeric reports; other nonlinear and multivariate calculations require sampling. With `@integrate`, enumeration also computes observations of one draw that aren't conjugate (`observe true from bernoulli(1 - p)`, `observe 3 from poisson(rate)` for a lognormal `rate`) and means without formulas, by numerical integration to a tolerance, and the summary line says `integrated to 1e-9`. Comparing one with a number works in both modes, from its CDF: `normal(0, 1) > 1.96` is 2.50%. `mean`, `sd`, `median`, `quantile`, `cdf` and `pdf` use the formulas. A choice among options that include one, such as `chance { 35% => 1 to 3, else => 0 }`, is a mixture, and drawing from it picks an option first. Arithmetic on a continuous distribution (`normal(0, 1) * 2`) isn't supported yet: draw a value, then compute with it.
 
-To draw a whole hand, pass a count: `let hand = deck.take(12)`. This removes twelve items and returns a list in draw order. `deck.take(0)` returns `[]`; requesting more items than remain is an error before any removal. The count must be a settled nonnegative integer; integral floats are accepted. As with `take()`, a fresh bag at the start of a sampled program gives each run a fresh deck. The [SET example](../examples/20_set.probl) combines `take(12)` with `combinations(3)` to check all triples in a hand.
+To draw a whole hand, pass a count: `let hand = deck.take(12)`. This removes twelve items and returns a list in draw order. `deck.take(0)` returns `[]`; requesting more items than remain is an error before any removal. The count must be a settled nonnegative integer; integral floats are accepted. As with `take()`, a fresh bag at the start of a sampled program gives each run a fresh deck. The [SET example](../examples/20_set.probl) uses `not hand.combinations(3).any(is_set)` to check whether a hand has no set, stopping at the first matching triple.
 
 ### Computing with them
 
@@ -855,7 +864,7 @@ Probl borrows `a to b` estimates from Squiggle, dice notation from AnyDice and t
 | [`17_sensor_tracking.probl`](../examples/17_sensor_tracking.probl) | monitoring | noisy observations of a hidden state, incremental exact filtering and next-state prediction |
 | [`18_correlated_losses.probl`](../examples/18_correlated_losses.probl) | risk | common hazards, equal marginal risks, different joint tails and reserve shortfalls |
 | [`19_analytic_continuous.probl`](../examples/19_analytic_continuous.probl) | arrival times | analytic continuous reports, shared draws and threshold evidence |
-| [`20_set.probl`](../examples/20_set.probl) | game | Monte Carlo simulation, batch draws without replacement, combinations and counting sets |
+| [`20_set.probl`](../examples/20_set.probl) | game | Monte Carlo simulation, batch draws without replacement, combinations and short-circuit search |
 
 Every example ends with the output it should produce, and those outputs are golden tests. The enumerated ones were checked against independent reference calculations, and must be printed exactly. Tests pin `today` to `2026-09-29`; use `--today 2026-09-29` to reproduce date-dependent output. Sampled output is compared within five standard errors for estimates, and 4% for other numbers. Examples 07–09 use independent reference simulations as their baselines; examples 15–16 record seeded engine output, with their headline results also checked independently. See the [use cases](use-cases.md) for the new examples' validation and the limitations they expose.
 
@@ -975,7 +984,7 @@ From loosest to tightest binding:
 | Integer and special functions | `choose(n, k)` `factorial(n)` `gcd(a, b)` `lcm(a, b)` `euler_phi(n)` `prime_factors(n)` `is_prime(n)` `is_squarefree(n)` `divisors(n)` `primes(lo?, hi)` `next_prime(n)` `prev_prime(n)` `isqrt(n)` `mod_pow(b, e, m)` `mod_inverse(a, m)` `ln_gamma(x)` `erf(x)` `erfc(x)` |
 | Complex numbers | `complex(re, im?)` `real(z)` `imag(z)` `conj(z)` `abs(z)` `abs2(z)` `arg(z)` `cis(theta)` |
 | Constants | `pi` `e` `euler_gamma` `today` `env`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
-| Collections | `len` `slice(xs, start, end?)` `combinations(xs, n)` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `minimum` `maximum` `highest(n, compare?)` `lowest(n, compare?)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
+| Collections | `len` `slice(xs, start, end?)` `combinations(xs, n)` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `any(xs, test)` `minimum` `maximum` `highest(n, compare?)` `lowest(n, compare?)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
 | Text | `str` `upper` `lower` `trim(s, chars?)` `trim_start(s, chars?)` `trim_end(s, chars?)` `starts_with` `ends_with` `chars` `split` `join` |
 | Dates | `date("2027-01-31")` or `date(year, month, day)`; `days(n)` `weeks(n)` `add_workdays(d, n, holidays?)` `is_workday(d, holidays?)` `weekday(d)` `add_months(d, n)` `add_years(d, n)` `start_of_month(d)` `end_of_month(d)` `year(d)` `month(d)` `day(d)` |
 | Debugging | `print` |

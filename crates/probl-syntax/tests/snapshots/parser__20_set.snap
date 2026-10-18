@@ -6,6 +6,5 @@ expression: tree
 (let cards = (.map (..< 0 81) (-> (n) [(mod n 3) (mod (div n 3) 3) (mod (div n 9) 3) (div n 27)])))
 (var deck = (call bag cards))
 (let hand = (.take deck 12))
-(let sets = (.count (.combinations hand 3) is_set))
-(report (== sets 0) as "no set in 12 cards")
+(report (not (.any (.combinations hand 3) is_set)) as "no set in 12 cards")
 (fn is_set (cards) (block (let [a b c] = cards) (for attribute (..< 0 4) (block (let same = (and (== (index a attribute) (index b attribute)) (== (index b attribute) (index c attribute)))) (let different = (and (and (!= (index a attribute) (index b attribute)) (!= (index a attribute) (index c attribute))) (!= (index b attribute) (index c attribute)))) (if (not (or same different)) (block (return false))))) true))

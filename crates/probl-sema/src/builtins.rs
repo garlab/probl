@@ -126,6 +126,7 @@ builtins! {
     Combinations = "combinations", 2..=2, Lift, true;
     Sum = "sum", 1..=1, Lift, true;
     Count = "count", 1..=2, Lift, true;
+    Any = "any", 2..=2, Lift, true;
     Map = "map", 2..=2, Lift, true;
     Filter = "filter", 2..=2, Lift, true;
     Reduce = "reduce", 2..=3, Lift, true;
@@ -255,6 +256,7 @@ impl Builtin {
                 | B::Filter
                 | B::Reduce
                 | B::Count
+                | B::Any
                 | B::Minimum
                 | B::Maximum
                 | B::Sort

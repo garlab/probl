@@ -8,8 +8,8 @@
 let cards = (0..<81).map(n -> [n mod 3, (n div 3) mod 3, (n div 9) mod 3, n div 27])
 var deck = bag(cards)
 let hand = deck.take(12)
-let sets = hand.combinations(3).count(is_set)
-report sets == 0 as "no set in 12 cards"
+# Stop checking triples as soon as a set is found.
+report not hand.combinations(3).any(is_set) as "no set in 12 cards"
 
 # Each attribute must be all the same or all different across the three cards.
 fn is_set(cards) {

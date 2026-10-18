@@ -277,6 +277,28 @@ An experimental backend answers a Boolean subset with binary decision diagrams i
 
 These are the workloads it was built for: facts that stay live together through evidence, which merging can't combine and moving draws can't separate. `reliability`, which moving draws already fixed, gains little. Diagrams have their own limit, the order of their variables, which is the order the program first uses its draws: twenty pairs `(x and y)` take 440 nodes declared side by side and 3.1 million with every `x` first. The plan has more sizes, the ordering family and the WebAssembly runs.
 
+## Since: stopping at the first SET match
+
+18 October 2026, macOS arm64. The [SET example](../examples/20_set.probl) originally counted every set in each hand, then reported whether that count was zero. Across 10,000 hands, that called the interpreted `is_set` function 2.2 million times: all 220 triples per hand. The new `any(xs, test)` predicate stops at the first match, so `not hand.combinations(3).any(is_set)` answers the same question with 657,636 rule checks for seed 42, about 66 per hand.
+
+| Measurement, 10,000 runs with seed 42 | Exhaustive `count` | Short-circuit `any` |
+|---|--:|--:|
+| Native release, one sampling thread | 7.85 s | 3.04 s |
+| Playground WebAssembly, run in Bun | 11.57 s | 4.30 s |
+| Interpreter world-steps | 40,289,622 | 12,667,474 |
+| Native peak heap | 22.57 MB | 22.54 MB |
+
+Native timings use `probl-bench --quick --threads=1 --json`: the executable from `eb97e70` running [the retained exhaustive baseline](../benches/set_count.probl), and the updated executable running `20_set`. Both use the workspace's default release profile. The order was before/after/after/before; the table reports the median of the two timings for each version. WebAssembly uses the playground's `wasm` build profile and JS loader, with the same alternating order after a 200-run warmup per module; those timings include compilation of the model and rendering its output. All four runs on each platform produced identical output, including the sampling error, with the same trials and random seed. The intended reduction in world-steps means these two models cannot use the benchmark runner's unchanged-work comparison.
+
+To locate the bottleneck, separate one-thread runs of the original CLI stopped after dealing the hands, after constructing their triples, and after calling a trivial predicate on every triple. Their median times were 0.89 s, 0.93 s and 1.94 s; the full rule check took 7.73 s. Roughly 88% of the original time was spent traversing and checking triples. A native sampling profile also showed interpreter evaluation, statement dispatch, value cloning and allocation in the callback path. Building combinations is a small part of this workload; making combinations lazy would not address most of the cost.
+
+The change reduces runtime by 61% natively and 63% in WebAssembly. Both versions still build all triples eagerly, so peak memory is essentially unchanged. Remaining costs include the interpreted rule checks and rebuilding the fresh deck in each trial. The exhaustive benchmark remains available for future interpreter work:
+
+```sh
+cargo run --release -p probl-bench -- --quick --threads=1 set_count
+cargo run --release -p probl-bench -- --quick --threads=1 20_set
+```
+
 ## Smaller findings
 
 - `poisson` draws in sampled runs recompute `lgamma` at the mode every time (14% of `inventory`); caching it for the last rate is a small fix.
