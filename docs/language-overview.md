@@ -865,8 +865,9 @@ Probl borrows `a to b` estimates from Squiggle, dice notation from AnyDice and t
 | [`18_correlated_losses.probl`](../examples/18_correlated_losses.probl) | risk | common hazards, equal marginal risks, different joint tails and reserve shortfalls |
 | [`19_analytic_continuous.probl`](../examples/19_analytic_continuous.probl) | arrival times | analytic continuous reports, shared draws and threshold evidence |
 | [`20_set.probl`](../examples/20_set.probl) | game | Monte Carlo simulation, batch draws without replacement, combinations and short-circuit search |
+| [`21_retirement.probl`](../examples/21_retirement.probl) | forecasting | a yearly balance with an absorbing zero, depletion risk by year and a constant-rate baseline |
 
-Every example ends with the output it should produce, and those outputs are golden tests. The enumerated ones were checked against independent reference calculations, and must be printed exactly. Tests pin `today` to `2026-09-29`; use `--today 2026-09-29` to reproduce date-dependent output. Sampled output is compared within five standard errors for estimates, and 4% for other numbers. Examples 07–09 use independent reference simulations as their baselines; examples 15–16 record seeded engine output, with their headline results also checked independently. See the [use cases](use-cases.md) for the new examples' validation and the limitations they expose.
+Every example ends with the output it should produce, and those outputs are golden tests. The enumerated ones were checked against independent reference calculations, and must be printed exactly. Tests pin `today` to `2026-09-29`; use `--today 2026-09-29` to reproduce date-dependent output. Sampled output is compared within five standard errors for estimates, and 4% for other numbers. Examples 07–09 use independent reference simulations as their baselines; examples 15–16 and 21 record seeded engine output, with their headline results also checked independently. See the [use cases](use-cases.md) for the new examples' validation and the limitations they expose.
 
 ---
 

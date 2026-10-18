@@ -1,0 +1,21 @@
+# The retirement model (examples/21_retirement.probl), reporting only the
+# balance after 100 years: the same simulation, with one report group.
+#
+# Stresses: the loop alone, for comparison with the keyed reports.
+
+@mode sample(runs: 10_000, seed: 42)
+
+let years = 100
+let withdrawal = 30_000
+var balance = 1_000_000.0
+var baseline = balance
+
+for year in 0..years {
+  if year > 0 {
+    let r ~ normal(4%, 18%)
+    let q ~ normal(2%, 1.5%)
+    balance = max(0.0, balance * (1 + max(-99%, r)) / (1 + max(-99%, q)) - withdrawal)
+    baseline = max(0.0, baseline * (1 + 4%) / (1 + 2%) - withdrawal)
+  }
+}
+report balance as "balance after 100 years"

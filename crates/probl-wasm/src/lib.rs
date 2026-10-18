@@ -542,6 +542,7 @@ pub fn examples() -> String {
         example!("18_correlated_losses"),
         example!("19_analytic_continuous"),
         example!("20_set"),
+        example!("21_retirement"),
     ];
     let data = json!({ "data/pilot.csv": include_str!("../../../examples/data/pilot.csv") });
     let list: Vec<Json> = all

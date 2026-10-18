@@ -1,0 +1,10 @@
+---
+source: crates/probl-syntax/tests/parser.rs
+expression: tree
+---
+(@mode (call sample runs: 5000 seed: 42))
+(let years = 100)
+(let withdrawal = 30000)
+(var balance = 1000000.0)
+(var baseline = balance)
+(for year (.. 0 years) (block (if (> year 0) (block (let r ~ (call normal 4% 18%)) (let q ~ (call normal 2% 1.5%)) (= balance (call max 0.0 (- (/ (* balance (+ 1 (call max (- 99%) r))) (+ 1 (call max (- 99%) q))) withdrawal))) (= baseline (call max 0.0 (- (/ (* baseline (+ 1 4%)) (+ 1 2%)) withdrawal))))) (report balance by year as "balance in today's dollars") (report (== balance 0) by year as "depleted by year") (report baseline by year as "constant-rate baseline")))

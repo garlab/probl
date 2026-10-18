@@ -101,6 +101,8 @@ October added three, for the [symbolic backend](#since-decision-diagrams-experim
 | `alarms` | an outage's 15 possible causes, from 10 noisy alarms | overlapping evidence about live causes |
 | `diagnosis` | a pumping station's failed parts, from its sensors | laws that depend on facts, evidence in a branch |
 
+A retirement forecast added four more, which [report a forecast every year](#reporting-a-forecast-every-year): `retirement_all`, `retirement_balance`, `retirement_depletion` and `retirement_terminal`, each the same simulation with different reports.
+
 ## Results
 
 Measured before sampling ran in parallel: sampled models used one core.
@@ -299,10 +301,62 @@ cargo run --release -p probl-bench -- --quick --threads=1 set_count
 cargo run --release -p probl-bench -- --quick --threads=1 20_set
 ```
 
+## Reporting a forecast every year
+
+18 October 2026, the Mac above (12 cores, 16 GB), release build. The [retirement example](../examples/21_retirement.probl) reports a balance, whether it's depleted, and a constant-rate baseline for each of 101 years: with the article's 10,000 trials, 303 report groups and about a million distinct sampled balances. Four benchmark models simulate the same thing and report different parts of it: `retirement_all` all three, `retirement_balance` and `retirement_depletion` one each, and `retirement_terminal` only the balance after 100 years.
+
+| Model, 10,000 runs | Time, 12 threads | Peak heap | Time, 1 thread | Peak heap |
+|---|--:|--:|--:|--:|
+| `retirement_all` | 416 ms | 570 MB | 2.00 s | 265 MB |
+| `retirement_balance` | 355 ms | 230 MB | 1.54 s | 230 MB |
+| `retirement_depletion` | 187 ms | 181 MB | 1.42 s | 36 MB |
+| `retirement_terminal` | 152 ms | 5 MB | 1.16 s | 1 MB |
+| `21_retirement` (5,000 runs) | 278 ms | 285 MB | 998 ms | 160 MB |
+
+Peak heap as the number of trials grows, on one thread and on 12 (one timed run each, with `--quick`):
+
+| Trials | Balance | Depletion | All three |
+|--:|--:|--:|--:|
+| 2,000 | 61 / 61 MB | 36 / 36 MB | 114 / 114 MB |
+| 10,000 | 230 / 230 MB | 36 / 181 MB | 265 / 569 MB |
+| 50,000 | 1.0 / 1.0 GB | 36 / 238 MB | 1.1 / 1.1 GB |
+
+Over a shorter horizon, all three reports with 10,000 runs on one thread peak at 128 MB for 25 years and 196 MB for 50. To see where the memory goes, a temporary probe in the runner read its allocation count after the last batch was combined, from the progress callback, and again when the run returned its `Outcome`:
+
+| One thread, 10,000 runs | After the last batch | Results returned | Peak |
+|---|--:|--:|--:|
+| `retirement_all` | 86 MB | 178 MB | 265 MB |
+| `retirement_balance` | 51 MB | 178 MB | 229 MB |
+| `retirement_depletion` | 17 MB | under 1 MB | 35 MB |
+| `retirement_terminal` | under 1 MB | under 1 MB | under 1 MB |
+
+- **The simulation is cheap.** Without per-year reports, the same 10,000 trials take 5 MB.
+- **Per-run statistics are kept per batch, and per thread.** A report with 101 keys keeps each run's statistics for the batch in progress: about 17 MB for 1,000-run batches, held afterwards as the capacity of the maps they were drained from. That doesn't grow with the trials (36 MB at 2,000, 10,000 and 50,000 on one thread), but every batch in flight has its own: depletion alone peaks at 181 MB on 12 threads.
+- **The results cost more than what sampling keeps.** A distinct sampled balance costs about 50 bytes in its report's accumulator, and about 176 in the results built from it, which keep it in several per-value lists: the group's distribution, the numeric summary's points, and each value's probability with its own uncertainty. The peak comes while both exist, and grows linearly with the trials.
+
+So for this model, numeric results that don't copy every value, and per-run maps released after each batch, would cut the peak before a quantile sketch does; a sketch would then bound what's left, the accumulator's 50 bytes per value. The process's peak memory, from `/usr/bin/time -l`, is 680–690 MB for `retirement_all`: the peak heap, and what the allocator holds on to.
+
+In the playground, the example runs on one thread. Measured in headless Chrome 155 with the `wasm` build profile, a fresh module for each size; Bun gave the same within 5%:
+
+| Trials | Time | Module memory |
+|--:|--:|--:|
+| 1,000 | 402 ms | 72 MiB |
+| 2,000 | 740 ms | 106 MiB |
+| 5,000 | 1.76 s | 157 MiB |
+| 10,000 | 3.42 s | 262 MiB |
+| 20,000 | 6.89 s | 474 MiB |
+
+The example uses 5,000 runs: in the playground it takes about as long as the other sampled examples (1.2 to 4.3 s), with less memory than the article's 10,000 would need. A module's memory only grows, so the runner keeps what its largest run needed until it's replaced.
+
+```sh
+cargo run --release -p probl-bench -- retirement
+cargo run --release -p probl-bench -- --threads=1 retirement
+```
+
 ## Smaller findings
 
 - `poisson` draws in sampled runs recompute `lgamma` at the mode every time (14% of `inventory`); caching it for the last rate is a small fix.
-- A sampled report of a continuous quantity keeps every distinct value for exact quantiles: 25 MB for example 08's 200,000 runs. A quantile sketch would bound it.
+- A sampled report of a continuous quantity keeps every distinct value for exact quantiles: 25 MB for example 08's 200,000 runs. A quantile sketch would bound it. *October: for a forecast reported every year, the results built from those values cost more than the values do ([above](#reporting-a-forecast-every-year)).*
 - The effective sample size is the right warning for likelihood weighting, but at a few hundred its standard errors are unreliable too (the semantics says so). A warning in the output when it's small would help.
 - Tiny evidence is printed as a percentage in scientific notation (`evidence 2.9e-23%`); plain scientific notation, `2.9e-25`, would read better. *Done: it's `evidence 2.92e-25` now, and sampling prints its estimate the same way.*
 - A local variable can hide a built-in function (a `count` variable made `count(…)` fail in `yahtzee` with "can't call an int"). A warning, or a better error, would help.

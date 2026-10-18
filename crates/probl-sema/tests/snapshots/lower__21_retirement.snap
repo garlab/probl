@@ -1,0 +1,27 @@
+---
+source: crates/probl-sema/tests/lower.rs
+expression: ir(&src)
+---
+fn#0 the top level ()
+  years_0 = 100    [live: years_0]
+  withdrawal_1 = 30000    [live: years_0 withdrawal_1]
+  balance_2 = 1000000.0    [live: years_0 withdrawal_1 balance_2]
+  baseline_3 = balance_2    [live: years_0 withdrawal_1 balance_2 baseline_3]
+  $4 = $iter_items((.. 0 years_0))    [live: withdrawal_1 balance_2 baseline_3 $4]
+  $5 = 0    [live: withdrawal_1 balance_2 baseline_3 $4 $5]
+  loop (bounded) {    [live at head: withdrawal_1 balance_2 baseline_3 $4 $5]
+    if (>= $5 len($4)) {
+      break    [live: withdrawal_1 balance_2 baseline_3 $4 $5]
+    }
+    year_6 = $4[$5]    [live: withdrawal_1 balance_2 baseline_3 $4 $5 year_6]
+    $5 = (+ $5 1)    [live: withdrawal_1 balance_2 baseline_3 $4 $5 year_6]
+    if (> year_6 0) {
+      r_7 ~ normal(0.04, 0.18)    [live: withdrawal_1 balance_2 baseline_3 $4 $5 year_6 r_7]
+      q_8 ~ normal(0.02, 0.015)    [live: withdrawal_1 balance_2 baseline_3 $4 $5 year_6 r_7 q_8]
+      balance_2 = max(0.0, (- (/ (* balance_2 (+ 1 max((- 0.99), r_7))) (+ 1 max((- 0.99), q_8))) withdrawal_1))    [live: withdrawal_1 balance_2 baseline_3 $4 $5 year_6]
+      baseline_3 = max(0.0, (- (/ (* baseline_3 (+ 1 0.04)) (+ 1 0.02)) withdrawal_1))    [live: withdrawal_1 balance_2 baseline_3 $4 $5 year_6]
+    }
+    report balance_2 by year_6 as "balance in today's dollars"    [live: withdrawal_1 balance_2 baseline_3 $4 $5 year_6]
+    report (== balance_2 0) by year_6 as "depleted by year"    [live: withdrawal_1 balance_2 baseline_3 $4 $5 year_6]
+    report baseline_3 by year_6 as "constant-rate baseline"    [live: withdrawal_1 balance_2 baseline_3 $4 $5]
+  }

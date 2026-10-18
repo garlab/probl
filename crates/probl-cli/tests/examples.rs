@@ -49,6 +49,13 @@ fn comparator() -> Result<(), Failed> {
             return Err(Failed::from(format!("accepted a wrong output:\n{actual}")));
         }
     }
+    // A left-out row whose key and numbers are close to the expected row's
+    // doesn't stand in for it.
+    let expected = "t\n  year    95%\n   100    300\n  (some rows are left out here)";
+    let actual = "t\n  year    95%\n    98    301\n    99    302\n   100    500";
+    if compare_sampled(expected, actual).is_ok() {
+        return Err(Failed::from(format!("accepted a wrong output:\n{actual}")));
+    }
     Ok(())
 }
 
@@ -120,7 +127,7 @@ fn expected_output(src: &str) -> Option<String> {
 /// five of the larger error; other numbers within 4%; dates within three
 /// days. The expected output may leave out rows of a table (and say so in a
 /// line in parentheses), since the reference simulation's rows were copied
-/// by hand.
+/// by hand; a row's first word, its key, must be the same.
 fn compare_sampled(expected: &str, actual: &str) -> Result<(), Failed> {
     let is_note = |l: &&str| {
         let t = l.trim();
@@ -140,10 +147,13 @@ fn compare_sampled(expected: &str, actual: &str) -> Result<(), Failed> {
                 )));
             };
             j += 1;
+            // A table row the expected output leaves out. A row's key is
+            // exact: years 98 and 100 are within 4% of each other.
+            if row(e) && row(a) && first(e) != first(a) {
+                continue;
+            }
             match agree(e, a) {
                 Ok(()) => break,
-                // A table row the expected output leaves out.
-                Err(_) if row(e) && row(a) && first(e) != first(a) => continue,
                 Err(why) => {
                     return Err(Failed::from(format!(
                         "expected: {e}\nactual:   {a}\n{why}\n\nactual output:\n{}",

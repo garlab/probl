@@ -1,0 +1,85 @@
+# Retirement: how long does $1M last, withdrawing $30,000 a year in today's dollars?
+
+@mode sample(runs: 5_000, seed: 42)
+
+# The retirement model of https://eli.thegreenplace.net/2026/monte-carlo-simulations/
+# (its code: https://github.com/eliben/code-for-blog/blob/main/2026/monte-carlo/retire/retire-monte-carlo.py).
+# Each year draws a return and an inflation rate from normal distributions,
+# independent of each other and of other years. Their means and spreads are
+# the article's illustrative assumptions for a mostly stock portfolio, not
+# fitted to data, and not financial advice.
+#
+# Both rates are clamped at -99%, so that growth stays positive: that's part
+# of this model, not something Probl does to a normal distribution. Growth is
+# real, (1 + return) / (1 + inflation), so balances are in today's dollars, and
+# the withdrawal comes at the end of each year, after growth. Year 0 is the
+# starting balance, and year n the balance after n withdrawals (`0..years`
+# includes both ends).
+let years = 100
+let withdrawal = 30_000
+var balance = 1_000_000.0
+var baseline = balance          # the same, with constant rates at their means
+
+for year in 0..years {
+  if year > 0 {
+    let r ~ normal(4%, 18%)     # return
+    let q ~ normal(2%, 1.5%)    # inflation
+    # 0.0, not 0: `max(0, x)` is the int 0 when x is negative.
+    balance = max(0.0, balance * (1 + max(-99%, r)) / (1 + max(-99%, q)) - withdrawal)
+    baseline = max(0.0, baseline * (1 + 4%) / (1 + 2%) - withdrawal)
+  }
+  # A depleted balance stays at zero, and every run reports every year: a run
+  # that stopped when its money ran out would leave the later years' reports
+  # to the runs that still have some.
+  report balance by year as "balance in today's dollars"
+  report balance == 0 by year as "depleted by year"
+  report baseline by year as "constant-rate baseline"
+}
+
+# Each year's percentiles are across runs: the medians, year by year, aren't
+# one run's path, and 90% of runs needn't stay between the 5% and 95% columns
+# for all 100 years. They describe how futures vary, not sampling error, which
+# the depletion probabilities show with their ±. With constant rates the money
+# lasts 54 years, while about 4 runs in 10 run out within 30.
+
+# ── Output (sampled; seed 42) ─────────────────────────────────────────────
+# sample · 5,000 runs · seed 42
+#
+# balance in today's dollars
+#   year          5%         25%      median         75%         95%
+#      0   1,000,000   1,000,000   1,000,000   1,000,000   1,000,000
+#      1     680,727     866,531     987,759   1,108,045   1,286,710
+#      5     379,301     638,916     871,584   1,168,549   1,710,616
+#     10     175,287     432,834     748,733   1,148,280   2,083,550
+#     20           0      99,410     430,623   1,027,815   2,694,441
+#     30           0           0     120,213     816,147   3,200,345
+#     40           0           0           0     509,207   3,682,376
+#     50           0           0           0     179,587   4,112,267
+#     60           0           0           0           0   4,383,930
+#     80           0           0           0           0   4,650,559
+#    100           0           0           0           0   4,225,952
+#   (all 101 years are printed; some rows are left out here)
+#
+# depleted by year
+#     0   0.00% (95% Wilson interval 0.00%–0.08%; 5,000 contributing runs)
+#    10                                                      0.32% ± 0.08%
+#    20                                                       16.0% ± 0.5%
+#    30                                                       42.2% ± 0.7%
+#    40                                                       59.0% ± 0.7%
+#    50                                                       70.2% ± 0.6%
+#    60                                                       77.4% ± 0.6%
+#    80                                                       84.0% ± 0.5%
+#   100                                                       87.8% ± 0.5%
+#   (all 101 years are printed; some rows are left out here)
+#
+# constant-rate baseline
+#   year          5%         25%      median         75%         95%
+#      0   1,000,000   1,000,000   1,000,000   1,000,000   1,000,000
+#      1     989,608     989,608     989,608     989,608     989,608
+#     10     886,413     886,413     886,413     886,413     886,413
+#     30     580,990     580,990     580,990     580,990     580,990
+#     50     130,625     130,625     130,625     130,625     130,625
+#     54      17,599      17,599      17,599      17,599      17,599
+#     55        0.00        0.00        0.00        0.00        0.00
+#    100        0.00        0.00        0.00        0.00        0.00
+#   (all 101 years are printed; some rows are left out here)
