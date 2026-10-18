@@ -218,10 +218,13 @@ fn own_reads(s: &Stmt, f: &mut impl FnMut(SlotId)) {
             self::place(place, f);
             draws::value_reads(dist, f);
         }
-        StmtKind::Take { place, bag } => {
+        StmtKind::Take { place, bag, count } => {
             self::place(place, f);
             f(bag.slot);
             self::place(bag, f);
+            if let Some(count) = count {
+                draws::value_reads(count, f);
+            }
         }
         StmtKind::Call { dest, callee, args } => {
             self::place(dest, f);

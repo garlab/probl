@@ -1342,6 +1342,78 @@ impl<'p> Engine<'p> {
         Ok(())
     }
 
+    /// Validate the whole request before changing the bag. Each draw has
+    /// the same conditional weights as a successive single-item take.
+    fn take_many(
+        &mut self,
+        f: FnId,
+        bag: &Place,
+        dest: &Place,
+        count: &Value,
+        w: World,
+        span: Span,
+    ) -> Result<Vec<World>> {
+        let at = |e: OpError| e.at(span);
+        let count = builtins::nonnegative_int(count, "take", &mut self.budget).map_err(at)?;
+        let current = self.read_place(f, bag, &w, span)?;
+        let Value::Bag(cards) = &current else {
+            return Err(RuntimeError::new(
+                span,
+                format!("`take` needs a bag, found {}", ops::article(&current.kind())),
+            ));
+        };
+        self.budget.work(cards.distinct_len() as u64).map_err(at)?;
+        let total: u128 = cards.values().map(|n| *n as u128).sum();
+        if count.as_ref() > &probl_number::Integer::from(total) {
+            return Err(OpError::fault(Fault::EmptyCollection, "can't take more items than the bag contains").at(span));
+        }
+        let count = count.to_u128().unwrap();
+        self.budget.collection(count).map_err(at)?;
+        let count = usize::try_from(count).map_err(|_| OpError::limit("too many items to take").at(span))?;
+        let mut frontier = vec![(w, Vec::<Value>::new())];
+        for step in 0..count {
+            let mut next = Vec::new();
+            for (w, drawn) in frontier {
+                let current = self.read_place(f, bag, &w, span)?;
+                let Value::Bag(cards) = &current else {
+                    unreachable!("validated bag")
+                };
+                self.spend(cards.distinct_len() as u64, span)?;
+                let chosen = match &mut self.sampler {
+                    Some(rng) => rng.choose(cards.values().map(|n| *n as f64)),
+                    None => None,
+                };
+                for (i, (card, copies)) in cards.iter().enumerate() {
+                    if self.sampler.is_some() && chosen != Some(i) {
+                        continue;
+                    }
+                    self.check_worlds(next.len().saturating_add(1), span)?;
+                    self.spend(
+                        (cards.distinct_len() as u64).saturating_add(drawn.len() as u64 + 1),
+                        span,
+                    )?;
+                    let mut nw = if self.sampler.is_some() {
+                        w.clone()
+                    } else {
+                        w.clone().scaled(*copies as f64 / (total - step as u128) as f64)
+                    };
+                    self.assign(f, bag, Value::multiset(cards.without_nth(i)), &mut nw, span)?;
+                    let mut hand = drawn.clone();
+                    hand.push(card.clone());
+                    next.push((nw, hand));
+                }
+            }
+            frontier = next;
+        }
+        frontier
+            .into_iter()
+            .map(|(mut w, drawn)| {
+                self.assign(f, dest, Value::list(drawn), &mut w, span)?;
+                Ok(w)
+            })
+            .collect()
+    }
+
     fn spend(&mut self, n: u64, span: Span) -> Result<()> {
         self.budget.work(n).map_err(|e| e.at(span))?;
         if let Some(cancel) = &self.config.cancel {
@@ -1646,10 +1718,18 @@ impl<'p> Engine<'p> {
                 }
                 Ok(Flow::next(self.merge(out, stmt.id)))
             }
-            StmtKind::Take { place, bag } => {
+            StmtKind::Take { place, bag, count } => {
                 let mut out = Vec::new();
                 for w in worlds {
                     let at = At::new(f, stmt, &w);
+                    if let Some(count) = count {
+                        let count = each!(self, at, world w, self.eval(f, count, &w));
+                        let mut saved = self.snapshot(&w);
+                        let drawn = each!(self, at, saved saved, self.take_many(f, bag, place, &count, w, span));
+                        self.check_worlds(out.len().saturating_add(drawn.len()), span)?;
+                        out.extend(drawn);
+                        continue;
+                    }
                     let current = each!(self, at, world w, self.read_place(f, bag, &w, span));
                     let Value::Bag(cards) = &current else {
                         return Err(RuntimeError::new(
@@ -4639,6 +4719,7 @@ fn handles_analytic(b: Builtin, values: &[Value]) -> bool {
         B::Map | B::Filter | B::Reduce | B::Len | B::IterItems | B::Settled | B::BooleanLaw | B::IsListOfLen => true,
         // They move values without looking at them.
         B::Slice
+        | B::Combinations
         | B::Reverse
         | B::Keys
         | B::Values

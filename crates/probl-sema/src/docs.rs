@@ -99,6 +99,7 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Print => "Text",
         B::Len
         | B::Slice
+        | B::Combinations
         | B::Sum
         | B::Count
         | B::Map
@@ -492,6 +493,10 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "A sequence from start (inclusive) to end (exclusive, defaults to length). Bounds accept ints or exactly integral finite floats, without rounding, and require 0 <= start <= end <= length. Strings count Unicode scalar values and return strings; lists return lists; ranges stay compact ranges. Equal bounds give an empty result. Does not mutate xs.",
         ),
         B::Sum => doc("sum(xs: list)", "The items added up; 0 for an empty list."),
+        B::Combinations => doc(
+            "combinations(xs, n: int) -> list[list]",
+            "All n-item groups from a list, range or string, without replacement, in input-index order. Equal values at different positions remain distinct. Zero gives [[]]; n above the length gives []; negative counts are errors. Results obey collection and work limits.",
+        ),
         B::Count => doc(
             "count(xs) -> int or count(xs, test) -> int",
             "How many items there are, or how many pass `test`: `count(rolls, r -> r == 6)`. The test cannot draw, observe or branch on uncertainty outside a local simulate scope, in either execution mode.",
@@ -560,8 +565,8 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "Removes the last item of the list variable `xs`, and gives it.",
         ),
         B::Take => doc(
-            "let card = deck.take()",
-            "Selects an item from a mutable bag, removes one copy, and returns the item unchanged. Enumeration creates one world per distinct item, weighted by count; sampling chooses one. Empty bags are errors. Probability and distribution items remain recipes; use `~` on the returned item to draw from it.",
+            "deck.take(n: int?)",
+            "Without a count, removes and returns one item from a mutable bag. With a nonnegative count, returns a list in draw order, without replacement: deck.take(12). Zero returns []; too few items is an error before any removal. Enumeration weights each choice by remaining counts; sampling draws one sequence. Probability and distribution items remain recipes.",
         ),
         // Distributions
         B::Bernoulli => doc(

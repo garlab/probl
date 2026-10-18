@@ -2715,18 +2715,36 @@ impl<'a> Lowerer<'a> {
         if let Some(b) = Builtin::from_name(&name.name) {
             if !self.fn_by_name.contains_key(&name.name) {
                 if b == Builtin::Take {
-                    if !args.is_empty() {
-                        self.error(span, "`take()` doesn't take arguments");
+                    self.check_arity(b, args.len() + 1, span);
+                    for key in self.argument_names(args) {
+                        self.error(span, format!("`take` doesn't take the named argument `{key}`"));
                     }
-                    let Some(bag) = self.place(receiver, out, "take an item from") else {
+                    let Some(mut bag) = self.place(receiver, out, "take an item from") else {
                         return lit(Lit::Unit, span);
                     };
+                    // Fix the receiver's indices before evaluating an argument
+                    // that could change them, and use each index only once.
+                    for elem in &mut bag.path {
+                        if let PathElem::Index(index) = elem {
+                            let dest = self.temp(index.span);
+                            out.push(self.stmt(
+                                index.span,
+                                StmtKind::Set {
+                                    place: Place::slot(dest),
+                                    value: index.clone(),
+                                },
+                            ));
+                            *index = slot(dest, index.span);
+                        }
+                    }
+                    let count = args.first().map(|a| self.expr(&a.value, out));
                     let dest = self.temp(span);
                     let st = self.stmt(
                         span,
                         StmtKind::Take {
                             place: Place::slot(dest),
                             bag,
+                            count,
                         },
                     );
                     out.push(st);
@@ -3263,9 +3281,12 @@ fn visit_stmt(stmt: &mut Stmt, f: &mut impl FnMut(&mut CallSite)) {
             visit_place(place, f);
             visit_expr(dist, f);
         }
-        StmtKind::Take { place, bag } => {
+        StmtKind::Take { place, bag, count } => {
             visit_place(place, f);
             visit_place(bag, f);
+            if let Some(count) = count {
+                visit_expr(count, f);
+            }
         }
         StmtKind::Call { dest, callee, args } => {
             visit_place(dest, f);

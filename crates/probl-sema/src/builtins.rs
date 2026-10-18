@@ -123,6 +123,7 @@ builtins! {
     // Collections
     Len = "len", 1..=1, Lift, true;
     Slice = "slice", 2..=3, Lift, true;
+    Combinations = "combinations", 2..=2, Lift, true;
     Sum = "sum", 1..=1, Lift, true;
     Count = "count", 1..=2, Lift, true;
     Map = "map", 2..=2, Lift, true;
@@ -144,7 +145,7 @@ builtins! {
     Insert = "insert", 3..=3, Lift, true;
     Remove = "remove", 2..=2, Lift, true;
     Pop = "pop", 1..=1, Lift, true;
-    Take = "take", 1..=1, Raw, true;
+    Take = "take", 1..=2, Raw, true;
     // Distributions
     Bernoulli = "bernoulli", 1..=1, Lift, true;
     OneOf = "one_of", 1..=1, Lift, true;

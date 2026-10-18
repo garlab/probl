@@ -155,9 +155,12 @@ fn visit(s: &Stmt, f: &mut impl FnMut(SlotId), leaves: &mut bool) {
             self::place(place, f);
             expr(dist, f);
         }
-        StmtKind::Take { place, bag } => {
+        StmtKind::Take { place, bag, count } => {
             self::place(place, f);
             self::place(bag, f);
+            if let Some(count) = count {
+                expr(count, f);
+            }
         }
         StmtKind::Call { dest, callee, args } => {
             self::place(dest, f);

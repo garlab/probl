@@ -77,10 +77,15 @@ impl Printer<'_> {
             StmtKind::Draw { place, dist } => {
                 self.line(s, depth, format!("{} ~ {}", self.place(place), self.expr(dist)), out)
             }
-            StmtKind::Take { place, bag } => self.line(
+            StmtKind::Take { place, bag, count } => self.line(
                 s,
                 depth,
-                format!("{} = {}.take()", self.place(place), self.place(bag)),
+                format!(
+                    "{} = {}.take({})",
+                    self.place(place),
+                    self.place(bag),
+                    count.as_ref().map(|n| self.expr(n)).unwrap_or_default()
+                ),
                 out,
             ),
             StmtKind::Call { dest, callee, args } => {

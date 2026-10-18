@@ -108,6 +108,17 @@ report split("é", "")                 # ["e", "́"], like chars("é")
 
 Separators, prefixes and suffixes are literal text; there are no regular expressions. Splitting on a nonempty separator preserves empty fields. Splitting on `""` gives scalar elements, and returns `[]` for empty text. Text operations respect string byte, collection size and work limits; see [text semantics and limits](semantics.md).
 
+### Combinations
+
+`combinations(xs, n)` lists the groups of `n` elements from a list, range or string, without replacement. Each group follows the input order:
+
+```probl
+report ["a", "b", "c"].combinations(2)   # [["a","b"],["a","c"],["b","c"]]
+report (1..4).combinations(3).count(xs -> sum(xs) >= 8)  # 2
+```
+
+The result is a list of lists. Equal values at different positions count separately; `[1,1,2].combinations(2)` includes `[1,2]` twice. Zero gives `[[]]`; a count above the length gives `[]`; negative counts are errors. Counts accept integral floats with the usual integer checks. The operation leaves its input unchanged and checks collection and work limits before building the result. Use `choose(n, k)` when you only need the number of groups.
+
 ### Dates
 
 Dates are immutable Gregorian calendar dates, without a time of day or timezone. Construct one with `date("2027-01-31")` or `date(2027, 1, 31)`. Years run from 1 through 9999; strings require exactly `YYYY-MM-DD`. Invalid dates are errors.
@@ -525,6 +536,8 @@ Three of these types describe uncertainty, and keeping them apart is what lets `
 
 Continuous distributions can't list their outcomes, so what you can do with them depends on the mode. Drawing one (`let x ~ normal(0, 1)`) produces a float: a concrete value in sampling, or an analytic outcome in enumeration. Enumeration supports affine arithmetic on a shared draw, `abs`, `min`, `max` and `clamp` of it, threshold conditions, exact updates of a beta, gamma or normal draw by a conjugate observation (`let p ~ beta(2, 3); observe 3 from binomial(5, p)` makes `p` a beta(5, 5)), rounding a bounded draw into ints (`floor(x)`), squares, roots, exponentials, logarithms and reciprocals of it (`x * x`, `exp(x)`), events of independent draws (`x > 0 and y > 0`), sums of normal draws (`x + y`, and `let y ~ normal(mu, 1)`) with their covariance through normal observations, and numeric reports; other nonlinear and multivariate calculations require sampling. With `@integrate`, enumeration also computes observations of one draw that aren't conjugate (`observe true from bernoulli(1 - p)`, `observe 3 from poisson(rate)` for a lognormal `rate`) and means without formulas, by numerical integration to a tolerance, and the summary line says `integrated to 1e-9`. Comparing one with a number works in both modes, from its CDF: `normal(0, 1) > 1.96` is 2.50%. `mean`, `sd`, `median`, `quantile`, `cdf` and `pdf` use the formulas. A choice among options that include one, such as `chance { 35% => 1 to 3, else => 0 }`, is a mixture, and drawing from it picks an option first. Arithmetic on a continuous distribution (`normal(0, 1) * 2`) isn't supported yet: draw a value, then compute with it.
 
+To draw a whole hand, pass a count: `let hand = deck.take(12)`. This removes twelve items and returns a list in draw order. `deck.take(0)` returns `[]`; requesting more items than remain is an error before any removal. The count must be a settled nonnegative integer; integral floats are accepted. As with `take()`, a fresh bag at the start of a sampled program gives each run a fresh deck. The [SET example](../examples/20_set.probl) combines `take(12)` with `combinations(3)` to check all triples in a hand.
+
 ### Computing with them
 
 Operators and built-in functions accept distributions and return new ones:
@@ -842,6 +855,7 @@ Probl borrows `a to b` estimates from Squiggle, dice notation from AnyDice and t
 | [`17_sensor_tracking.probl`](../examples/17_sensor_tracking.probl) | monitoring | noisy observations of a hidden state, incremental exact filtering and next-state prediction |
 | [`18_correlated_losses.probl`](../examples/18_correlated_losses.probl) | risk | common hazards, equal marginal risks, different joint tails and reserve shortfalls |
 | [`19_analytic_continuous.probl`](../examples/19_analytic_continuous.probl) | arrival times | analytic continuous reports, shared draws and threshold evidence |
+| [`20_set.probl`](../examples/20_set.probl) | game | Monte Carlo simulation, batch draws without replacement, combinations and counting sets |
 
 Every example ends with the output it should produce, and those outputs are golden tests. The enumerated ones were checked against independent reference calculations, and must be printed exactly. Tests pin `today` to `2026-09-29`; use `--today 2026-09-29` to reproduce date-dependent output. Sampled output is compared within five standard errors for estimates, and 4% for other numbers. Examples 07–09 use independent reference simulations as their baselines; examples 15–16 record seeded engine output, with their headline results also checked independently. See the [use cases](use-cases.md) for the new examples' validation and the limitations they expose.
 
@@ -961,7 +975,7 @@ From loosest to tightest binding:
 | Integer and special functions | `choose(n, k)` `factorial(n)` `gcd(a, b)` `lcm(a, b)` `euler_phi(n)` `prime_factors(n)` `is_prime(n)` `is_squarefree(n)` `divisors(n)` `primes(lo?, hi)` `next_prime(n)` `prev_prime(n)` `isqrt(n)` `mod_pow(b, e, m)` `mod_inverse(a, m)` `ln_gamma(x)` `erf(x)` `erfc(x)` |
 | Complex numbers | `complex(re, im?)` `real(z)` `imag(z)` `conj(z)` `abs(z)` `abs2(z)` `arg(z)` `cis(theta)` |
 | Constants | `pi` `e` `euler_gamma` `today` `env`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
-| Collections | `len` `slice(xs, start, end?)` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `minimum` `maximum` `highest(n, compare?)` `lowest(n, compare?)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
+| Collections | `len` `slice(xs, start, end?)` `combinations(xs, n)` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `minimum` `maximum` `highest(n, compare?)` `lowest(n, compare?)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
 | Text | `str` `upper` `lower` `trim(s, chars?)` `trim_start(s, chars?)` `trim_end(s, chars?)` `starts_with` `ends_with` `chars` `split` `join` |
 | Dates | `date("2027-01-31")` or `date(year, month, day)`; `days(n)` `weeks(n)` `add_workdays(d, n, holidays?)` `is_workday(d, holidays?)` `weekday(d)` `add_months(d, n)` `add_years(d, n)` `start_of_month(d)` `end_of_month(d)` `year(d)` `month(d)` `day(d)` |
 | Debugging | `print` |

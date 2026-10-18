@@ -193,11 +193,14 @@ impl Pass<'_> {
                 uses(dist, &mut live);
                 live
             }
-            StmtKind::Take { place, bag } => {
+            StmtKind::Take { place, bag, count } => {
                 let mut live = out;
                 define(place, &mut live);
                 live.insert(bag.slot);
                 place_uses(bag, &mut live);
+                if let Some(count) = count {
+                    uses(count, &mut live);
+                }
                 live
             }
             StmtKind::Call { dest, callee, args } => {

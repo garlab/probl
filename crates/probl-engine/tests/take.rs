@@ -167,7 +167,7 @@ fn taking_requires_a_mutable_nonempty_bag_and_checks_result_types() {
         "let deck = bag([1]); let x = deck.take()",
         "var deck = bag([1]); fn f() { deck.take() }; let x = f()",
         "let x = bag([1]).take()",
-        "var deck = bag([1]); let x = deck.take(1)",
+        "var deck = bag([1]); let x = deck.take(1, 2)",
         "var deck = bag([1]); let x = deck.take(n: 1)",
         "var deck = bag([1]); let x = take(deck)",
     ] {
@@ -186,4 +186,107 @@ fn taking_requires_a_mutable_nonempty_bag_and_checks_result_types() {
         chance("var deck: bag[int] = bag([1]); let x: int = deck.take(); report x == 1 and len(deck) == 0"),
         1.0,
     );
+}
+
+#[test]
+fn batch_taking_has_the_same_ordered_distribution_as_successive_draws() {
+    let batch = "var deck = bag([1: 2, 2: 1]); let hand = deck.take(2); report [hand, deck]";
+    let singles = "var deck = bag([1: 2, 2: 1]); let hand = [deck.take(), deck.take()]; report [hand, deck]";
+    assert_eq!(distribution(batch), distribution(singles));
+    close(chance("var b=bag([1:2,2:1]); report b.take(2) == [1,1]"), 1.0 / 3.0);
+    close(chance("var b=bag([1,2,3]); report b.take(2) == [2,1]"), 1.0 / 6.0);
+    let sampled = chance("@mode sample(runs: 10_000, seed: 42)\nvar b=bag([1:2,2:1]); report b.take(2) == [1,1]");
+    assert!((sampled - 1.0 / 3.0).abs() < 0.025, "{sampled}");
+}
+
+#[test]
+fn batch_taking_preserves_items_types_and_evaluation_order() {
+    for mode in ["enumerate", "sample(runs: 100, seed: 7)"] {
+        for source in [
+            "var b=bag([1,2]); let empty=b.take(0); let one=b.take(1.0); let last=b.take(); report empty==[] and len(one)==1 and one[0]!=last and len(b)==0",
+            "var b=bag([]); report b.take(0)==[] and len(b)==0",
+            "var b=bag([d2,d4]); let hand: list[dist[int]]=b.take(2); report hand.map(mean).sum()==4 and len(b)==0",
+            "var b=bag([prob(25%)]); let hand=b.take(1); report typeof hand[0]==\"prob\" and hand[0]==prob(25%)",
+            "var b=bag([1,2,3]); let n ~ d2; let hand=b.take(n); report len(hand)==n and len(b)==3-n",
+            "var b=bag([1,2]); let n=b.take(); let hand=b.take(n-1); report len(hand)==n-1 and len(b)==2-n",
+            "var b=bag([1,2]); false and b.take(1)==[]; b.take(1); report len(b)==1",
+            "var bags=[bag([1,2]),bag([3,4])]; var i=0; var calls=0; let hand=bags[i].take({i=1; calls+=1; 2}); report sort(hand)==[1,2] and calls==1 and len(bags[0])==0 and len(bags[1])==2",
+            "var b=bag([1,2,3]); let n=2; let hand=b.take(n); report len(hand)==2 and len(b)==1",
+            "fn draw(n) { var b=bag([1,2]); b.take(n) }; let f=draw; report len(f(2))==2",
+        ] {
+            close(chance(&format!("@mode {mode}\n{source}")), 1.0);
+        }
+    }
+}
+
+#[test]
+fn batch_taking_faults_before_removal_and_keeps_effect_boundaries() {
+    for mode in ["enumerate", "sample(runs: 100, seed: 7)"] {
+        for source in [
+            "var b=bag([1,2]); let hand=try { b.take(3) } catch EmptyCollection { [] }; report hand==[] and len(b)==2",
+            "var b=bag([1]); let hand=try { b.take(-1) } catch DomainError { [] }; report hand==[] and len(b)==1",
+            "var b=bag([1]); let hand=try { b.take(10^100) } catch EmptyCollection { [] }; report hand==[] and len(b)==1",
+        ] {
+            close(chance(&format!("@mode {mode}\n{source}")), 1.0);
+        }
+        for source in [
+            "report [1].map(x -> { var b=bag([1]); b.take(1) })",
+            "fn pick() { var b=bag([1]); b.take(1) }; report [1].map(x -> pick())",
+        ] {
+            assert!(
+                error(&format!("@mode {mode}\n{source}")).contains("can't branch on chances, draw values or observe")
+            );
+        }
+        for n in ["1.5", "true", "\"1\"", "d2"] {
+            error(&format!("@mode {mode}\nvar b=bag([1,2]); report b.take({n})"));
+        }
+        error(&format!("@mode {mode}\nvar b=bag([1]); let x: int=b.take(1); report x"));
+    }
+    compile_error("let b=bag([1]); report b.take(1)");
+    compile_error("var b=bag([1]); fn f(){ b.take(1) }; report f()");
+    close(
+        chance("report [1].map(x -> simulate { var b=bag([1,2]); b.take(2) })[0] == [1,2]"),
+        0.5,
+    );
+}
+
+#[test]
+fn batch_taking_checks_collection_world_and_work_limits() {
+    use probl_engine::{ErrorKind, Limits, Options};
+    for (source, limits) in [
+        (
+            "var b=bag([1:100]); report b.take(100)",
+            Limits {
+                max_collection: 10,
+                ..Limits::default()
+            },
+        ),
+        (
+            "var b=bag([1,2,3,4,5]); report b.take(5)",
+            Limits {
+                max_worlds: 10,
+                ..Limits::default()
+            },
+        ),
+        (
+            "@mode sample(runs:1)\nvar b=bag([1:100]); report b.take(100)",
+            Limits {
+                max_work: 100,
+                ..Limits::default()
+            },
+        ),
+    ] {
+        assert_eq!(
+            exec_raw(
+                source,
+                &Options {
+                    limits,
+                    ..Options::default()
+                }
+            )
+            .unwrap_err()
+            .kind,
+            ErrorKind::Limit
+        );
+    }
 }

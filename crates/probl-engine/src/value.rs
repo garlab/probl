@@ -206,6 +206,10 @@ impl Multiset {
         self.entries.iter().map(|(v, n)| (v, n))
     }
 
+    pub fn distinct_len(&self) -> usize {
+        self.entries.len()
+    }
+
     pub fn keys(&self) -> impl Iterator<Item = &Value> + Clone {
         self.entries.iter().map(|(v, _)| v)
     }

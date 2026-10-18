@@ -292,10 +292,11 @@ pub enum StmtKind {
         place: Place,
         dist: Expr,
     },
-    /// `place = bag.take()`: select an item unchanged and remove one copy.
+    /// `place = bag.take(count?)`: remove one item, or a list in draw order.
     Take {
         place: Place,
         bag: Place,
+        count: Option<Expr>,
     },
     /// Call a user function or closure; may split worlds.
     Call {

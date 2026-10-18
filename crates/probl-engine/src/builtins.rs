@@ -326,6 +326,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         }
         B::Len => len(a(0)),
         B::Slice => slice(a(0), a(1), args.get(2), budget),
+        B::Combinations => combinations(a(0), a(1), budget),
         B::Sum => sum(a(0), budget),
         B::Count if args.len() == 1 => len(a(0)),
         B::Sort | B::SortDesc => {
@@ -1434,7 +1435,7 @@ fn whole(v: &Value, what: &str, budget: &mut Budget) -> OpResult<i64> {
         .ok_or_else(|| OpError::new(format!("{what} is outside the supported count range")))
 }
 
-fn nonnegative_int<'a>(v: &'a Value, func: &str, budget: &mut Budget) -> OpResult<Cow<'a, Integer>> {
+pub(crate) fn nonnegative_int<'a>(v: &'a Value, func: &str, budget: &mut Budget) -> OpResult<Cow<'a, Integer>> {
     let n = integer(v, func, budget)?;
     if n.is_negative() {
         Err(OpError::fault(
@@ -1841,6 +1842,63 @@ fn min_max(args: &[Value], want_max: bool, budget: &mut Budget) -> OpResult<Valu
         });
     }
     best.ok_or_else(|| OpError::fault(Fault::EmptyCollection, format!("`{name}` of an empty list")))
+}
+
+/// Index combinations in lexicographic order. Equal values at different
+/// positions remain distinct; elements themselves are never compared.
+fn combinations(v: &Value, k: &Value, budget: &mut Budget) -> OpResult<Value> {
+    let k = nonnegative_int(k, "combinations", budget)?;
+    let n: Integer = match v {
+        Value::List(xs) => xs.len().into(),
+        Value::Range(lo, hi) => {
+            budget.integer_work(lo, hi, false)?;
+            range_len(lo, hi)?
+        }
+        Value::Str(s) => s.chars().count().into(),
+        other => return Err(expected("a list, range or string", other, "combinations")),
+    };
+    if k.as_ref() > &n {
+        return Ok(Value::list(vec![]));
+    }
+    if k.is_zero() {
+        budget.collection(1)?;
+        budget.work(1)?;
+        return Ok(Value::list(vec![Value::list(vec![])]));
+    }
+    // For 0 < k <= n, the input must fit before any materialization.
+    let n = n
+        .to_u128()
+        .ok_or_else(|| OpError::limit("combinations input is too large"))?;
+    budget.collection(n)?;
+    let n = usize::try_from(n).map_err(|_| OpError::limit("combinations input is too large"))?;
+    let k = k.to_u64().and_then(|k| usize::try_from(k).ok()).unwrap();
+    // Stop counting as soon as the result exceeds the collection limit;
+    // never construct a giant binomial coefficient or allocate first.
+    let mut count = 1u128;
+    for i in 1..=k.min(n - k) {
+        budget.work(1)?;
+        count = count
+            .checked_mul((n - i + 1) as u128)
+            .ok_or_else(|| OpError::limit("too many combinations"))?
+            / i as u128;
+        budget.collection(count)?;
+    }
+    budget.collection(count)?;
+    budget.work(count.saturating_mul(k as u128 + 1).min(u64::MAX as u128) as u64)?;
+    let xs = items(v, "combinations", budget)?;
+    let mut indices: Vec<usize> = (0..k).collect();
+    let mut result = Vec::with_capacity(count as usize);
+    loop {
+        result.push(Value::list(indices.iter().map(|&i| xs[i].clone()).collect()));
+        let Some(i) = (0..k).rev().find(|&i| indices[i] < n - k + i) else {
+            break;
+        };
+        indices[i] += 1;
+        for j in i + 1..k {
+            indices[j] = indices[j - 1] + 1;
+        }
+    }
+    Ok(Value::list(result))
 }
 
 fn slice(v: &Value, start: &Value, end: Option<&Value>, budget: &mut Budget) -> OpResult<Value> {

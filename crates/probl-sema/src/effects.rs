@@ -275,9 +275,12 @@ impl Direct {
                 self.place(place);
                 self.expr(dist);
             }
-            StmtKind::Take { place, bag } => {
+            StmtKind::Take { place, bag, count } => {
                 self.place(place);
                 self.place(bag);
+                if let Some(count) = count {
+                    self.expr(count);
+                }
             }
             StmtKind::Call { dest, callee, args } => {
                 self.place(dest);

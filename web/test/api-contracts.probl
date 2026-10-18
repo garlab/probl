@@ -65,3 +65,19 @@ report [].maximum((a,b)->a-b,default:7)
 report [{k:2},{k:1}].minimum((a,b)->a.k-b.k,default:{k:0})
 let max_alias=maximum
 report max_alias([],default:9)
+
+# Batch extraction and combinations share native and WebAssembly behavior.
+var deck = bag([1:2,2:1])
+let hand = deck.take(2)
+report hand
+report len(deck)
+report [1,1,2].combinations(2)
+report "a🙂é".combinations(2)
+report [].combinations(0)
+report (0..10^100).combinations(0)
+report (1..4).combinations(3).count(xs -> sum(xs) >= 8)
+var empty = bag([])
+report empty.take(0)
+var short = bag([1])
+report try { short.take(2) } catch EmptyCollection { [] }
+report len(short)

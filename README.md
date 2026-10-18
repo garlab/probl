@@ -96,6 +96,7 @@ Models using `today` get one immutable UTC date snapshot from the host. Add `--t
 | Compare decisions | [Stock levels](examples/14_stock_decision.probl), [service queues](examples/15_service_queue.probl) |
 | Monitoring and risk | [Sensor tracking](examples/17_sensor_tracking.probl), [correlated losses](examples/18_correlated_losses.probl) |
 | Analytic continuous inference | [Arrival times and threshold evidence](examples/19_analytic_continuous.probl) |
+| Monte Carlo simulation | [SET hands](examples/20_set.probl) |
 
 Each example includes its assumptions and expected output. The [full list](docs/language-overview.md#12-examples) and [use-case assessment](docs/use-cases.md) explain what they demonstrate and what remains difficult.
 
