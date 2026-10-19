@@ -75,6 +75,9 @@ fn the_examples_print_what_the_command_line_prints() {
         }
         let expected = program.run(&options).unwrap();
         assert_eq!(output, expected.text(), "{}", example["name"]);
+        let document: Value =
+            serde_json::from_str(&expected.reports_json(&probl::ReportJsonLimits::default()).unwrap()).unwrap();
+        assert_eq!(answer["reports"], document, "{}", example["name"]);
     }
 }
 
@@ -307,4 +310,38 @@ fn a_partial_result_has_the_output_and_the_failures() {
     );
     let (out, _) = run(json!({ "source": source, "mode": "sample", "on_error": "total" }));
     assert!(out["output"].is_null(), "{out}");
+}
+
+#[test]
+fn structured_reports_match_the_library_including_partial_results() {
+    for source in [
+        "for year in 0..3 { report d6 by year; report d6>3 by year }",
+        "@mode sample(runs: 100, seed: 31)\nlet x~normal(0,1); report x; report x<0",
+        "let x~normal(0,1); report {a:x,b:x+2}",
+        "@on_error partial\nlet n~d2; report 1/(n-1)",
+        "for k in [9007199254740993,date(2026,10,19),\"1\",1] {report 2 by k}",
+    ] {
+        let (actual, _) = run(json!({"source":source,"today":"2026-09-29"}));
+        let result = probl::compile("playground.probl", source)
+            .unwrap()
+            .run(&Options::new().today("2026-09-29".parse().unwrap()));
+        let outcome = match &result {
+            Ok(out) => out,
+            Err(e) => e.partial().unwrap(),
+        };
+        let expected: Value =
+            serde_json::from_str(&outcome.reports_json(&probl::ReportJsonLimits::default()).unwrap()).unwrap();
+        assert_eq!(actual["reports"], expected, "{source}");
+        assert!(actual.get("reports_error").is_none());
+        assert_eq!(actual["output"], outcome.text());
+    }
+}
+
+#[test]
+fn structured_report_limits_keep_the_model_output_available() {
+    let (answer, _) = run(json!({"source":"for k in 1..10000 { report true by k }"}));
+    assert!(answer["output"].as_str().unwrap().lines().count() >= 10_000);
+    assert!(answer.get("error").is_none());
+    assert!(answer.get("reports").is_none());
+    assert_eq!(answer["reports_error"]["kind"], "limit");
 }

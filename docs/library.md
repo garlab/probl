@@ -137,6 +137,8 @@ Facts have `probability()` and no redundant true/false table. A structured repor
 
 Numeric summaries expose the renderer's precision. They do not make `f64` an exact representation of arbitrary integers. `quantile(q)` returns `InvalidQuantile` for nonfinite/out-of-range probabilities and `Unavailable` when the summary cannot be supplied.
 
+With the optional `json` crate feature, `Outcome::reports_json(&ReportJsonLimits::default())` exports a bounded, versioned summary document with typed keys, report identities, reach and uncertainty. The WASM adapter uses the same serializer. See the [JSON schema and limits](report-json.md); this exports summaries without raw sampled populations and leaves the existing text/query API unchanged.
+
 ### Point estimates and unresolved mass
 
 `Estimate::point()` returns a point over resolved mass whenever it can be computed. `None` means no point is available, not simply that a tail remains unresolved. In the craps example, the useful point remains available despite a tiny positive unresolved tail.

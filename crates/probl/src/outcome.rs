@@ -9,6 +9,11 @@ use probl_syntax::SourceFile;
 use std::ops::Range;
 use std::sync::Arc;
 
+#[cfg(feature = "json")]
+mod json;
+#[cfg(feature = "json")]
+pub use json::{ReportJsonError, ReportJsonLimits};
+
 /// What a run gives back.
 pub struct Outcome {
     program: Arc<ir::Program>,

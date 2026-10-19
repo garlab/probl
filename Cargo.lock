@@ -391,6 +391,7 @@ dependencies = [
  "probl-engine",
  "probl-sema",
  "probl-syntax",
+ "serde_json",
 ]
 
 [[package]]

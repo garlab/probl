@@ -45,6 +45,8 @@ pub use outcome::{
     ConfidenceInterval, ConfidenceMethod, Estimate, Evidence, EvidenceKind, ExactUpdates, Failure, Group, Interval,
     NumericSummary, Outcome, Report, Sampling, SamplingStatus, SamplingUncertainty, Stats, SummaryError, Unresolved,
 };
+#[cfg(feature = "json")]
+pub use outcome::{ReportJsonError, ReportJsonLimits};
 pub use program::{Mode, Program, compile};
 
 /// This version of Probl.

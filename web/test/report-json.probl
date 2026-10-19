@@ -1,0 +1,15 @@
+# Small populations with typed keys, duplicate labels and analytic fields.
+for year in 0..3 {
+  report d6 by year as "balance"
+  report d6 > year by year as "risk"
+  report year by year as "baseline"
+}
+for key in [1, 1.0, "1", 9007199254740993, date(2026,10,19)] {
+  report true by key as "same"
+}
+report false as "same"
+report one_of([9007199254740993,9007199254740995])
+report one_of([date(2026,1,1),date(2026,1,3)])
+let x ~ normal(0,1)
+report {original:x, shifted:x+2}
+if false { report "unreached" }

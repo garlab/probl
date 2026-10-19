@@ -16,6 +16,44 @@ const wasm = await readFile(`${root}/target/wasm32-unknown-unknown/wasm/probl_wa
 const cli = `${root}/target/release/probl`;
 
 const probl = await load(wasm);
+
+// The native adapter uses the library's bounded serializer. Compare its full
+// document with the actual WASM module, not just the rounded text rendering.
+execFileSync('cargo', ['build', '--release', '--locked', '-p', 'probl-wasm', '--example', 'run-json'], { cwd: root, stdio: 'inherit' });
+const nativeAdapter = `${root}/target/release/examples/run-json`;
+function sameReports(actual, expected, path = 'reports') {
+  if (typeof actual === 'number' && typeof expected === 'number' && !path.endsWith('.value')) {
+    const scale = Math.max(Math.abs(actual), Math.abs(expected));
+    // Weighted effective sizes/reach differ by a few rounding bits across
+    // targets. A near-zero standard error also suffers cancellation at 1.
+    const tolerance = path.endsWith('.standard_error') && scale < 1e-14
+      ? 4 * Number.EPSILON : 16 * Number.EPSILON * scale;
+    assert.ok(Math.abs(actual - expected) <= tolerance, `${path}: ${actual} != ${expected}`);
+  } else if (actual && expected && typeof actual === 'object' && typeof expected === 'object') {
+    assert.equal(Array.isArray(actual), Array.isArray(expected), path);
+    assert.deepEqual(Object.keys(actual), Object.keys(expected), path);
+    for (const key of Object.keys(expected)) sameReports(actual[key], expected[key], `${path}.${key}`);
+  } else {
+    assert.deepEqual(actual, expected, path);
+  }
+}
+for (const source of [
+  await readFile(`${root}/web/test/report-json.probl`, 'utf8'),
+  await readFile(`${root}/web/test/reporting.probl`, 'utf8'),
+  '@mode sample(runs: 100, seed: 23)\nlet x~bernoulli(50%); score if x {90%} else {10%}; report x',
+  '@on_error partial\nlet n~d2; report 1/(n-1)',
+  await readFile(`${root}/examples/02_craps.probl`, 'utf8'),
+  'for k in 1..10000 { report true by k }',
+]) {
+  const request = { source, today: '2026-09-29' };
+  const expected = JSON.parse(execFileSync(nativeAdapter, [], { input: JSON.stringify(request), encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }));
+  const actual = probl.run(request);
+  sameReports(actual.reports, expected.reports);
+  assert.deepEqual(actual.reports_error, expected.reports_error);
+  assert.equal(actual.output, expected.output);
+}
+console.log('same  versioned report JSON, partial results and transport limits');
+
 let failed = 0;
 const cases = probl.examples().map((e) => ({ ...e, path: `examples/${e.name}.probl` }));
 cases.push({ name: 'api-contracts', path: 'web/test/api-contracts.probl', source: await readFile(`${root}/web/test/api-contracts.probl`, 'utf8') });

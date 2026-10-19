@@ -55,6 +55,9 @@ export async function load(module, { onPrint = () => {}, onProgress = () => {} }
     /** `{diagnostics, symbols}` for a program's source; `symbols` is null when it doesn't parse. */
     check: (source) => JSON.parse(call(exports.probl_check, source)),
     /** Run `{source, today?, env?, mode?, runs?, seed?, conjugate?, files?}`.
+     * Successful and partial results include a versioned `reports` document,
+     * or `reports_error` if its serialization exceeded a budget. `output`
+     * remains available in either case. See docs/report-json.md.
      * Snapshot the UTC date once, before entering WASM; an explicit date replays a run. */
     run: (request) => {
       const today = request.today === undefined ? new Date().toISOString().slice(0, 10) : request.today;

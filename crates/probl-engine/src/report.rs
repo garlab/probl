@@ -1100,7 +1100,11 @@ fn sparkline(dist: &[(Value, f64)]) -> Option<String> {
 /// the same midpoint rule as `median()`; the other columns select outcomes.
 /// An unrepresentable fractional bigint midpoint is labelled rather than
 /// silently replaced with the lower bound.
-fn summary_quantile(dist: &[(Value, f64)], q: f64) -> Option<Value> {
+/// Empty populations and levels outside [0, 1] have no summary.
+pub fn summary_quantile(dist: &[(Value, f64)], q: f64) -> Option<Value> {
+    if dist.is_empty() || !q.is_finite() || !(0.0..=1.0).contains(&q) {
+        return None;
+    }
     if q != 0.5 {
         return Some(quantile(dist, q));
     }

@@ -237,6 +237,9 @@ pub fn docs() -> String {
 /// `{"output": …, "stats": …, "partial": true, "error": …, "failures":
 /// [...], "diagnostics": [...]}`, with a diagnostic for each place they
 /// failed.
+/// Successful and partial results also include a versioned `reports` document,
+/// or `reports_error` when its independent serialization budgets were exceeded.
+/// That error does not invalidate the model's output or replace its diagnostics.
 pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option<Progress>) -> String {
     let request: Json = match serde_json::from_str(request) {
         Ok(r) => r,
@@ -345,27 +348,38 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
         }
         stats
     };
+    let with_reports = |mut response: Json, outcome: &probl::Outcome| {
+        match outcome.reports_json(&probl::ReportJsonLimits::default()) {
+            Ok(document) => response["reports"] = serde_json::from_str(&document).expect("library report JSON"),
+            Err(e) => response["reports_error"] = json!({"kind":"limit", "message":e.to_string()}),
+        }
+        response.to_string()
+    };
     match program.run_with(&options, print) {
         Ok(outcome) => {
             let today = outcome.today().map(|d| d.to_string());
-            json!({ "output": outcome.text(), "today": today, "stats": stats(&outcome), "diagnostics": diagnostics })
-                .to_string()
+            with_reports(
+                json!({ "output": outcome.text(), "today": today, "stats": stats(&outcome), "diagnostics": diagnostics }),
+                &outcome,
+            )
         }
         Err(e) if e.partial().is_some() => {
             let outcome = e.partial().expect("checked");
             let today = outcome.today().map(|d| d.to_string());
             let failures: Vec<Json> = e.diagnostics().iter().map(|d| diagnostic(d, source)).collect();
-            json!({
-                "output": outcome.text(),
-                "today": today,
-                "stats": stats(outcome),
-                "partial": true,
-                "finished": outcome.finished(),
-                "error": error(&e, source),
-                "failures": failures,
-                "diagnostics": diagnostics,
-            })
-            .to_string()
+            with_reports(
+                json!({
+                    "output": outcome.text(),
+                    "today": today,
+                    "stats": stats(outcome),
+                    "partial": true,
+                    "finished": outcome.finished(),
+                    "error": error(&e, source),
+                    "failures": failures,
+                    "diagnostics": diagnostics,
+                }),
+                outcome,
+            )
         }
         Err(e) => failed(error(&e, source)),
     }
