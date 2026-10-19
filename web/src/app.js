@@ -322,6 +322,13 @@ async function main() {
 
   // ── Running ──
   let running = null;
+  const bar = document.querySelector('#output .bar');
+  /** The mark before the status line: `running`, then `done`, `partial`,
+   * `failed` or `stopped`; none for other news. */
+  function setState(state) {
+    if (state) bar.dataset.state = state;
+    else delete bar.dataset.state;
+  }
   // Runs that finished, were stopped or crashed: tests wait on it.
   let finished = 0;
 
@@ -332,33 +339,33 @@ async function main() {
     $('result').textContent = '';
     $('result').className = '';
     $('status').textContent = note;
+    setState(null);
     $('progress').hidden = true;
     $('empty').hidden = false;
   }
 
   /** A run's output, as `probl run` prints it. Each line is laid out so that
    * a report too long for the pane wraps at its ` · ` separators, under its
-   * values: the text itself doesn't change. */
+   * values, and a line with one value stays whole: the text itself doesn't
+   * change. */
   function showOutput(text) {
     const lines = text.split('\n');
     $('result').replaceChildren(
       ...lines.map((line, i) => {
         const row = document.createElement('span');
-        row.className = 'line';
         // A report's label, and the spaces that line its values up.
         const label = /^\s*\S.*?\s{2,}(?=\S)/.exec(line)?.[0] ?? '';
+        const parts = line.slice(label.length).split(' · ');
+        row.className = parts.length > 1 ? 'line' : 'line whole';
         row.style.setProperty('--hang', `${label.length}ch`);
         row.append(label);
-        line
-          .slice(label.length)
-          .split(' · ')
-          .forEach((part, j) => {
-            // A wrapped line starts with its separator.
-            const item = document.createElement('span');
-            item.className = 'item';
-            item.textContent = j ? `· ${part}` : part;
-            row.append(...(j ? [' ', item] : [item]));
-          });
+        parts.forEach((part, j) => {
+          // A wrapped line starts with its separator.
+          const item = document.createElement('span');
+          item.className = 'item';
+          item.textContent = j ? `· ${part}` : part;
+          row.append(...(j ? [' ', item] : [item]));
+        });
         if (i < lines.length - 1) row.append('\n');
         return row;
       }),
@@ -410,6 +417,7 @@ async function main() {
     $('run').disabled = true;
     $('stop').disabled = false;
     $('status').textContent = 'Running…';
+    setState('running');
     runner.send({ type: 'run', id, request: input });
   }
 
@@ -427,7 +435,10 @@ async function main() {
     if (!running) return;
     finish();
     runner.restart();
-    if (message) $('status').textContent = message;
+    if (message) {
+      $('status').textContent = message;
+      setState('stopped');
+    }
   }
 
   function onRun(data) {
@@ -452,6 +463,7 @@ async function main() {
       $('result').className = 'error';
       $('result').textContent = `The engine crashed: ${data.message}\n\nThis may be the playground's limits (memory, or calls nested too deep), or a bug in Probl.`;
       $('status').textContent = `Crashed after ${elapsed.toFixed(1)} s.`;
+      setState('failed');
     } else if (data.type === 'done') {
       const { note, source } = running;
       finish();
@@ -483,6 +495,7 @@ async function main() {
       if (s.solved_loops) parts.push(`${s.solved_loops} ${s.solved_loops === 1 ? 'loop' : 'loops'} solved`);
       if (s.solved_calls) parts.push(`${s.solved_calls} recursive ${s.solved_calls === 1 ? 'call' : 'calls'} solved`);
       status(`${parts.join(' · ')}.`);
+      setState(result.partial ? 'partial' : 'done');
       if (result.partial) {
         const doc = view.state.doc;
         const warnings = result.diagnostics.filter((d) => d.severity === 'warning').map((d) => toEditor(d, doc));
@@ -496,6 +509,7 @@ async function main() {
     $('result').textContent = error?.rendered ?? error?.message ?? 'Something went wrong.';
     const limit = error?.kind === 'limit' ? ' The playground’s limits are lower than the command line’s.' : '';
     status(`Failed after ${time}.${limit}`);
+    setState('failed');
     if (error?.from !== undefined) {
       const doc = view.state.doc;
       const diagnostics = result.diagnostics.filter((d) => d.severity === 'warning').map((d) => toEditor(d, doc));
@@ -505,8 +519,29 @@ async function main() {
 
   $('run').addEventListener('click', () => start());
   $('stop').addEventListener('click', () => stop('Stopped.'));
-  $('mode').addEventListener('change', () => {
+
+  // ── Options ──
+  const options = document.querySelector('.options');
+  /** Show the runs and seed when sampling, and mark the Options button
+   * when any option isn't its default. A reload can restore the form's
+   * values, so this happens at the start too. */
+  function markOptions() {
     $('sampling').hidden = $('mode').value !== 'sample';
+    const changed =
+      $('mode').value !== 'program' || $('on-error').value !== 'program' || !$('conjugate').checked || !$('limited').checked;
+    options.classList.toggle('changed', changed);
+    options.querySelector('summary').title = `Mode, runs, seed, faults and the time limit${changed ? ': some are changed' : ''}`;
+  }
+  options.addEventListener('change', markOptions);
+  markOptions();
+  // The panel closes on a click elsewhere, or on Escape.
+  document.addEventListener('pointerdown', (event) => {
+    if (options.open && !options.contains(event.target)) options.open = false;
+  });
+  options.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !options.open) return;
+    options.open = false;
+    options.querySelector('summary').focus();
   });
 
   // ── Tabs: the output, the guide and the reference ──
@@ -678,6 +713,7 @@ async function main() {
     if (Object.keys(selectedCharts.reports).length) hash.set('charts', JSON.stringify(selectedCharts));
     history.replaceState(null, '', `#${hash}`);
     linked = source;
+    setState(null);
     try {
       await navigator.clipboard.writeText(location.href);
       $('status').textContent = 'Link copied. It contains your program; anyone with the link can read it.';
@@ -723,8 +759,10 @@ async function main() {
   select.value = examples.find((e) => e.source === first)?.name ?? '';
   view.focus();
 
-  // The hint shown until a run: its shortcut, and its links to the tabs.
-  for (const key of document.querySelectorAll('kbd.mod')) key.textContent = modKey;
+  // The shortcuts, on Run and in the hint shown until a run, and the hint's
+  // links to the tabs.
+  for (const key of document.querySelectorAll('.mod')) key.textContent = modKey;
+  $('run').title = `Run (${modKey}+Enter)`;
   for (const link of document.querySelectorAll('[data-show]')) {
     link.addEventListener('click', () => showPane(link.dataset.show));
   }
@@ -746,4 +784,5 @@ async function main() {
 
 main().catch((error) => {
   $('status').textContent = `The playground couldn’t start: ${error.message}`;
+  document.querySelector('#output .bar').dataset.state = 'failed';
 });

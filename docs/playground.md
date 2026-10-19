@@ -19,7 +19,8 @@ Open `http://localhost:8000`. The development server rebuilds when page sources,
 
 ## Using the page
 
-- Run with Ctrl/⌘-Enter; stop with Escape or the Stop button. Options select mode, run count, seed, what a fault does to the other worlds (`--on-error`), exact conjugate updates and the time limit.
+- Run with Ctrl/⌘-Enter; stop with Escape or the Stop button. Options select mode, run count, seed, what a fault does to the other worlds (`--on-error`), exact conjugate updates and the time limit. A dot on the Options button means some differ from their defaults; a click elsewhere or Escape closes the panel.
+- Until the first run, the output pane lists the editor's shortcuts. The status line stays in view over long output and is marked by how the run went: running, done, partial, failed or stopped.
 - The examples menu includes games, forecasts, calendars, decisions, monitoring and analytic continuous calculations. Example data files are available to `read` from memory.
 - Compile diagnostics appear in the editor; runtime errors point to the failing source. Output uses the CLI's text format, with streamed `print` lines and sampled-run progress. A partial result, where some worlds failed and the others finished, shows the output with its `failed` section, says so in the status line, and marks where the worlds failed in the editor.
 - Numeric reports grouped by numeric or date keys also draw a median and percentile bands; deterministic reports draw a line. Boolean reports draw a probability step curve. Hover or use the slider's arrow keys, Home and End to inspect values and uncertainty. “Values and uncertainty” opens an accessible table; the complete text output stays below the charts.
@@ -42,7 +43,7 @@ sides of 0.5 are paired from outside inward for bands. The inspector and table
 show all requested columns; mean/SD-only reports have no percentile bands.
 SD-only curves cannot be used as value baselines.
 
-The page supports light/dark themes, a resizable panel divider, keyboard navigation and a single-column layout on small screens.
+The page supports light/dark themes, a resizable panel divider, keyboard navigation and a single-column layout on small screens. Text output wraps a long report at its ` · ` separators; a line with one value, such as a table row, stays whole and scrolls instead.
 
 ## Architecture
 

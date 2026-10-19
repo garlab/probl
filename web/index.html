@@ -15,35 +15,37 @@
       <option value="">Examples…</option>
     </select>
     <div class="actions">
-      <button id="run" class="primary" title="Run (Ctrl+Enter or ⌘+Enter)" disabled>Run</button>
-      <button id="stop" disabled title="Stop (Escape)">Stop</button>
-      <button id="share" title="Copy a link to this program">Share</button>
+      <button id="run" class="primary" title="Run (Ctrl+Enter or ⌘+Enter)" aria-keyshortcuts="Control+Enter Meta+Enter" disabled>Run <kbd class="shortcut" aria-hidden="true"><span class="mod">Ctrl</span>↵</kbd></button>
+      <button id="stop" disabled title="Stop (Escape)" aria-keyshortcuts="Escape">Stop</button>
     </div>
-    <details class="options">
-      <summary>Options</summary>
-      <div class="panel">
-        <label>Mode
-          <select id="mode">
-            <option value="program">as the program says</option>
-            <option value="enumerate">enumerate</option>
-            <option value="sample">sample</option>
-          </select>
-        </label>
-        <span id="sampling" hidden>
-          <label>Runs <input id="runs" type="number" min="1" value="10000"></label>
-          <label>Seed <input id="seed" type="number" min="0" value="0"></label>
-        </span>
-        <label>On error
-          <select id="on-error" title="What a fault in one world, like a division by zero, does to the others">
-            <option value="program">as the program says</option>
-            <option value="total">stop the run</option>
-            <option value="partial">finish the other worlds</option>
-          </select>
-        </label>
-        <label><input id="conjugate" type="checkbox" checked> Exact updates for conjugate priors</label>
-        <label><input id="limited" type="checkbox" checked> Stop runs after 30 seconds</label>
-      </div>
-    </details>
+    <div class="actions end">
+      <button id="share" title="Copy a link to this program">Share</button>
+      <details class="options">
+        <summary title="Mode, runs, seed, faults and the time limit">Options</summary>
+        <div class="panel">
+          <label>Mode
+            <select id="mode">
+              <option value="program">as the program says</option>
+              <option value="enumerate">enumerate</option>
+              <option value="sample">sample</option>
+            </select>
+          </label>
+          <span id="sampling" hidden>
+            <label>Runs <input id="runs" type="number" min="1" value="10000"></label>
+            <label>Seed <input id="seed" type="number" min="0" value="0"></label>
+          </span>
+          <label>On error
+            <select id="on-error" title="What a fault in one world, like a division by zero, does to the others">
+              <option value="program">as the program says</option>
+              <option value="total">stop the run</option>
+              <option value="partial">finish the other worlds</option>
+            </select>
+          </label>
+          <label><input id="conjugate" type="checkbox" checked> Exact updates for conjugate priors</label>
+          <label><input id="limited" type="checkbox" checked> Stop runs after 30 seconds</label>
+        </div>
+      </details>
+    </div>
   </header>
   <main>
     <section id="editor" aria-label="Program"></section>
@@ -59,7 +61,16 @@
           <span id="status" role="status">Loading Probl…</span>
           <progress id="progress" hidden></progress>
         </div>
-        <p id="empty">Press Run, or <kbd class="mod">Ctrl</kbd>+Enter, to run the program: its reports appear here. New to Probl? The <button class="link" data-show="guide">guide</button> explains the language, and the <button class="link" data-show="reference">reference</button> lists what's built in.</p>
+        <div id="empty">
+          <p>Press Run to run the program: its reports appear here. New to Probl? The <button class="link" data-show="guide">guide</button> explains the language, and the <button class="link" data-show="reference">reference</button> lists what's built in.</p>
+          <dl class="keys">
+            <dt><kbd class="mod">Ctrl</kbd> <kbd>Enter</kbd></dt><dd>Run the program</dd>
+            <dt><kbd>Esc</kbd></dt><dd>Stop a run</dd>
+            <dt><kbd>Ctrl</kbd> <kbd>Space</kbd></dt><dd>Complete a name</dd>
+            <dt><kbd>F12</kbd> or <kbd class="mod">Ctrl</kbd>-click</dt><dd>Go to a definition, or a built-in’s reference</dd>
+            <dt><kbd>F2</kbd></dt><dd>Select a name everywhere, to rename it</dd>
+          </dl>
+        </div>
         <pre id="printed" hidden></pre>
         <details id="report-summaries" hidden></details>
         <div id="charts" hidden></div>
@@ -68,7 +79,7 @@
       </div>
       <article id="guide" class="pane" role="tabpanel" aria-labelledby="tab-guide" hidden></article>
       <div id="reference" class="pane" role="tabpanel" aria-labelledby="tab-reference" hidden>
-        <input id="search" type="search" placeholder="Search the built-in functions and keywords" aria-label="Search the reference">
+        <div class="search"><input id="search" type="search" placeholder="Search the built-in functions and keywords" aria-label="Search the reference"></div>
         <p class="hint">Hover a name in the editor to see what it is, and Cmd-click or Ctrl-click it (or press F12) to go to where it's declared, or to its entry here. F2 selects a name everywhere it's used, so typing renames it. Completion comes as you type, or with Ctrl-Space, and a call's signature shows while you type its arguments.</p>
         <div id="entries"></div>
       </div>

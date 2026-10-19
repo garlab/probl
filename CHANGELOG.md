@@ -16,6 +16,7 @@ All notable changes to the published crates are recorded here. The format follow
 
 ### Changed
 
+- The playground's toolbar shows Run's shortcut, puts Share and Options at the far end, marks changed options and closes the options panel on an outside click or Escape. The status line stays in view and is marked by the run's state. Before a run, the output pane lists the editor's shortcuts. Charts sit in cards, errors in a tinted panel, and the reference search stays in view. Table rows in text output no longer break onto two lines in a narrow pane.
 - Reports share exact populations across rendering and numeric queries, construct per-value probability estimates on demand, and release completed batches' per-run maps. Rust's `Group::distribution()` formats its table on first access and shares the cache across cloned groups. Exact results and query capabilities are unchanged; sampled populations still grow with the number of distinct outcomes. See [forecast memory measurements](docs/benchmarks.md#since-sharing-exact-report-populations).
 
 ## [0.3.2] - 2026-10-17

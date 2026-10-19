@@ -140,7 +140,7 @@ export function renderCharts(container, document, settings, onChange) {
     let width;
 
     function draw() {
-      width = Math.max(220, card.clientWidth);
+      width = Math.max(220, Math.floor(plot.getBoundingClientRect().width));
       const height = 250, left = 66, right = width - 16, top = 12, bottom = 204;
       const xs = [s.points[0].x, s.points.at(-1).x];
       const baselinePoints = alignedBaseline(s, baseline);

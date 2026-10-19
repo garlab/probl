@@ -10,8 +10,12 @@
   --active: rgba(195, 185, 150, 0.2);
   --selection: #d7e4f7;
   --accent: #2458c6;
+  --accent-hover: #1c4aa8;
   --accent-text: #ffffff;
+  --hover: #efede6;
   --error: #b3261e;
+  --ok: #1a7f5a;
+  --warn: #a6541b;
   --keyword: #8739b8;
   --number: #1a7f5a;
   --string: #a6541b;
@@ -37,8 +41,12 @@
     --active: rgba(59, 65, 74, 0.3); /* #262a30 over --editor */
     --selection: #2f4466;
     --accent: #6d9cf2;
+    --accent-hover: #8ab0f5;
     --accent-text: #0f1726;
+    --hover: #2c3037;
     --error: #ff8a80;
+    --ok: #7fd4a8;
+    --warn: #f0b37e;
     --keyword: #c792ea;
     --number: #7fd4a8;
     --string: #f0b37e;
@@ -90,13 +98,46 @@ select, input, button {
 input[type="number"] { width: 7.5em; }
 input[type="checkbox"] { padding: 0; }
 
-.actions { display: flex; gap: 8px; }
+.actions { display: flex; align-items: center; gap: 8px; }
+/* Sharing and the options sit at the far end, away from Run. */
+.actions.end { margin-left: auto; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: 0.45; }
+button:not(:disabled):hover, select:hover, .options summary:hover { background: var(--hover); }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+button.primary:not(:disabled):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+/* Stop, while there's a run to stop. */
+#stop:not(:disabled) { color: var(--error); border-color: currentColor; }
+:where(button, select, input, summary, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#run { display: inline-flex; align-items: center; gap: 8px; }
+/* Run's shortcut, on screens with a keyboard to press it. */
+kbd.shortcut {
+  font: 500 12px/1.4 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.08em;
+  color: inherit;
+  background: color-mix(in srgb, var(--accent-text) 20%, transparent);
+  border: none;
+  padding: 0 5px;
+}
+@media (hover: none) { kbd.shortcut { display: none; } }
 
 .options { position: relative; }
-.options summary { cursor: pointer; color: var(--faint); padding: 5px 0; }
+.options summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 5px 10px;
+  background: var(--panel);
+}
+.options summary::-webkit-details-marker { display: none; }
+.options summary::after { content: ''; width: 6px; height: 6px; margin: -3px 1px 0 2px; border: solid var(--faint); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+.options[open] summary::after { margin-top: 3px; transform: rotate(-135deg); }
+/* A dot: some options aren't their defaults. */
+.options.changed summary::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .options .panel {
   position: absolute;
   z-index: 10;
@@ -114,6 +155,9 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
   box-shadow: 0 8px 28px rgb(0 0 0 / 0.14);
 }
 .options label { display: flex; align-items: center; gap: 8px; }
+/* The menus line up, at the panel's end. */
+.options label:has(> select) { justify-content: space-between; gap: 16px; }
+.options select { min-width: 13.5em; }
 #sampling { display: flex; gap: 12px; }
 #sampling[hidden] { display: none; }
 
@@ -145,8 +189,19 @@ main {
 .pane { flex: 1; min-height: 0; overflow: auto; }
 .pane[hidden] { display: none; }
 #output:not([hidden]) { display: flex; flex-direction: column; }
-.bar { display: flex; align-items: center; gap: 12px; min-height: 38px; padding: 8px 16px; color: var(--faint); font-size: 14px; }
-progress { flex: 0 1 200px; }
+/* The status line stays in view over long output. A mark before it says
+   how the last run went, and the progress bar gives way to the status, then
+   moves under it. */
+.bar { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-height: 38px; padding: 8px 16px; color: var(--faint); background: var(--page); font-size: 14px; }
+.bar[data-state]::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.bar[data-state="done"]::before { background: var(--ok); }
+.bar[data-state="partial"]::before { background: var(--warn); }
+.bar[data-state="failed"]::before { background: var(--error); }
+.bar[data-state="failed"] { color: var(--error); }
+.bar[data-state="running"]::before { width: 10px; height: 10px; background: none; border: 2px solid var(--accent); border-right-color: transparent; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .bar[data-state="running"]::before { animation: none; } }
+progress { flex: 1 1 100px; max-width: 200px; accent-color: var(--accent); }
 
 pre {
   margin: 0;
@@ -156,7 +211,14 @@ pre {
   overflow-x: auto;
 }
 #printed { color: var(--faint); border-bottom: 1px dashed var(--line); padding-bottom: 10px; margin-bottom: 8px; }
-#result.error { color: var(--error); }
+#result.error {
+  color: var(--error);
+  margin: 4px 16px 16px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--error);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--error) 7%, transparent);
+}
 /* A report too long for the pane wraps at its ` · ` separators, under its
    values. */
 /* The output is a size container, so `cqw` is 1% of its width in both
@@ -170,8 +232,15 @@ pre {
   text-indent: calc(-1 * var(--indent));
 }
 #result .item { white-space: pre; }
-#empty { margin: 0; padding: 4px 16px; color: var(--faint); max-width: 60ch; }
+/* A line with one value, like a table's row, would only move it under
+   itself: it stays whole, and the output scrolls. */
+#result .line.whole { white-space: pre; }
+#empty { padding: 4px 16px 16px; color: var(--faint); max-width: 64ch; }
+#empty p { margin: 0 0 16px; }
 #empty[hidden] { display: none; }
+.keys { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; margin: 0; font-size: 13.5px; }
+.keys dt { white-space: nowrap; }
+.keys dd { margin: 0; }
 
 /* Forecast charts use the same theme as the text, with a dashed baseline and
    nested fills so color is not the only distinction. */
@@ -186,10 +255,11 @@ pre {
 .summary-row select { min-width: 0; }
 .summary-row input[hidden] { display: none; }
 #charts[hidden], #text-heading[hidden] { display: none; }
-#charts h2, #text-heading { font-size: 15px; margin: 8px 0 14px; }
-#text-heading { margin: 12px 16px; }
-.report-chart { min-width: 0; border-bottom: 1px solid var(--line); padding: 0 0 18px; margin: 0 0 20px; }
-.report-chart h3 { font-size: 16px; margin: 10px 0; overflow-wrap: anywhere; }
+#charts h2, #text-heading { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); margin: 10px 0 8px; }
+#text-heading { margin: 4px 16px 10px; }
+#charts > .chart-note { color: var(--faint); margin: 0 0 12px; }
+.report-chart { min-width: 0; padding: 4px 16px 14px; margin: 0 0 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.report-chart h3 { font-size: 15px; margin: 10px 0; overflow-wrap: anywhere; }
 .chart-controls { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 12px; }
 .chart-controls label { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; max-width: 100%; }
 .chart-controls select { max-width: 100%; min-width: 0; padding: 4px 6px; }
@@ -209,10 +279,11 @@ pre {
 .legend-line::before, .legend-baseline::before, .legend-band::before { content: ''; display: inline-block; width: 18px; margin-right: 6px; vertical-align: middle; border-top: 2px solid var(--accent); }
 .legend-baseline::before { border-top: 2px dashed var(--string); }
 .legend-band::before { border: 0; height: 9px; background: var(--accent); opacity: 0.25; }
-.chart-inspector { background: var(--code-bg); border-radius: 6px; padding: 8px 10px; }
+.chart-inspector { background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
 .chart-position { display: block; width: 100%; margin: 8px 0; padding: 0; accent-color: var(--accent); }
 .chart-hint, .chart-note { font-size: 12px; line-height: 1.5; margin: 7px 0; overflow-wrap: anywhere; }
-.chart-hint { margin-top: 0; }
+.chart-hint { margin-top: 0; color: var(--faint); }
+.report-chart > .chart-note { color: var(--faint); }
 .chart-values { font-size: 13px; font-variant-numeric: tabular-nums; margin: 6px 0; overflow-wrap: anywhere; }
 .chart-table { margin-top: 10px; font-size: 12px; }
 .chart-table summary { cursor: pointer; color: var(--accent); }
@@ -260,7 +331,9 @@ button.link { font: inherit; color: var(--accent); background: none; border: non
 #guide .contents a:hover { text-decoration: underline; }
 
 /* The reference. */
-#reference { padding: 12px 18px 40px; }
+#reference { padding: 0 18px 40px; }
+/* The search stays in view while the entries scroll. */
+#reference .search { position: sticky; top: 0; z-index: 1; padding: 12px 0 8px; background: var(--page); }
 #search { width: 100%; }
 #reference .hint { color: var(--faint); font-size: 13.5px; margin: 10px 0 0; }
 #reference h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--faint); margin: 22px 0 6px; }
@@ -290,5 +363,4 @@ footer a { color: var(--accent); }
   #divider { display: none; }
   #editor { height: 55vh; border-right: none; border-bottom: 1px solid var(--line); }
   #output { min-height: 40vh; }
-  .options .panel { right: auto; left: 0; }
 }
