@@ -153,8 +153,9 @@ playground does. Work units are not a wall-clock deadline.
 
 For fixed groups, document size follows the number of summaries, not the number
 of trials. Computing exact quantiles still scans the retained populations; this
-feature does not solve report-collection memory growth. Configurable summaries,
-streaming accumulators and charts are subsequent work.
+feature does not solve report-collection memory growth. The [playground charts](playground.md)
+consume these summaries; configurable summaries and streaming accumulators are
+subsequent work.
 
 An October 19, 2026 spot check of the retirement example (5,000 trials, seed 42,
 101 years including year zero) produced 303 groups in 481,419 JSON bytes. Using

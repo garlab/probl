@@ -39,7 +39,7 @@ This contract is deliberate, but editor type information and a joint transformat
 
 ### Results and model checking
 
-The [Rust library](library.md) now exposes structured probabilities, numeric summaries, uncertainty, evidence and provenance. This resolves the former need for Rust callers to parse report text. The optional JSON API now supplies a versioned summary schema with typed group keys, reach and uncertainty, shared with WASM ([schema](report-json.md)). Full typed outcome serialization and browser charts remain open. The WASM page still presents text.
+The [Rust library](library.md) now exposes structured probabilities, numeric summaries, uncertainty, evidence and provenance. This resolves the former need for Rust callers to parse report text. The optional JSON API supplies a versioned summary schema with typed group keys, reach and uncertainty, shared with WASM ([schema](report-json.md)). The [playground](playground.md) draws numeric/date-keyed forecasts with percentile bands, probability curves and optional deterministic overlays, retaining text for every report. Full typed outcome serialization remains open.
 
 Small scalar tables and explicit selection of reported statistics would improve decision and tracking models. A fitted-model interface should preserve parameter uncertainty when generating replicated datasets or predictions for new inputs. [PyMC's posterior-predictive API](https://www.pymc.io/projects/docs/en/stable/api/generated/pymc.sample_posterior_predictive.html) illustrates that distinction.
 

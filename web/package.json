@@ -6,7 +6,7 @@
   "scripts": {
     "build": "bun build.mjs",
     "serve": "bun serve.mjs",
-    "test": "bun test/examples.mjs && bun test/page.mjs"
+    "test": "bun test/charts.mjs && bun test/examples.mjs && bun test/page.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

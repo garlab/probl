@@ -22,9 +22,18 @@ Open `http://localhost:8000`. The development server rebuilds when page sources,
 - Run with Ctrl/⌘-Enter; stop with Escape or the Stop button. Options select mode, run count, seed, what a fault does to the other worlds (`--on-error`), exact conjugate updates and the time limit.
 - The examples menu includes games, forecasts, calendars, decisions, monitoring and analytic continuous calculations. Example data files are available to `read` from memory.
 - Compile diagnostics appear in the editor; runtime errors point to the failing source. Output uses the CLI's text format, with streamed `print` lines and sampled-run progress. A partial result, where some worlds failed and the others finished, shows the output with its `failed` section, says so in the status line, and marks where the worlds failed in the editor.
+- Numeric reports grouped by numeric or date keys also draw a median and percentile bands; deterministic reports draw a line. Boolean reports draw a probability step curve. Hover or use the slider's arrow keys, Home and End to inspect values and uncertainty. “Values and uncertainty” opens an accessible table; the complete text output stays below the charts.
+- “Overlay (same units)” selects a compatible deterministic report as a dashed baseline. Choose a report measured in the same units; labels alone do not prove that. Only matching typed keys are compared, and missing values break the line. Value formatting can explicitly select USD, EUR or GBP. No currency or baseline is inferred from a label.
 - Hover shows declarations or built-in documentation. Ctrl/⌘-click or F12 goes to a definition; F2 selects references for renaming. Completion and signature help use compiler symbols; after `catch`, completion offers the faults it can name, which the reference also lists.
-- Share encodes the program in the URL fragment. Running a model does not upload its source or inputs to an execution server; a share link itself contains the source and should be treated accordingly.
+- Share encodes the program and its chart choices in the URL fragment. Older links use default chart choices. Running a model does not upload its source or inputs to an execution server; a share link itself contains the source and should be treated accordingly.
 - Local edits are saved in browser storage. Loading an example or guide snippet is undoable; editing it makes it the user's saved program.
+
+Chart choices are saved with the exact source. Editing the source resets them so
+report IDs from another program cannot silently select an overlay. Percentile
+bands describe variation across outcomes at each key, not one run's trajectory
+or a Monte Carlo confidence band. The point details separately show sampling
+error, Wilson confidence intervals where available, incomplete-result bounds,
+support and report reach. Partial failures remain qualified beside the plot.
 
 The page supports light/dark themes, a resizable panel divider, keyboard navigation and a single-column layout on small screens.
 
@@ -36,6 +45,7 @@ The page supports light/dark themes, a resizable panel divider, keyboard navigat
 | [`probl.js`](../web/src/probl.js) | Loader for plain WASM exports and strings in module memory; no wasm-bindgen toolchain |
 | [`worker.js`](../web/src/worker.js) | Checking/running away from the page's main thread |
 | [`app.js`](../web/src/app.js) | Editor, output, options, guide, reference and worker lifecycle |
+| [`chart-data.js`](../web/src/chart-data.js) / [`charts.js`](../web/src/charts.js) | Typed chart eligibility/alignment and SVG rendering, keyboard inspection and tables |
 | [`build.mjs`](../web/build.mjs) / [`serve.mjs`](../web/serve.mjs) | Static build and rebuilding development server |
 
 Two workers share a compiled module: one checks edits and one runs programs. Each instance runs synchronously on one thread. Stop and the default 30-second timeout terminate the runner and replace it. Crashes also replace the runner, so a failed model does not require reloading the page.
@@ -46,7 +56,22 @@ The adapter uses [`probl`](library.md) for loading, execution and reporting, and
 
 [`Limits::browser()`](../crates/probl/src/options.rs) sets lower ceilings than native execution, including 1,000,000 worlds, 2 × 10⁹ work units, 150 nested calls, 20,000 chain states, 1 MiB output and 8 MiB input. The source definition is authoritative for the full list. The page's timeout is additional to engine budgets.
 
-The resolver serves only supplied in-memory files. The page currently supplies bundled example data; it has no arbitrary local-file picker or stdin. Nor does it have environment variables: a WASM request may carry an `env` object, but the page sends none, so a model's `env` is empty. The language has no general network access. Output is displayed as text. The WASM response also includes [versioned report summaries](report-json.md), with typed keys and uncertainty, for host applications; the page does not draw charts yet.
+The resolver serves only supplied in-memory files. The page currently supplies bundled example data; it has no arbitrary local-file picker or stdin. Nor does it have environment variables: a WASM request may carry an `env` object, but the page sends none, so a model's `env` is empty. The language has no general network access. Charts consume the WASM adapter's [versioned report summaries](report-json.md); the text output remains available.
+
+Charts use native SVG, with no chart library dependency. They render at most 20
+reports with 1,000 groups per report; tables are built only when opened. Unsupported
+shapes, categorical/mixed keys, unsafe numeric coordinates and larger series stay
+in the text view, without downsampling. Numeric/date keys are ordered by their
+typed values, and date axes use UTC calendar-day distances. Date-valued reports
+and structured field marginals currently remain in text. An unavailable estimate
+is a gap; a missing key is never assigned an invented value. Serialization limits
+are separate from these display limits. None of this reduces the engine's memory
+for retaining exact sample populations.
+
+In the October 19, 2026 Bun build, the chart UI and saved settings added 13,787
+bytes to the minified page bundle (430,231 to 444,018 bytes), or 5,065 bytes with
+gzip. This compares the same build settings against the preceding `48e6302`
+version; the WASM module is unchanged.
 
 ## Tests
 
@@ -60,7 +85,7 @@ bun run build
 bun run test
 ```
 
-The native Rust tests cover the adapter. `test/examples.mjs` executes the actual WASM module and compares native/WASM outputs. `test/page.mjs` runs the page in headless Chrome, covering examples, Stop, limits, errors, share links, the guide and editor interactions. These check different layers; a native adapter test alone does not test WebAssembly.
+The native Rust tests cover the adapter. `test/charts.mjs` checks chart eligibility, precision, gaps, baseline alignment and settings against actual WASM reports. `test/examples.mjs` executes the actual WASM module and compares native/WASM outputs. `test/page.mjs` runs the page in headless Chrome, covering examples, Stop, limits, errors, share links, the guide and editor interactions, plus chart values, overlays, keyboard access, light/dark themes, narrow layouts and fallback text. Pass `--screenshots` to save chart screenshots under `/tmp`. These check different layers; a native adapter test alone does not test WebAssembly.
 
 The browser test defaults to macOS application paths. Set `PROBL_CHROME` to the Chrome executable on another installation. For Firefox, set `PROBL_FIREFOX` if needed and run `bun test/page.mjs firefox`. The browser must be installed separately.
 
@@ -78,4 +103,6 @@ To test an existing deployment:
 PROBL_URL=https://playground.probl.dev bun test/page.mjs
 ```
 
-Charts, user-supplied data files and parallel browser sampling remain future work. Structured JSON summaries are now available from the shared Rust/WASM serializer; categorical populations still use the text view.
+User-supplied data files, configurable report quantiles, bounded-memory summaries
+and parallel browser sampling remain future work. Categorical populations still
+use the text view.

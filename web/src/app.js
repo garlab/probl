@@ -13,11 +13,14 @@ import { EditorView, keymap } from '@codemirror/view';
 import { basicSetup } from 'codemirror';
 import { intelligence, setSymbols } from './intel.js';
 import { highlighter, probl } from './probl-lang.js';
+import { chartSettings, readChartSettings } from './chart-data.js';
+import { renderCharts } from './charts.js';
 
 /** Seconds a run may take before it's stopped, unless the options say not to. */
 const TIME_LIMIT = 30;
 const STORED = 'probl-playground-source';
 const SPLIT = 'probl-playground-split';
+const CHARTS = 'probl-playground-charts';
 
 const $ = (id) => document.getElementById(id);
 /** The modifier key for shortcuts: ⌘ on Apple's systems, Ctrl elsewhere. */
@@ -179,6 +182,22 @@ async function main() {
 
   let saving = null;
   let edited = false;
+  let chartSource = '';
+  let charts = chartSettings(null);
+  let clearCharts = () => {};
+  function resetCharts() {
+    clearCharts();
+    clearCharts = () => {};
+    $('charts').replaceChildren();
+    $('charts').hidden = true;
+    $('text-heading').hidden = true;
+  }
+  function restoreCharts(source) {
+    try {
+      const saved = JSON.parse(remembered(CHARTS));
+      return saved?.source === source ? chartSettings(saved.settings) : chartSettings(null);
+    } catch { return chartSettings(null); }
+  }
   const userEdits = ['input', 'delete', 'move', 'undo', 'redo'];
   const view = new EditorView({
     parent: $('editor'),
@@ -199,6 +218,12 @@ async function main() {
       ]),
       EditorView.updateListener.of((update) => {
         if (!update.docChanged) return;
+        const source = update.state.doc.toString();
+        if (source !== chartSource) {
+          chartSource = source;
+          charts = chartSettings(null);
+          resetCharts();
+        }
         // Only what the person changes is kept for next time: a program
         // loaded from a link, the menu or the guide isn't theirs.
         edited ||= update.transactions.some((tr) => userEdits.some((event) => tr.isUserEvent(event)));
@@ -235,6 +260,7 @@ async function main() {
   function load(source) {
     const before = view.state.doc.toString();
     setSource(source);
+    charts = restoreCharts(source);
     const own = before.trim() !== '' && before !== source && before !== linked && !examples.some((e) => e.source === before);
     return own ? `Your program was replaced: ${modKey}+Z brings it back.` : '';
   }
@@ -252,7 +278,9 @@ async function main() {
     if (!example) return;
     const note = load(example.source);
     linked = example.source;
-    history.replaceState(null, '', `#example=${example.name}`);
+    const hash = new URLSearchParams({ example: example.name });
+    if (Object.keys(charts.reports).length) hash.set('charts', JSON.stringify(charts));
+    history.replaceState(null, '', `#${hash}`);
     clearOutput(note);
     view.focus();
   });
@@ -274,6 +302,7 @@ async function main() {
   let finished = 0;
 
   function clearOutput(note = '') {
+    resetCharts();
     $('printed').textContent = '';
     $('printed').hidden = true;
     $('result').textContent = '';
@@ -337,10 +366,12 @@ async function main() {
     const id = ++lastId;
     const started = performance.now();
     const limited = $('limited').checked;
+    const input = request();
     running = {
       id,
       started,
       note,
+      source: input.source,
       lines: [],
       ticker: setInterval(() => {
         const seconds = (performance.now() - started) / 1000;
@@ -354,7 +385,7 @@ async function main() {
     $('run').disabled = true;
     $('stop').disabled = false;
     $('status').textContent = 'Running…';
-    runner.send({ type: 'run', id, request: request() });
+    runner.send({ type: 'run', id, request: input });
   }
 
   function finish() {
@@ -397,19 +428,31 @@ async function main() {
       $('result').textContent = `The engine crashed: ${data.message}\n\nThis may be the playground's limits (memory, or calls nested too deep), or a bug in Probl.`;
       $('status').textContent = `Crashed after ${elapsed.toFixed(1)} s.`;
     } else if (data.type === 'done') {
-      const { note } = running;
+      const { note, source } = running;
       finish();
-      show(data.result, elapsed, note);
+      show(data.result, elapsed, note, source);
     }
   }
 
-  function show(result, elapsed, note) {
+  function show(result, elapsed, note, source) {
     const time = elapsed < 1 ? `${Math.round(elapsed * 1000)} ms` : `${elapsed.toFixed(1)} s`;
     const status = (text) => {
       $('status').textContent = note ? `${text} ${note}` : text;
     };
     if (result.output !== undefined) {
       showOutput(result.output);
+      if (source === view.state.doc.toString()) {
+        clearCharts = renderCharts($('charts'), result.reports, charts, (id, choice) => {
+          charts = chartSettings({ version: 1, reports: { ...charts.reports, [id]: choice } });
+          remember(JSON.stringify({ source, settings: charts }), CHARTS);
+          if (linked === source) {
+            const hash = new URLSearchParams(location.hash.slice(1));
+            hash.set('charts', JSON.stringify(charts));
+            history.replaceState(null, '', `#${hash}`);
+          }
+        });
+        $('text-heading').hidden = $('charts').hidden;
+      }
       const s = result.stats;
       // A partial result: the other worlds finished, and the editor marks
       // where the failed ones failed.
@@ -607,8 +650,13 @@ async function main() {
 
   // ── Sharing ──
   $('share').addEventListener('click', async () => {
-    const code = await encode(view.state.doc.toString());
-    history.replaceState(null, '', `#code=${code}`);
+    const source = view.state.doc.toString();
+    const selectedCharts = charts;
+    const code = await encode(source);
+    const hash = new URLSearchParams({ code });
+    if (Object.keys(selectedCharts.reports).length) hash.set('charts', JSON.stringify(selectedCharts));
+    history.replaceState(null, '', `#${hash}`);
+    linked = source;
     try {
       await navigator.clipboard.writeText(location.href);
       $('status').textContent = 'Link copied. It contains your program; anyone with the link can read it.';
@@ -622,7 +670,7 @@ async function main() {
     const hash = new URLSearchParams(location.hash.slice(1));
     if (hash.has('code')) {
       try {
-        return await decode(hash.get('code'));
+        return { source: await decode(hash.get('code')), charts: readChartSettings(hash.get('charts')) };
       } catch {
         $('status').textContent = 'The link’s program couldn’t be read.';
         return null;
@@ -631,12 +679,14 @@ async function main() {
     const named = examples.find((e) => e.name === hash.get('example'));
     if (!named) return null;
     select.value = named.name;
-    return named.source;
+    return { source: named.source, charts: readChartSettings(hash.get('charts')) };
   }
   window.addEventListener('hashchange', async () => {
-    const source = await fromLink();
-    if (source !== null) {
+    const shared = await fromLink();
+    if (shared !== null) {
+      const { source } = shared;
       const note = load(source);
+      charts = shared.charts;
       linked = source;
       clearOutput(note);
       showPane('output');
@@ -644,9 +694,11 @@ async function main() {
   });
 
   // The first program: from the link, then as left, then the tour.
-  linked = await fromLink();
+  const shared = await fromLink();
+  linked = shared?.source ?? null;
   const first = linked ?? remembered() ?? examples[0].source;
   setSource(first);
+  charts = shared?.charts ?? restoreCharts(first);
   select.value = examples.find((e) => e.source === first)?.name ?? '';
   view.focus();
 

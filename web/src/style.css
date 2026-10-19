@@ -161,7 +161,7 @@ pre {
    values. */
 /* The output is a size container, so `cqw` is 1% of its width in both
    properties below (a percentage isn't: text-indent's is of the line). */
-#result { container-type: inline-size; }
+#result { container-type: inline-size; flex: none; }
 #result .line {
   --indent: min(var(--hang), 40cqw); /* a long label leaves room for the values */
   display: block;
@@ -172,6 +172,48 @@ pre {
 #result .item { white-space: pre; }
 #empty { margin: 0; padding: 4px 16px; color: var(--faint); max-width: 60ch; }
 #empty[hidden] { display: none; }
+
+/* Forecast charts use the same theme as the text, with a dashed baseline and
+   nested fills so color is not the only distinction. */
+#charts { padding: 0 16px; flex: none; }
+#charts[hidden], #text-heading[hidden] { display: none; }
+#charts h2, #text-heading { font-size: 15px; margin: 8px 0 14px; }
+#text-heading { margin: 12px 16px; }
+.report-chart { min-width: 0; border-bottom: 1px solid var(--line); padding: 0 0 18px; margin: 0 0 20px; }
+.report-chart h3 { font-size: 16px; margin: 10px 0; overflow-wrap: anywhere; }
+.chart-controls { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 12px; }
+.chart-controls label { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; max-width: 100%; }
+.chart-controls select { max-width: 100%; min-width: 0; padding: 4px 6px; }
+.chart-plot { display: block; width: 100%; overflow: hidden; }
+.chart-plot text { fill: var(--text); font: 11px system-ui, sans-serif; }
+.chart-grid { stroke: var(--line); }
+.chart-band { fill: var(--accent); }
+.chart-band.outer { fill-opacity: 0.12; }
+.chart-band.inner { fill-opacity: 0.24; }
+.chart-line, .chart-baseline-line { fill: none; stroke: var(--accent); stroke-width: 2; }
+.chart-baseline-line { stroke: var(--string); stroke-dasharray: 6 4; }
+.chart-line.point { fill: var(--accent); }
+.chart-baseline-line.point { fill: var(--string); stroke-dasharray: none; }
+.chart-marker { stroke: var(--text); stroke-opacity: 0.4; stroke-dasharray: 2 3; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 5px 14px; font-size: 12px; margin: 12px 0 6px; }
+.chart-legend span { overflow-wrap: anywhere; }
+.legend-line::before, .legend-baseline::before, .legend-band::before { content: ''; display: inline-block; width: 18px; margin-right: 6px; vertical-align: middle; border-top: 2px solid var(--accent); }
+.legend-baseline::before { border-top: 2px dashed var(--string); }
+.legend-band::before { border: 0; height: 9px; background: var(--accent); opacity: 0.25; }
+.chart-inspector { background: var(--code-bg); border-radius: 6px; padding: 8px 10px; }
+.chart-position { display: block; width: 100%; margin: 8px 0; padding: 0; accent-color: var(--accent); }
+.chart-hint, .chart-note { font-size: 12px; line-height: 1.5; margin: 7px 0; overflow-wrap: anywhere; }
+.chart-hint { margin-top: 0; }
+.chart-values { font-size: 13px; font-variant-numeric: tabular-nums; margin: 6px 0; overflow-wrap: anywhere; }
+.chart-table { margin-top: 10px; font-size: 12px; }
+.chart-table summary { cursor: pointer; color: var(--accent); }
+.chart-table-scroll { overflow: auto; max-height: 360px; margin-top: 8px; }
+.chart-table table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.chart-table caption { text-align: left; margin-bottom: 6px; }
+.chart-table th, .chart-table td { border: 1px solid var(--line); padding: 5px 8px; text-align: right; vertical-align: top; white-space: nowrap; }
+.chart-table td:last-child { min-width: 240px; white-space: normal; text-align: left; }
+.chart-position:focus-visible, .chart-table-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 kbd { font: 0.92em var(--mono); background: var(--code-bg); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
 button.link { font: inherit; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; }
 

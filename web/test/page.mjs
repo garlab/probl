@@ -16,6 +16,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer-core';
 import { serveFiles } from '../serve.mjs';
+import { load } from '../src/probl.js';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const firefox = process.argv.includes('firefox');
@@ -86,7 +87,124 @@ try {
       encoding: 'utf8',
     });
     expect(`${result}\n` === expected, `${name} prints what \`probl run\` prints (${time} s; ${status})`, result);
+    if (name === '07_launch_forecast' || name === '12_invoice_calendar') {
+      expect(await page.$$eval('.report-chart', (cards) => cards.length) === 1, `${name} also draws its numeric forecast`);
+    }
   }
+
+  // Retirement is the last example: inspect its charts against the shared
+  // report schema, with exact values rather than rounded SVG labels.
+  const api = await load(readFileSync(`${root}web/dist/probl.wasm`));
+  const retirement = api.run({ source: readFileSync(`${root}examples/21_retirement.probl`, 'utf8'), today: '2026-10-19' }).reports;
+  expect(await page.$$eval('.report-chart', (cards) => cards.length) === 3, 'retirement draws balance, depletion and baseline');
+  const balance = '.report-chart[data-report-id="0"]';
+  const depletion = '.report-chart[data-report-id="1"]';
+  await page.select(`${balance} .chart-baseline`, '2');
+  await page.select(`${balance} .chart-currency`, 'USD');
+  expect(await page.$eval(`${balance} .chart-baseline-line`, (line) => line.getAttribute('d').startsWith('M')), 'a selected deterministic baseline is drawn');
+  await page.focus(`${balance} .chart-position`);
+  await page.keyboard.press('End');
+  const last = await page.$eval(`${balance} .chart-readout`, (el) => ({ key: el.dataset.key, value: el.dataset.value, text: el.textContent }));
+  expect(last.key === '["int","100"]' && Number(last.value) === retirement.reports[0].groups[100].summary.quantiles[2].estimate.point
+    && last.text.includes('constant-rate baseline'), 'End inspects the last key and its overlay', JSON.stringify(last));
+  await page.keyboard.press('Home');
+  await page.keyboard.press('ArrowRight');
+  const firstYear = await page.$eval(`${balance} .chart-readout`, (el) => Number(el.dataset.value));
+  expect(firstYear === retirement.reports[0].groups[1].summary.quantiles[2].estimate.point, 'arrow keys inspect exact structured values');
+  await page.$eval(`${depletion} .chart-position`, (el) => { el.value = 30; el.dispatchEvent(new Event('input', { bubbles: true })); });
+  const risk = await page.$eval(`${depletion} .chart-readout`, (el) => ({ value: Number(el.dataset.value), text: el.textContent }));
+  expect(risk.value === retirement.reports[1].groups[30].probability.point && risk.text.includes('Monte Carlo standard error'), 'depletion shows probability and sampling error separately', risk.text);
+  expect(await page.$eval(`${depletion} .chart-line`, (el) => el.getAttribute('d').includes('H')), 'probabilities use a step curve');
+  await page.$eval(`${balance} details`, (el) => { el.open = true; });
+  await page.waitForSelector(`${balance} tbody tr`);
+  expect(await page.$$eval(`${balance} tbody tr`, (rows) => rows.length) === 101, 'an accessible table retains all 101 years');
+  const tableValue = await page.$eval(`${balance} tbody tr[data-group-id="30"]`, (row) => row.cells[3].textContent);
+  const expectedMedian = new Intl.NumberFormat('en', { style: 'currency', currency: 'USD', maximumSignificantDigits: 7 }).format(retirement.reports[0].groups[30].summary.quantiles[2].estimate.point);
+  expect(tableValue === expectedMedian, 'table medians agree with the structured reports', tableValue);
+  await page.$eval(`${balance} details`, (el) => { el.open = false; });
+
+  await press(page, 'share');
+  await page.waitForFunction(() => location.hash.includes('charts='));
+  const chartLink = await page.evaluate(() => location.href);
+  const chartReplay = await open(chartLink);
+  await run(chartReplay);
+  expect(await chartReplay.$eval(`${balance} .chart-baseline`, (el) => el.value) === '2'
+    && await chartReplay.$eval(`${balance} .chart-currency`, (el) => el.value) === 'USD', 'share links replay chart choices');
+  const legacy = new URL(chartLink);
+  const params = new URLSearchParams(legacy.hash.slice(1));
+  params.delete('charts');
+  legacy.hash = params.toString();
+  const oldLink = await open(legacy.href);
+  await run(oldLink);
+  expect(await oldLink.$eval(`${balance} .chart-baseline`, (el) => el.value) === '', 'older links use default chart choices');
+  await oldLink.close();
+  // Local reloads associate choices with exact source, not merely report IDs.
+  await chartReplay.evaluate(() => {
+    localStorage.setItem('probl-playground-source', window.playground.getSource());
+    history.replaceState(null, '', location.pathname);
+  });
+  await chartReplay.reload();
+  await chartReplay.waitForSelector('body[data-ready="true"]');
+  await run(chartReplay);
+  expect(await chartReplay.$eval(`${balance} .chart-baseline`, (el) => el.value) === '2', 'local reloads retain choices for the same source');
+  await chartReplay.select('#examples', '21_retirement');
+  expect(await chartReplay.evaluate(() => location.hash.includes('charts=')), 'reselecting an example keeps its restored choices in the link');
+  await chartReplay.reload();
+  await chartReplay.waitForSelector('body[data-ready="true"]');
+  await run(chartReplay);
+  expect(await chartReplay.$eval(`${balance} .chart-baseline`, (el) => el.value) === '2', 'restored example choices survive another reload');
+  await chartReplay.evaluate(() => window.playground.setSource('for k in 0..2 { report d6 by k; report false by k; report k by k }'));
+  await run(chartReplay);
+  expect(await chartReplay.$eval(`${balance} .chart-baseline`, (el) => el.value) === ''
+    && await chartReplay.$eval(`${balance} .chart-currency`, (el) => el.value) === '', 'source edits reset choices even when report IDs still match');
+  await chartReplay.close();
+
+  // Inspect the chart at desktop and phone sizes, in both themes. Screenshots
+  // are optional local artifacts; assertions always run in CI.
+  for (const scheme of ['light', 'dark']) {
+    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: scheme }]);
+    await page.setViewport({ width: 1300, height: 900 });
+    await page.$eval('#output', (el) => { el.scrollTop = 0; });
+    await page.waitForFunction(() => Number(document.querySelector('.chart-plot').getAttribute('viewBox').split(' ')[2]) > 440);
+    const colors = await page.$eval(`${balance} .chart-line`, (line) => ({ stroke: getComputedStyle(line).stroke, dash: getComputedStyle(line.parentNode.querySelector('.chart-baseline-line')).strokeDasharray }));
+    expect(colors.stroke !== 'none' && colors.dash !== 'none', `chart and dashed baseline render in ${scheme} mode`);
+    if (process.argv.includes('--screenshots')) await page.screenshot({ path: `/tmp/probl-charts-${scheme}.png` });
+  }
+  await page.setViewport({ width: 390, height: 844 });
+  await page.waitForFunction(() => Number(document.querySelector('.chart-plot').getAttribute('viewBox').split(' ')[2]) < 400);
+  const chartWidths = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth, badPaths: [...document.querySelectorAll('.chart-plot path')].some((p) => /NaN|Infinity/.test(p.getAttribute('d'))) }));
+  expect(chartWidths.page <= chartWidths.viewport && !chartWidths.badPaths, 'charts fit a narrow screen with finite coordinates', JSON.stringify(chartWidths));
+  if (process.argv.includes('--screenshots')) {
+    await page.$eval(balance, (el) => el.scrollIntoView());
+    await page.screenshot({ path: '/tmp/probl-charts-phone.png' });
+  }
+  await page.setViewport({ width: 800, height: 600 });
+
+  const edgeCases = [
+    ['for key in 0..2 {report 0 by key; report false by key}', 2, 'zero-only numeric and probability curves'],
+    ['report d6 by 1', 1, 'one-point distributions'],
+    ['report d6 by "cat"; report 9007199254740993 by 1', 0, 'categorical keys and unsafe integers stay in text'],
+    ['@on_error partial\nlet n~d2; for k in 0..2 {report 1/(n-1) by k}', 1, 'partial results retain chart qualifications'],
+    ['for k in 0..1001 {report k by k}', 0, 'large series fall back to text'],
+    ['for k in 0..2 { report d6 by k as "range" }; for k in [0,2] { report k by k as "baseline" }', 2, 'unequal baseline keys leave a gap'],
+  ];
+  for (const [source, count, name] of edgeCases) {
+    await page.evaluate((source) => window.playground.setSource(source), source);
+    const answer = await run(page);
+    const cards = await page.$$eval('.report-chart', (cards) => cards.length);
+    expect(cards === count && !answer.error && answer.result.length > 0, name, `${cards} charts; ${answer.result}`);
+    expect(await page.$$eval('.chart-plot path', (paths) => paths.every((p) => !/NaN|Infinity/.test(p.getAttribute('d')))), `${name}: valid coordinates`);
+    if (source.includes('@on_error')) expect(await page.$eval('.chart-qualifications', (el) => el.textContent.includes('Partial result')), 'partial failures remain visible beside the plot');
+    if (source.includes('[0,2]')) {
+      await page.select(`${balance} .chart-baseline`, '1');
+      expect(await page.$$eval(`${balance} path.chart-baseline-line`, (paths) => paths.length) === 2, 'overlay does not interpolate a missing baseline key');
+    }
+  }
+  const bounded = readFileSync(`${root}examples/02_craps.probl`, 'utf8').replace('report win ', 'report win by 0 ');
+  await page.evaluate((source) => window.playground.setSource(source), bounded);
+  await run(page);
+  expect(await page.$eval('.chart-readout', (el) => el.textContent.includes('unresolved bounds'))
+    && await page.$eval('.chart-qualifications', (el) => el.textContent.includes('unresolved')), 'missing model weight and bounds remain visible on charts');
 
   // List statistics and scalar-query errors through the real editor/worker.
   const statisticsSource = readFileSync(`${root}web/test/statistics.probl`, 'utf8');
