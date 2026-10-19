@@ -137,6 +137,8 @@ pub struct Options {
     pub epsilon: Option<f64>,
     /// Also print the simplest fraction near each probability.
     pub fractions: bool,
+    /// Explicit summary columns by zero-based report ID. Collection stays exact.
+    pub report_summaries: BTreeMap<usize, report::ReportSummary>,
     pub limits: Limits,
     /// Set to stop a running program.
     pub cancel: Option<Arc<AtomicBool>>,
@@ -187,6 +189,7 @@ impl Default for Options {
             memoize: true,
             epsilon: None,
             fractions: false,
+            report_summaries: BTreeMap::new(),
             limits: Limits::default(),
             cancel: None,
             mode: None,
@@ -223,6 +226,7 @@ pub struct Outcome {
     /// How the reports were rendered into `output`, to render some of them
     /// again with [`report::render`].
     pub format: Format,
+    pub report_summaries: BTreeMap<usize, report::ReportSummary>,
     /// When sampling: how.
     pub sample: Option<Sampled>,
     /// The data the program read, if any.
@@ -322,6 +326,7 @@ fn run_here(
     options: &Options,
     print: &mut (dyn FnMut(&str) + Send),
 ) -> Result<Outcome, RuntimeError> {
+    report::validate_summaries(&program.reports, &options.report_summaries)?;
     if options.today.is_some_and(|d| !dates::valid(d)) {
         return Err(RuntimeError::new(
             Default::default(),
@@ -587,7 +592,8 @@ fn enumerated(
             header.push_str(&format!(" · unresolved {:.1e}", unresolved.to_f64()));
         }
     }
-    let body = report::render_results(&program.reports, &results, format);
+    report::validate_summary_values(&program.reports, &results, &options.report_summaries)?;
+    let body = report::render_selected(&program.reports, &results, format, &options.report_summaries, 0);
     let output = if body.is_empty() {
         header
     } else {
@@ -603,6 +609,7 @@ fn enumerated(
         reports: sinks,
         results,
         format,
+        report_summaries: options.report_summaries.clone(),
         sample: None,
         data: sources(options),
         updates: Vec::new(),
@@ -998,7 +1005,8 @@ fn sampled(
     // The report lines don't show unresolved weight when sampling (the
     // summary line does), but the results still say what's incomplete.
     let results = report::results(&program.reports, &engine.sinks, format, unresolved);
-    let body = report::render_results(&program.reports, &results, format);
+    report::validate_summary_values(&program.reports, &results, &options.report_summaries)?;
+    let body = report::render_selected(&program.reports, &results, format, &options.report_summaries, 0);
     let output = if body.is_empty() {
         header
     } else {
@@ -1015,6 +1023,7 @@ fn sampled(
         reports: std::mem::take(&mut engine.sinks),
         results,
         format,
+        report_summaries: options.report_summaries.clone(),
         sample: Some(Sampled {
             runs,
             seed,

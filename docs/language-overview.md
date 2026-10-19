@@ -740,11 +740,18 @@ probl run model.probl --threads 2                            # sample on at most
 probl run model.probl --no-conjugate                         # sample without exact updates, for comparing
 probl run model.probl --on-error total                       # stop at the first fault, even when sampling
 probl run model.probl --timeout 10                           # stop after 10 seconds
+probl run model.probl --summary 0=forecast                   # 10/25/median/75/90 columns for the first report
 probl check model.probl                                      # parse and check without running
 probl check --data model.probl                               # and check its data
 probl schema data.csv                                        # suggest a type to read a file with
 probl repl
 ```
+
+`--summary ID=SPEC` chooses ordered statistics for one zero-based report ID;
+other reports keep their defaults. Presets are `forecast`, `standard` and
+`moments`, or list columns such as `mean,sd,median,q:0.9`. The playground exposes
+the same choices under **Report summaries**. `median` uses midpoint ties;
+`q:0.5` uses the inverse CDF. See [summary selection](report-summaries.md).
 
 The output always starts with a line saying how the numbers were computed, so an enumerated answer is never confused with an estimate:
 

@@ -1,10 +1,11 @@
-import { alignedBaseline, chartSeries, compatibleBaselines, currencies, keyId, segments } from './chart-data.js';
+import { alignedBaseline, chartSeries, columnEstimate, compatibleBaselines, currencies, keyId, segments } from './chart-data.js';
 
 const svgNS = 'http://www.w3.org/2000/svg';
 const finite = (n) => typeof n === 'number' && Number.isFinite(n);
 const plain = new Intl.NumberFormat('en', { maximumSignificantDigits: 7 });
 const percent = new Intl.NumberFormat('en', { style: 'percent', maximumFractionDigits: 2 });
 const textNumber = (n) => finite(n) ? plain.format(n) : 'unavailable';
+const lineLabel = (series) => series.deterministic && !series.report.summary_selection ? 'Value' : series.columns[series.primary].label;
 
 function element(tag, attrs = {}, text) {
   const node = document.createElement(tag);
@@ -43,7 +44,7 @@ function estimateNotes(q, fmt) {
 
 function groupNotes(series, point, fmt) {
   const g = point.group;
-  const quantity = series.kind === 'probability' ? g.probability : g.summary?.quantiles.find((q) => q.level === 0.5)?.estimate;
+  const quantity = columnEstimate(g, series.columns[series.primary]);
   const notes = [estimateNotes(quantity, fmt)];
   if (g.support) notes.push(`${g.support.contributing_runs} contributing runs; ${textNumber(g.support.effective_runs)} effective.`);
   if (g.complete === false) notes.push(`Unresolved share ${percent.format(g.unresolved_share)}.`);
@@ -122,7 +123,8 @@ export function renderCharts(container, document, settings, onChange) {
     card.append(inspector);
     const explanation = s.kind === 'probability' ? 'Step curve: probability at each observed key. Monte Carlo error and confidence intervals are shown separately in the point details.'
       : s.deterministic ? 'One resolved value at each key. Deterministic values may still come from a partial or incomplete result.'
-      : 'Bands show the 5–95% and 25–75% outcome percentiles; the line is the median. These are pointwise ranges across futures, not a single trajectory or Monte Carlo confidence bands.';
+      : s.bands.length ? `Bands show the ${s.bands.map((b) => b.label).join(' and ')} outcome percentiles; the line shows ${lineLabel(s).toLowerCase()}. These are pointwise ranges across futures, not a single trajectory or Monte Carlo confidence bands.`
+      : `The line shows ${lineLabel(s).toLowerCase()} at each key. Monte Carlo uncertainty is shown separately in the point details.`;
     card.append(element('p', { class: 'chart-note' }, explanation));
     card.append(element('p', { class: 'chart-note chart-qualifications' }, reportNotes(s, document.run)));
     const details = element('details', { class: 'chart-table' });
@@ -142,7 +144,7 @@ export function renderCharts(container, document, settings, onChange) {
       const height = 250, left = 66, right = width - 16, top = 12, bottom = 204;
       const xs = [s.points[0].x, s.points.at(-1).x];
       const baselinePoints = alignedBaseline(s, baseline);
-      const ys = s.points.flatMap((p) => p.values).concat(baselinePoints.map((p) => p.y)).filter(finite);
+      const ys = s.points.flatMap((p) => [p.y, ...s.bands.flatMap((b) => [p.values[b.lo], p.values[b.hi]])]).concat(baselinePoints.map((p) => p.y)).filter(finite);
       let low = s.percent && s.kind === 'probability' ? 0 : Math.min(0, ...ys);
       let high = s.percent && s.kind === 'probability' ? 1 : Math.max(...ys);
       if (low === high) high = low + 1;
@@ -170,11 +172,11 @@ export function renderCharts(container, document, settings, onChange) {
       const keyLabel = s.report.key_label.length > maxLabel ? `${s.report.key_label.slice(0, maxLabel - 1)}…` : s.report.key_label;
       plot.append(svg('text', { x: (left + right) / 2, y: height - 4, 'text-anchor': 'middle', class: 'chart-axis-label' }, keyLabel));
       if (s.kind === 'number' && !s.deterministic) {
-        for (const [lo, hi, cls] of [[0, 4, 'outer'], [1, 3, 'inner']]) {
+        for (const [index, {lo, hi}] of s.bands.entries()) {
           for (const part of segments(s.points, (p) => [p.values[lo], p.values[hi]])) {
             if (part.length < 2) continue;
             const pairs = [...part.map((p) => [xScale(p.x), y(p.values[hi])]), ...part.toReversed().map((p) => [xScale(p.x), y(p.values[lo])])];
-            plot.append(svg('path', { d: `M${pairs.map((p) => p.join(',')).join('L')}Z`, class: `chart-band ${cls}` }));
+            plot.append(svg('path', { d: `M${pairs.map((p) => p.join(',')).join('L')}Z`, class: `chart-band ${index === 0 ? 'outer' : 'inner'}` }));
           }
         }
       }
@@ -189,8 +191,8 @@ export function renderCharts(container, document, settings, onChange) {
       if (baseline) line(baselinePoints, 'chart-baseline-line', false);
       marker = svg('line', { y1: top, y2: bottom, class: 'chart-marker' });
       plot.append(marker);
-      legend.replaceChildren(element('span', { class: 'legend-line' }, s.kind === 'probability' ? 'Probability' : s.deterministic ? 'Value' : 'Median'));
-      if (s.kind === 'number' && !s.deterministic) legend.append(element('span', { class: 'legend-band' }, '5–95% / 25–75%'));
+      legend.replaceChildren(element('span', { class: 'legend-line' }, lineLabel(s)));
+      if (s.bands.length && !s.deterministic) legend.append(element('span', { class: 'legend-band' }, s.bands.map((b) => b.label).join(' / ')));
       if (baseline) legend.append(element('span', { class: 'legend-baseline' }, baseline.report.label));
       inspect();
     }
@@ -201,9 +203,12 @@ export function renderCharts(container, document, settings, onChange) {
       const fmt = numberFormat(s, currency);
       const show = (n) => finite(n) ? fmt.format(n) : 'unavailable';
       const parts = [`${s.report.key_label}: ${point.key.label}`];
-      if (s.kind === 'probability') parts.push(`Probability: ${show(point.y)}`);
-      else if (s.deterministic) parts.push(`Value: ${show(point.y)}`);
-      else parts.push(`Median: ${show(point.y)}`, `5–95%: ${show(point.values[0])} to ${show(point.values[4])}`, `25–75%: ${show(point.values[1])} to ${show(point.values[3])}`);
+      parts.push(`${lineLabel(s)}: ${show(point.y)}`);
+      if (s.report.summary_selection && s.kind !== 'probability') {
+        s.columns.forEach((c, i) => { if (i !== s.primary) parts.push(`${c.label}: ${show(point.values[i])}`); });
+      } else if (!s.deterministic) {
+        for (const band of s.bands) parts.push(`${band.label}: ${show(point.values[band.lo])} to ${show(point.values[band.hi])}`);
+      }
       const baselinePoint = baseline?.points.find((p) => keyId(p.key) === keyId(point.key));
       if (baseline) parts.push(`${baseline.report.label}: ${show(alignedBaseline(s, baseline)[Number(slider.value)].y)}`);
       slider.setAttribute('aria-valuetext', parts.join('; '));
@@ -229,7 +234,8 @@ export function renderCharts(container, document, settings, onChange) {
       table.append(element('caption', {}, s.report.label));
       const head = element('thead');
       const row = element('tr');
-      const columns = s.kind === 'probability' ? ['Probability'] : s.deterministic ? ['Value'] : ['5%', '25%', 'Median', '75%', '95%'];
+      const compact = s.deterministic && !s.report.summary_selection;
+      const columns = compact ? ['Value'] : s.columns.map((c) => c.label);
       for (const label of [s.report.key_label, ...columns, ...(baseline ? [baseline.report.label] : []), 'Uncertainty and support']) row.append(element('th', { scope: 'col' }, label));
       head.append(row);
       table.append(head);
@@ -239,7 +245,7 @@ export function renderCharts(container, document, settings, onChange) {
       s.points.forEach((p, i) => {
         const row = element('tr', { 'data-group-id': p.group.id });
         row.append(element('th', { scope: 'row' }, p.key.label));
-        const values = s.deterministic ? [p.y] : p.values;
+        const values = compact ? [p.y] : p.values;
         for (const value of [...values, ...(baseline ? [aligned[i].y] : [])]) row.append(element('td', {}, finite(value) ? fmt.format(value) : 'unavailable'));
         row.append(element('td', {}, groupNotes(s, p, fmt)));
         body.append(row);

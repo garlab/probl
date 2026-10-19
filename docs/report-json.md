@@ -36,6 +36,7 @@ Reports are in source order, including unreached report sites:
 | `id` | Zero-based report index within this compiled program |
 | `label` | The explicit `as` label or expression text |
 | `key_label` | Source text of the `by` expression, or `null` |
+| `summary_selection` | Ordered explicit statistic tokens, or `null` for defaults |
 | `visits` | `once`, `per_key`, or `per_visit` |
 | `reach` | `{share, standard_error}` where known, otherwise `null` |
 | `groups` | Groups in the engine's key order; empty if unreached |
@@ -70,26 +71,34 @@ samples. Other groups have an empty `fields` array.
 
 Numeric and date summaries contain:
 
-- `mean` and `sd`: estimates, or `null` when unavailable (including dates).
-- `quantiles`: five entries with `level` 0.05, 0.25, 0.5, 0.75 and 0.95, an
+- `mean` and `sd`: estimates, or `null` when unavailable (including dates) or
+  omitted from an explicit selection.
+- `quantiles`: by default, five entries with `level` 0.05, 0.25, 0.5, 0.75 and 0.95, an
   `estimate` where available, and a typed `value` where the quantile is a retained
   discrete value. These typed values use the key encoding, with a null label.
+  `convention` is `"midpoint"` for the median and `"inverse_cdf"` for generic
+  quantiles. Explicit selections include only requested quantiles, in order.
 - `percent`: whether numeric values are probability parameters.
 - `integrated_moments`: whether computing moments required numerical integration.
 - `quantile_method: "exact"`: no quantile sketch or sample compression was used.
 - `deterministic`: the resolved population consists of one concrete number/date.
 
 A true `deterministic` flag does not override incompleteness or partial-failure
-metadata. Quantiles follow Probl's report convention: the 50% entry uses the
-midpoint median; other levels select outcomes. These conventions can differ from
-interpolated sample percentiles in other libraries.
+metadata. By default the 50% entry uses the midpoint median; other levels use the
+weighted inverse CDF. A [summary selection](report-summaries.md) can request both
+`median` and `q:0.5`: those have the same level but different conventions and can
+differ at ties. These conventions can differ from interpolated sample percentiles
+in other libraries. For older version-1 documents without `summary_selection` or
+`convention`, use default columns and interpret level 0.5 as midpoint, all others
+as inverse CDF. The new metadata is additive; unchanged defaults preserve values.
 
 Dates and integers that cannot be represented exactly in the numeric summary
 retain typed quantile values even when their `estimate` or mean/SD is unavailable.
 A typed quantile value is authoritative for exact integer/date display. Numeric
 estimates are floating-point summaries; they do not make arbitrary-precision
 integer arithmetic available in JavaScript. Continuous quantiles have an estimate
-but no retained typed value. Null means unavailable, never zero.
+but no retained typed value. Null means unavailable or unrequested, never zero;
+`summary_selection` distinguishes the latter.
 
 Full-precision floating estimates can differ in their last rounding bits across
 native and WASM targets, especially weighted effective sample sizes and reach
@@ -154,8 +163,8 @@ playground does. Work units are not a wall-clock deadline.
 For fixed groups, document size follows the number of summaries, not the number
 of trials. Computing exact quantiles still scans the retained populations; this
 feature does not solve report-collection memory growth. The [playground charts](playground.md)
-consume these summaries; configurable summaries and streaming accumulators are
-subsequent work.
+consume these summaries, including [configurable columns](report-summaries.md).
+Streaming accumulators remain subsequent work.
 
 An October 19, 2026 spot check of the retirement example (5,000 trials, seed 42,
 101 years including year zero) produced 303 groups in 481,419 JSON bytes. Using

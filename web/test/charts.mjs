@@ -69,3 +69,26 @@ assert.deepEqual(chartSettings({ version: 2, reports: { 0: { baseline: 2 } } }).
 assert.deepEqual(chartSettings({ version: 1, reports: { 0: { baseline: 2, currency: 'USD' }, 1: { baseline: '2', currency: 'bad' }, bad: {} } }).reports,
   { 0: { baseline: 2, currency: 'USD' }, 1: { baseline: null, currency: '' } });
 console.log('all passed: chart eligibility, typed coordinates, quantiles, gaps, baselines, partial results and settings');
+
+const configure = (spec, source = 'for k in 0..2 {report one_of([0:50%,10:50%]) by k}') => engine.run({ source, report_summaries: { 0: spec } }).reports;
+const forecast = chartSeries(configure('forecast'))[0];
+assert.deepEqual(forecast.bands.map((b) => b.label), ['10–90%', '25–75%']);
+assert.deepEqual(forecast.columns.map((c) => c.label), ['10%', '25%', 'Median', '75%', '90%']);
+const moments = chartSeries(configure('moments'))[0];
+assert.deepEqual(moments.columns.map((c) => c.label), ['Mean', 'SD']);
+assert.deepEqual(moments.bands, []);
+assert.deepEqual(moments.points.map((p) => p.y), [5, 5, 5]);
+const tied = chartSeries(configure('q:0.5,median'))[0];
+assert.deepEqual(tied.points[0].values, [0, 5]);
+assert.equal(tied.points[0].y, 5, 'midpoint median remains distinct from the inverse CDF');
+const reversed = chartSeries(configure('q:0.9,q:0.1,median'))[0];
+assert.deepEqual(reversed.bands, [{lo:1,hi:0,label:'10–90%'}]);
+assert.deepEqual(reversed.points[0].values, [10, 0, 5], 'table columns retain requested order');
+const precise = chartSeries(configure('q:0.29,q:0.29000000000000004,q:1e-7,q:0,q:1'))[0];
+assert.deepEqual(precise.columns.map((c) => c.label), ['29%', '29.000000000000004%', '0.00001%', '0%', '100%']);
+const sd = chartSeries(configure('sd', 'for k in 0..2 {report k by k}'))[0];
+assert.equal(sd.columns[sd.primary].label, 'SD');
+assert.equal(sd.deterministic, false, 'an SD line cannot stand in for a value baseline');
+assert.deepEqual(compatibleBaselines(sd, all), []);
+assert.equal(chartSettings({version:1,reports:{0:{summary:'forecast'}}}).reports[0].summary, 'forecast');
+console.log('all passed: configurable chart columns, bands, moments, median conventions and persistence');

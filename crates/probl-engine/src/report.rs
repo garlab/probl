@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 
 mod results;
+mod selection;
+pub use selection::{ReportStatistic, ReportSummary, ReportSummaryError, statistic_value};
 
 pub use results::{Fields, GroupResult, Numeric, Quantity, Reach, ReportResult, Status, Support, Uncertainty, results};
 
@@ -708,6 +710,95 @@ pub fn render(sites: &[ReportSite], sinks: &[Sink], format: Format) -> String {
 /// Render reports from their [`results`], in source order: the renderer
 /// only formats the numbers they hold.
 pub fn render_results(sites: &[ReportSite], results: &[ReportResult], format: Format) -> String {
+    render_selected(sites, results, format, &BTreeMap::new(), 0)
+}
+
+/// Validate configuration identities before running any model code.
+pub fn validate_summaries(
+    sites: &[ReportSite],
+    selections: &BTreeMap<usize, ReportSummary>,
+) -> Result<(), crate::RuntimeError> {
+    if selections.len() > 256 {
+        return Err(crate::RuntimeError::new(
+            Default::default(),
+            "at most 256 report summary overrides are allowed",
+        ));
+    }
+    for id in selections.keys() {
+        if *id >= sites.len() {
+            return Err(crate::RuntimeError::new(
+                Default::default(),
+                format!(
+                    "report summary ID {id} does not exist; the program has {} reports (IDs start at 0)",
+                    sites.len()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Dynamic values are checked once their types are known. Facts keep their
+/// probability semantics even when summary columns have been configured.
+pub fn validate_summary_values(
+    sites: &[ReportSite],
+    results: &[ReportResult],
+    selections: &BTreeMap<usize, ReportSummary>,
+) -> Result<(), crate::RuntimeError> {
+    for (id, selection) in selections {
+        if results[*id].groups.iter().any(|g| g.fact.is_some()) && results[*id].groups.iter().any(|g| g.fact.is_none())
+        {
+            return Err(crate::RuntimeError::new(
+                sites[*id].span,
+                format!("report summary {id}: mixed Boolean and other values keep their default display"),
+            ));
+        }
+        for group in &results[*id].groups {
+            if group.fact.is_some() {
+                continue;
+            }
+            let dates =
+                !group.distribution.is_empty() && group.distribution.iter().all(|(v, _)| matches!(v, Value::Date(_)));
+            let numeric = group.numeric.is_some()
+                || (!group.distribution.is_empty()
+                    && group
+                        .distribution
+                        .iter()
+                        .all(|(v, _)| matches!(v, Value::Int(_) | Value::Float(_) | Value::Prob(_))));
+            let message = if dates
+                && selection
+                    .statistics()
+                    .iter()
+                    .any(|s| matches!(s, ReportStatistic::Mean | ReportStatistic::StandardDeviation))
+            {
+                Some("date reports support median and quantiles, not mean or sd")
+            } else if !dates && !numeric {
+                Some(
+                    "summary columns require numeric or date values; categorical and structured reports keep their default display",
+                )
+            } else {
+                None
+            };
+            if let Some(message) = message {
+                return Err(crate::RuntimeError::new(
+                    sites[*id].span,
+                    format!("report summary {id}: {message}"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Render already validated selections. `offset` preserves report identities
+/// when the library/REPL renders a slice of the reports.
+pub fn render_selected(
+    sites: &[ReportSite],
+    results: &[ReportResult],
+    format: Format,
+    selections: &BTreeMap<usize, ReportSummary>,
+    offset: usize,
+) -> String {
     let mut out = String::new();
     let mut simple: Vec<(String, String)> = Vec::new();
     let flush = |simple: &mut Vec<(String, String)>, out: &mut String| {
@@ -717,7 +808,8 @@ pub fn render_results(sites: &[ReportSite], results: &[ReportResult], format: Fo
             writeln!(out, "{label}{}    {text}", " ".repeat(pad)).unwrap();
         }
     };
-    for (site, result) in sites.iter().zip(results) {
+    for (index, (site, result)) in sites.iter().zip(results).enumerate() {
+        let selection = selections.get(&(index + offset));
         let mut label = site.label.clone();
         if site.kind == ReportKind::PerVisit {
             label.push_str(" (per visit)");
@@ -727,7 +819,7 @@ pub fn render_results(sites: &[ReportSite], results: &[ReportResult], format: Fo
         if site.key_label.is_none() && !structured {
             let text = match result.groups.first() {
                 None => "(never reached)".to_string(),
-                Some(group) => format!("{}{reach}", value_text(group, format)),
+                Some(group) => format!("{}{reach}", selected_value_text(group, format, selection)),
             };
             simple.push((label, text));
             continue;
@@ -748,7 +840,12 @@ pub fn render_results(sites: &[ReportSite], results: &[ReportResult], format: Fo
         if result.groups.is_empty() {
             writeln!(out, "  (never reached)").unwrap();
         } else {
-            out.push_str(&table(site.key_label.as_deref().unwrap_or(""), result, format));
+            out.push_str(&table(
+                site.key_label.as_deref().unwrap_or(""),
+                result,
+                format,
+                selection,
+            ));
         }
         out.push('\n');
     }
@@ -809,11 +906,22 @@ fn reach_note(reach: Option<Reach>, format: Format) -> String {
 }
 
 fn value_text(group: &GroupResult, format: Format) -> String {
+    selected_value_text(group, format, None)
+}
+
+fn selected_value_text(group: &GroupResult, format: Format, selection: Option<&ReportSummary>) -> String {
     if let Some(fact) = &group.fact {
         return chance_text(fact, format);
     }
     let dist = &group.distribution;
-    let mut text = if let Some(numeric) = group.numeric.as_ref().filter(|n| n.mixture().is_some()) {
+    let mut text = if let Some(selection) = selection {
+        selection
+            .statistics()
+            .iter()
+            .map(|s| format!("{} {}", s.label(), summary_cell(group, *s)))
+            .collect::<Vec<_>>()
+            .join(" · ")
+    } else if let Some(numeric) = group.numeric.as_ref().filter(|n| n.mixture().is_some()) {
         analytic_stats(numeric)
     } else if dist.len() == 1 {
         display(&dist[0].0)
@@ -1122,7 +1230,44 @@ fn quantile(dist: &[(Value, f64)], q: f64) -> Value {
 }
 
 /// A report table: one row per `by` key.
-fn table(key_label: &str, result: &ReportResult, format: Format) -> String {
+fn summary_cell(group: &GroupResult, statistic: ReportStatistic) -> String {
+    let numeric = group.numeric.as_ref();
+    let scale = numeric.map_or_else(
+        || {
+            group
+                .distribution
+                .iter()
+                .filter_map(|(v, _)| v.as_f64())
+                .fold(0.0f64, |a, x| a.max(x.abs()))
+        },
+        |n| n.mean.point.unwrap_or(0.0).abs().max(n.sd.point.unwrap_or(0.0)),
+    );
+    let decimals = if scale < 100.0 { 2 } else { 0 };
+    let percent = numeric.is_some_and(|n| n.percent);
+    let show = |x| if percent { fmt_percent(x, 2) } else { fixed(x, decimals) };
+    if let Some(value) = statistic_value(group, statistic) {
+        return match &value {
+            Value::Date(_) => display(&value),
+            _ if percent => show(value.as_f64().unwrap_or(f64::NAN)),
+            _ => number(&value, decimals),
+        };
+    }
+    let Some(quantity) = numeric.and_then(|n| n.statistic(statistic)) else {
+        return "unavailable".into();
+    };
+    let Some(point) = quantity.point else {
+        return "unavailable".into();
+    };
+    let text = show(point);
+    match quantity.sampling.and_then(|s| s.se) {
+        Some(se) if se > 0.0 && se * if percent { 100.0 } else { 1.0 } >= 0.5 * libm::pow(10.0, -(decimals as f64)) => {
+            format!("{text} ± {}", show(se))
+        }
+        _ => text,
+    }
+}
+
+fn table(key_label: &str, result: &ReportResult, format: Format, selection: Option<&ReportSummary>) -> String {
     let groups = &result.groups;
     let keys: Vec<String> = groups.iter().map(|g| display(&g.key)).collect();
     let mut rows: Vec<Vec<String>> = Vec::new();
@@ -1133,6 +1278,13 @@ fn table(key_label: &str, result: &ReportResult, format: Format) -> String {
         header = Vec::new();
         for (key, group) in keys.iter().zip(groups) {
             rows.push(vec![key.clone(), value_text(group, format)]);
+        }
+    } else if let Some(selection) = selection {
+        header = selection.statistics().iter().map(|s| s.label()).collect();
+        for (key, group) in keys.iter().zip(groups) {
+            let mut row = vec![key.clone()];
+            row.extend(selection.statistics().iter().map(|s| summary_cell(group, *s)));
+            rows.push(row);
         }
     } else {
         let numeric = groups.iter().all(|g| {
@@ -1197,6 +1349,12 @@ fn table(key_label: &str, result: &ReportResult, format: Format) -> String {
     // Reliability belongs to a key, not to the whole table. Include it for
     // numeric/date/categorical rows too, where no probability cell carries it.
     let mut header = header;
+    if selection.is_some() && !all_facts && groups.iter().any(|g| g.unresolved_share > 0.0) {
+        header.push("unresolved".into());
+        for (row, group) in rows.iter_mut().zip(groups) {
+            row.push(pct(group.unresolved_share, format));
+        }
+    }
     if !all_facts && groups.iter().any(|g| !reliability_note(g.support).is_empty()) {
         if !header.is_empty() {
             header.push("reliability".to_string());

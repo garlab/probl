@@ -25,6 +25,7 @@ pub struct Options {
     epsilon: Option<f64>,
     integrate: Option<f64>,
     fractions: bool,
+    pub(crate) report_summaries: BTreeMap<usize, crate::ReportSummary>,
     conjugate: bool,
     pub(crate) limits: Limits,
     pub(crate) data: Option<Data>,
@@ -81,6 +82,7 @@ impl Default for Options {
             epsilon: None,
             integrate: None,
             fractions: false,
+            report_summaries: BTreeMap::new(),
             conjugate: true,
             limits: Limits::default(),
             data: None,
@@ -170,6 +172,15 @@ impl Options {
         self
     }
 
+    /// Select summary columns for one zero-based source-order report ID. Labels
+    /// need not be unique; [`Program::report_labels`](crate::Program::report_labels)
+    /// lists them in ID order. An override replaces any earlier one for this ID.
+    /// Facts keep their probability output. Collection remains exact.
+    pub fn report_summary(mut self, id: usize, summary: crate::ReportSummary) -> Options {
+        self.report_summaries.insert(id, summary);
+        self
+    }
+
     /// When sampling, update conjugate priors exactly (on by default).
     /// Turning it off draws every variable from its prior, for comparing:
     /// the estimates mean the same either way.
@@ -241,6 +252,7 @@ impl Options {
             memoize: self.checks.memoize,
             epsilon: self.epsilon,
             fractions: self.fractions,
+            report_summaries: self.report_summaries.clone(),
             limits: self.limits.engine(),
             cancel: self.cancel.as_ref().map(|c| c.0.clone()),
             mode: self.mode(&program.settings.mode),
@@ -266,6 +278,7 @@ impl fmt::Debug for Options {
             .field("epsilon", &self.epsilon)
             .field("integrate", &self.integrate)
             .field("fractions", &self.fractions)
+            .field("report_summaries", &self.report_summaries)
             .field("conjugate", &self.conjugate)
             .field("limits", &self.limits)
             .field("data", &self.data.is_some())

@@ -82,6 +82,33 @@ fn run_source(name: &str, source: &str, args: &[&str]) -> (Option<i32>, String, 
 }
 
 #[test]
+fn report_summary_flags_select_ordered_columns_by_id() {
+    let source = "for k in 0..2 {report one_of([0:50%,10:50%]) by k as \"same\"}; report true as \"same\"";
+    let (code, out, err) = run_source(
+        "summary.probl",
+        source,
+        &["--summary", "0=q:0.5,median,mean", "--summary", "1=moments"],
+    );
+    assert_eq!(code, Some(0), "{err}");
+    assert!(
+        out.contains("50%") && out.contains("median") && out.contains("mean"),
+        "{out}"
+    );
+    assert!(out.contains("100.00%"));
+    assert!(!out.contains("95%"));
+    for args in [
+        vec!["--summary", "0=q:NaN"],
+        vec!["--summary", "2=forecast"],
+        vec!["--summary", "0=mean,mean"],
+        vec!["--summary", "0=forecast", "--summary", "0=moments"],
+    ] {
+        let (code, _, err) = run_source("bad-summary.probl", source, &args);
+        assert_ne!(code, Some(0));
+        assert!(err.contains("summary") || err.contains("quantile"), "{err}");
+    }
+}
+
+#[test]
 fn a_partial_result_prints_the_other_worlds_and_exits_with_3() {
     let source = "let x ~ d6 - 1\nlet y = 1 / x\nreport y\n";
     // Enumeration stops at the first fault.

@@ -131,6 +131,23 @@ enum Shape {
 }
 
 impl Numeric {
+    /// Weighted inverse CDF, including at 0.5 (unlike the midpoint median).
+    pub fn inverse_quantile(&self, q: f64) -> Option<Quantity> {
+        if !q.is_finite() || !(0.0..=1.0).contains(&q) {
+            return None;
+        }
+        let point = match &self.shape {
+            Shape::Mixture(m) => Some(m.quantile(q)),
+            Shape::Points(points) => crate::stats::quantile(points, q).and_then(Value::as_f64),
+        }?;
+        Some(Quantity {
+            point: Some(point),
+            complete: self.complete,
+            bounds: None,
+            sampling: self.support.map(not_computed),
+        })
+    }
+
     /// The continuous marginal, when there's one.
     pub fn mixture(&self) -> Option<&Mixture> {
         match &self.shape {

@@ -23,17 +23,24 @@ Open `http://localhost:8000`. The development server rebuilds when page sources,
 - The examples menu includes games, forecasts, calendars, decisions, monitoring and analytic continuous calculations. Example data files are available to `read` from memory.
 - Compile diagnostics appear in the editor; runtime errors point to the failing source. Output uses the CLI's text format, with streamed `print` lines and sampled-run progress. A partial result, where some worlds failed and the others finished, shows the output with its `failed` section, says so in the status line, and marks where the worlds failed in the editor.
 - Numeric reports grouped by numeric or date keys also draw a median and percentile bands; deterministic reports draw a line. Boolean reports draw a probability step curve. Hover or use the slider's arrow keys, Home and End to inspect values and uncertainty. “Values and uncertainty” opens an accessible table; the complete text output stays below the charts.
+- Open “Report summaries” to choose 10–90% bands, mean/SD or custom ordered columns for each report, then “Apply and run”. Controls appear after compilation, so invalid selections can be corrected before a successful run. “Default” clears an override. [Summary specifications](report-summaries.md) include `mean,sd,median,q:0.1,q:0.9`; `median` and `q:0.5` have distinct tie conventions. The selection updates text, charts and tables together.
 - “Overlay (same units)” selects a compatible deterministic report as a dashed baseline. Choose a report measured in the same units; labels alone do not prove that. Only matching typed keys are compared, and missing values break the line. Value formatting can explicitly select USD, EUR or GBP. No currency or baseline is inferred from a label.
 - Hover shows declarations or built-in documentation. Ctrl/⌘-click or F12 goes to a definition; F2 selects references for renaming. Completion and signature help use compiler symbols; after `catch`, completion offers the faults it can name, which the reference also lists.
-- Share encodes the program and its chart choices in the URL fragment. Older links use default chart choices. Running a model does not upload its source or inputs to an execution server; a share link itself contains the source and should be treated accordingly.
+- Share encodes the program, summary selections and chart choices in the URL fragment. Older links use defaults. Running a model does not upload its source or inputs to an execution server; a share link itself contains the source and should be treated accordingly.
 - Local edits are saved in browser storage. Loading an example or guide snippet is undoable; editing it makes it the user's saved program.
 
-Chart choices are saved with the exact source. Editing the source resets them so
+Summary and chart choices are saved with the exact source. Editing the source resets them so
 report IDs from another program cannot silently select an overlay. Percentile
 bands describe variation across outcomes at each key, not one run's trajectory
 or a Monte Carlo confidence band. The point details separately show sampling
 error, Wilson confidence intervals where available, incomplete-result bounds,
 support and report reach. Partial failures remain qualified beside the plot.
+
+Custom charts prefer the selected median as the main line, then the mean, then
+the quantile nearest 0.5, or SD if it is the only column. Quantiles on opposite
+sides of 0.5 are paired from outside inward for bands. The inspector and table
+show all requested columns; mean/SD-only reports have no percentile bands.
+SD-only curves cannot be used as value baselines.
 
 The page supports light/dark themes, a resizable panel divider, keyboard navigation and a single-column layout on small screens.
 
@@ -46,6 +53,7 @@ The page supports light/dark themes, a resizable panel divider, keyboard navigat
 | [`worker.js`](../web/src/worker.js) | Checking/running away from the page's main thread |
 | [`app.js`](../web/src/app.js) | Editor, output, options, guide, reference and worker lifecycle |
 | [`chart-data.js`](../web/src/chart-data.js) / [`charts.js`](../web/src/charts.js) | Typed chart eligibility/alignment and SVG rendering, keyboard inspection and tables |
+| [`summary-controls.js`](../web/src/summary-controls.js) | Per-report column controls, using IDs from compiler metadata |
 | [`build.mjs`](../web/build.mjs) / [`serve.mjs`](../web/serve.mjs) | Static build and rebuilding development server |
 
 Two workers share a compiled module: one checks edits and one runs programs. Each instance runs synchronously on one thread. Stop and the default 30-second timeout terminate the runner and replace it. Crashes also replace the runner, so a failed model does not require reloading the page.
@@ -68,6 +76,12 @@ is a gap; a missing key is never assigned an invented value. Serialization limit
 are separate from these display limits. None of this reduces the engine's memory
 for retaining exact sample populations.
 
+Summary controls cover the first 256 reports and allow 1–32 distinct columns
+per report. Specifications are capped at 4,096 bytes. Shape, level and report-ID
+errors are checked before execution; value-type compatibility is checked when
+results are known. Date reports support quantiles and medians, facts keep their
+probability output, and categorical/structured reports require the default.
+
 In the October 19, 2026 Bun build, the chart UI and saved settings added 13,787
 bytes to the minified page bundle (430,231 to 444,018 bytes), or 5,065 bytes with
 gzip. This compares the same build settings against the preceding `48e6302`
@@ -85,7 +99,7 @@ bun run build
 bun run test
 ```
 
-The native Rust tests cover the adapter. `test/charts.mjs` checks chart eligibility, precision, gaps, baseline alignment and settings against actual WASM reports. `test/examples.mjs` executes the actual WASM module and compares native/WASM outputs. `test/page.mjs` runs the page in headless Chrome, covering examples, Stop, limits, errors, share links, the guide and editor interactions, plus chart values, overlays, keyboard access, light/dark themes, narrow layouts and fallback text. Pass `--screenshots` to save chart screenshots under `/tmp`. These check different layers; a native adapter test alone does not test WebAssembly.
+The native Rust tests cover the adapter. `test/charts.mjs` checks chart eligibility, precision, gaps, baseline alignment, custom columns and settings against actual WASM reports. `test/examples.mjs` executes the actual WASM module and compares native/WASM outputs. `test/page.mjs` runs the page in headless Chrome, covering examples, Stop, limits, errors, share links, the guide and editor interactions, plus chart values, overlays, summary controls and error recovery, keyboard access, light/dark themes, narrow layouts and fallback text. Pass `--screenshots` to save chart screenshots under `/tmp`. These check different layers; a native adapter test alone does not test WebAssembly.
 
 The browser test defaults to macOS application paths. Set `PROBL_CHROME` to the Chrome executable on another installation. For Firefox, set `PROBL_FIREFOX` if needed and run `bun test/page.mjs firefox`. The browser must be installed separately.
 
@@ -103,6 +117,5 @@ To test an existing deployment:
 PROBL_URL=https://playground.probl.dev bun test/page.mjs
 ```
 
-User-supplied data files, configurable report quantiles, bounded-memory summaries
-and parallel browser sampling remain future work. Categorical populations still
-use the text view.
+User-supplied data files, bounded-memory summaries and parallel browser sampling
+remain future work. Categorical populations still use the text view.

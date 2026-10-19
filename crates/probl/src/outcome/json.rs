@@ -1,6 +1,6 @@
 //! Versioned report summaries, streamed to a bounded JSON buffer.
 use super::Outcome;
-use crate::{Date, EvidenceKind, SamplingStatus};
+use crate::{Date, EvidenceKind, ReportStatistic, ReportSummary, SamplingStatus};
 use probl_engine::report::{self, GroupResult, Quantity, Status};
 use probl_engine::value::Value;
 use probl_sema::ir::ReportKind;
@@ -8,7 +8,13 @@ use serde_json::{Value as Json, json};
 use std::fmt;
 use std::io::{self, Write};
 
-const QUANTILES: [f64; 5] = [0.05, 0.25, 0.5, 0.75, 0.95];
+const COLUMNS: [ReportStatistic; 5] = [
+    ReportStatistic::Quantile(0.05),
+    ReportStatistic::Quantile(0.25),
+    ReportStatistic::Median,
+    ReportStatistic::Quantile(0.75),
+    ReportStatistic::Quantile(0.95),
+];
 
 /// Budgets for [`Outcome::reports_json`], separate from model execution.
 #[derive(Clone, Copy, Debug)]
@@ -179,6 +185,11 @@ impl Outcome {
             out.json(&json!(site.label))?;
             out.raw(b",\"key_label\":")?;
             out.json(&json!(site.key_label))?;
+            let selection = self.report_summaries.get(&id);
+            out.raw(b",\"summary_selection\":")?;
+            out.json(&json!(
+                selection.map(|s| s.statistics().iter().map(|s| s.token()).collect::<Vec<_>>())
+            ))?;
             out.raw(b",\"visits\":")?;
             out.json(&json!(match site.kind {
                 ReportKind::Once => "once",
@@ -194,7 +205,7 @@ impl Outcome {
                 if index > 0 {
                     out.raw(b",")?;
                 }
-                let group = group(g, p.key(), index, &mut budget, 0)?;
+                let group = group(g, p.key(), index, &mut budget, 0, selection)?;
                 out.json(&group)?;
             }
             out.raw(b"]}")?;
@@ -204,7 +215,14 @@ impl Outcome {
     }
 }
 
-fn group(g: &GroupResult, key_label: Option<&str>, id: usize, budget: &mut Budget, depth: usize) -> Result<Json> {
+fn group(
+    g: &GroupResult,
+    key_label: Option<&str>,
+    id: usize,
+    budget: &mut Budget,
+    depth: usize,
+    selection: Option<&ReportSummary>,
+) -> Result<Json> {
     budget.node()?;
     if depth > 64 {
         return Err(ReportJsonError::Nodes);
@@ -212,7 +230,12 @@ fn group(g: &GroupResult, key_label: Option<&str>, id: usize, budget: &mut Budge
     if let Some(label) = key_label {
         budget.text(label)?;
     }
-    // Reserve repeated scans for classification, the five quantiles and their
+    let columns = selection.map_or(COLUMNS.as_slice(), ReportSummary::statistics);
+    let count = columns
+        .iter()
+        .filter(|s| matches!(s, ReportStatistic::Median | ReportStatistic::Quantile(_)))
+        .count();
+    // Reserve repeated scans for classification, the requested quantiles and their
     // exact typed values. Continuous queries have bounded internal solvers.
     let population = g.distribution.len().saturating_add(
         g.numeric
@@ -220,7 +243,7 @@ fn group(g: &GroupResult, key_label: Option<&str>, id: usize, budget: &mut Budge
             .and_then(|n| n.mixture())
             .map_or(0, |m| m.parts.len()),
     );
-    budget.work(population.saturating_add(1).saturating_mul(16))?;
+    budget.work(population.saturating_add(1).saturating_mul(6 + 2 * count))?;
     let dates = !g.distribution.is_empty() && g.distribution.iter().all(|(v, _)| matches!(v, Value::Date(_)));
     let numbers = !g.distribution.is_empty()
         && g.distribution
@@ -240,18 +263,22 @@ fn group(g: &GroupResult, key_label: Option<&str>, id: usize, budget: &mut Budge
     let mut summary = Json::Null;
     if dates || numbers || g.numeric.is_some() {
         let mut quantiles = Vec::new();
-        for level in QUANTILES {
-            let exact = if let Some(n) = &g.numeric {
-                n.quantile_value(level)
-            } else {
-                report::summary_quantile(&g.distribution, level)
+        for statistic in columns {
+            let (level, convention) = match statistic {
+                ReportStatistic::Median => (0.5, "midpoint"),
+                ReportStatistic::Quantile(q) => (*q, "inverse_cdf"),
+                _ => continue,
             };
-            let estimate = g.numeric.as_ref().and_then(|n| n.quantile(level));
+            let exact = report::statistic_value(g, *statistic);
+            let estimate = g.numeric.as_ref().and_then(|n| n.statistic(*statistic));
             let value = exact.as_ref().map(|v| typed(v, None, budget)).transpose()?;
-            quantiles.push(json!({"level":level, "estimate": estimate.map(quantity), "value": value}));
+            quantiles.push(
+                json!({"level":level, "convention":convention, "estimate": estimate.map(quantity), "value": value}),
+            );
         }
         summary = json!({
-            "mean": g.numeric.as_ref().map(|n| quantity(n.mean)), "sd": g.numeric.as_ref().map(|n| quantity(n.sd)),
+            "mean": g.numeric.as_ref().filter(|_| selection.is_none() || columns.contains(&ReportStatistic::Mean)).map(|n| quantity(n.mean)),
+            "sd": g.numeric.as_ref().filter(|_| selection.is_none() || columns.contains(&ReportStatistic::StandardDeviation)).map(|n| quantity(n.sd)),
             "quantiles": quantiles,
             "percent": g.numeric.as_ref().is_some_and(|n| n.percent),
             "integrated_moments": g.numeric.as_ref().is_some_and(|n| n.integrated),
@@ -263,7 +290,7 @@ fn group(g: &GroupResult, key_label: Option<&str>, id: usize, budget: &mut Budge
     if let Some(fs) = &g.fields {
         for (index, (path, child)) in fs.0.iter().enumerate() {
             budget.text(path)?;
-            fields.push(json!({"path":path, "group":group(child, None, index, budget, depth+1)?}));
+            fields.push(json!({"path":path, "group":group(child, None, index, budget, depth+1, None)?}));
         }
     }
     Ok(json!({

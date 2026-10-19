@@ -176,6 +176,15 @@ pre {
 /* Forecast charts use the same theme as the text, with a dashed baseline and
    nested fills so color is not the only distinction. */
 #charts { padding: 0 16px; flex: none; }
+#report-summaries { margin: 4px 16px 12px; flex: none; font-size: 13px; }
+#report-summaries[hidden] { display: none; }
+#report-summaries summary { cursor: pointer; color: var(--accent); }
+#report-summaries p { max-width: 72ch; }
+.summary-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 160px); gap: 6px 10px; align-items: center; margin: 10px 0; }
+.summary-row label { overflow-wrap: anywhere; }
+.summary-row input { grid-column: 1 / -1; width: 100%; }
+.summary-row select { min-width: 0; }
+.summary-row input[hidden] { display: none; }
 #charts[hidden], #text-heading[hidden] { display: none; }
 #charts h2, #text-heading { font-size: 15px; margin: 8px 0 14px; }
 #text-heading { margin: 12px 16px; }

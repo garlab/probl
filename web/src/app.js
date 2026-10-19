@@ -15,6 +15,7 @@ import { intelligence, setSymbols } from './intel.js';
 import { highlighter, probl } from './probl-lang.js';
 import { chartSettings, readChartSettings } from './chart-data.js';
 import { renderCharts } from './charts.js';
+import { renderSummaryControls } from './summary-controls.js';
 
 /** Seconds a run may take before it's stopped, unless the options say not to. */
 const TIME_LIMIT = 30;
@@ -175,6 +176,7 @@ async function main() {
       // last ones stay, following the edits.
       const { symbols } = answer.result;
       if (symbols && view.state.doc.toString() === source) view.dispatch({ effects: setSymbols.of(symbols) });
+      if (view.state.doc.toString() === source) showSummaryControls(answer.result.reports);
       return answer.result.diagnostics.map((d) => toEditor(d, view.state.doc));
     },
     { delay: 300 },
@@ -197,6 +199,26 @@ async function main() {
       const saved = JSON.parse(remembered(CHARTS));
       return saved?.source === source ? chartSettings(saved.settings) : chartSettings(null);
     } catch { return chartSettings(null); }
+  }
+  function saveChartChoices() {
+    const source = view.state.doc.toString();
+    remember(JSON.stringify({ source, settings: charts }), CHARTS);
+    if (linked === source) {
+      const hash = new URLSearchParams(location.hash.slice(1));
+      hash.set('charts', JSON.stringify(charts));
+      history.replaceState(null, '', `#${hash}`);
+    }
+  }
+  function showSummaryControls(reports) {
+    renderSummaryControls($('report-summaries'), reports, charts, (summaries) => {
+      // Also clear overrides for IDs absent from this compiled program, which
+      // can occur in an edited or malformed share link.
+      const choices = Object.fromEntries(Object.entries(charts.reports).map(([id, choice]) => [id, { ...choice, summary: '' }]));
+      for (const [id, summary] of Object.entries(summaries)) choices[id] = { ...choices[id], summary };
+      charts = chartSettings({ version: 1, reports: choices });
+      saveChartChoices();
+      start();
+    });
   }
   const userEdits = ['input', 'delete', 'move', 'undo', 'redo'];
   const view = new EditorView({
@@ -223,6 +245,8 @@ async function main() {
           chartSource = source;
           charts = chartSettings(null);
           resetCharts();
+          $('report-summaries').replaceChildren();
+          $('report-summaries').hidden = true;
         }
         // Only what the person changes is kept for next time: a program
         // loaded from a link, the menu or the guide isn't theirs.
@@ -354,6 +378,7 @@ async function main() {
     const onError = $('on-error').value;
     if (onError !== 'program') r.on_error = onError;
     r.conjugate = $('conjugate').checked;
+    r.report_summaries = Object.fromEntries(Object.entries(charts.reports).filter(([, choice]) => choice.summary).map(([id, choice]) => [id, choice.summary]));
     return r;
   }
 
@@ -443,15 +468,11 @@ async function main() {
       showOutput(result.output);
       if (source === view.state.doc.toString()) {
         clearCharts = renderCharts($('charts'), result.reports, charts, (id, choice) => {
-          charts = chartSettings({ version: 1, reports: { ...charts.reports, [id]: choice } });
-          remember(JSON.stringify({ source, settings: charts }), CHARTS);
-          if (linked === source) {
-            const hash = new URLSearchParams(location.hash.slice(1));
-            hash.set('charts', JSON.stringify(charts));
-            history.replaceState(null, '', `#${hash}`);
-          }
+          charts = chartSettings({ version: 1, reports: { ...charts.reports, [id]: { ...charts.reports[id], ...choice } } });
+          saveChartChoices();
         });
         $('text-heading').hidden = $('charts').hidden;
+        if (result.reports) showSummaryControls(result.reports.reports);
       }
       const s = result.stats;
       // A partial result: the other worlds finished, and the editor marks

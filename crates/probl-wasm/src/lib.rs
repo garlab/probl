@@ -29,13 +29,21 @@ const FILE: &str = "playground.probl";
 /// {...}}`. Each diagnostic has its severity, message, notes and help, where
 /// it is (see [`diagnostic`]), and the text the command line would print.
 /// The symbols, where the program's names are declared and used, are there
-/// when it parses (see [`symbols`]); they're `null` otherwise.
+/// when it parses (see [`symbols`]); they're `null` otherwise. `reports` lists
+/// `{id, label}` in compiled report order, or is `null` when compilation fails.
 pub fn check(source: &str) -> String {
     let file = SourceFile::new(FILE, source);
-    let (_, diags, symbols) = probl_sema::compile_with_symbols(source);
+    let (program, diags, symbols) = probl_sema::compile_with_symbols(source);
+    let reports = program.as_ref().map(|p| {
+        p.reports
+            .iter()
+            .enumerate()
+            .map(|(id, r)| json!({"id":id, "label":r.label}))
+            .collect::<Vec<_>>()
+    });
     let symbols = symbols.map(|s| self::symbols(&s, source));
     let diagnostics: Vec<Json> = diags.iter().map(|d| compiler_diagnostic(d, &file)).collect();
-    json!({ "diagnostics": diagnostics, "symbols": symbols }).to_string()
+    json!({ "diagnostics": diagnostics, "symbols": symbols, "reports": reports }).to_string()
 }
 
 /// Offsets in UTF-16 code units, as JavaScript counts them, for byte offsets
@@ -215,6 +223,8 @@ pub fn docs() -> String {
 /// - `"mode"`: `"enumerate"` or `"sample"`, and `"runs"` and `"seed"`,
 ///   which override the program's `@mode` as on the command line;
 /// - `"conjugate"`: `false` to sample without exact updates;
+/// - `"report_summaries"`: an object from zero-based report ID strings to summary
+///   specifications, such as `{"0":"forecast","2":"mean,median,q:0.9"}`;
 /// - `"on_error"`: `"total"` or `"partial"`, overriding the program's
 ///   `@on_error` as `--on-error` does;
 /// - `"files"`: `{path: text}`, the files `read` may read.
@@ -232,7 +242,7 @@ pub fn docs() -> String {
 /// how many there are. The answer is
 /// `{"output": …, "stats": …, "diagnostics": [...]}`, or
 /// `{"error": …, "diagnostics": [...]}`, with the error described as a
-/// diagnostic, and its `"kind"`: `"language"`, `"unsupported"`, `"limit"`
+/// diagnostic, and its `"kind"`: `"usage"`, `"language"`, `"unsupported"`, `"limit"`
 /// or `"internal"`. A partial result, where some worlds failed, has both:
 /// `{"output": …, "stats": …, "partial": true, "error": …, "failures":
 /// [...], "diagnostics": [...]}`, with a diagnostic for each place they
@@ -265,6 +275,42 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
     let mut options = mode(&request, Options::new())
         .limits(Limits::browser())
         .conjugate(request["conjugate"].as_bool().unwrap_or(true));
+    if let Some(selections) = request.get("report_summaries") {
+        let parsed = (|| -> Result<Vec<(usize, probl::ReportSummary)>, String> {
+            let selections = selections
+                .as_object()
+                .ok_or("report_summaries must be an object of report IDs and summary strings")?;
+            if selections.len() > 256 {
+                return Err("at most 256 report summary overrides are allowed".into());
+            }
+            selections
+                .iter()
+                .map(|(id, summary)| {
+                    let index: usize = id.parse().map_err(|_| format!("invalid report summary ID `{id}`"))?;
+                    if id != &index.to_string() {
+                        return Err(format!(
+                            "invalid report summary ID `{id}`; use a canonical zero-based integer"
+                        ));
+                    }
+                    let text = summary
+                        .as_str()
+                        .ok_or_else(|| format!("report summary {id} must be a string"))?;
+                    let selection = text
+                        .parse::<probl::ReportSummary>()
+                        .map_err(|e| format!("report summary {id}: {e}"))?;
+                    Ok((index, selection))
+                })
+                .collect()
+        })();
+        match parsed {
+            Ok(selections) => {
+                for (id, selection) in selections {
+                    options = options.report_summary(id, selection);
+                }
+            }
+            Err(message) => return failed(json!({"kind":"usage", "message":message})),
+        }
+    }
     let symbolic = match request["symbolic"].as_str() {
         Some("only") => Symbolic::Only,
         Some("prefer") => Symbolic::Prefer,

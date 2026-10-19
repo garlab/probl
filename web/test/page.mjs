@@ -206,6 +206,68 @@ try {
   expect(await page.$eval('.chart-readout', (el) => el.textContent.includes('unresolved bounds'))
     && await page.$eval('.chart-qualifications', (el) => el.textContent.includes('unresolved')), 'missing model weight and bounds remain visible on charts');
 
+  // Summary choices are available from compiler report IDs before running.
+  const summarySource = 'for year in 0..2 {report one_of([0:50%,10:50%]) by year as "balance"; report year by year as "baseline"}';
+  await page.evaluate((source) => window.playground.setSource(source), summarySource);
+  await page.waitForSelector('#summary-0');
+  await page.$eval('#report-summaries', (el) => { el.open = true; });
+  const applySummaries = () => run(page, () => page.$eval('#report-summaries form', (form) => form.requestSubmit()));
+  await page.select('#summary-0', 'forecast');
+  let configuredAnswer = await applySummaries();
+  const configured = api.run({source:summarySource,report_summaries:{0:'forecast'}});
+  expect(configuredAnswer.result === configured.output, 'selected summary text agrees with the actual WASM API', configuredAnswer.result);
+  expect(await page.$eval(`${balance} .chart-legend`, (el) => el.textContent.includes('10–90%'))
+    && await page.$eval('#summary-0', (el) => el.value) === 'forecast', 'forecast selection draws the requested 10–90% bands');
+  await page.$eval(`${balance} details`, (el) => { el.open = true; });
+  await page.waitForSelector(`${balance} th`);
+  const selectedHeaders = await page.$$eval(`${balance} thead th`, (els) => els.map((el) => el.textContent));
+  expect(selectedHeaders.join().includes('10%,25%,Median,75%,90%'), 'table headers use the selected percentile levels', selectedHeaders.join());
+
+  await page.select('#summary-0', 'moments');
+  await applySummaries();
+  expect(await page.$$eval(`${balance} .chart-band`, (els) => els.length) === 0
+    && await page.$eval(`${balance} .legend-line`, (el) => el.textContent) === 'Mean', 'mean/SD selection shows a mean line without percentile bands');
+  await page.select('#summary-0', 'custom');
+  const setCustom = (value) => page.$eval('.summary-row[data-report-id="0"] input', (el, value) => { el.value = value; }, value);
+  await setCustom('q:0.5,median');
+  await applySummaries();
+  const tiedSummary = await page.$eval(`${balance} .chart-readout`, (el) => el.textContent);
+  expect(tiedSummary.includes('Median: 5') && tiedSummary.includes('50%: 0'), 'custom midpoint median and inverse-CDF quantile remain distinct', tiedSummary);
+  await setCustom('q:NaN');
+  const invalidSummary = await applySummaries();
+  expect(invalidSummary.error && invalidSummary.result.includes('finite')
+    && await page.$eval('#report-summaries', (el) => !el.hidden), 'invalid summary settings leave their controls available for correction');
+  await page.select('#summary-0', 'forecast');
+  await applySummaries();
+  await page.select(`${balance} .chart-currency`, 'USD');
+  await page.select(`${balance} .chart-baseline`, '1');
+  await press(page, 'share');
+  await page.waitForFunction(() => location.hash.startsWith('#code='));
+  const summaryLink = await page.evaluate(() => location.href);
+  const summaryReplay = await open(summaryLink);
+  await run(summaryReplay);
+  expect(await summaryReplay.$eval('#summary-0', (el) => el.value) === 'forecast'
+    && await summaryReplay.$eval(`${balance} .chart-baseline`, (el) => el.value) === '1'
+    && await summaryReplay.$eval(`${balance} .chart-currency`, (el) => el.value) === 'USD', 'summary, currency and baseline choices survive sharing together');
+  await summaryReplay.evaluate(() => {
+    localStorage.setItem('probl-playground-source', window.playground.getSource());
+    history.replaceState(null, '', location.pathname);
+  });
+  await summaryReplay.reload();
+  await summaryReplay.waitForSelector('body[data-ready="true"]');
+  await run(summaryReplay);
+  expect(await summaryReplay.$eval('#summary-0', (el) => el.value) === 'forecast', 'local reloads retain report summary choices');
+  await summaryReplay.close();
+  if (process.argv.includes('--screenshots')) {
+    await page.setViewport({width:1300,height:900});
+    await page.$eval('#output', (el) => { el.scrollTop = 0; });
+    await page.screenshot({path:'/tmp/probl-summary-controls.png'});
+    await page.setViewport({width:390,height:844});
+    await page.$eval('#report-summaries', (el) => el.scrollIntoView());
+    await page.screenshot({path:'/tmp/probl-summary-phone.png'});
+    await page.setViewport({width:800,height:600});
+  }
+
   // List statistics and scalar-query errors through the real editor/worker.
   const statisticsSource = readFileSync(`${root}web/test/statistics.probl`, 'utf8');
   await page.evaluate((source) => window.playground.setSource(source), statisticsSource);

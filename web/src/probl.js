@@ -52,9 +52,12 @@ export async function load(module, { onPrint = () => {}, onProgress = () => {} }
   }
 
   return {
-    /** `{diagnostics, symbols}` for a program's source; `symbols` is null when it doesn't parse. */
+    /** `{diagnostics, symbols, reports}` for source. `symbols` is null when it
+     * doesn't parse; `reports` is `[{id, label}]` when compiled, null otherwise. */
     check: (source) => JSON.parse(call(exports.probl_check, source)),
-    /** Run `{source, today?, env?, mode?, runs?, seed?, conjugate?, files?}`.
+    /** Run `{source, today?, env?, mode?, runs?, seed?, conjugate?, files?, report_summaries?}`.
+     * `report_summaries` maps zero-based report IDs to specifications such as
+     * `{"0":"forecast","2":"mean,median,q:0.9"}` (docs/report-summaries.md).
      * Successful and partial results include a versioned `reports` document,
      * or `reports_error` if its serialization exceeded a budget. `output`
      * remains available in either case. See docs/report-json.md.

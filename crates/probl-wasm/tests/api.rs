@@ -345,3 +345,48 @@ fn structured_report_limits_keep_the_model_output_available() {
     assert!(answer.get("reports").is_none());
     assert_eq!(answer["reports_error"]["kind"], "limit");
 }
+
+#[test]
+fn summary_requests_match_the_library_and_validate_before_printing() {
+    let source =
+        "print(\"ran\"); for k in 0..2 { report one_of([0:50%,10:50%]) by k as \"same\" }; report true as \"same\"";
+    let (answer, _) = run(json!({"source":source,"report_summaries":{"0":"q:0.5,median,mean"}}));
+    let out = probl::compile("playground.probl", source)
+        .unwrap()
+        .run(&Options::new().report_summary(0, "q:0.5,median,mean".parse().unwrap()))
+        .unwrap();
+    let expected: Value =
+        serde_json::from_str(&out.reports_json(&probl::ReportJsonLimits::default()).unwrap()).unwrap();
+    assert_eq!(answer["reports"], expected);
+    assert_eq!(answer["output"], out.text());
+    let checked: Value = serde_json::from_str(&probl_wasm::check(source)).unwrap();
+    assert_eq!(
+        checked["reports"],
+        json!([{"id":0,"label":"same"},{"id":1,"label":"same"}])
+    );
+    for selection in [
+        json!([]),
+        json!({"0":[]}),
+        json!({"2":"mean"}),
+        json!({"00":"mean"}),
+        json!({"0":"q:NaN"}),
+        json!({"0":"mean,mean"}),
+    ] {
+        let (answer, printed) = run(json!({"source":source,"report_summaries":selection}));
+        assert!(answer.get("error").is_some(), "{answer}");
+        assert!(printed.is_empty(), "{answer}");
+    }
+    let (partial, _) =
+        run(json!({"source":"@on_error partial\nlet n~d2; report 1/(n-1)","report_summaries":{"0":"moments"}}));
+    assert_eq!(partial["partial"], true);
+    assert_eq!(
+        partial["reports"]["reports"][0]["summary_selection"],
+        json!(["mean", "sd"])
+    );
+    assert!(
+        partial["reports"]["reports"][0]["groups"][0]["summary"]["quantiles"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}

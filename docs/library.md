@@ -50,6 +50,7 @@ let options = probl::Options::new().runs(50_000).seed(7);
 - `today(date)` supplies the immutable date snapshot when a model uses `today`. The native host can obtain it with `Date::today_utc()`; WASM hosts supply it themselves. Pin the date for reproducibility.
 - `env(name, value)` sets a variable in the `map[str, str]` that a model's `env` stands for. The library never reads the process's environment: `env` is empty unless the host gives variables, and a model can't change it. The command line gives its whole environment this way.
 - `epsilon`, `fractions` and `conjugate` control approximation/display settings and exact conjugate updates.
+- `report_summary(id, summary)` selects ordered statistics for one report, such as `ReportSummary::forecast()` for 10/25/50/75/90 columns. `Program::report_labels()` lists labels in zero-based ID order, including duplicate labels. See [summary selection](report-summaries.md) for custom columns, validation and median conventions. With no override, output is unchanged.
 - `integrate(tolerance)` turns on numerical integration when enumerating, as `@integrate` does ([semantics](semantics.md#numerical-integration)). `Outcome::integration()` then gives the tolerance if results came from it: every probability, summary and the evidence can be approximate to about that tolerance.
 - `on_error(FailureMode::Total)` or `on_error(FailureMode::Partial)` chooses what a fault in one world does to the others, whatever the program's `@on_error` says. Without either, a run is total when it enumerates and partial when it samples ([partial results](#partial-results)).
 - `limits`, `cancel` and `progress` give the host control over resources and execution.
@@ -135,7 +136,7 @@ match program.run(&options) {
 
 Facts have `probability()` and no redundant true/false table. A structured report's fields are marginals of one joint distribution: they don't say how the fields depend on each other, and the group's other accessors are `None`. A continuous analytic report has no finite table: `None` means unavailable, not an empty population. Outcome labels are display strings, not a typed serialization format; distinct outcomes can have the same display label.
 
-Numeric summaries expose the renderer's precision. They do not make `f64` an exact representation of arbitrary integers. `quantile(q)` returns `InvalidQuantile` for nonfinite/out-of-range probabilities and `Unavailable` when the summary cannot be supplied.
+Numeric summaries expose the renderer's precision. They do not make `f64` an exact representation of arbitrary integers. `quantile(q)` returns `InvalidQuantile` for nonfinite/out-of-range probabilities and `Unavailable` when the summary cannot be supplied. Display selections do not restrict these queries; `quantile(0.5)` retains the report midpoint median convention.
 
 With the optional `json` crate feature, `Outcome::reports_json(&ReportJsonLimits::default())` exports a bounded, versioned summary document with typed keys, report identities, reach and uncertainty. The WASM adapter uses the same serializer. See the [JSON schema and limits](report-json.md); this exports summaries without raw sampled populations and leaves the existing text/query API unchanged.
 

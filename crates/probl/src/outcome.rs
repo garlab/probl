@@ -19,6 +19,7 @@ pub struct Outcome {
     program: Arc<ir::Program>,
     results: Vec<report::ReportResult>,
     format: report::Format,
+    report_summaries: std::collections::BTreeMap<usize, crate::ReportSummary>,
     text: String,
     pub(crate) printed: Vec<String>,
     reports: Vec<Report>,
@@ -90,6 +91,7 @@ impl Outcome {
             reports,
             results: outcome.results,
             format: outcome.format,
+            report_summaries: outcome.report_summaries,
             program: program.clone(),
         }
     }
@@ -105,10 +107,12 @@ impl Outcome {
     pub fn render(&self, reports: Range<usize>) -> String {
         let end = reports.end.min(self.results.len());
         let start = reports.start.min(end);
-        report::render_results(
+        report::render_selected(
             &self.program.reports[start..end],
             &self.results[start..end],
             self.format,
+            &self.report_summaries,
+            start,
         )
     }
 

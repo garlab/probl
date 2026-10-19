@@ -85,6 +85,7 @@ impl Program {
     /// `options`. Errors are about a `read(…)` call, and say where in the
     /// data they are.
     pub fn load(&self, files: &mut dyn Files, options: &Options) -> Result<Data, Error> {
+        self.validate_options(options)?;
         let mut snapshots = probl_engine::data::Snapshots::default();
         let cancel = options.cancel.as_ref().map(|c| c.flag());
         probl_engine::data::load(
@@ -124,6 +125,7 @@ impl Program {
 
     /// Run it, giving each line it `print`s to `print` as it's printed.
     pub fn run_with(&self, options: &Options, print: &mut (dyn FnMut(&str) + Send)) -> Result<Outcome, Error> {
+        self.validate_options(options)?;
         let mut engine = options.engine(&self.ir);
         engine.inputs = self.inputs(options)?;
         #[cfg(target_arch = "wasm32")]
@@ -157,6 +159,23 @@ impl Program {
             )),
             None => Ok(None),
         }
+    }
+
+    fn validate_options(&self, options: &Options) -> Result<(), Error> {
+        probl_engine::report::validate_summaries(&self.ir.reports, &options.report_summaries).map_err(|e| {
+            Error::usage(
+                Default::default(),
+                &e.message,
+                "select an existing zero-based report ID",
+                &self.file,
+            )
+        })
+    }
+
+    /// Report labels in source order. Their indices are the stable IDs for this
+    /// compiled program, even when several reports have the same label.
+    pub fn report_labels(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.ir.reports.iter().map(|r| r.label.as_str())
     }
 
     /// How many reports it has, in [`Outcome::reports`].

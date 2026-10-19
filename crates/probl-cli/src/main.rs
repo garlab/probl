@@ -61,78 +61,85 @@ impl FormatArg {
     }
 }
 
+#[derive(clap::Args)]
+struct RunArgs {
+    file: PathBuf,
+    /// Pin the execution-date snapshot (`today`); defaults to the UTC date at launch.
+    #[arg(long, value_parser = parse_execution_date, value_name = "YYYY-MM-DD")]
+    today: Option<Date>,
+    /// Set a variable in the program's `env`, in place of the process's (repeatable).
+    #[arg(long = "env", value_parser = parse_env_var, value_name = "NAME=VALUE")]
+    env: Vec<(String, String)>,
+    /// Also print the simplest fraction near each probability, like ≈ 244/495 (a hint, not a proof).
+    #[arg(long)]
+    fractions: bool,
+    /// Summary columns for a zero-based report ID (repeatable): ID=forecast,
+    /// ID=moments, or ID=mean,sd,median,q:0.1,q:0.9. Other reports keep defaults.
+    #[arg(long = "summary", value_parser = parse_report_summary, value_name = "ID=SPEC")]
+    summaries: Vec<(usize, probl::ReportSummary)>,
+    /// Stop `while` and `loop` once the worlds still inside weigh less than this share of what entered.
+    #[arg(long)]
+    epsilon: Option<f64>,
+    /// When enumerating, compute what has no formula by numerical integration, to this relative tolerance (like `@integrate`).
+    #[arg(long, value_name = "TOLERANCE", num_args = 0..=1, require_equals = true, default_missing_value = "1e-9")]
+    integrate: Option<f64>,
+    /// Print how much work the engine did.
+    #[arg(long)]
+    stats: bool,
+    /// Enumerate or sample, whatever the program's `@mode` says.
+    #[arg(long, value_enum)]
+    mode: Option<ModeArg>,
+    /// When sampling: the number of runs (implies `--mode sample`).
+    #[arg(long)]
+    runs: Option<u64>,
+    /// When sampling: the seed of the random numbers (implies `--mode sample`).
+    #[arg(long)]
+    seed: Option<u64>,
+    /// When sampling: the most threads to use (the output doesn't depend on it).
+    #[arg(long)]
+    threads: Option<usize>,
+    /// When sampling: draw every variable from its prior, without exact updates for conjugate priors (for comparing; the estimates mean the same).
+    #[arg(long)]
+    no_conjugate: bool,
+    /// What a fault in one world does to the others, whatever the program's `@on_error` says: `total` stops the run (the default when enumerating), `partial` lets the others finish (the default when sampling).
+    #[arg(long, value_enum, value_name = "MODE")]
+    on_error: Option<OnErrorArg>,
+    /// Stop the run after this many seconds.
+    #[arg(long)]
+    timeout: Option<f64>,
+    /// The most worlds a statement may produce.
+    #[arg(long)]
+    max_worlds: Option<usize>,
+    /// The most work (world-steps and outcomes computed) the run may do.
+    #[arg(long)]
+    max_work: Option<u64>,
+    /// The most data the program may read, all files together, like 64M.
+    #[arg(long, value_parser = parse_size)]
+    max_input: Option<u64>,
+    /// Stack size of the engine thread, in MiB (for checking the engine).
+    #[arg(long, hide = true)]
+    stack_mb: Option<usize>,
+    /// Nested-call limit (for checking the engine).
+    #[arg(long, hide = true)]
+    max_depth: Option<usize>,
+    /// Don't merge identical worlds (for checking the engine).
+    #[arg(long, hide = true)]
+    no_merge: bool,
+    /// Don't reuse function results (for checking the engine).
+    #[arg(long, hide = true)]
+    no_memo: bool,
+    /// Unroll loops that cycle instead of solving them (for checking the engine).
+    #[arg(long, hide = true)]
+    no_solve: bool,
+    /// Experimental: answer the program with decision diagrams instead of worlds, `only` (the default) or where they're supported (`prefer`).
+    #[arg(long, hide = true, value_enum, value_name = "WHEN", num_args = 0..=1, require_equals = true, default_missing_value = "only")]
+    symbolic: Option<SymbolicArg>,
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Run a program and print its reports.
-    Run {
-        file: PathBuf,
-        /// Pin the execution-date snapshot (`today`); defaults to the UTC date at launch.
-        #[arg(long, value_parser = parse_execution_date, value_name = "YYYY-MM-DD")]
-        today: Option<Date>,
-        /// Set a variable in the program's `env`, in place of the process's (repeatable).
-        #[arg(long = "env", value_parser = parse_env_var, value_name = "NAME=VALUE")]
-        env: Vec<(String, String)>,
-        /// Also print the simplest fraction near each probability, like ≈ 244/495 (a hint, not a proof).
-        #[arg(long)]
-        fractions: bool,
-        /// Stop `while` and `loop` once the worlds still inside weigh less than this share of what entered.
-        #[arg(long)]
-        epsilon: Option<f64>,
-        /// When enumerating, compute what has no formula by numerical integration, to this relative tolerance (like `@integrate`).
-        #[arg(long, value_name = "TOLERANCE", num_args = 0..=1, require_equals = true, default_missing_value = "1e-9")]
-        integrate: Option<f64>,
-        /// Print how much work the engine did.
-        #[arg(long)]
-        stats: bool,
-        /// Enumerate or sample, whatever the program's `@mode` says.
-        #[arg(long, value_enum)]
-        mode: Option<ModeArg>,
-        /// When sampling: the number of runs (implies `--mode sample`).
-        #[arg(long)]
-        runs: Option<u64>,
-        /// When sampling: the seed of the random numbers (implies `--mode sample`).
-        #[arg(long)]
-        seed: Option<u64>,
-        /// When sampling: the most threads to use (the output doesn't depend on it).
-        #[arg(long)]
-        threads: Option<usize>,
-        /// When sampling: draw every variable from its prior, without exact updates for conjugate priors (for comparing; the estimates mean the same).
-        #[arg(long)]
-        no_conjugate: bool,
-        /// What a fault in one world does to the others, whatever the program's `@on_error` says: `total` stops the run (the default when enumerating), `partial` lets the others finish (the default when sampling).
-        #[arg(long, value_enum, value_name = "MODE")]
-        on_error: Option<OnErrorArg>,
-        /// Stop the run after this many seconds.
-        #[arg(long)]
-        timeout: Option<f64>,
-        /// The most worlds a statement may produce.
-        #[arg(long)]
-        max_worlds: Option<usize>,
-        /// The most work (world-steps and outcomes computed) the run may do.
-        #[arg(long)]
-        max_work: Option<u64>,
-        /// The most data the program may read, all files together, like 64M.
-        #[arg(long, value_parser = parse_size)]
-        max_input: Option<u64>,
-        /// Stack size of the engine thread, in MiB (for checking the engine).
-        #[arg(long, hide = true)]
-        stack_mb: Option<usize>,
-        /// Nested-call limit (for checking the engine).
-        #[arg(long, hide = true)]
-        max_depth: Option<usize>,
-        /// Don't merge identical worlds (for checking the engine).
-        #[arg(long, hide = true)]
-        no_merge: bool,
-        /// Don't reuse function results (for checking the engine).
-        #[arg(long, hide = true)]
-        no_memo: bool,
-        /// Unroll loops that cycle instead of solving them (for checking the engine).
-        #[arg(long, hide = true)]
-        no_solve: bool,
-        /// Experimental: answer the program with decision diagrams instead of worlds, `only` (the default) or where they're supported (`prefer`).
-        #[arg(long, hide = true, value_enum, value_name = "WHEN", num_args = 0..=1, require_equals = true, default_missing_value = "only")]
-        symbolic: Option<SymbolicArg>,
-    },
+    Run(Box<RunArgs>),
     /// Check a program for errors without running it.
     Check {
         file: PathBuf,
@@ -163,31 +170,33 @@ enum Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
-        Command::Run {
-            file,
-            today,
-            env,
-            fractions,
-            epsilon,
-            integrate,
-            stats,
-            mode,
-            runs,
-            seed,
-            threads,
-            no_conjugate,
-            on_error,
-            timeout,
-            max_worlds,
-            max_work,
-            max_input,
-            stack_mb,
-            max_depth,
-            no_merge,
-            no_memo,
-            no_solve,
-            symbolic,
-        } => {
+        Command::Run(args) => {
+            let RunArgs {
+                file,
+                today,
+                env,
+                fractions,
+                summaries,
+                epsilon,
+                integrate,
+                stats,
+                mode,
+                runs,
+                seed,
+                threads,
+                no_conjugate,
+                on_error,
+                timeout,
+                max_worlds,
+                max_work,
+                max_input,
+                stack_mb,
+                max_depth,
+                no_merge,
+                no_memo,
+                no_solve,
+                symbolic,
+            } = *args;
             let today = match today.map(Ok).unwrap_or_else(execution_date) {
                 Ok(d) => d,
                 Err(e) => {
@@ -199,6 +208,14 @@ fn main() -> ExitCode {
                 .today(today)
                 .fractions(fractions)
                 .conjugate(!no_conjugate);
+            let mut configured = std::collections::BTreeSet::new();
+            for (id, summary) in summaries {
+                if !configured.insert(id) {
+                    eprintln!("error: duplicate summary override for report {id}");
+                    return ExitCode::FAILURE;
+                }
+                options = options.report_summary(id, summary);
+            }
             if let Some(e) = epsilon {
                 options = options.epsilon(e);
             }
@@ -280,6 +297,19 @@ fn main() -> ExitCode {
 
 fn parse_execution_date(s: &str) -> Result<Date, String> {
     s.parse().map_err(|e: probl::ParseDateError| e.to_string())
+}
+
+fn parse_report_summary(s: &str) -> Result<(usize, probl::ReportSummary), String> {
+    let (id, selection) = s
+        .split_once('=')
+        .ok_or("expected ID=SPEC, for example 0=forecast or 0=mean,sd,median,q:0.9")?;
+    let id = id
+        .parse()
+        .map_err(|_| "report summary ID must be a zero-based integer")?;
+    Ok((
+        id,
+        selection.parse::<probl::ReportSummary>().map_err(|e| e.to_string())?,
+    ))
 }
 
 fn parse_env_var(s: &str) -> Result<(String, String), String> {

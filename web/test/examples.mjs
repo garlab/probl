@@ -54,6 +54,22 @@ for (const source of [
 }
 console.log('same  versioned report JSON, partial results and transport limits');
 
+for (const [source, report_summaries] of [
+  ['for k in 0..3 {report one_of([0:50%,10:50%]) by k}', {0:'q:0.5,median,mean,sd,q:0.1,q:0.9'}],
+  ['let side~d2; let x~if side==1 {uniform(0,1)} else {uniform(10,11)}; report x', {0:'q:0.5,median,q:0,q:1'}],
+  ['@on_error partial\nlet n~d2; report 1/(n-1)', {0:'moments'}],
+  ['report d6', {2:'forecast'}],
+  ['report d6', {0:'q:NaN'}],
+]) {
+  const request = { source, report_summaries, today:'2026-10-19' };
+  const expected = JSON.parse(execFileSync(nativeAdapter, [], { input:JSON.stringify(request), encoding:'utf8' }));
+  const actual = probl.run(request);
+  sameReports(actual.reports, expected.reports);
+  assert.equal(actual.output, expected.output);
+  assert.deepEqual(actual.error, expected.error);
+}
+console.log('same  configurable summaries and validation in native/WASM');
+
 let failed = 0;
 const cases = probl.examples().map((e) => ({ ...e, path: `examples/${e.name}.probl` }));
 cases.push({ name: 'api-contracts', path: 'web/test/api-contracts.probl', source: await readFile(`${root}/web/test/api-contracts.probl`, 'utf8') });
