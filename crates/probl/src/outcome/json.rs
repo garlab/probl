@@ -298,7 +298,7 @@ fn group(
         "kind":kind, "probability":g.fact.map(quantity), "summary":summary,
         "unresolved_share": g.unresolved_share,
         "complete": g.fact.or_else(|| g.numeric.as_ref().map(|n| n.mean))
-            .or_else(|| g.values.as_ref().and_then(|values| values.first().map(|(_, q)| *q)))
+            .or_else(|| g.values.as_ref().and_then(|values| values.first().map(|(_, q)| q)))
             .map(|q| q.complete),
         "support": g.support.map(|s| json!({"contributing_runs":s.contributing_runs.to_string(),"effective_runs":s.effective})),
         "fields":fields,

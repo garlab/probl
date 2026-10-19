@@ -7,7 +7,7 @@ use probl_engine::value::Value;
 use probl_sema::ir;
 use probl_syntax::SourceFile;
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 #[cfg(feature = "json")]
 mod json;
@@ -415,7 +415,7 @@ impl Report {
 pub struct Group {
     key: Option<String>,
     probability: Option<Estimate>,
-    distribution: Option<Vec<(String, Estimate)>>,
+    distribution: Option<Arc<Distribution>>,
     numeric: Option<NumericSummary>,
     fields: Option<Box<Fields>>,
 }
@@ -423,6 +423,14 @@ pub struct Group {
 /// A structured group's fields, each with its path.
 #[derive(Clone, Debug)]
 struct Fields(Vec<(String, Group)>);
+
+/// The public slice is formatted only if requested. Clones of a group share
+/// both its exact population and this cache, including across threads.
+#[derive(Debug)]
+struct Distribution {
+    values: report::ValueProbabilities,
+    formatted: OnceLock<Vec<(String, Estimate)>>,
+}
 
 impl Group {
     fn new(group: &GroupResult, by: bool) -> Group {
@@ -432,12 +440,10 @@ impl Group {
             // A fact's probability is its result: a table of `true` and
             // `false` would only say it again.
             distribution: match (&group.fact, &group.values) {
-                (None, Some(values)) => Some(
-                    values
-                        .iter()
-                        .map(|(value, q)| (label(value), Estimate::new(*q)))
-                        .collect(),
-                ),
+                (None, Some(values)) => Some(Arc::new(Distribution {
+                    values: values.clone(),
+                    formatted: OnceLock::new(),
+                })),
                 _ => None,
             },
             numeric: group.numeric.clone().map(NumericSummary::new),
@@ -467,8 +473,21 @@ impl Group {
     /// value, as Probl prints it, with its probability, in the order of the
     /// values (numbers and dates in numeric order). Labels are for display:
     /// two values can print alike, and both are listed.
+    /// The table is formatted on first access and cached, shared by clones of
+    /// this group. Requesting it allocates space proportional to its population.
     pub fn distribution(&self) -> Option<&[(String, Estimate)]> {
-        self.distribution.as_deref()
+        self.distribution.as_ref().map(|distribution| {
+            distribution
+                .formatted
+                .get_or_init(|| {
+                    distribution
+                        .values
+                        .iter()
+                        .map(|(v, q)| (label(v), Estimate::new(q)))
+                        .collect()
+                })
+                .as_slice()
+        })
     }
 
     /// When the values are real numbers, or continuous: their mean, standard

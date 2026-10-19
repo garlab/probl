@@ -69,6 +69,10 @@ Sampling uses independent runs, without merging them. Observations weight each r
 
 Runs are grouped into batches of 1,000. Each batch has its own xoshiro256++ stream, seeded with SplitMix64 from the run seed and batch number. Floating-point functions use `libm`. Batches combine in a fixed order, so successful runs with the same program, data, date, seed and engine version have the same output across supported native/WASM hosts and thread counts. No cross-version random-stream guarantee is made.
 
+Per-run report maps are folded into uncertainty aggregates and released when a
+batch finishes, before it waits to be combined. Active batches still need those
+maps to distinguish repeated visits from independent runs.
+
 Parallel workers share a work budget. Near that limit, scheduling can affect whether the run finishes. Tests compare outputs and errors across thread counts; host limits and platform resources still affect which programs can run.
 
 ## Reports and the library boundary
@@ -77,7 +81,18 @@ Each report site accumulates values by its optional key, with reach and contribu
 
 [`report::results`](../crates/probl-engine/src/report/results.rs) computes the quantities shared by the renderer and the library. Formatting does not define their meaning. Results distinguish resolved point estimates, incompleteness, unresolved bounds and Monte Carlo uncertainty. Evidence stays in log space and distinguishes probabilities from densities. The [library guide](library.md) explains the public accessors and their limits.
 
-The CLI and playground currently present text. The Rust library exposes structured report numbers, but typed outcome export, a versioned JSON result schema and charts remain future work.
+Results share an immutable exact population across the renderer, numeric queries
+and probability views. Per-value quantities are constructed as they are read;
+the library formats a full distribution table only on first access and shares
+that cache across cloned groups. Incomplete enumeration retains per-value bounds
+computed from original weights, and sampling retains the aggregates needed for
+per-run errors. This reduces duplicate storage without changing available queries
+or bounding the retained population.
+
+The CLI and playground retain text output. The library's optional [JSON API](report-json.md)
+exports versioned summaries, shared with WASM and [playground charts](playground.md).
+[Summary selections](report-summaries.md) control displayed statistics across hosts.
+Full typed outcome export and bounded-memory collection remain future work.
 
 The deferred [portal proposal](design/portals-and-effects.md) explores explicit access to a joint population, with host effects confined to a pre-inference prologue or portal scopes. Portals could return shared values and permit midway data acquisition; their synchronization, evidence and sampled-feedback contracts remain open. Improve reporting and population queries before implementing this boundary.
 

@@ -54,7 +54,7 @@ fn fixed_rates_follow_the_recurrence() {
         // The balance, and the baseline, which follows the same rates now.
         for report in [0, 2] {
             for (year, g) in yearly(&out.results[report].groups).iter().enumerate() {
-                let [(value, p)] = g.distribution.as_slice() else {
+                let [(value, p)] = g.distribution.as_ref() else {
                     panic!("year {year}: {:?}", g.distribution);
                 };
                 close(*p, 1.0);

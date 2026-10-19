@@ -66,6 +66,15 @@ Both modes use deterministic queries, a pinned date, and a fixed sampling seed. 
 
 The existing shared `close` helper uses absolute error below `1e-9`. That is suitable for some moderate-size values, but would accept zero for a `1e-13` tail and would miss a small violation of `[0,1]`. Choose assertions according to the property rather than applying one tolerance everywhere.
 
+[`report_storage.rs`](../crates/probl/tests/report_storage.rs) measures retained
+and cloned report allocations for 20,000 distinct outcomes. Text, JSON and numeric
+queries must not materialize a formatted probability table. Concurrent first
+readers of cloned reports share the cached table after the original outcome has
+been dropped, while preserving exact labels, probabilities and median queries.
+Engine report tests also check that completed batches release per-run map capacity
+and that lazy probability queries preserve weighted per-visit sampling errors and
+unresolved bounds.
+
 ## What is already covered
 
 | Layer | Existing protection | Important limit |

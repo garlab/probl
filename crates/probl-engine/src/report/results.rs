@@ -7,6 +7,7 @@ use crate::continuous::Mixture;
 use crate::value::Value;
 use crate::weight::Weight;
 use probl_sema::ir::{ReportKind, ReportSite};
+use std::sync::Arc;
 
 /// One report's results.
 #[derive(Clone, Debug)]
@@ -36,10 +37,10 @@ pub struct GroupResult {
     /// Unless a value is continuous: each value's probability, in the order
     /// of the values (facts as `true` and `false`, for tables that mix them
     /// with other values).
-    pub values: Option<Vec<(Value, Quantity)>>,
+    pub values: Option<ValueProbabilities>,
     /// The values and their probabilities, among the resolved worlds, in the
     /// order of the values (facts count as `true` and `false`).
-    pub distribution: Vec<(Value, f64)>,
+    pub distribution: Arc<[(Value, f64)]>,
     /// For real numbers, and continuous values: their summaries.
     pub numeric: Option<Numeric>,
     /// The share of the group's weight that isn't resolved, as the renderer
@@ -125,9 +126,9 @@ pub struct Numeric {
 #[derive(Clone, Debug)]
 enum Shape {
     /// A continuous marginal, possibly mixed with point masses.
-    Mixture(Mixture),
+    Mixture(Arc<Mixture>),
     /// Point masses, as values (integers keep their exact value for printing).
-    Points(Vec<(Value, f64)>),
+    Points(Arc<[(Value, f64)]>),
 }
 
 impl Numeric {
@@ -261,7 +262,7 @@ pub(super) fn group(key: &Value, acc: &Acc, format: Format, kind: ReportKind, un
         effective: acc.effective(),
     });
     let complete = (unresolved + acc.missing).is_zero();
-    let distribution = acc.distribution();
+    let distribution: Arc<[(Value, f64)]> = acc.distribution().into();
     let fact = acc
         .is_event()
         .then(|| fact(acc, format, kind, complete, unresolved, support));
@@ -318,7 +319,7 @@ fn structured(key: &Value, acc: &Acc, format: Format, kind: ReportKind, unresolv
         key: key.clone(),
         fact: None,
         values: None,
-        distribution: Vec::new(),
+        distribution: Arc::from([]),
         numeric: None,
         unresolved_share: acc.unresolved_share(format.unresolved),
         support: None,
@@ -370,58 +371,119 @@ fn fact(
 
 /// Each reported value's probability, with bounds over the unresolved
 /// weight: as if it had all gone to that value, or none of it.
+#[derive(Clone, Debug)]
+pub struct ValueProbabilities {
+    distribution: Arc<[(Value, f64)]>,
+    complete: bool,
+    // Only incomplete enumeration needs per-value bounds. Keep the original
+    // weight arithmetic rather than reconstructing weights from rounded shares.
+    bounds: Option<Arc<[(f64, f64)]>>,
+    sampling: Option<SampledValues>,
+}
+
+#[derive(Clone, Debug)]
+struct SampledValues {
+    support: Support,
+    visits: super::Base,
+    // Numeric reports do not keep per-value sums. Categorical sums are shared
+    // and sorted for lookup; sorting here does not change accumulation order.
+    sums: Arc<[(Value, super::Sums)]>,
+}
+
+impl ValueProbabilities {
+    /// Construct quantities as they are read, sharing the exact population
+    /// with numeric queries instead of keeping a large Quantity per value.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&Value, Quantity)> {
+        self.distribution
+            .iter()
+            .enumerate()
+            .map(|(i, (value, p))| (value, self.quantity(i, value, *p)))
+    }
+
+    pub fn first(&self) -> Option<(&Value, Quantity)> {
+        self.iter().next()
+    }
+
+    pub fn get(&self, value: &Value) -> Option<Quantity> {
+        let i = self.distribution.binary_search_by(|(v, _)| v.cmp(value)).ok()?;
+        Some(self.quantity(i, value, self.distribution[i].1))
+    }
+
+    fn quantity(&self, index: usize, value: &Value, p: f64) -> Quantity {
+        let sampling = self.sampling.as_ref().map(|sample| {
+            let sums = sample
+                .sums
+                .binary_search_by(|(v, _)| v.cmp(value))
+                .map(|i| sample.sums[i].1)
+                .unwrap_or_default();
+            let se = sums.standard_error(&sample.visits, p);
+            let (status, se) = if se == 0.0 {
+                (Status::NotEstimable, None)
+            } else {
+                (Status::Estimated, Some(se))
+            };
+            Uncertainty {
+                status,
+                se,
+                wilson: None,
+                support: sample.support,
+            }
+        });
+        Quantity {
+            point: Some(p),
+            complete: self.complete,
+            bounds: self.bounds.as_ref().map(|bounds| bounds[index]),
+            sampling,
+        }
+    }
+}
+
 fn values(
     acc: &Acc,
-    distribution: &[(Value, f64)],
+    distribution: &Arc<[(Value, f64)]>,
     complete: bool,
     unresolved: Weight,
     support: Option<Support>,
-) -> Vec<(Value, Quantity)> {
-    let u = unresolved + acc.missing;
-    let resolved = Weight::sum(acc.values.values().copied()) + acc.facts;
-    distribution
-        .iter()
-        .map(|(value, p)| {
-            let bounds = (!complete && support.is_none()).then(|| {
-                // Facts are counted apart from the other values.
+) -> ValueProbabilities {
+    let bounds = (!complete && support.is_none()).then(|| {
+        let u = unresolved + acc.missing;
+        let resolved = Weight::sum(acc.values.values().copied()) + acc.facts;
+        let total = resolved + u;
+        distribution
+            .iter()
+            .map(|(value, _)| {
                 let w = match value {
                     Value::Bool(true) => acc.yes,
                     Value::Bool(false) => acc.facts.saturating_sub(acc.yes),
                     _ => acc.values.get(value).copied().unwrap_or_default(),
                 };
-                let total = resolved + u;
                 (w.ratio(total), (w + u).ratio(total).min(1.0))
-            });
-            let sampling = support.map(|support| {
-                let se = acc.value_se(value, *p);
-                let (status, se) = if se == 0.0 {
-                    (Status::NotEstimable, None)
-                } else {
-                    (Status::Estimated, Some(se))
-                };
-                Uncertainty {
-                    status,
-                    se,
-                    wilson: None,
-                    support,
-                }
-            });
-            let quantity = Quantity {
-                point: Some(*p),
-                complete,
-                bounds,
-                sampling,
-            };
-            (value.clone(), quantity)
-        })
-        .collect()
+            })
+            .collect()
+    });
+    let sampling = support.map(|support| {
+        let moments = acc.moments();
+        let mut sums = moments.values.clone();
+        sums.sort_by(|(a, _), (b, _)| a.cmp(b));
+        SampledValues {
+            support,
+            visits: moments.visits,
+            sums: sums.into(),
+        }
+    });
+    ValueProbabilities {
+        distribution: distribution.clone(),
+        complete,
+        bounds,
+        sampling,
+    }
 }
 
 /// The mean and standard deviation of real numbers, or of a continuous
 /// marginal mixed with point masses, as the renderer prints them.
 fn numeric(
     acc: &Acc,
-    distribution: &[(Value, f64)],
+    distribution: &Arc<[(Value, f64)]>,
     complete: bool,
     support: Option<Support>,
     integrate: Option<f64>,
@@ -451,7 +513,7 @@ fn numeric(
             sd,
             support.map(not_computed),
             false,
-            Shape::Mixture(m),
+            Shape::Mixture(Arc::new(m)),
             integrated,
         );
     }
@@ -492,7 +554,7 @@ fn numeric(
         sd,
         mean_sampling,
         percent,
-        Shape::Points(distribution.to_vec()),
+        Shape::Points(distribution.clone()),
         false,
     )
 }

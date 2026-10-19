@@ -136,6 +136,13 @@ match program.run(&options) {
 
 Facts have `probability()` and no redundant true/false table. A structured report's fields are marginals of one joint distribution: they don't say how the fields depend on each other, and the group's other accessors are `None`. A continuous analytic report has no finite table: `None` means unavailable, not an empty population. Outcome labels are display strings, not a typed serialization format; distinct outcomes can have the same display label.
 
+Exact populations are shared by the renderer and numeric queries. Calling
+`Group::distribution()` formats and caches its full table on first access,
+allocating space proportional to the number of outcomes. Cloned reports/groups
+share the population and cache, including across threads. Reading text, numeric
+summaries or report JSON does not build that formatted table. Exact collection
+still retains every distinct outcome; this is not bounded-memory sampling.
+
 Numeric summaries expose the renderer's precision. They do not make `f64` an exact representation of arbitrary integers. `quantile(q)` returns `InvalidQuantile` for nonfinite/out-of-range probabilities and `Unavailable` when the summary cannot be supplied. Display selections do not restrict these queries; `quantile(0.5)` retains the report midpoint median convention.
 
 With the optional `json` crate feature, `Outcome::reports_json(&ReportJsonLimits::default())` exports a bounded, versioned summary document with typed keys, report identities, reach and uncertainty. The WASM adapter uses the same serializer. See the [JSON schema and limits](report-json.md); this exports summaries without raw sampled populations and leaves the existing text/query API unchanged.

@@ -353,6 +353,77 @@ cargo run --release -p probl-bench -- retirement
 cargo run --release -p probl-bench -- --threads=1 retirement
 ```
 
+## Since: sharing exact report populations
+
+19 October 2026, macOS arm64 on the same 12-core machine. Compared with
+`06d83c9`, report results now share one immutable exact population between the
+renderer and numeric queries. Per-value probability estimates are constructed
+when read, and Rust's `Group::distribution()` formats its full table only on
+first access, sharing the cache across cloned groups. Completed sampling batches
+release their per-run maps before waiting to be combined; reading uncertainty
+aggregates no longer clones their categorical-value lists.
+
+The same retirement models and seed 42, with 10,000 trials except the 5,000-trial
+playground example:
+
+| Model | Threads | Time before → after | Peak heap before → after |
+|---|--:|--:|--:|
+| `retirement_all` | 1 | 2.029 → 1.922 s | 265.3 → 88.8 MiB |
+| `retirement_balance` | 1 | 1.545 → 1.425 s | 229.7 → 53.3 MiB |
+| `retirement_depletion` | 1 | 1.417 → 1.421 s | 35.8 → 18.3 MiB |
+| `retirement_terminal` | 1 | 1.129 → 1.139 s | 0.96 → 0.79 MiB |
+| `21_retirement` | 1 | 1.021 → 0.958 s | 160.3 → 71.9 MiB |
+| `retirement_all` | 12 | 0.505 → 0.335 s | 569.4 → 542.6 MiB |
+| `retirement_balance` | 12 | 0.400 → 0.276 s | 229.7 → 205.9 MiB |
+| `retirement_depletion` | 12 | 0.212 → 0.212 s | 180.7 → 172.6 MiB |
+| `retirement_terminal` | 12 | 0.161 → 0.174 s | 4.75 → 4.75 MiB |
+| `21_retirement` | 12 | 0.284 → 0.227 s | 285.0 → 274.2 MiB |
+
+Both native builds used one codegen unit and fat LTO, as in
+[comparing two builds](#comparing-two-builds). For each thread count, the command
+was `probl-bench --quick --threads=1 --json retirement` (or `--threads=12`), in
+before/after/after/before order. Times are medians of the two timed runs; heap is
+the smaller of two separately instrumented peaks. Text and world-step counts
+were identical across all builds, repetitions and thread counts. These are short
+comparisons, not runtime guarantees; active worker scheduling affects both time
+and peak heap.
+
+The twelve-thread terminal-only row included an after-run outlier of 0.186 s
+(the other was 0.161 s). An additional alternating comparison without `--quick`
+used five timed runs per invocation: the two before medians were 0.152/0.160 s
+and the after medians were 0.165/0.157 s. Their overall medians differ by about
+3%, with overlapping ranges. No runtime improvement is claimed for that control.
+
+The smaller reduction in twelve-thread peaks is useful evidence about the next
+step: active batches still retain per-run statistics for each report/key. With
+ten 1,000-trial batches running at once, that bookkeeping can dominate the peak
+before any completed-batch or result storage is released.
+
+With the actual playground WASM module and loader in Bun, fresh instances for
+each run count, after a 200-trial warmup:
+
+| Trials | Time before → after | Module memory before → after |
+|--:|--:|--:|
+| 5,000 | 1.904 → 1.856 s | 157.4 → 69.2 MiB |
+| 10,000 | 3.767 → 3.595 s | 262.5 → 86.3 MiB |
+| 20,000 | 7.576 → 7.291 s | 475.1 → 120.3 MiB |
+
+The WASM comparison also used before/after/after/before order, with no native
+benchmarks or test suites running concurrently. Module compilation was excluded;
+model compilation, execution, text/JSON export and parsing were included. Times
+are medians of two runs; both repetitions gave the same module-memory size.
+The execution date was pinned to `2026-10-19`. Output text and the complete
+structured report document matched byte-for-byte. Module memory is the WASM
+linear-memory high-water mark, excluding JavaScript and browser rendering.
+
+This is the storage cleanup preceding bounded collection. Exact outcome storage
+still grows with distinct samples; selecting only displayed moments does not
+change that. A Rust caller that requests full distribution tables incurs their
+formatting cost and retains the cached tables until their last group clone is
+dropped. Explicit moments-only and approximate-quantile collection policies,
+report-memory limits, sketch accuracy guarantees and larger-scale measurements
+remain future work. The playground default stays at 5,000 trials.
+
 ## Smaller findings
 
 - `poisson` draws in sampled runs recompute `lgamma` at the mode every time (14% of `inventory`); caching it for the last rate is a small fix.

@@ -160,6 +160,11 @@ callers may still use `Outcome::text()` and the existing query API. Hosts that
 need cancellation during export should run it in a cancellable worker, as the
 playground does. Work units are not a wall-clock deadline.
 
+Text, numeric queries and JSON share the retained exact population without
+building the Rust API's full formatted distribution table. That table is cached
+only when `Group::distribution()` is requested. [Sharing result storage](benchmarks.md#since-sharing-exact-report-populations)
+reduces memory overhead, but does not bound the number of retained outcomes.
+
 For fixed groups, document size follows the number of summaries, not the number
 of trials. Computing exact quantiles still scans the retained populations; this
 feature does not solve report-collection memory growth. The [playground charts](playground.md)

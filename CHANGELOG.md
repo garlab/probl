@@ -14,6 +14,10 @@ All notable changes to the published crates are recorded here. The format follow
 - A SET example in the CLI examples and playground uses `take(12)` and `combinations(3)` to estimate the probability that a hand contains no set.
 - `any(xs, test)` checks lists, ranges and strings in order, stopping at the first match. The SET example uses it to skip unnecessary rule checks while keeping the same trials and seeded result: [about 2.7× faster in WebAssembly](docs/benchmarks.md#since-stopping-at-the-first-set-match).
 
+### Changed
+
+- Reports share exact populations across rendering and numeric queries, construct per-value probability estimates on demand, and release completed batches' per-run maps. Rust's `Group::distribution()` formats its table on first access and shares the cache across cloned groups. Exact results and query capabilities are unchanged; sampled populations still grow with the number of distinct outcomes. See [forecast memory measurements](docs/benchmarks.md#since-sharing-exact-report-populations).
+
 ## [0.3.2] - 2026-10-17
 
 ### Added

@@ -12,7 +12,10 @@ mod results;
 mod selection;
 pub use selection::{ReportStatistic, ReportSummary, ReportSummaryError, statistic_value};
 
-pub use results::{Fields, GroupResult, Numeric, Quantity, Reach, ReportResult, Status, Support, Uncertainty, results};
+pub use results::{
+    Fields, GroupResult, Numeric, Quantity, Reach, ReportResult, Status, Support, Uncertainty, ValueProbabilities,
+    results,
+};
 
 /// Everything one report site saw for one key.
 #[derive(Clone, Debug)]
@@ -401,7 +404,10 @@ impl Acc {
             return;
         }
         let m = self.moments.get_or_insert_with(Moments::default);
-        for (_, run) in self.runs.drain() {
+        // This batch is finished and its sink will be sent to the combiner.
+        // Keeping the drained map's capacity retained one batch of per-run
+        // bookkeeping in every completed/pending sink, including the result.
+        for (_, run) in std::mem::take(&mut self.runs) {
             let w = run.weight;
             m.contributing_runs += 1;
             m.not_bernoulli |= run.visits != 1
@@ -441,8 +447,11 @@ impl Acc {
         }
     }
 
-    fn moments(&self) -> Moments {
-        self.moments.clone().unwrap_or_default()
+    fn moments(&self) -> std::borrow::Cow<'_, Moments> {
+        self.moments.as_ref().map_or_else(
+            || std::borrow::Cow::Owned(Moments::default()),
+            std::borrow::Cow::Borrowed,
+        )
     }
 
     /// Number of independent runs contributing to this report/key. Multiple
@@ -1053,7 +1062,7 @@ fn categorical_sampled(group: &GroupResult) -> String {
 /// A sampled value's probability `p` (zero for a value the group never
 /// reported), with its standard error.
 fn sampled_value_text(group: &GroupResult, value: &Value, p: f64) -> String {
-    let quantity = group.values.iter().flatten().find(|(v, _)| v == value).map(|(_, q)| q);
+    let quantity = group.values.as_ref().and_then(|values| values.get(value));
     match quantity
         .and_then(|q| q.sampling)
         .filter(|s| s.status == Status::Estimated)
@@ -1586,6 +1595,11 @@ mod tests {
                 batch.add(Value::Unit, &Value::Bool(true), Weight::ONE, Some(run));
             }
             batch.end_batch();
+            assert_eq!(
+                batch.groups[&Value::Unit].runs.capacity(),
+                0,
+                "finished batches release per-run storage"
+            );
             combined.absorb(batch);
         }
         let acc = &combined.groups[&Value::Unit];
@@ -1648,5 +1662,57 @@ mod tests {
         let fact = group.fact.unwrap();
         assert!(!fact.complete && fact.bounds == Some((lo, hi)));
         assert_eq!(chance_text(&fact, format), "0.00%–99.80%");
+    }
+
+    #[test]
+    fn value_queries_preserve_weighted_visit_errors_and_unresolved_bounds() {
+        let red = Value::Str("red".into());
+        let blue = Value::Str("blue".into());
+        let mut sink = Sink::default();
+        sink.add(Value::Unit, &red, Weight::ONE, Some(0));
+        sink.add(Value::Unit, &blue, Weight::ONE, Some(0));
+        sink.add(Value::Unit, &red, Weight::new(3.0), Some(1));
+        sink.end_batch();
+        let g = results::group(
+            &Value::Unit,
+            &sink.groups[&Value::Unit],
+            plain(),
+            ReportKind::PerVisit,
+            Weight::ZERO,
+        );
+        let values = g.values.unwrap();
+        let close = |a: f64, b: f64| assert!((a - b).abs() < 1e-12, "{a} != {b}");
+        for (value, point) in [(&red, 0.8), (&blue, 0.2)] {
+            let q = values.get(value).unwrap();
+            close(q.point.unwrap(), point);
+            let sampling = q.sampling.unwrap();
+            close(sampling.se.unwrap(), 0.72f64.sqrt() / 5.0);
+            close(sampling.support.effective, 25.0 / 13.0);
+            assert_eq!(sampling.support.contributing_runs, 2);
+            assert!(q.complete && q.bounds.is_none());
+        }
+        assert!(values.get(&Value::Str("absent".into())).is_none());
+        assert_eq!(values.iter().map(|(v, _)| v).collect::<Vec<_>>(), [&blue, &red]);
+
+        let mut enumerated = Sink::default();
+        enumerated.add(Value::Unit, &red, Weight::new(0.2), None);
+        enumerated.add(Value::Unit, &blue, Weight::new(0.3), None);
+        let missing = Weight::new(0.5);
+        let g = results::group(
+            &Value::Unit,
+            &enumerated.groups[&Value::Unit],
+            plain(),
+            ReportKind::Once,
+            missing,
+        );
+        let values = g.values.unwrap();
+        for (value, point, lower, upper) in [(&red, 0.4, 0.2, 0.7), (&blue, 0.6, 0.3, 0.8)] {
+            let q = values.get(value).unwrap();
+            close(q.point.unwrap(), point);
+            let (lo, hi) = q.bounds.unwrap();
+            close(lo, lower);
+            close(hi, upper);
+            assert!(!q.complete && q.sampling.is_none());
+        }
     }
 }

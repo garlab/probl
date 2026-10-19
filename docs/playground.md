@@ -82,7 +82,7 @@ errors are checked before execution; value-type compatibility is checked when
 results are known. Date reports support quantiles and medians, facts keep their
 probability output, and categorical/structured reports require the default.
 
-In the October 19, 2026 Bun build, the chart UI and saved settings added 13,787
+In the October 19, 2026 Bun build at `c7ab8a9`, the chart UI and saved settings added 13,787
 bytes to the minified page bundle (430,231 to 444,018 bytes), or 5,065 bytes with
 gzip. This compares the same build settings against the preceding `48e6302`
 version; the WASM module is unchanged.
