@@ -390,3 +390,26 @@ fn summary_requests_match_the_library_and_validate_before_printing() {
             .is_empty()
     );
 }
+
+#[test]
+fn collection_requests_validate_and_mark_unavailable_quantiles() {
+    let source = "@mode sample(runs:100,seed:42)\nprint(\"ran\"); let x~d6; report x";
+    let (answer, _) = run(json!({"source":source,"report_collections":{"0":"moments"}}));
+    assert!(answer.get("error").is_none(), "{answer}");
+    assert_eq!(answer["reports"]["reports"][0]["collection"], "moments");
+    assert_eq!(
+        answer["reports"]["reports"][0]["groups"][0]["summary"]["quantile_method"],
+        "unavailable"
+    );
+    for policy in [
+        json!([]),
+        json!({"0":null}),
+        json!({"0":"bad"}),
+        json!({"00":"moments"}),
+        json!({"1":"moments"}),
+    ] {
+        let (answer, printed) = run(json!({"source":source,"report_collections":policy}));
+        assert!(answer.get("error").is_some(), "{answer}");
+        assert!(printed.is_empty());
+    }
+}

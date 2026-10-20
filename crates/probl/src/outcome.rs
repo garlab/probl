@@ -47,6 +47,7 @@ impl Outcome {
             .iter()
             .zip(&outcome.results)
             .map(|(site, result)| Report {
+                collection: result.collection,
                 label: site.label.clone(),
                 groups: result
                     .groups
@@ -394,11 +395,17 @@ impl std::fmt::Debug for Outcome {
 /// One `report`: what it saw, for each of its keys.
 #[derive(Clone, Debug)]
 pub struct Report {
+    collection: crate::ReportCollection,
     label: String,
     groups: Vec<Group>,
 }
 
 impl Report {
+    /// The retention policy used for this report.
+    pub fn collection(&self) -> crate::ReportCollection {
+        self.collection
+    }
+
     pub fn label(&self) -> &str {
         &self.label
     }
@@ -469,7 +476,7 @@ impl Group {
         self.probability.as_ref()
     }
 
-    /// When the report is of other values, unless they're continuous: each
+    /// When the report retains exact discrete values: each
     /// value, as Probl prints it, with its probability, in the order of the
     /// values (numbers and dates in numeric order). Labels are for display:
     /// two values can print alike, and both are listed.

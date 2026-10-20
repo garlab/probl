@@ -68,6 +68,8 @@ pub struct Limits {
     pub max_outcomes: usize,
     /// Elements of one collection built by the program.
     pub max_collection: usize,
+    /// Maximum groups per moments-only report, including across batches.
+    pub max_report_groups: usize,
     /// Units of work: world-steps plus outcomes computed.
     pub max_work: u64,
     /// Iterations of one loop.
@@ -102,6 +104,7 @@ impl Default for Limits {
             max_worlds: 10_000_000,
             max_outcomes: 2_000_000,
             max_collection: 10_000_000,
+            max_report_groups: 10_000,
             max_work: 20_000_000_000,
             max_iterations: 10_000_000,
             max_call_depth: 500,
@@ -137,8 +140,10 @@ pub struct Options {
     pub epsilon: Option<f64>,
     /// Also print the simplest fraction near each probability.
     pub fractions: bool,
-    /// Explicit summary columns by zero-based report ID. Collection stays exact.
+    /// Explicit summary columns by zero-based report ID; independent of retention.
     pub report_summaries: BTreeMap<usize, report::ReportSummary>,
+    /// Explicit retention policy by zero-based report ID; exact by default.
+    pub report_collections: BTreeMap<usize, report::ReportCollection>,
     pub limits: Limits,
     /// Set to stop a running program.
     pub cancel: Option<Arc<AtomicBool>>,
@@ -190,6 +195,7 @@ impl Default for Options {
             epsilon: None,
             fractions: false,
             report_summaries: BTreeMap::new(),
+            report_collections: BTreeMap::new(),
             limits: Limits::default(),
             cancel: None,
             mode: None,
@@ -335,6 +341,12 @@ fn run_here(
     }
     let settings = &program.settings;
     let mode = options.mode.clone().unwrap_or_else(|| settings.mode.clone());
+    report::validate_collections(
+        &program.reports,
+        &options.report_collections,
+        &options.report_summaries,
+        &mode,
+    )?;
     let sample = match mode {
         Mode::Auto | Mode::Enumerate => None,
         Mode::Sample { runs, seed } => Some((runs, seed)),
@@ -363,6 +375,8 @@ fn run_here(
     });
     let limits = &options.limits;
     let config = interp::Config {
+        report_collections: options.report_collections.clone(),
+        max_report_groups: limits.max_report_groups,
         today: options.today,
         env: options.env.clone(),
         epsilon: options.epsilon.unwrap_or(settings.epsilon),
@@ -592,8 +606,9 @@ fn enumerated(
             header.push_str(&format!(" · unresolved {:.1e}", unresolved.to_f64()));
         }
     }
-    report::validate_summary_values(&program.reports, &results, &options.report_summaries)?;
-    let body = report::render_selected(&program.reports, &results, format, &options.report_summaries, 0);
+    let summaries = report::selected_summaries(&options.report_collections, &options.report_summaries);
+    report::validate_summary_values(&program.reports, &results, &summaries)?;
+    let body = report::render_selected(&program.reports, &results, format, &summaries, 0);
     let output = if body.is_empty() {
         header
     } else {
@@ -609,7 +624,7 @@ fn enumerated(
         reports: sinks,
         results,
         format,
-        report_summaries: options.report_summaries.clone(),
+        report_summaries: summaries,
         sample: None,
         data: sources(options),
         updates: Vec::new(),
@@ -717,9 +732,9 @@ struct Combined {
 }
 
 impl Combined {
-    fn new(reports: usize) -> Combined {
+    fn new(reports: usize, config: &interp::Config) -> Combined {
         Combined {
-            sinks: vec![Sink::default(); reports],
+            sinks: config.sinks(reports),
             totals: interp::SampleTotals {
                 weight: Weight::ZERO,
                 squares: Weight::ZERO,
@@ -733,7 +748,10 @@ impl Combined {
         }
     }
 
-    fn absorb(&mut self, batch: interp::Batch) {
+    fn absorb(&mut self, batch: interp::Batch, program: &Program) -> Result<(), RuntimeError> {
+        for ((sink, theirs), site) in self.sinks.iter().zip(&batch.sinks).zip(&program.reports) {
+            sink.validate_merge(theirs).map_err(|e| e.at(site.span))?;
+        }
         for (sink, theirs) in self.sinks.iter_mut().zip(batch.sinks) {
             sink.absorb(theirs);
         }
@@ -745,6 +763,7 @@ impl Combined {
         self.last_ruling_out = batch.last_ruling_out.or(self.last_ruling_out);
         self.stats.absorb(&batch.stats);
         self.failures.append(batch.failures);
+        Ok(())
     }
 }
 
@@ -851,7 +870,7 @@ fn run_batches(
         }
         drop(tx);
 
-        let mut combined = Combined::new(program.reports.len());
+        let mut combined = Combined::new(program.reports.len(), config);
         let mut pending = BTreeMap::new();
         let mut bytes = 0;
         for index in 0..batches {
@@ -874,8 +893,8 @@ fn run_batches(
                 print(&line);
             }
             printed.store(bytes, Ordering::Relaxed);
-            match result {
-                Ok(batch) => combined.absorb(batch),
+            match result.and_then(|batch| combined.absorb(batch, program)) {
+                Ok(()) => {}
                 Err(e) => return stop(e),
             }
             if let Some(progress) = &options.progress {
@@ -904,7 +923,7 @@ fn run_batches_here(
 ) -> Result<Combined, RuntimeError> {
     let mut ignore = |_: &str| {};
     let mut engine = interp::Engine::new(program, live, conj, config.clone(), inputs, &mut ignore);
-    let mut combined = Combined::new(program.reports.len());
+    let mut combined = Combined::new(program.reports.len(), config);
     let mut bytes = 0;
     for index in 0..runs.div_ceil(interp::BATCH) {
         let first = index * interp::BATCH;
@@ -917,7 +936,7 @@ fn run_batches_here(
             }
             print(&line);
         }
-        combined.absorb(result?);
+        combined.absorb(result?, program)?;
         if let Some(progress) = &options.progress {
             (progress.0)(first + n, runs);
         }
@@ -1005,8 +1024,9 @@ fn sampled(
     // The report lines don't show unresolved weight when sampling (the
     // summary line does), but the results still say what's incomplete.
     let results = report::results(&program.reports, &engine.sinks, format, unresolved);
-    report::validate_summary_values(&program.reports, &results, &options.report_summaries)?;
-    let body = report::render_selected(&program.reports, &results, format, &options.report_summaries, 0);
+    let summaries = report::selected_summaries(&options.report_collections, &options.report_summaries);
+    report::validate_summary_values(&program.reports, &results, &summaries)?;
+    let body = report::render_selected(&program.reports, &results, format, &summaries, 0);
     let output = if body.is_empty() {
         header
     } else {
@@ -1023,7 +1043,7 @@ fn sampled(
         reports: std::mem::take(&mut engine.sinks),
         results,
         format,
-        report_summaries: options.report_summaries.clone(),
+        report_summaries: summaries,
         sample: Some(Sampled {
             runs,
             seed,

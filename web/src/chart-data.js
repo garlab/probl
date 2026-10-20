@@ -13,6 +13,7 @@ export function chartSettings(value) {
       reports[id] = {
         baseline: Number.isSafeInteger(choice.baseline) && choice.baseline >= 0 ? choice.baseline : null,
         currency: currencies.includes(choice.currency) ? choice.currency : '',
+        ...(choice.collection === 'moments' ? { collection: 'moments' } : {}),
         ...(typeof choice.summary === 'string' && choice.summary.length <= 4096 && choice.summary ? { summary: choice.summary } : {}),
       };
     }

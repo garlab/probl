@@ -213,3 +213,24 @@ fn the_repl_has_the_environment_and_can_t_change_it() {
     assert!(out.contains("env.get(\"PROBL_TEST_REGION\", \"eu\")    us"), "{out}");
     assert!(err.contains("can't assign to `env`: it's a constant"), "{err}");
 }
+
+#[test]
+fn collection_flags_are_explicit_and_checked() {
+    let source = "@mode sample(runs:100,seed:42)\nlet x~d6; report x";
+    let (code, out, err) = run_source("collection.probl", source, &["--collect", "0=moments"]);
+    assert_eq!(code, Some(0), "{err}");
+    assert!(
+        out.contains("mean") && out.contains("sd") && !out.contains("median"),
+        "{out}"
+    );
+    for args in [
+        vec!["--collect", "0=bad"],
+        vec!["--collect", "1=moments"],
+        vec!["--collect", "0=moments", "--summary", "0=forecast"],
+        vec!["--collect", "0=moments", "--collect", "0=exact"],
+        vec!["--collect", "0=moments", "--mode", "enumerate"],
+    ] {
+        let (code, _, _) = run_source("bad-collection.probl", source, &args);
+        assert_ne!(code, Some(0));
+    }
+}

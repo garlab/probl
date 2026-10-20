@@ -268,6 +268,25 @@ try {
     await page.setViewport({width:800,height:600});
   }
 
+  const momentsSource = '@mode sample(runs:100,seed:42)\nfor year in 0..2 {let x~d6; report x by year as "balance"}';
+  await page.evaluate((source) => window.playground.setSource(source), momentsSource);
+  await page.waitForSelector('#collection-0');
+  await page.select('#collection-0', 'moments');
+  const momentsAnswer = await applySummaries();
+  const momentsExpected = api.run({source:momentsSource,report_collections:{0:'moments'},report_summaries:{0:'moments'}});
+  expect(momentsAnswer.result === momentsExpected.output && !momentsAnswer.error, 'moments collection works through the editor and worker', momentsAnswer.result);
+  expect(await page.$$eval(`${balance} .chart-band`, (els) => els.length) === 0, 'moments collection has no invented percentile bands');
+  await press(page, 'share');
+  const momentsReplay = await open(await page.evaluate(() => location.href));
+  await run(momentsReplay);
+  expect(await momentsReplay.$eval('#collection-0', (el) => el.value) === 'moments', 'sharing retains collection separately from summary columns');
+  await momentsReplay.close();
+  await page.select('#summary-0', 'forecast');
+  const incompatible = await applySummaries();
+  expect(incompatible.error && incompatible.result.includes('cannot provide'), 'incompatible quantile selection is explained');
+  await page.select('#collection-0', 'exact');
+  expect(!(await applySummaries()).error, 'switching back to exact collection restores percentile columns');
+
   // List statistics and scalar-query errors through the real editor/worker.
   const statisticsSource = readFileSync(`${root}web/test/statistics.probl`, 'utf8');
   await page.evaluate((source) => window.playground.setSource(source), statisticsSource);

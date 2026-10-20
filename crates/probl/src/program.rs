@@ -162,14 +162,24 @@ impl Program {
     }
 
     fn validate_options(&self, options: &Options) -> Result<(), Error> {
-        probl_engine::report::validate_summaries(&self.ir.reports, &options.report_summaries).map_err(|e| {
-            Error::usage(
-                Default::default(),
-                &e.message,
-                "select an existing zero-based report ID",
-                &self.file,
-            )
-        })
+        probl_engine::report::validate_summaries(&self.ir.reports, &options.report_summaries)
+            .and_then(|()| {
+                let engine = options.engine(&self.ir);
+                probl_engine::report::validate_collections(
+                    &self.ir.reports,
+                    &engine.report_collections,
+                    &engine.report_summaries,
+                    engine.mode.as_ref().unwrap_or(&self.ir.settings.mode),
+                )
+            })
+            .map_err(|e| {
+                Error::usage(
+                    Default::default(),
+                    &e.message,
+                    "use an existing report ID and compatible summary/collection settings",
+                    &self.file,
+                )
+            })
     }
 
     /// Report labels in source order. Their indices are the stable IDs for this

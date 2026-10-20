@@ -251,6 +251,7 @@ pre {
 #report-summaries p { max-width: 72ch; }
 .summary-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 160px); gap: 6px 10px; align-items: center; margin: 10px 0; }
 .summary-row label { overflow-wrap: anywhere; }
+.summary-row select[id^="collection-"] { grid-column: 1 / -1; }
 .summary-row input { grid-column: 1 / -1; width: 100%; }
 .summary-row select { min-width: 0; }
 .summary-row input[hidden] { display: none; }

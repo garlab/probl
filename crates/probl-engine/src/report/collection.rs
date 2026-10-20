@@ -1,0 +1,170 @@
+//! Explicit retention policies, separate from displayed summary columns.
+use super::{ReportStatistic, ReportSummary};
+use crate::{RuntimeError, error::OpError, value::Value, weight::Weight};
+use probl_sema::ir::{Mode, ReportSite};
+use std::{collections::BTreeMap, fmt, str::FromStr};
+
+/// What a report retains. Exact collection is the default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReportCollection {
+    #[default]
+    Exact,
+    /// Sampled scalar numbers or facts only. Numeric populations and quantiles
+    /// are unavailable; weighted means, spreads and sampling errors remain.
+    Moments,
+}
+
+impl fmt::Display for ReportCollection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Exact => "exact",
+            Self::Moments => "moments",
+        })
+    }
+}
+
+impl FromStr for ReportCollection {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "exact" => Ok(Self::Exact),
+            "moments" => Ok(Self::Moments),
+            _ => Err("report collection must be exact or moments".into()),
+        }
+    }
+}
+
+pub fn validate_collections(
+    sites: &[ReportSite],
+    collections: &BTreeMap<usize, ReportCollection>,
+    summaries: &BTreeMap<usize, ReportSummary>,
+    mode: &Mode,
+) -> Result<(), RuntimeError> {
+    if collections.len() > 256 {
+        return Err(OpError::new("at most 256 report collection overrides are allowed").at(Default::default()));
+    }
+    for (&id, &policy) in collections {
+        let site = sites
+            .get(id)
+            .ok_or_else(|| OpError::new(format!("unknown report collection ID {id}")).at(Default::default()))?;
+        if policy == ReportCollection::Moments {
+            let message = if !matches!(mode, Mode::Sample { .. }) {
+                Some("moments collection requires sample mode")
+            } else if summaries.get(&id).is_some_and(|s| {
+                s.statistics()
+                    .iter()
+                    .any(|s| matches!(s, ReportStatistic::Median | ReportStatistic::Quantile(_)))
+            }) {
+                Some(
+                    "moments collection cannot provide median or quantile columns; choose mean and/or sd, or exact collection",
+                )
+            } else {
+                None
+            };
+            if let Some(message) = message {
+                return Err(OpError::new(format!("report {id}: {message}")).at(site.span));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Fill in the moments-only default without changing exact report defaults.
+pub fn selected_summaries(
+    collections: &BTreeMap<usize, ReportCollection>,
+    summaries: &BTreeMap<usize, ReportSummary>,
+) -> BTreeMap<usize, ReportSummary> {
+    let mut selected = summaries.clone();
+    for (&id, &policy) in collections {
+        if policy == ReportCollection::Moments {
+            selected.entry(id).or_insert_with(ReportSummary::moments);
+        }
+    }
+    selected
+}
+
+/// Preserve the exact collector's requirement that integer summaries be
+/// representable without rounding. Booleans are handled separately.
+pub(super) fn number(value: &Value) -> Option<f64> {
+    match value {
+        Value::Int(n) => n.to_f64().filter(|x| n.cmp_f64(*x).is_some_and(|c| c.is_eq())),
+        Value::Float(x) | Value::Prob(x) if x.is_finite() => Some(*x),
+        _ => None,
+    }
+}
+
+/// Weighted parallel central moments. Store SD instead of the squared spread
+/// so finite spreads remain representable even when their squares overflow.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct OnlineNumbers {
+    pub weight: Weight,
+    pub mean: f64,
+    pub sd: f64,
+    pub percent: bool,
+}
+
+impl OnlineNumbers {
+    pub fn add(&mut self, value: &Value, weight: Weight) {
+        self.absorb(Self {
+            weight,
+            mean: number(value).expect("validated numeric report"),
+            sd: 0.0,
+            percent: matches!(value, Value::Prob(_)),
+        });
+    }
+    pub fn absorb(&mut self, other: Self) {
+        if other.weight.is_zero() {
+            return;
+        }
+        if self.weight.is_zero() {
+            *self = other;
+            return;
+        }
+        let weight = self.weight + other.weight;
+        let a = self.weight.ratio(weight);
+        let b = other.weight.ratio(weight);
+        let cross = a.sqrt() * b.sqrt();
+        let delta = other.mean - self.mean;
+        let spread = if delta.is_finite() {
+            delta * cross
+        } else {
+            other.mean * cross - self.mean * cross
+        };
+        self.sd = libm::hypot(libm::hypot(self.sd * a.sqrt(), other.sd * b.sqrt()), spread);
+        self.mean = if delta.is_finite() {
+            self.mean + b * delta
+        } else {
+            a * self.mean + b * other.mean
+        };
+        self.weight = weight;
+        self.percent &= other.percent;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn point(x: f64, w: f64) -> OnlineNumbers {
+        OnlineNumbers {
+            weight: Weight::ONE.scale(w),
+            mean: x,
+            sd: 0.0,
+            percent: false,
+        }
+    }
+    #[test]
+    fn central_moments_preserve_small_spreads_and_large_finite_values() {
+        let mut n = point(1e12, 1.0);
+        n.absorb(point(1e12 + 1.0, 1.0));
+        assert_eq!(n.mean, 1e12 + 0.5);
+        assert!((n.sd - 0.5).abs() < 1e-15);
+        let mut n = point(-1e308, 1.0);
+        n.absorb(point(1e308, 1.0));
+        assert_eq!(n.mean, 0.0);
+        assert!((n.sd / 1e308 - 1.0).abs() < 1e-15);
+        let mut n = point(1.0, 1.0);
+        n.absorb(point(3.0, 3.0));
+        assert!((n.mean - 2.5).abs() < 1e-15);
+        assert!((n.sd - 0.75_f64.sqrt()).abs() < 1e-15);
+    }
+}

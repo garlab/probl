@@ -25,9 +25,10 @@ function sameReports(actual, expected, path = 'reports') {
   if (typeof actual === 'number' && typeof expected === 'number' && !path.endsWith('.value')) {
     const scale = Math.max(Math.abs(actual), Math.abs(expected));
     // Weighted effective sizes/reach differ by a few rounding bits across
-    // targets. A near-zero standard error also suffers cancellation at 1.
-    const tolerance = path.endsWith('.standard_error') && scale < 1e-14
-      ? 4 * Number.EPSILON : 16 * Number.EPSILON * scale;
+    // targets. Standard errors subtract squared terms, so cancellation also
+    // needs a small absolute allowance (including weighted repeated visits).
+    const tolerance = path.endsWith('.standard_error')
+      ? Math.max(4 * Number.EPSILON, 16 * Number.EPSILON * scale) : 16 * Number.EPSILON * scale;
     assert.ok(Math.abs(actual - expected) <= tolerance, `${path}: ${actual} != ${expected}`);
   } else if (actual && expected && typeof actual === 'object' && typeof expected === 'object') {
     assert.equal(Array.isArray(actual), Array.isArray(expected), path);
@@ -69,6 +70,23 @@ for (const [source, report_summaries] of [
   assert.deepEqual(actual.error, expected.error);
 }
 console.log('same  configurable summaries and validation in native/WASM');
+
+
+for (const request of [
+  { source:'@mode sample(runs:2100,seed:42)\nlet x~d6; score if x>3 {90%} else {10%}; for k in 1..x {report x+k by k mod 2; report x>3 by k mod 2}', report_collections:{0:'moments',1:'moments'} },
+  { source:'@mode sample(runs:2100,seed:42)\nlet x~d6; score if x>3 {90%} else {10%}; for k in 1..x {report x+k by k mod 2; report x>3 by k mod 2}', report_collections:{0:'exact',1:'exact'} },
+  { source:'@mode sample(runs:100,seed:42)\nlet x~d2; report 1/(x-1)', report_collections:{0:'moments'} },
+  { source:'report 1', report_collections:{0:'moments'} },
+  { source:'report 1', report_collections:{0:'invalid'} },
+]) {
+  request.today = '2026-10-19';
+  const expected = JSON.parse(execFileSync(nativeAdapter, [], { input:JSON.stringify(request), encoding:'utf8' }));
+  const actual = probl.run(request);
+  sameReports(actual.reports, expected.reports);
+  assert.equal(actual.output, expected.output);
+  assert.deepEqual(actual.error, expected.error);
+}
+console.log('same  moments collection, weighted repeated visits, partial runs and validation in native/WASM');
 
 let failed = 0;
 const cases = probl.examples().map((e) => ({ ...e, path: `examples/${e.name}.probl` }));

@@ -223,6 +223,7 @@ pub fn docs() -> String {
 /// - `"mode"`: `"enumerate"` or `"sample"`, and `"runs"` and `"seed"`,
 ///   which override the program's `@mode` as on the command line;
 /// - `"conjugate"`: `false` to sample without exact updates;
+/// - `"report_collections"`: report ID strings mapped to "exact" or "moments".
 /// - `"report_summaries"`: an object from zero-based report ID strings to summary
 ///   specifications, such as `{"0":"forecast","2":"mean,median,q:0.9"}`;
 /// - `"on_error"`: `"total"` or `"partial"`, overriding the program's
@@ -306,6 +307,39 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
             Ok(selections) => {
                 for (id, selection) in selections {
                     options = options.report_summary(id, selection);
+                }
+            }
+            Err(message) => return failed(json!({"kind":"usage", "message":message})),
+        }
+    }
+    if let Some(collections) = request.get("report_collections") {
+        let parsed = (|| -> Result<Vec<(usize, probl::ReportCollection)>, String> {
+            let collections = collections
+                .as_object()
+                .ok_or("report_collections must be an object of report IDs and collection strings")?;
+            if collections.len() > 256 {
+                return Err("at most 256 report collection overrides are allowed".into());
+            }
+            collections
+                .iter()
+                .map(|(id, policy)| {
+                    let index: usize = id.parse().map_err(|_| format!("invalid report collection ID `{id}`"))?;
+                    if id != &index.to_string() {
+                        return Err(format!(
+                            "invalid report collection ID `{id}`; use a canonical zero-based integer"
+                        ));
+                    }
+                    let policy = policy
+                        .as_str()
+                        .ok_or_else(|| format!("report collection {id} must be a string"))?;
+                    Ok((index, policy.parse()?))
+                })
+                .collect()
+        })();
+        match parsed {
+            Ok(collections) => {
+                for (id, policy) in collections {
+                    options = options.report_collection(id, policy);
                 }
             }
             Err(message) => return failed(json!({"kind":"usage", "message":message})),

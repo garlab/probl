@@ -185,6 +185,8 @@ impl Outcome {
             out.json(&json!(site.label))?;
             out.raw(b",\"key_label\":")?;
             out.json(&json!(site.key_label))?;
+            out.raw(b",\"collection\":")?;
+            out.json(&json!(result.collection.to_string()))?;
             let selection = self.report_summaries.get(&id);
             out.raw(b",\"summary_selection\":")?;
             out.json(&json!(
@@ -282,7 +284,7 @@ fn group(
             "quantiles": quantiles,
             "percent": g.numeric.as_ref().is_some_and(|n| n.percent),
             "integrated_moments": g.numeric.as_ref().is_some_and(|n| n.integrated),
-            "quantile_method": "exact",
+            "quantile_method": if g.numeric.as_ref().is_some_and(|n| !n.has_quantiles()) { "unavailable" } else { "exact" },
             "deterministic": g.distribution.len() == 1 && (dates || numbers),
         });
     }

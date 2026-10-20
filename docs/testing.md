@@ -138,3 +138,11 @@ Do not start with an expensive whole-workspace mutation gate. Fix meaningful sur
 Rotate the existing oracle/fuzz seeds in scheduled jobs, keeping fixed regression seeds on pull requests. Later, add [cargo-fuzz/libFuzzer](https://rust-fuzz.github.io/book/cargo-fuzz.html) targets for parsing, compilation/diagnostics, and data loading. Preserve work, memory, and cancellation limits. A run that does not crash is a robustness success, not evidence that its probability calculations are correct.
 
 The first priorities are executing existing platform tests in CI, measuring a baseline, and strengthening semantic properties. Coverage reports and mutation testing answer different questions; both are useful, and neither replaces an explicit API contract.
+
+`report_collection` checks moments-only retention against exact weighted,
+repeated-visit reports, unchanged probabilities/model draws, thread replay,
+partial results, unsupported types and group limits across batches. The
+`report_storage` allocation test also checks that a tenfold trial-count increase
+with fixed groups does not grow retention proportionally. Native/WASM parity
+and browser tests cover collection metadata, unavailable quantiles, persisted
+settings and recovery from incompatible display columns.

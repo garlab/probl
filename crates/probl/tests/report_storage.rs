@@ -8,13 +8,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct Counting;
 static LIVE: AtomicUsize = AtomicUsize::new(0);
+static PEAK: AtomicUsize = AtomicUsize::new(0);
 static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let ptr = unsafe { System.alloc(layout) };
         if !ptr.is_null() {
-            LIVE.fetch_add(layout.size(), Ordering::Relaxed);
+            let live = LIVE.fetch_add(layout.size(), Ordering::Relaxed) + layout.size();
+            PEAK.fetch_max(live, Ordering::Relaxed);
             ALLOCATED.fetch_add(layout.size(), Ordering::Relaxed);
         }
         ptr
@@ -27,7 +29,8 @@ unsafe impl GlobalAlloc for Counting {
         let ptr = unsafe { System.realloc(ptr, layout, size) };
         if !ptr.is_null() {
             LIVE.fetch_add(size, Ordering::Relaxed);
-            LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
+            let live = LIVE.fetch_sub(layout.size(), Ordering::Relaxed) - layout.size();
+            PEAK.fetch_max(live, Ordering::Relaxed);
             ALLOCATED.fetch_add(size, Ordering::Relaxed);
         }
         ptr
@@ -95,4 +98,31 @@ fn exact_populations_are_shared_and_formatted_tables_are_created_on_demand() {
             .collect::<Vec<_>>()
     });
     assert!(pointers.iter().all(|p| *p == pointers[0]));
+    drop(reports);
+    // Fixed groups and batch size must bound collection memory as trials grow.
+    let program = probl::compile("moments storage", "let x~uniform(0,1); report x by 0").unwrap();
+    let mut limits = probl::Limits::default();
+    limits.max_threads = 1;
+    let options = Options::new()
+        .seed(42)
+        .limits(limits)
+        .report_collection(0, probl::ReportCollection::Moments);
+    drop(program.run(&options.clone().runs(1000)).unwrap());
+    let peaks: Vec<_> = [2000, 20000]
+        .into_iter()
+        .map(|runs| {
+            let before = LIVE.load(Ordering::Relaxed);
+            PEAK.store(before, Ordering::Relaxed);
+            let outcome = program.run(&options.clone().runs(runs)).unwrap();
+            let peak = PEAK.load(Ordering::Relaxed).saturating_sub(before);
+            let retained = LIVE.load(Ordering::Relaxed).saturating_sub(before);
+            assert!(retained < 128 * 1024, "{runs} trials retained {retained} bytes");
+            assert!(outcome.reports()[0].groups()[0].distribution().is_none());
+            peak
+        })
+        .collect();
+    assert!(
+        peaks[1] < 2 * peaks[0] + 64 * 1024,
+        "ten times as many trials grew collection memory: {peaks:?}"
+    );
 }

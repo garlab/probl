@@ -6,6 +6,7 @@
 //! cargo run --release -p probl-bench -- tennis      # the models whose name contains "tennis"
 //! cargo run --release -p probl-bench -- --quick     # one timed run each
 //! cargo run --release -p probl-bench -- --threads=1 # sampling on one thread
+//! cargo run --release -p probl-bench -- --collect=moments --runs=100000 retirement
 //! cargo run --release -p probl-bench -- --no-conjugate # no exact updates for conjugate priors
 //! cargo run --release -p probl-bench -- --no-solve   # unroll loops that cycle instead of solving them
 //! cargo run --release -p probl-bench -- --symbolic   # decision diagrams for the models they support (experimental)
@@ -106,6 +107,8 @@ struct Run {
 /// How the models are run.
 #[derive(Clone)]
 struct Settings {
+    collection: probl::ReportCollection,
+    runs: Option<u64>,
     /// One timed run each, instead of five.
     quick: bool,
     /// The most threads that sample at once (all the cores by default).
@@ -135,6 +138,14 @@ fn run_once(program: &Program, settings: &Settings, merge: bool, limit: Duration
         .limits(limits)
         .conjugate(settings.conjugate)
         .today(today);
+    if let Some(runs) = settings.runs {
+        options = options.runs(runs);
+    }
+    if settings.collection != probl::ReportCollection::Exact {
+        for id in 0..program.report_labels().len() {
+            options = options.report_collection(id, settings.collection);
+        }
+    }
     if let Some(data) = &settings.data {
         options = options.data(data.clone());
     }
@@ -183,7 +194,7 @@ struct Measured {
 }
 
 fn measure(name: &str, program: &Program, settings: &Settings) -> Measured {
-    let enumerated = !matches!(program.mode(), Mode::Sample { .. });
+    let enumerated = settings.runs.is_none() && !matches!(program.mode(), Mode::Sample { .. });
     // The heap is counted in a run of its own, which isn't timed: counting
     // slows allocation down, much more so when threads allocate at once.
     IN_USE.store(0, Ordering::Relaxed);
@@ -508,6 +519,16 @@ fn main() -> std::process::ExitCode {
     }
     let json = args.iter().any(|a| a == "--json");
     let mut settings = Settings {
+        collection: args
+            .iter()
+            .find_map(|a| a.strip_prefix("--collect="))
+            .unwrap_or("exact")
+            .parse()
+            .expect("--collect= needs exact or moments"),
+        runs: args
+            .iter()
+            .find_map(|a| a.strip_prefix("--runs="))
+            .map(|n| n.parse().expect("--runs= needs a number")),
         quick: args.iter().any(|a| a == "--quick"),
         threads: args.iter().find_map(|a| a.strip_prefix("--threads=")).map(|n| {
             n.parse()

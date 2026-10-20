@@ -12,6 +12,7 @@ use std::sync::Arc;
 /// One report's results.
 #[derive(Clone, Debug)]
 pub struct ReportResult {
+    pub collection: super::ReportCollection,
     /// The share of the worlds' weight (or of the runs) that reached the
     /// report. `None` when every visit counts, when nothing reached it, when
     /// no world finished, or when worlds failed before evidence they'd have
@@ -125,6 +126,7 @@ pub struct Numeric {
 
 #[derive(Clone, Debug)]
 enum Shape {
+    Moments,
     /// A continuous marginal, possibly mixed with point masses.
     Mixture(Arc<Mixture>),
     /// Point masses, as values (integers keep their exact value for printing).
@@ -132,12 +134,17 @@ enum Shape {
 }
 
 impl Numeric {
+    pub fn has_quantiles(&self) -> bool {
+        !matches!(self.shape, Shape::Moments)
+    }
+
     /// Weighted inverse CDF, including at 0.5 (unlike the midpoint median).
     pub fn inverse_quantile(&self, q: f64) -> Option<Quantity> {
         if !q.is_finite() || !(0.0..=1.0).contains(&q) {
             return None;
         }
         let point = match &self.shape {
+            Shape::Moments => None,
             Shape::Mixture(m) => Some(m.quantile(q)),
             Shape::Points(points) => crate::stats::quantile(points, q).and_then(Value::as_f64),
         }?;
@@ -153,7 +160,7 @@ impl Numeric {
     pub fn mixture(&self) -> Option<&Mixture> {
         match &self.shape {
             Shape::Mixture(m) => Some(m),
-            Shape::Points(_) => None,
+            Shape::Points(_) | Shape::Moments => None,
         }
     }
 
@@ -162,6 +169,7 @@ impl Numeric {
     /// be in [0, 1].
     pub fn quantile(&self, q: f64) -> Option<Quantity> {
         let point = match &self.shape {
+            Shape::Moments => None,
             Shape::Mixture(m) => Some(if q == 0.5 { m.median() } else { m.quantile(q) }),
             Shape::Points(points) => summary_quantile(points, q).and_then(|v| v.as_f64()),
         }?;
@@ -178,7 +186,7 @@ impl Numeric {
     pub fn quantile_value(&self, q: f64) -> Option<Value> {
         match &self.shape {
             Shape::Points(points) => summary_quantile(points, q),
-            Shape::Mixture(_) => None,
+            Shape::Mixture(_) | Shape::Moments => None,
         }
     }
 
@@ -191,7 +199,7 @@ impl Numeric {
                     .map(|(v, p)| (v.as_f64().unwrap_or(f64::NAN), *p))
                     .collect(),
             ),
-            Shape::Mixture(_) => None,
+            Shape::Mixture(_) | Shape::Moments => None,
         }
     }
 }
@@ -221,6 +229,7 @@ pub fn results(sites: &[ReportSite], sinks: &[Sink], format: Format, unresolved:
                 site.kind
             };
             ReportResult {
+                collection: sink.collection,
                 reach: reach(site.kind, sink, format),
                 groups: sink
                     .groups
@@ -269,7 +278,8 @@ pub(super) fn group(key: &Value, acc: &Acc, format: Format, kind: ReportKind, un
     let continuous = distribution
         .iter()
         .any(|(v, _)| matches!(v, Value::Analytic(_) | Value::Continuous(_)));
-    let values = (!continuous).then(|| values(acc, &distribution, complete, unresolved, support));
+    let values =
+        (!continuous && acc.online.is_none()).then(|| values(acc, &distribution, complete, unresolved, support));
     let numeric = if acc.is_event() {
         None
     } else {
@@ -516,6 +526,25 @@ fn numeric(
             Shape::Mixture(Arc::new(m)),
             integrated,
         );
+    }
+    if let Some(n) = acc.online {
+        if n.weight.is_zero() {
+            return None;
+        }
+        let mean_sampling = support.map(|support| {
+            let se = acc.mean_se().1;
+            Uncertainty {
+                status: if se > 0.0 {
+                    Status::Estimated
+                } else {
+                    Status::NotEstimable
+                },
+                se: (se > 0.0).then_some(se),
+                wilson: None,
+                support,
+            }
+        });
+        return summary(n.mean, n.sd, mean_sampling, n.percent, Shape::Moments, false);
     }
     let nums: Vec<(f64, f64)> = distribution
         .iter()

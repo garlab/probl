@@ -92,3 +92,10 @@ assert.equal(sd.deterministic, false, 'an SD line cannot stand in for a value ba
 assert.deepEqual(compatibleBaselines(sd, all), []);
 assert.equal(chartSettings({version:1,reports:{0:{summary:'forecast'}}}).reports[0].summary, 'forecast');
 console.log('all passed: configurable chart columns, bands, moments, median conventions and persistence');
+
+const retained = engine.run({source:'@mode sample(runs:100,seed:42)\nfor year in 0..2 {let x~d6; report x by year}',report_collections:{0:'moments'}});
+assert.equal(retained.reports.reports[0].collection, 'moments');
+assert.equal(chartSeries(retained.reports)[0].columns[0].kind, 'mean');
+assert.deepEqual(retained.reports.reports[0].groups[0].summary.quantiles, []);
+assert.equal(chartSettings({version:1,reports:{0:{collection:'moments'},1:{collection:'bad'}}}).reports[0].collection, 'moments');
+assert.equal(chartSettings({version:1,reports:{0:{collection:'moments'},1:{collection:'bad'}}}).reports[1].collection, undefined);

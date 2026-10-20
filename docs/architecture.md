@@ -129,3 +129,11 @@ The [September design and architecture audit](design/project-audit.md) is retain
 | I2: evaluation order | Left-to-right lowering and effect-aware optimization |
 | I3: resource limits and crashes | Host budgets, cancellation, parser limits and native panic handling; isolation is still a host concern |
 | I4: independent verification | Rational oracle, generated programs, robustness tests and regressions |
+
+An explicit per-report `ReportCollection::Moments` policy configures sampled
+sinks before execution. Numeric visits update weighted central mean/SD aggregates
+instead of inserting values into population maps. Existing per-run accumulators
+still compute sampling uncertainty and are released after each fixed-size batch.
+Batch-order merging preserves thread-count replay. The combiner validates group
+limits and numeric/Boolean compatibility before merging; exact sinks keep their
+existing path. Results expose the retention policy and unavailable quantiles.

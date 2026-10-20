@@ -11,7 +11,7 @@ export function renderSummaryControls(container, reports, settings, apply) {
     return el;
   };
   container.append(make('summary', 'Report summaries'));
-  container.append(make('p', 'Choose displayed statistics for each report. Median uses midpoint ties; q:0.5 uses the weighted inverse CDF. Probability reports keep their probability and uncertainty.'));
+  container.append(make('p', 'Choose displayed statistics for each report. Median uses midpoint ties; q:0.5 uses the weighted inverse CDF. Probability reports keep their probability and uncertainty. Moments-only collection saves memory in sample mode; it retains mean and SD but makes numeric populations and quantiles unavailable.'));
   const form = make('form');
   const fields = [];
   for (const report of reports.slice(0, 256)) {
@@ -39,8 +39,20 @@ export function renderSummaryControls(container, reports, settings, apply) {
     const change = () => { input.hidden = select.value !== 'custom'; input.required = !input.hidden; };
     select.addEventListener('change', change);
     change();
-    row.append(name, select, input);
-    fields.push({ id: report.id, select, input });
+    const collection = make('select');
+    collection.id = `collection-${report.id}`;
+    collection.setAttribute('aria-label', `Collection for ${report.label}`);
+    for (const [value, label] of [['exact', 'Exact collection'], ['moments', 'Moments only (sample mode)']]) {
+      const option = make('option', label);
+      option.value = value;
+      collection.append(option);
+    }
+    collection.value = settings.reports[report.id]?.collection ?? 'exact';
+    collection.addEventListener('change', () => {
+      if (collection.value === 'moments') { select.value = 'moments'; change(); }
+    });
+    row.append(name, select, collection, input);
+    fields.push({ id: report.id, select, input, collection });
     form.append(row);
   }
   const button = make('button', 'Apply and run');
@@ -48,7 +60,7 @@ export function renderSummaryControls(container, reports, settings, apply) {
   form.append(button);
   form.addEventListener('submit', (event) => {
     event.preventDefault();
-    apply(Object.fromEntries(fields.map(({ id, select, input }) => [id, select.value === 'custom' ? input.value.trim() : select.value])));
+    apply(Object.fromEntries(fields.map(({ id, select, input, collection }) => [id, { summary: select.value === 'custom' ? input.value.trim() : select.value, collection: collection.value }])));
   });
   container.append(form);
   container.open = open;

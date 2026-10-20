@@ -1,5 +1,5 @@
-//! Explicit summary columns. Collection remains exact; this selects what to
-//! compute for display, not a smaller-memory accumulator.
+//! Explicit summary columns. Selection alone leaves retention unchanged;
+//! collection policies separately control what data is kept.
 use super::{GroupResult, Numeric, Quantity, summary_quantile};
 use crate::value::Value;
 use std::{fmt, str::FromStr};

@@ -8,7 +8,10 @@ use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
+mod collection;
 mod results;
+use collection::OnlineNumbers;
+pub use collection::{ReportCollection, selected_summaries, validate_collections};
 mod selection;
 pub use selection::{ReportStatistic, ReportSummary, ReportSummaryError, statistic_value};
 
@@ -34,6 +37,7 @@ pub struct Acc {
     runs: FxHashMap<u32, RunStat>,
     /// When sampling: sums over the finished runs, for standard errors.
     moments: Option<Moments>,
+    online: Option<OnlineNumbers>,
     continuous: bool,
     nonnumeric: bool,
     /// The values are records or lists that hold outcomes of draws, all
@@ -51,6 +55,7 @@ impl Default for Acc {
             missing: Weight::ZERO,
             runs: FxHashMap::default(),
             moments: None,
+            online: None,
             continuous: false,
             nonnumeric: false,
             structured: false,
@@ -267,6 +272,12 @@ impl RunStat {
 
 impl Acc {
     fn add(&mut self, value: &Value, weight: Weight) {
+        if let Some(online) = &mut self.online {
+            if collection::number(value).is_some() {
+                online.add(value, weight);
+                return;
+            }
+        }
         // A discrete outcome, like `floor(x)`, is each of its values.
         if let Value::Analytic(a) = value {
             if a.is_discrete() {
@@ -332,7 +343,7 @@ impl Acc {
 
     /// Whether every reported value was a fact (or a distribution of facts).
     pub fn is_event(&self) -> bool {
-        self.values.is_empty() && !self.facts.is_zero()
+        self.values.is_empty() && self.online.is_none_or(|n| n.weight.is_zero()) && !self.facts.is_zero()
     }
 
     /// The probability that the reported fact is true, among the resolved
@@ -376,6 +387,9 @@ impl Acc {
             self.runs.is_empty() && other.runs.is_empty(),
             "batches end before they're combined"
         );
+        if let (Some(mine), Some(theirs)) = (&mut self.online, other.online) {
+            mine.absorb(theirs);
+        }
         self.total += other.total;
         self.yes += other.yes;
         self.facts += other.facts;
@@ -519,6 +533,8 @@ impl Acc {
 /// All values reported at one site, per `by` key (`()` without `by`).
 #[derive(Clone, Debug, Default)]
 pub struct Sink {
+    pub collection: ReportCollection,
+    max_groups: usize,
     pub groups: BTreeMap<Value, Acc>,
     /// Whether a group's values are records or lists of outcomes of draws.
     structured: bool,
@@ -529,6 +545,56 @@ pub struct Sink {
 }
 
 impl Sink {
+    pub fn new(collection: ReportCollection, max_groups: usize) -> Self {
+        Self {
+            collection,
+            max_groups,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn validate_collection(&self, key: &Value, value: &Value) -> crate::error::OpResult<()> {
+        use crate::error::OpError;
+        if self.collection == ReportCollection::Exact {
+            return Ok(());
+        }
+        if !self.groups.contains_key(key) && self.groups.len() >= self.max_groups {
+            return Err(OpError::limit("moments report exceeded max_report_groups"));
+        }
+        if !matches!(value, Value::Bool(_)) && collection::number(value).is_none() {
+            return Err(OpError::unsupported(
+                "moments collection requires sampled scalar numbers (exactly representable as f64) or facts; use exact collection for other values",
+            ));
+        }
+        if self.groups.get(key).is_some_and(|a| {
+            (matches!(value, Value::Bool(_)) && a.online.is_some_and(|n| !n.weight.is_zero()))
+                || (!matches!(value, Value::Bool(_)) && !a.facts.is_zero())
+        }) {
+            return Err(OpError::unsupported(
+                "moments collection cannot mix numeric and Boolean values in one group",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_merge(&self, other: &Sink) -> crate::error::OpResult<()> {
+        use crate::error::OpError;
+        if self.collection == ReportCollection::Exact {
+            return Ok(());
+        }
+        let added = other.groups.keys().filter(|k| !self.groups.contains_key(*k)).count();
+        if self.groups.len().saturating_add(added) > self.max_groups {
+            return Err(OpError::limit("moments report exceeded max_report_groups"));
+        }
+        for (key, a) in &other.groups {
+            if self.groups.get(key).is_some_and(|b| a.is_event() != b.is_event()) {
+                return Err(OpError::unsupported(
+                    "moments collection cannot mix numeric and Boolean values in one group",
+                ));
+            }
+        }
+        Ok(())
+    }
     pub(crate) fn validate_analytic(&self, key: &Value, value: &Value) -> crate::error::OpResult<()> {
         fn kinds(v: &Value) -> (bool, bool) {
             match v {
@@ -619,7 +685,10 @@ impl Sink {
 
     /// Record a value reported in a world, and when sampling, by which run.
     pub fn add(&mut self, key: Value, value: &Value, weight: Weight, run: Option<u32>) {
-        let acc = self.groups.entry(key).or_default();
+        let acc = self.groups.entry(key).or_insert_with(|| Acc {
+            online: (self.collection == ReportCollection::Moments).then(OnlineNumbers::default),
+            ..Acc::default()
+        });
         acc.total += weight;
         acc.add(value, weight);
         self.structured |= acc.structured;
@@ -1714,5 +1783,16 @@ mod tests {
             close(hi, upper);
             assert!(!q.complete && q.sampling.is_none());
         }
+    }
+    #[test]
+    fn moments_merges_reject_types_that_only_meet_across_batches() {
+        let mut a = Sink::new(ReportCollection::Moments, 10);
+        let mut b = Sink::new(ReportCollection::Moments, 10);
+        a.add(Value::Unit, &Value::Float(1.0), Weight::ONE, Some(0));
+        b.add(Value::Unit, &Value::Bool(true), Weight::ONE, Some(1));
+        a.end_batch();
+        b.end_batch();
+        assert!(a.validate_merge(&b).unwrap_err().message.contains("cannot mix"));
+        assert!(b.validate_merge(&a).is_err());
     }
 }

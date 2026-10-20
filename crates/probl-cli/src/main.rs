@@ -77,6 +77,9 @@ struct RunArgs {
     /// ID=moments, or ID=mean,sd,median,q:0.1,q:0.9. Other reports keep defaults.
     #[arg(long = "summary", value_parser = parse_report_summary, value_name = "ID=SPEC")]
     summaries: Vec<(usize, probl::ReportSummary)>,
+    /// Retain exact populations (default) or only moments for a sampled report.
+    #[arg(long = "collect", value_parser = parse_report_collection, value_name = "ID=exact|moments")]
+    collections: Vec<(usize, probl::ReportCollection)>,
     /// Stop `while` and `loop` once the worlds still inside weigh less than this share of what entered.
     #[arg(long)]
     epsilon: Option<f64>,
@@ -177,6 +180,7 @@ fn main() -> ExitCode {
                 env,
                 fractions,
                 summaries,
+                collections,
                 epsilon,
                 integrate,
                 stats,
@@ -215,6 +219,14 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
                 options = options.report_summary(id, summary);
+            }
+            configured.clear();
+            for (id, collection) in collections {
+                if !configured.insert(id) {
+                    eprintln!("error: duplicate collection override for report {id}");
+                    return ExitCode::FAILURE;
+                }
+                options = options.report_collection(id, collection);
             }
             if let Some(e) = epsilon {
                 options = options.epsilon(e);
@@ -297,6 +309,14 @@ fn main() -> ExitCode {
 
 fn parse_execution_date(s: &str) -> Result<Date, String> {
     s.parse().map_err(|e: probl::ParseDateError| e.to_string())
+}
+
+fn parse_report_collection(s: &str) -> Result<(usize, probl::ReportCollection), String> {
+    let (id, policy) = s.split_once('=').ok_or("expected ID=exact or ID=moments")?;
+    let id = id
+        .parse()
+        .map_err(|_| "report collection ID must be a zero-based integer")?;
+    Ok((id, policy.parse()?))
 }
 
 fn parse_report_summary(s: &str) -> Result<(usize, probl::ReportSummary), String> {

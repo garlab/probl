@@ -25,6 +25,7 @@ pub struct Options {
     epsilon: Option<f64>,
     integrate: Option<f64>,
     fractions: bool,
+    pub(crate) report_collections: BTreeMap<usize, crate::ReportCollection>,
     pub(crate) report_summaries: BTreeMap<usize, crate::ReportSummary>,
     conjugate: bool,
     pub(crate) limits: Limits,
@@ -83,6 +84,7 @@ impl Default for Options {
             integrate: None,
             fractions: false,
             report_summaries: BTreeMap::new(),
+            report_collections: BTreeMap::new(),
             conjugate: true,
             limits: Limits::default(),
             data: None,
@@ -175,9 +177,17 @@ impl Options {
     /// Select summary columns for one zero-based source-order report ID. Labels
     /// need not be unique; [`Program::report_labels`](crate::Program::report_labels)
     /// lists them in ID order. An override replaces any earlier one for this ID.
-    /// Facts keep their probability output. Collection remains exact.
+    /// Facts keep their probability output. This does not change collection.
     pub fn report_summary(mut self, id: usize, summary: crate::ReportSummary) -> Options {
         self.report_summaries.insert(id, summary);
+        self
+    }
+
+    /// Set retention for one zero-based report ID. `Moments` requires sampling
+    /// scalar numbers or facts; numeric distributions and quantiles become
+    /// unavailable. It defaults to mean/SD columns. `Exact` is the default.
+    pub fn report_collection(mut self, id: usize, collection: crate::ReportCollection) -> Self {
+        self.report_collections.insert(id, collection);
         self
     }
 
@@ -253,6 +263,7 @@ impl Options {
             epsilon: self.epsilon,
             fractions: self.fractions,
             report_summaries: self.report_summaries.clone(),
+            report_collections: self.report_collections.clone(),
             limits: self.limits.engine(),
             cancel: self.cancel.as_ref().map(|c| c.0.clone()),
             mode: self.mode(&program.settings.mode),
@@ -279,6 +290,7 @@ impl fmt::Debug for Options {
             .field("integrate", &self.integrate)
             .field("fractions", &self.fractions)
             .field("report_summaries", &self.report_summaries)
+            .field("report_collections", &self.report_collections)
             .field("conjugate", &self.conjugate)
             .field("limits", &self.limits)
             .field("data", &self.data.is_some())
@@ -315,6 +327,9 @@ pub struct Limits {
     pub max_outcomes: usize,
     /// Elements of one collection, in the program and in its data.
     pub max_collection: usize,
+    /// Groups retained per moments-only report (default 10,000). Exact reports
+    /// are unaffected. Active and pending batches have their own bounded state.
+    pub max_report_groups: usize,
     /// Units of work: world-steps plus outcomes computed.
     pub max_work: u64,
     /// Iterations of one loop.
@@ -387,6 +402,7 @@ impl Limits {
             max_worlds: engine.max_worlds,
             max_outcomes: engine.max_outcomes,
             max_collection: engine.max_collection,
+            max_report_groups: engine.max_report_groups,
             max_work: engine.max_work,
             max_iterations: engine.max_iterations,
             max_call_depth: engine.max_call_depth,
@@ -410,6 +426,7 @@ impl Limits {
             max_worlds: self.max_worlds,
             max_outcomes: self.max_outcomes,
             max_collection: self.max_collection,
+            max_report_groups: self.max_report_groups,
             max_work: self.max_work,
             max_iterations: self.max_iterations,
             max_call_depth: self.max_call_depth,

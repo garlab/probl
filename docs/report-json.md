@@ -36,6 +36,7 @@ Reports are in source order, including unreached report sites:
 | `id` | Zero-based report index within this compiled program |
 | `label` | The explicit `as` label or expression text |
 | `key_label` | Source text of the `by` expression, or `null` |
+| `collection` | `exact` (default) or explicit `moments` retention |
 | `summary_selection` | Ordered explicit statistic tokens, or `null` for defaults |
 | `visits` | `once`, `per_key`, or `per_visit` |
 | `reach` | `{share, standard_error}` where known, otherwise `null` |
@@ -179,3 +180,10 @@ memory grew from 156.875 to 157.438 MiB. Each measurement used a fresh instance
 after a 200-trial warmup, excluding module compilation, in before/after/after/before
 order. Printed output matched exactly. These few runs measure total adapter cost,
 including JSON parsing; they are a spot check, not a performance guarantee.
+
+Explicit moments-only collection is described in [report summaries](report-summaries.md#moments-only-collection).
+It defaults `summary_selection` to `["mean", "sd"]`. Numeric groups retain means,
+SDs and support, with `quantile_method: "unavailable"` and `quantiles: []`.
+Probability groups retain their existing quantities and uncertainty. Omitted
+numeric populations do not imply determinism; `deterministic` is false for them.
+This additive policy metadata does not change schema version 1.

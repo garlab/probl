@@ -120,3 +120,10 @@ PROBL_URL=https://playground.probl.dev bun test/page.mjs
 
 User-supplied data files, bounded-memory summaries and parallel browser sampling
 remain future work. Categorical populations still use the text view.
+
+The per-report **Moments only (sample mode)** collection choice retains mean/SD
+and probability estimates without numeric populations. It is separate from the
+**Mean and SD** display preset, which alone keeps exact collection. The choice is
+saved in `charts.reports[id].collection` and sent as `report_collections`; share
+links and local reloads preserve it. Quantile columns require exact collection.
+See [collection policies](report-summaries.md#moments-only-collection).

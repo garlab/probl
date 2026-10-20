@@ -92,6 +92,8 @@ impl Stats {
 /// How the engine runs, with the host's limits already applied.
 #[derive(Clone, Debug)]
 pub struct Config {
+    pub report_collections: BTreeMap<usize, crate::report::ReportCollection>,
+    pub max_report_groups: usize,
     pub today: Option<i32>,
     /// The host's environment snapshot, for `env`.
     pub env: Arc<BTreeMap<String, String>>,
@@ -121,6 +123,19 @@ pub struct Config {
     /// Compute what has no formula by numerical integration, to this
     /// relative tolerance (section 13).
     pub integrate: Option<f64>,
+}
+
+impl Config {
+    pub(crate) fn sinks(&self, count: usize) -> Vec<Sink> {
+        (0..count)
+            .map(|id| {
+                Sink::new(
+                    self.report_collections.get(&id).copied().unwrap_or_default(),
+                    self.max_report_groups,
+                )
+            })
+            .collect()
+    }
 }
 
 /// The most steps eliminating one loop's chain may take before the loop is
@@ -380,6 +395,7 @@ impl<'p> Engine<'p> {
         print: &'p mut (dyn FnMut(&str) + Send),
     ) -> Engine<'p> {
         let sampler = config.sample_seed.map(Rng::new);
+        let sinks = config.sinks(prog.reports.len());
         Engine {
             prog,
             live,
@@ -408,7 +424,7 @@ impl<'p> Engine<'p> {
             local_density_at: None,
             returned_densities: None,
             integrated: None,
-            sinks: vec![Sink::default(); prog.reports.len()],
+            sinks,
             dice: FxHashMap::default(),
             pools: FxHashMap::default(),
             record_names: prog.records.iter().map(|r| Arc::from(r.name.as_str())).collect(),
@@ -484,7 +500,7 @@ impl<'p> Engine<'p> {
     /// What it prints comes back with its result, even when it fails.
     pub fn run_batch(&mut self, rng: Rng, first: u64, n: u64, printed: usize) -> (Result<Batch>, Printed) {
         self.sampler = Some(rng);
-        self.sinks = vec![Sink::default(); self.prog.reports.len()];
+        self.sinks = self.config.sinks(self.prog.reports.len());
         self.observed = false;
         self.densities = false;
         self.unresolved = Weight::ZERO;
@@ -2151,6 +2167,7 @@ impl<'p> Engine<'p> {
                                 let k = Value::Bool(yes);
                                 self.same_units(w, value.span)?;
                                 let sink = &self.sinks[*site as usize];
+                                sink.validate_collection(&k, &v).map_err(|e| e.at(value.span))?;
                                 sink.validate_analytic(&k, &v).map_err(|e| e.at(value.span))?;
                                 sink.validate_structure(&k, &v).map_err(|e| e.at(value.span))?;
                                 self.sinks[*site as usize].add(k, &v, w.weight.scale(p), run);
@@ -2166,6 +2183,9 @@ impl<'p> Engine<'p> {
                     }
                     self.sinks[*site as usize]
                         .validate_analytic(&k, &v)
+                        .map_err(|e| e.at(value.span))?;
+                    self.sinks[*site as usize]
+                        .validate_collection(&k, &v)
                         .map_err(|e| e.at(value.span))?;
                     self.sinks[*site as usize].add(k, &v, w.weight, run);
                 }

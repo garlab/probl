@@ -18,6 +18,7 @@ cargo run --release -p probl-bench              # every model in benches/ and ex
 cargo run --release -p probl-bench -- tennis    # models whose name contains "tennis"
 cargo run --release -p probl-bench -- --quick   # one timed run each
 cargo run --release -p probl-bench -- --threads=1   # sample on one thread
+cargo run --release -p probl-bench -- --collect=moments --runs=100000 retirement_all   # explicit retention and trial count
 cargo run --release -p probl-bench -- --no-conjugate   # sample without exact updates for conjugate priors
 cargo run --release -p probl-bench -- --symbolic   # decision diagrams for the models they support (experimental)
 ```
@@ -431,3 +432,71 @@ remain future work. The playground default stays at 5,000 trials.
 - The effective sample size is the right warning for likelihood weighting, but at a few hundred its standard errors are unreliable too (the semantics says so). A warning in the output when it's small would help.
 - Tiny evidence is printed as a percentage in scientific notation (`evidence 2.9e-23%`); plain scientific notation, `2.9e-25`, would read better. *Done: it's `evidence 2.92e-25` now, and sampling prints its estimate the same way.*
 - A local variable can hide a built-in function (a `count` variable made `count(…)` fail in `yahtzee` with "can't call an int"). A warning, or a better error, would help.
+
+
+## Since moments-only report collection
+
+2026-10-20, Apple M2 Pro. Explicit `--collect ID=moments` retains weighted
+central moments and existing per-run uncertainty bookkeeping, while discarding
+numeric populations. Exact collection remains the default. The benchmark runner
+accepts `--collect=exact|moments` for **all** reports and `--runs=N` to override the
+sample count. The retirement playground example still defaults to 5,000 trials.
+
+Native `benches/retirement_all.probl`, one sampling thread, seed 42, full LTO and
+one codegen unit. Each entry below uses the median of two timed runs and the
+minimum of two separately allocation-counted peaks, ordered exact/moments/
+moments/exact. The 100,000-trial moments run has one timing and one counted peak.
+Timing excludes allocation instrumentation; peaks are allocator heap, not RSS.
+
+| Trials | Exact seconds | Moments seconds | Exact peak MiB | Moments peak MiB |
+|---:|---:|---:|---:|---:|
+| 10,000 | 1.901 | 2.130 | 88.8 | 53.7 |
+| 20,000 | 3.827 | 4.266 | 122.9 | 53.7 |
+| 100,000 | — | 21.172 | — | 53.7 |
+
+Actual WASM retirement example through the JS loader in Bun, with a fresh module
+instance per measurement and a 200-trial warmup. Compilation of the WASM module
+is excluded; model compilation, execution and text/JSON decoding are included.
+Seed 42 and date 2026-10-19 are pinned. Order and repetitions match the native
+comparison; 100,000 trials again has one measurement. Memory is the module's
+linear-memory high-water size, including its allocator and runtime.
+
+| Trials | Exact seconds | Moments seconds | Exact memory MiB | Moments memory MiB |
+|---:|---:|---:|---:|---:|
+| 5,000 | 1.777 | 1.957 | 69.3 | 50.8 |
+| 20,000 | 7.059 | 7.835 | 120.4 | 50.8 |
+| 100,000 | — | 39.698 | — | 50.8 |
+
+Moments-only collection uses roughly constant memory with these fixed report
+groups, including a tenfold native trial-count increase. Active batches remain
+the main retained bookkeeping; parallel workers multiply that cost. This first
+implementation is about 10–12% slower at the compared sizes, so this is a memory
+improvement, not a runtime speedup. Runtime still grows with trial count. Large
+browser runs can exceed the playground's optional 30-second time limit even when
+memory fits.
+
+The WASM comparisons assert identical run metadata, depletion probabilities and
+support, and mean/SD agreement within floating-point tolerance. Rust regressions
+cover weighted repeated visits, identical sampling-error quantities, partial
+runs, cancellation, group limits across batches and one/four-thread replay.
+Population queries and quantiles deliberately become unavailable; the policy is
+recorded in report JSON. Aggregate byte budgets and bounded quantile sketches
+remain future work.
+
+
+The default exact path was also compared with `eff03bb` using the saved full-LTO
+storage-cleanup binary. Before/after/after/before runs kept text and world-steps
+identical on one and twelve threads. One-thread medians were 1.897 → 1.928 s for
+all reports and 1.116 → 1.140 s for the terminal-only control (about 2% slower),
+with unchanged peak heap to the displayed precision. Initial twelve-thread
+single timings gave 0.323 → 0.356 s and 0.151 → 0.189 s respectively. Rechecking
+with five timed runs per invocation gave all-report medians of 0.294/0.307 s
+before and 0.291/0.302 s after; terminal medians were 0.154/0.147 s before and
+0.145/0.151 s after. Those overlapping ranges do not establish a parallel runtime
+regression or speedup. Sampling concurrency still causes peak-heap variation.
+
+
+A final CLI scale check completed the retirement example with 1,000,000 trials,
+seed 42, twelve workers and moments collection on all three reports (1,116,000,000
+world-steps). This was a completion check, not an allocation-instrumented or timed
+comparison. The fixed-group memory measurements above stop at 100,000 trials.

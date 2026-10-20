@@ -123,4 +123,54 @@ Selections do not change the model, its random draws, retained populations or
 sampling uncertainty. They avoid exporting and rendering unrequested quantiles;
 moments remain available to Rust queries. JSON work budgets account for the
 number of requested quantiles. This feature does not provide bounded-memory
-sampling; exact population retention is unchanged.
+sampling; use the explicit collection policy below to discard numeric populations.
+
+## Moments-only collection
+
+Collection is a separate, opt-in choice, configured before execution:
+
+```sh
+probl run examples/21_retirement.probl --collect 0=moments --runs 100000
+```
+
+The equivalent Rust option is
+`Options::new().report_collection(0, probl::ReportCollection::Moments)`;
+WASM accepts `"report_collections": {"0": "moments"}`. The playground has an
+**Exact collection / Moments only (sample mode)** selector for each report.
+Selecting moments-only collection also selects mean/SD display columns. It does
+not switch the execution mode; the program or run options must request sampling.
+Collection choices persist with the source and share links like summary choices.
+`--collect ID=exact` / `ReportCollection::Exact` restores default retention.
+
+Moments-only collection supports sampled scalar numbers and Boolean facts.
+Weighted observations and repeated visits use the same per-run denominators,
+effective sample sizes and sampling-error calculations as exact collection.
+Means and population SDs use weighted central-moment updates merged in batch
+order. Their last rounding bits can differ from exact population scans, but the
+model's random draws, probability counts and thread-count replay do not change.
+Mean and SD are the default columns; explicit `mean`, `sd` or both are allowed.
+Probability reports retain their probability and uncertainty output.
+
+Numeric populations are discarded. `Group::distribution()` returns `None` and
+`NumericSummary::quantile()` returns `SummaryError::Unavailable`. The report's
+`collection()` accessor and JSON `collection` field identify the policy. Numeric
+JSON summaries have `quantile_method: "unavailable"` and an empty quantile array.
+A constant numeric report is not advertised as a deterministic baseline from a
+missing population. Other reports and language-level distribution queries are
+unaffected.
+
+Dates, strings, records, lists, complex numbers, unevaluated distributions and
+integers not exactly representable as `f64` are rejected; use exact collection
+for these. Draw a distribution (`let x ~ d6; report x`) instead of reporting its
+law (`report d6`). Mixed numeric/Boolean reports are rejected. Mode, ID and
+quantile-column conflicts fail before execution and input loading. Unsupported
+values fail when encountered, including when incompatible batches are merged;
+these are configuration/unsupported errors, not silently dropped trials.
+
+With fixed groups, retention no longer grows with trial count. Active batches
+still keep per-run bookkeeping, and parallel workers/pending batches multiply
+that cost. `Limits::max_report_groups` caps groups per moments-only report across
+batches (default 10,000), with a `Limit` error before a new group exceeds it.
+Exact reports are unaffected. This is a group cap, not a byte budget for all
+reports or their keys. Aggregate byte budgets and bounded quantile sketches
+remain future work; the playground default remains 5,000 retirement trials.

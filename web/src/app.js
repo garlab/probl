@@ -213,8 +213,8 @@ async function main() {
     renderSummaryControls($('report-summaries'), reports, charts, (summaries) => {
       // Also clear overrides for IDs absent from this compiled program, which
       // can occur in an edited or malformed share link.
-      const choices = Object.fromEntries(Object.entries(charts.reports).map(([id, choice]) => [id, { ...choice, summary: '' }]));
-      for (const [id, summary] of Object.entries(summaries)) choices[id] = { ...choices[id], summary };
+      const choices = Object.fromEntries(Object.entries(charts.reports).map(([id, choice]) => [id, { ...choice, summary: '', collection: 'exact' }]));
+      for (const [id, choice] of Object.entries(summaries)) choices[id] = { ...choices[id], ...choice };
       charts = chartSettings({ version: 1, reports: choices });
       saveChartChoices();
       start();
@@ -385,6 +385,7 @@ async function main() {
     const onError = $('on-error').value;
     if (onError !== 'program') r.on_error = onError;
     r.conjugate = $('conjugate').checked;
+    r.report_collections = Object.fromEntries(Object.entries(charts.reports).filter(([, choice]) => choice.collection).map(([id, choice]) => [id, choice.collection]));
     r.report_summaries = Object.fromEntries(Object.entries(charts.reports).filter(([, choice]) => choice.summary).map(([id, choice]) => [id, choice.summary]));
     return r;
   }

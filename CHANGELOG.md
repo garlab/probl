@@ -6,6 +6,8 @@ All notable changes to the published crates are recorded here. The format follow
 
 ### Added
 
+- Explicit moments-only report collection through Rust, `--collect ID=moments`, WASM and the playground retains weighted means, population SDs and probability uncertainty without numeric populations. Numeric quantiles/distributions become unavailable; exact collection remains the default. Group limits bound new keys across batches. See [collection policies](docs/report-summaries.md#moments-only-collection).
+
 - The library's optional `json` feature exports bounded, versioned report summaries with typed group keys, quantiles, reach, uncertainty and partial-result metadata. WASM returns the same document alongside its existing text; serialization limits leave that text available. See the [schema](docs/report-json.md).
 - The playground draws forecast percentile bands, deterministic lines and probability step curves from structured reports. Compatible baseline overlays and currency formatting are explicit choices, saved locally and in share links. Keyboard inspection and tables retain uncertainty, reach and partial-result qualifications; all reports remain available as text.
 - Report statistics are configurable per report through `probl run --summary ID=SPEC`, Rust's `ReportSummary` / `Options::report_summary`, and the playground's “Report summaries” controls. Presets include 10/25/median/75/90 forecast columns and mean/SD; custom columns preserve their order. Explicit quantiles use the inverse CDF while `median` retains midpoint ties. Text, JSON, charts and tables agree, with unchanged defaults and seeded draws. See [summary selection](docs/report-summaries.md).
