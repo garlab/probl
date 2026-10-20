@@ -193,6 +193,9 @@ fn entry_hash(v: &Value, n: u64) -> u64 {
 }
 
 impl Multiset {
+    pub(crate) fn capacity(&self) -> usize {
+        self.entries.capacity()
+    }
     /// From counts, leaving out zeros.
     pub fn new(counts: BTreeMap<Value, u64>) -> Multiset {
         let entries: Vec<(Value, u64)> = counts.into_iter().filter(|(_, n)| *n > 0).collect();

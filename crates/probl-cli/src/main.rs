@@ -116,6 +116,10 @@ struct RunArgs {
     /// The most work (world-steps and outcomes computed) the run may do.
     #[arg(long)]
     max_work: Option<u64>,
+    /// Live storage budget for moments-only report collectors, including keys
+    /// and worker batches, like 128M (default 1G). Excludes exact reports.
+    #[arg(long, value_parser = parse_size)]
+    max_report_summary: Option<u64>,
     /// The most data the program may read, all files together, like 64M.
     #[arg(long, value_parser = parse_size)]
     max_input: Option<u64>,
@@ -193,6 +197,7 @@ fn main() -> ExitCode {
                 timeout,
                 max_worlds,
                 max_work,
+                max_report_summary,
                 max_input,
                 stack_mb,
                 max_depth,
@@ -256,6 +261,15 @@ fn main() -> ExitCode {
             }
             if let Some(n) = max_work {
                 limits.max_work = n;
+            }
+            if let Some(n) = max_report_summary {
+                limits.max_report_summary_bytes = match usize::try_from(n) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        eprintln!("error: --max-report-summary is too large for this platform");
+                        return ExitCode::FAILURE;
+                    }
+                };
             }
             if let Some(mb) = stack_mb {
                 limits.stack_size = mb * 1024 * 1024;

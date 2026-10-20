@@ -70,6 +70,9 @@ pub struct Limits {
     pub max_collection: usize,
     /// Maximum groups per moments-only report, including across batches.
     pub max_report_groups: usize,
+    /// Accounted live collector bytes across all moments reports and batches.
+    /// Includes keys and run bookkeeping; excludes exact reports and rendering.
+    pub max_report_summary_bytes: usize,
     /// Units of work: world-steps plus outcomes computed.
     pub max_work: u64,
     /// Iterations of one loop.
@@ -105,6 +108,7 @@ impl Default for Limits {
             max_outcomes: 2_000_000,
             max_collection: 10_000_000,
             max_report_groups: 10_000,
+            max_report_summary_bytes: 1024 * 1024 * 1024,
             max_work: 20_000_000_000,
             max_iterations: 10_000_000,
             max_call_depth: 500,
@@ -377,6 +381,7 @@ fn run_here(
     let config = interp::Config {
         report_collections: options.report_collections.clone(),
         max_report_groups: limits.max_report_groups,
+        report_summary_budget: report::SummaryBudget::new(limits.max_report_summary_bytes, options.cancel.clone()),
         today: options.today,
         env: options.env.clone(),
         epsilon: options.epsilon.unwrap_or(settings.epsilon),

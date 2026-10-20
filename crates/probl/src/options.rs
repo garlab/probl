@@ -330,6 +330,13 @@ pub struct Limits {
     /// Groups retained per moments-only report (default 10,000). Exact reports
     /// are unaffected. Active and pending batches have their own bounded state.
     pub max_report_groups: usize,
+    /// Accounted live storage across moments-only reports and worker batches:
+    /// group keys, accumulators and per-run bookkeeping. Defaults to 1 GiB
+    /// (128 MiB in browsers). Shared key payloads are charged per group.
+    /// Excludes exact reports, model execution, result formatting and caller
+    /// copies; this is not a process-memory limit. A tight limit can fail with
+    /// more workers or a different schedule; successful results are unchanged.
+    pub max_report_summary_bytes: usize,
     /// Units of work: world-steps plus outcomes computed.
     pub max_work: u64,
     /// Iterations of one loop.
@@ -375,6 +382,7 @@ impl Limits {
             max_worlds: 1_000_000,
             max_outcomes: 1_000_000,
             max_collection: 1_000_000,
+            max_report_summary_bytes: 128 * 1024 * 1024,
             max_work: 2_000_000_000,
             max_call_depth: 150,
             max_cached_calls: 200_000,
@@ -403,6 +411,7 @@ impl Limits {
             max_outcomes: engine.max_outcomes,
             max_collection: engine.max_collection,
             max_report_groups: engine.max_report_groups,
+            max_report_summary_bytes: engine.max_report_summary_bytes,
             max_work: engine.max_work,
             max_iterations: engine.max_iterations,
             max_call_depth: engine.max_call_depth,
@@ -427,6 +436,7 @@ impl Limits {
             max_outcomes: self.max_outcomes,
             max_collection: self.max_collection,
             max_report_groups: self.max_report_groups,
+            max_report_summary_bytes: self.max_report_summary_bytes,
             max_work: self.max_work,
             max_iterations: self.max_iterations,
             max_call_depth: self.max_call_depth,

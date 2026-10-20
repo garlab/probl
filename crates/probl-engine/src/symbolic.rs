@@ -620,7 +620,9 @@ impl Run {
             if valid.is_err() {
                 return Err(unsupported("this report", span));
             }
-            self.sinks[site].add(Value::Unit, &value, weight, None);
+            self.sinks[site]
+                .add(Value::Unit, &value, weight, None)
+                .map_err(|e| Fallback::Stopped(e.at(span)))?;
         }
         Ok(())
     }

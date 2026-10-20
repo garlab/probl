@@ -234,3 +234,21 @@ fn collection_flags_are_explicit_and_checked() {
         assert_ne!(code, Some(0));
     }
 }
+
+#[test]
+fn summary_memory_limit_is_configurable() {
+    let source = "@mode sample(runs:2100,seed:42)\nlet x~d6; report x";
+    for (cap, success) in [("0", false), ("1K", false), ("16M", true), ("invalid", false)] {
+        let (code, _, err) = run_source(
+            "summary-memory.probl",
+            source,
+            &["--collect", "0=moments", "--max-report-summary", cap],
+        );
+        assert_eq!(code == Some(0), success, "{cap}: {err}");
+        if matches!(cap, "0" | "1K") {
+            assert!(err.contains("max_report_summary_bytes"), "{err}");
+        }
+    }
+    let (code, _, err) = run_source("exact-memory.probl", source, &["--max-report-summary", "0"]);
+    assert_eq!(code, Some(0), "{err}");
+}

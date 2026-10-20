@@ -94,6 +94,7 @@ impl Stats {
 pub struct Config {
     pub report_collections: BTreeMap<usize, crate::report::ReportCollection>,
     pub max_report_groups: usize,
+    pub(crate) report_summary_budget: crate::report::SummaryBudget,
     pub today: Option<i32>,
     /// The host's environment snapshot, for `env`.
     pub env: Arc<BTreeMap<String, String>>,
@@ -133,6 +134,7 @@ impl Config {
                     self.report_collections.get(&id).copied().unwrap_or_default(),
                     self.max_report_groups,
                 )
+                .with_summary_budget(self.report_summary_budget.clone())
             })
             .collect()
     }
@@ -537,8 +539,8 @@ impl<'p> Engine<'p> {
             totals.weight += w.weight;
             totals.squares += w.weight * w.weight;
         }
-        for sink in &mut self.sinks {
-            sink.end_batch();
+        for (sink, site) in self.sinks.iter_mut().zip(&self.prog.reports) {
+            sink.end_batch().map_err(|e| e.at(site.span))?;
         }
         Ok(Batch {
             sinks: std::mem::take(&mut self.sinks),
@@ -2170,7 +2172,9 @@ impl<'p> Engine<'p> {
                                 sink.validate_collection(&k, &v).map_err(|e| e.at(value.span))?;
                                 sink.validate_analytic(&k, &v).map_err(|e| e.at(value.span))?;
                                 sink.validate_structure(&k, &v).map_err(|e| e.at(value.span))?;
-                                self.sinks[*site as usize].add(k, &v, w.weight.scale(p), run);
+                                self.sinks[*site as usize]
+                                    .add(k, &v, w.weight.scale(p), run)
+                                    .map_err(|e| e.at(value.span))?;
                             }
                         }
                         continue;
@@ -2187,7 +2191,9 @@ impl<'p> Engine<'p> {
                     self.sinks[*site as usize]
                         .validate_collection(&k, &v)
                         .map_err(|e| e.at(value.span))?;
-                    self.sinks[*site as usize].add(k, &v, w.weight, run);
+                    self.sinks[*site as usize]
+                        .add(k, &v, w.weight, run)
+                        .map_err(|e| e.at(value.span))?;
                 }
                 let mut worlds = worlds;
                 drop_failed(&mut worlds, &failed);

@@ -480,8 +480,8 @@ support, and mean/SD agreement within floating-point tolerance. Rust regressions
 cover weighted repeated visits, identical sampling-error quantities, partial
 runs, cancellation, group limits across batches and one/four-thread replay.
 Population queries and quantiles deliberately become unavailable; the policy is
-recorded in report JSON. Aggregate byte budgets and bounded quantile sketches
-remain future work.
+recorded in report JSON. A live summary budget was added subsequently (below);
+bounded quantile sketches remain future work.
 
 
 The default exact path was also compared with `eff03bb` using the saved full-LTO
@@ -500,3 +500,47 @@ A final CLI scale check completed the retirement example with 1,000,000 trials,
 seed 42, twelve workers and moments collection on all three reports (1,116,000,000
 world-steps). This was a completion check, not an allocation-instrumented or timed
 comparison. The fixed-group memory measurements above stop at 100,000 trials.
+
+## Since the live report-summary budget
+
+2026-10-20, the same machine. Compared with `69646e5`, moments-only collectors
+now share a live storage allowance across sites and workers, including keys,
+active run maps and pending batches. The defaults are 1 GiB native and 128 MiB
+browser; the [collector contract](report-summaries.md#moments-only-collection)
+defines what is charged and what remains outside this allowance. Exact
+collection keeps its existing storage policy.
+
+Native builds used one codegen unit and full LTO. The before/after/after/before
+comparison uses two timings and two separately allocation-counted runs per
+entry, reporting median time and minimum peak heap. Retirement has 10,000
+trials, seed 42 and one sampling thread. Output and world-steps agree exactly
+between builds for each policy.
+
+| Collection | Before seconds | After seconds | Before peak MiB | After peak MiB |
+|---|---:|---:|---:|---:|
+| Exact | 1.843 | 1.800 | 88.83 | 88.84 |
+| Moments | 2.039 | 2.022 | 53.75 | 53.77 |
+
+At 20,000 and 100,000 trials the new moments collector still peaks at
+53.77 MiB on one thread; these single measurements took 4.010 and
+20.594 seconds. Accounting adds about 23 KiB to the measured peak, with
+fixed groups and batches.
+
+A twelve-worker exact-path recheck uses five timed runs per invocation, again
+before/after/after/before. All-report medians are 0.309/0.309 seconds before and
+0.317/0.294 after; terminal-only control medians are 0.145/0.159 before and
+0.148/0.144 after. These overlapping ranges do not establish a parallel runtime
+regression or speedup. Successful output and work counts agree across builds.
+
+Actual WASM, using fresh instances, a 200-trial warmup, 5,000 trials and the same
+before/after/after/before order, changed from 1.724 to 1.727 seconds for exact
+collection and 1.903 to 1.895 seconds for moments. Linear-memory high-water sizes
+remain 69.31 and 50.75 MiB respectively. Full returned documents agree between
+builds. Moments runs at 20,000 and 100,000 trials also stayed at 50.75 MiB, taking
+7.583 and 37.851 seconds in single measurements. These runs fit the new browser
+collector allowance; the playground's optional timeout is a separate constraint.
+
+A final native CLI run completed 100,000 trials on twelve workers with moments
+collection on all three reports and the default 1 GiB allowance (111,600,000
+world-steps). This is a completion check; the controlled allocation measurements
+above use one worker.

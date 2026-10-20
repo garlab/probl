@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 
 mod collection;
+mod memory;
+pub(crate) use memory::SummaryBudget;
 mod results;
 use collection::OnlineNumbers;
 pub use collection::{ReportCollection, selected_summaries, validate_collections};
@@ -43,11 +45,14 @@ pub struct Acc {
     /// The values are records or lists that hold outcomes of draws, all
     /// with the same fields: the report summarizes each field on its own.
     structured: bool,
+    // Drop the reservation after the storage it accounts for.
+    memory: Option<Box<memory::Reservation>>,
 }
 
 impl Default for Acc {
     fn default() -> Acc {
         Acc {
+            memory: None,
             total: Weight::ZERO,
             yes: Weight::ZERO,
             facts: Weight::ZERO,
@@ -271,6 +276,26 @@ impl RunStat {
 }
 
 impl Acc {
+    fn visit(&mut self, value: &Value, weight: Weight, run: Option<u32>) {
+        self.total += weight;
+        self.add(value, weight);
+        if let Some(run) = run {
+            let stat = self.runs.entry(run).or_insert_with(|| RunStat {
+                weight,
+                visits: 0,
+                integrated: false,
+                yes: 0.0,
+                facts: 0.0,
+                sum: 0.0,
+                numbers: 0.0,
+                others: Vec::new(),
+            });
+            stat.visits += 1;
+            stat.integrated |= matches!(value, Value::Dist(_));
+            stat.record(value, 1.0);
+        }
+    }
+
     fn add(&mut self, value: &Value, weight: Weight) {
         if let Some(online) = &mut self.online {
             if collection::number(value).is_some() {
@@ -459,6 +484,9 @@ impl Acc {
                 }
             }
         }
+        if let Some(memory) = &mut self.memory {
+            memory.end_batch();
+        }
     }
 
     fn moments(&self) -> std::borrow::Cow<'_, Moments> {
@@ -533,6 +561,7 @@ impl Acc {
 /// All values reported at one site, per `by` key (`()` without `by`).
 #[derive(Clone, Debug, Default)]
 pub struct Sink {
+    summary_budget: Option<SummaryBudget>,
     pub collection: ReportCollection,
     max_groups: usize,
     pub groups: BTreeMap<Value, Acc>,
@@ -551,6 +580,13 @@ impl Sink {
             max_groups,
             ..Self::default()
         }
+    }
+
+    pub(crate) fn with_summary_budget(mut self, budget: SummaryBudget) -> Self {
+        if self.collection == ReportCollection::Moments {
+            self.summary_budget = Some(budget);
+        }
+        self
     }
 
     pub(crate) fn validate_collection(&self, key: &Value, value: &Value) -> crate::error::OpResult<()> {
@@ -684,34 +720,74 @@ impl Sink {
     }
 
     /// Record a value reported in a world, and when sampling, by which run.
-    pub fn add(&mut self, key: Value, value: &Value, weight: Weight, run: Option<u32>) {
+    pub fn add(&mut self, key: Value, value: &Value, weight: Weight, run: Option<u32>) -> crate::error::OpResult<()> {
+        if self.summary_budget.is_some() {
+            return self.add_budgeted(key, value, weight, run);
+        }
         let acc = self.groups.entry(key).or_insert_with(|| Acc {
             online: (self.collection == ReportCollection::Moments).then(OnlineNumbers::default),
             ..Acc::default()
         });
-        acc.total += weight;
-        acc.add(value, weight);
+        acc.visit(value, weight, run);
         self.structured |= acc.structured;
-        if let Some(run) = run {
-            let stat = acc.runs.entry(run).or_insert_with(|| RunStat {
-                weight,
-                visits: 0,
-                integrated: false,
-                yes: 0.0,
-                facts: 0.0,
-                sum: 0.0,
-                numbers: 0.0,
-                others: Vec::new(),
-            });
-            stat.visits += 1;
-            stat.integrated |= matches!(value, Value::Dist(_));
-            stat.record(value, 1.0);
+        Ok(())
+    }
+
+    // Keep accounting out of the exact collector's hot path.
+    #[inline(never)]
+    fn add_budgeted(
+        &mut self,
+        key: Value,
+        value: &Value,
+        weight: Weight,
+        run: Option<u32>,
+    ) -> crate::error::OpResult<()> {
+        let acc = match self.groups.entry(key) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let memory = self
+                    .summary_budget
+                    .as_ref()
+                    .map(|budget| budget.group(entry.key()))
+                    .transpose()?;
+                entry.insert(Acc {
+                    memory,
+                    online: (self.collection == ReportCollection::Moments).then(OnlineNumbers::default),
+                    ..Acc::default()
+                })
+            }
+        };
+        let growth = if let (Some(memory), Some(run)) = (&mut acc.memory, run) {
+            if acc.runs.len() == acc.runs.capacity() && !acc.runs.contains_key(&run) {
+                Some(memory.grow_runs(acc.runs.capacity())?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        acc.visit(value, weight, run);
+        self.structured |= acc.structured;
+        if let Some(bytes) = growth {
+            acc.memory.as_mut().unwrap().finish_growth(bytes);
         }
+        Ok(())
     }
 
     /// When sampling: fold the batch's runs into the sums. They're finished,
     /// so what's kept doesn't grow with the number of runs.
-    pub fn end_batch(&mut self) {
+    pub fn end_batch(&mut self) -> crate::error::OpResult<()> {
+        let reach_memory = if let Some(budget) = &self.summary_budget {
+            let entries = self
+                .groups
+                .values()
+                .map(|a| a.runs.len())
+                .try_fold(0usize, usize::checked_add)
+                .ok_or_else(|| crate::error::OpError::limit("moments reports exceeded max_report_summary_bytes"))?;
+            Some(budget.reserve(memory::reach_bytes(entries)?)?)
+        } else {
+            None
+        };
         let mut runs: FxHashMap<u32, Weight> = FxHashMap::default();
         for acc in self.groups.values() {
             runs.extend(acc.runs.iter().map(|(id, r)| (*id, r.weight)));
@@ -720,9 +796,11 @@ impl Sink {
             self.reached += w;
             self.reached_squares += w * w;
         }
+        drop(reach_memory);
         for acc in self.groups.values_mut() {
             acc.end_batch();
         }
+        Ok(())
     }
 
     /// Add what another batch of runs reported. Batches are combined in
@@ -1661,9 +1739,11 @@ mod tests {
         for _ in 0..3 {
             let mut batch = Sink::default();
             for run in 0..1000 {
-                batch.add(Value::Unit, &Value::Bool(true), Weight::ONE, Some(run));
+                batch
+                    .add(Value::Unit, &Value::Bool(true), Weight::ONE, Some(run))
+                    .unwrap();
             }
-            batch.end_batch();
+            batch.end_batch().unwrap();
             assert_eq!(
                 batch.groups[&Value::Unit].runs.capacity(),
                 0,
@@ -1679,8 +1759,10 @@ mod tests {
 
         // Each batch has equal weights, but their union does not.
         let mut weighted = Sink::default();
-        weighted.add(Value::Unit, &Value::Bool(true), Weight::new(0.1), Some(0));
-        weighted.end_batch();
+        weighted
+            .add(Value::Unit, &Value::Bool(true), Weight::new(0.1), Some(0))
+            .unwrap();
+        weighted.end_batch().unwrap();
         combined.absorb(weighted);
         let acc = &combined.groups[&Value::Unit];
         assert_eq!(acc.contributing_runs(), 3001);
@@ -1690,11 +1772,12 @@ mod tests {
     #[test]
     fn repeated_visits_do_not_inflate_independent_sample_counts() {
         let mut sink = Sink::default();
-        sink.add(Value::Unit, &Value::Bool(false), Weight::ONE, Some(0));
+        sink.add(Value::Unit, &Value::Bool(false), Weight::ONE, Some(0))
+            .unwrap();
         for _ in 0..9 {
-            sink.add(Value::Unit, &Value::Bool(true), Weight::ONE, Some(1));
+            sink.add(Value::Unit, &Value::Bool(true), Weight::ONE, Some(1)).unwrap();
         }
-        sink.end_batch();
+        sink.end_batch().unwrap();
         let acc = &sink.groups[&Value::Unit];
         assert_eq!(acc.contributing_runs(), 2);
         assert!((acc.effective() - 100.0 / 82.0).abs() < 1e-12);
@@ -1709,16 +1792,19 @@ mod tests {
         // mass to the mean's denominator, rather than one whole visit.
         let partial = crate::dist::Dist::from_pairs(vec![(Value::Float(1.0), 0.1)], 0.9).into_value();
         let mut numeric = Sink::default();
-        numeric.add(Value::Unit, &partial, Weight::ONE, Some(0));
-        numeric.add(Value::Unit, &Value::Float(1.0), Weight::ONE, Some(1));
-        numeric.end_batch();
+        numeric.add(Value::Unit, &partial, Weight::ONE, Some(0)).unwrap();
+        numeric
+            .add(Value::Unit, &Value::Float(1.0), Weight::ONE, Some(1))
+            .unwrap();
+        numeric.end_batch().unwrap();
         assert!((numeric.groups[&Value::Unit].effective() - 1.21 / 1.01).abs() < 1e-12);
     }
 
     #[test]
     fn bounds_widen_with_unresolved_weight() {
         let mut sink = Sink::default();
-        sink.add(Value::Unit, &Value::Bool(false), Weight::new(1e-5), None);
+        sink.add(Value::Unit, &Value::Bool(false), Weight::new(1e-5), None)
+            .unwrap();
         let acc = &sink.groups[&Value::Unit];
         // Half a percent of the weight was cut before it could reach the report.
         let (lo, hi) = acc.chance_bounds(Weight::new(0.005));
@@ -1738,10 +1824,10 @@ mod tests {
         let red = Value::Str("red".into());
         let blue = Value::Str("blue".into());
         let mut sink = Sink::default();
-        sink.add(Value::Unit, &red, Weight::ONE, Some(0));
-        sink.add(Value::Unit, &blue, Weight::ONE, Some(0));
-        sink.add(Value::Unit, &red, Weight::new(3.0), Some(1));
-        sink.end_batch();
+        sink.add(Value::Unit, &red, Weight::ONE, Some(0)).unwrap();
+        sink.add(Value::Unit, &blue, Weight::ONE, Some(0)).unwrap();
+        sink.add(Value::Unit, &red, Weight::new(3.0), Some(1)).unwrap();
+        sink.end_batch().unwrap();
         let g = results::group(
             &Value::Unit,
             &sink.groups[&Value::Unit],
@@ -1764,8 +1850,8 @@ mod tests {
         assert_eq!(values.iter().map(|(v, _)| v).collect::<Vec<_>>(), [&blue, &red]);
 
         let mut enumerated = Sink::default();
-        enumerated.add(Value::Unit, &red, Weight::new(0.2), None);
-        enumerated.add(Value::Unit, &blue, Weight::new(0.3), None);
+        enumerated.add(Value::Unit, &red, Weight::new(0.2), None).unwrap();
+        enumerated.add(Value::Unit, &blue, Weight::new(0.3), None).unwrap();
         let missing = Weight::new(0.5);
         let g = results::group(
             &Value::Unit,
@@ -1788,10 +1874,10 @@ mod tests {
     fn moments_merges_reject_types_that_only_meet_across_batches() {
         let mut a = Sink::new(ReportCollection::Moments, 10);
         let mut b = Sink::new(ReportCollection::Moments, 10);
-        a.add(Value::Unit, &Value::Float(1.0), Weight::ONE, Some(0));
-        b.add(Value::Unit, &Value::Bool(true), Weight::ONE, Some(1));
-        a.end_batch();
-        b.end_batch();
+        a.add(Value::Unit, &Value::Float(1.0), Weight::ONE, Some(0)).unwrap();
+        b.add(Value::Unit, &Value::Bool(true), Weight::ONE, Some(1)).unwrap();
+        a.end_batch().unwrap();
+        b.end_batch().unwrap();
         assert!(a.validate_merge(&b).unwrap_err().message.contains("cannot mix"));
         assert!(b.validate_merge(&a).is_err());
     }

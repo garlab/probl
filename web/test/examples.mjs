@@ -72,7 +72,10 @@ for (const [source, report_summaries] of [
 console.log('same  configurable summaries and validation in native/WASM');
 
 
+const summaryLimitSource = `@mode sample(runs:1)\nlet payload="${'x'.repeat(200000)}"; for k in 1..1000 {report 1 by [k,payload]}`;
 for (const request of [
+  { source:summaryLimitSource, report_collections:{0:'moments'} },
+  { source:'@mode sample(runs:10)\nreport 1 by [d6]', report_collections:{0:'moments'} },
   { source:'@mode sample(runs:2100,seed:42)\nlet x~d6; score if x>3 {90%} else {10%}; for k in 1..x {report x+k by k mod 2; report x>3 by k mod 2}', report_collections:{0:'moments',1:'moments'} },
   { source:'@mode sample(runs:2100,seed:42)\nlet x~d6; score if x>3 {90%} else {10%}; for k in 1..x {report x+k by k mod 2; report x>3 by k mod 2}', report_collections:{0:'exact',1:'exact'} },
   { source:'@mode sample(runs:100,seed:42)\nlet x~d2; report 1/(x-1)', report_collections:{0:'moments'} },
@@ -85,8 +88,9 @@ for (const request of [
   sameReports(actual.reports, expected.reports);
   assert.equal(actual.output, expected.output);
   assert.deepEqual(actual.error, expected.error);
+  if (request.source === summaryLimitSource) assert.match(actual.error?.message ?? '', /max_report_summary_bytes/);
 }
-console.log('same  moments collection, weighted repeated visits, partial runs and validation in native/WASM');
+console.log('same  moments collection, weighted repeated visits, partial runs, live memory limit and validation in native/WASM');
 
 let failed = 0;
 const cases = probl.examples().map((e) => ({ ...e, path: `examples/${e.name}.probl` }));

@@ -94,6 +94,11 @@ The host grants read authority. Use a restricted provider for untrusted models, 
 
 `Limits::default()` uses native defaults; `Limits::browser()` uses lower memory/work limits and one thread. The public fields can be adjusted after construction. `Cancel` is cloneable and can be triggered from another thread. Program pragmas cannot raise the host's ceilings.
 
+`max_report_summary_bytes` caps live collector storage across moments-only reports,
+including keys and active/pending worker batches (1 GiB native, 128 MiB browser).
+Exact populations, model memory and result formatting are outside this allowance.
+See the [accounting and key restrictions](report-summaries.md#moments-only-collection).
+
 One `Error` type covers compilation, loading and execution. `kind()` distinguishes `Compile`, `Usage`, `Language`, `Unsupported`, `Limit` and `Internal`. `render(color)` formats source diagnostics. Individual diagnostics expose messages, notes, help, byte spans and one-based line/column positions. Frontends using UTF-16 positions must convert byte spans.
 
 Resource budgets and caught native panics improve containment; they do not replace process isolation for a service executing untrusted models. See [host boundaries](architecture.md#host-boundaries).

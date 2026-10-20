@@ -171,6 +171,33 @@ With fixed groups, retention no longer grows with trial count. Active batches
 still keep per-run bookkeeping, and parallel workers/pending batches multiply
 that cost. `Limits::max_report_groups` caps groups per moments-only report across
 batches (default 10,000), with a `Limit` error before a new group exceeds it.
-Exact reports are unaffected. This is a group cap, not a byte budget for all
-reports or their keys. Aggregate byte budgets and bounded quantile sketches
-remain future work; the playground default remains 5,000 retirement trials.
+
+`Limits::max_report_summary_bytes` additionally limits accounted live collector
+storage across **all moments-only reports and workers in one execution**. It
+defaults to 1 GiB natively and 128 MiB in the browser. The CLI accepts sizes such
+as `--max-report-summary 128M`; Rust hosts can set the field on `Limits`.
+The playground uses its fixed browser allowance.
+
+Charges cover group accumulators, nested key payloads, per-run hash tables and
+their growth, temporary reach bookkeeping, and completed batches awaiting merge.
+They are reserved before collector allocation and released as tables, duplicate
+groups and batches are discarded. A group transferred to the combined result
+keeps its charge. Repeated visits to an existing run/key need no new storage.
+Shared key payloads are conservatively charged for each retained occurrence;
+container charges include spare capacity and bookkeeping. Large integer keys
+use an allowance based on the hard integer-size ceiling, since a small result
+can retain a larger limb buffer. Plain scalar, enum,
+range and collection keys are supported, nesting at most 128 levels. Keys that
+contain functions or distributions require exact collection.
+
+This is an implementation-dependent accounting budget, not a process-memory or
+WASM-linear-memory ceiling. It excludes exact reports, model execution and
+caches, source/data, result construction/formatting, allocator overhead and
+copies made by callers. Mixing exact and moments reports leaves the exact
+populations outside this allowance. An exceeded limit stops the execution with
+a `Limit` error; it never silently drops a report or trial. More workers and a
+different batch schedule can cross a tight live limit; completed runs retain
+the same seeded results. Reducing threads can help a native run fit.
+
+Bounded quantile sketches remain future work. The playground default remains
+5,000 retirement trials.
