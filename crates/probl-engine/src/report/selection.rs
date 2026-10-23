@@ -1,12 +1,16 @@
 //! Explicit summary columns. Selection alone leaves retention unchanged;
 //! collection policies separately control what data is kept.
 use super::{GroupResult, Numeric, Quantity, summary_quantile};
+use crate::error::{OpError, OpResult};
 use crate::value::Value;
+use crate::weight::Weight;
 use std::{fmt, str::FromStr};
 
 /// One requested report column. A median uses midpoint ties; a quantile uses
-/// the weighted inverse CDF, including at level 0.5.
+/// the weighted inverse CDF, including at level 0.5. More statistics may be
+/// added, so matches outside this crate need a wildcard arm.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum ReportStatistic {
     Mean,
     StandardDeviation,
@@ -160,5 +164,95 @@ pub fn statistic_value(group: &GroupResult, statistic: ReportStatistic) -> Optio
         ReportStatistic::Median => summary_quantile(&group.distribution, 0.5),
         ReportStatistic::Quantile(q) => crate::stats::quantile(&group.distribution, q).cloned(),
         _ => None,
+    }
+}
+
+/// Why a selection can't summarize a report's values.
+pub(super) const MIXED: &str = "mixed Boolean and other values keep their default display";
+pub(super) const DATE_MOMENTS: &str = "date reports support median and quantiles, not mean or sd";
+pub(super) const NOT_NUMERIC: &str =
+    "summary columns require numeric or date values; categorical and structured reports keep their default display";
+
+/// What an explicit selection needs of a report's values, checked as each
+/// one is reported, so that a run stops at the first value the selection
+/// can't summarize rather than after it finishes. It rejects only values the
+/// check of the results ([`super::validate_summary_values`]) would; values
+/// known by their outcomes, like distributions, are left to that check.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct SummaryCheck {
+    id: usize,
+    /// Whether the columns include a mean or SD, which dates don't have.
+    moments: bool,
+    /// Whether the report has had facts, and numbers or dates.
+    facts: bool,
+    others: bool,
+}
+
+impl SummaryCheck {
+    pub fn new(id: usize, summary: &ReportSummary) -> Self {
+        Self {
+            id,
+            moments: summary
+                .0
+                .iter()
+                .any(|s| matches!(s, ReportStatistic::Mean | ReportStatistic::StandardDeviation)),
+            facts: false,
+            others: false,
+        }
+    }
+
+    /// A value reported with `weight`. Without weight, it isn't in the
+    /// results, so it can't make them fail.
+    pub fn value(&mut self, value: &Value, weight: Weight) -> OpResult<()> {
+        if weight.is_zero() {
+            return Ok(());
+        }
+        let problem = match value {
+            Value::Bool(_) => {
+                self.facts = true;
+                None
+            }
+            Value::Int(_) | Value::Float(_) | Value::Prob(_) => {
+                self.others = true;
+                None
+            }
+            Value::Date(_) => {
+                self.others = true;
+                self.moments.then_some(DATE_MOMENTS)
+            }
+            Value::Unit
+            | Value::Str(_)
+            | Value::Enum(_)
+            | Value::Range(..)
+            | Value::Complex(_)
+            | Value::List(_)
+            | Value::Map(_)
+            | Value::Bag(_)
+            | Value::Record(_) => Some(NOT_NUMERIC),
+            _ => None,
+        };
+        match problem {
+            Some(problem) => Err(self.error(problem)),
+            None => self.mixed(),
+        }
+    }
+
+    /// The checks of two batches of the same report's runs, together.
+    pub fn merged(mut self, other: Self) -> OpResult<Self> {
+        self.facts |= other.facts;
+        self.others |= other.others;
+        self.mixed()?;
+        Ok(self)
+    }
+
+    fn mixed(&self) -> OpResult<()> {
+        if self.facts && self.others {
+            return Err(self.error(MIXED));
+        }
+        Ok(())
+    }
+
+    fn error(&self, problem: &str) -> OpError {
+        OpError::new(format!("report summary {}: {problem}", self.id))
     }
 }

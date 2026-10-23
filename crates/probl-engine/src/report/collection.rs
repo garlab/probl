@@ -4,8 +4,10 @@ use crate::{RuntimeError, error::OpError, value::Value, weight::Weight};
 use probl_sema::ir::{Mode, ReportSite};
 use std::{collections::BTreeMap, fmt, str::FromStr};
 
-/// What a report retains. Exact collection is the default.
+/// What a report retains. Exact collection is the default. More policies may
+/// be added, so matches outside this crate need a wildcard arm.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ReportCollection {
     #[default]
     Exact,
@@ -28,8 +30,18 @@ impl fmt::Display for ReportCollection {
     }
 }
 
+/// A collection policy that doesn't parse, or names an invalid capacity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReportCollectionError(&'static str);
+impl fmt::Display for ReportCollectionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
+impl std::error::Error for ReportCollectionError {}
+
 impl FromStr for ReportCollection {
-    type Err = String;
+    type Err = ReportCollectionError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "exact" => Ok(Self::Exact),
@@ -40,9 +52,11 @@ impl FromStr for ReportCollection {
                     if (128..=4096).contains(&capacity) {
                         return Ok(Self::Quantiles { capacity });
                     }
-                    return Err("quantile capacity must be within 128..=4096".into());
+                    return Err(ReportCollectionError("quantile capacity must be within 128..=4096"));
                 }
-                Err("report collection must be exact, moments or quantiles[:CAPACITY]".into())
+                Err(ReportCollectionError(
+                    "report collection must be exact, moments or quantiles[:CAPACITY]",
+                ))
             }
         }
     }

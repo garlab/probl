@@ -332,7 +332,10 @@ fn parse_report_collection(s: &str) -> Result<(usize, probl::ReportCollection), 
     let id = id
         .parse()
         .map_err(|_| "report collection ID must be a zero-based integer")?;
-    Ok((id, policy.parse()?))
+    Ok((
+        id,
+        policy.parse::<probl::ReportCollection>().map_err(|e| e.to_string())?,
+    ))
 }
 
 fn parse_report_summary(s: &str) -> Result<(usize, probl::ReportSummary), String> {

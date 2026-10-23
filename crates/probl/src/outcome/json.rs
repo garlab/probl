@@ -337,7 +337,9 @@ fn typed(value: &Value, label: Option<&str>, budget: &mut Budget) -> Result<Json
         Value::Unit => ("unit", Json::Null),
         _ => ("opaque", Json::Null),
     };
-    if let Some(text) = value.as_str() {
+    // Each text is charged once: a string before it's copied, an integer or
+    // a date as the text it's written as.
+    if let Some(text) = value.as_str().filter(|_| kind != "str") {
         budget.text(text)?;
     }
     Ok(json!({"kind":kind, "value":value, "label":label}))

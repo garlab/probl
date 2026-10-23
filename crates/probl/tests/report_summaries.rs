@@ -127,6 +127,47 @@ fn dates_large_integers_and_incompatible_values_are_explicit() {
     );
 }
 
+#[test]
+fn a_value_the_summary_cant_describe_stops_the_run_where_it_is_reported() {
+    // The `print` after each report would run if the values were only
+    // checked once the run had finished.
+    for (source, summary, problem) in [
+        ("report \"cat\"", "forecast", "require numeric or date values"),
+        ("report [1, 2]", "median", "require numeric or date values"),
+        ("report date(2026, 1, 1)", "mean", "date reports"),
+        (
+            "for k in 0..1 { report if k == 0 { true } else { 1 } by k }",
+            "forecast",
+            "mixed Boolean",
+        ),
+        (
+            "@mode sample(runs: 100, seed: 7)\nlet x ~ d6\nreport if x == 1 { true } else { x }",
+            "forecast",
+            "mixed Boolean",
+        ),
+    ] {
+        let p = probl::compile("early", &format!("{source}\nprint(\"after\")")).unwrap();
+        let mut printed = Vec::new();
+        let error = p
+            .run_with(
+                &Options::new().report_summary(0, summary.parse().unwrap()),
+                &mut |line| printed.push(line.to_string()),
+            )
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains(problem), "{source}: {error}");
+        assert!(printed.is_empty(), "{source}: {printed:?}");
+    }
+    // A distribution is known by its outcomes, so it's still checked after
+    // the run, with the same message.
+    let p = probl::compile("late", "report one_of([\"a\", \"b\"])").unwrap();
+    let error = p
+        .run(&Options::new().report_summary(0, ReportSummary::forecast()))
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("require numeric or date values"), "{error}");
+}
+
 #[cfg(feature = "json")]
 #[test]
 fn json_selection_and_text_agree_without_changing_sampled_results() {

@@ -115,8 +115,12 @@ Specifications are limited to 4,096 bytes and a run accepts at most 256 report
 overrides. The playground exposes controls for its first 256 reports.
 
 Invalid specifications and unknown report IDs fail before model execution or
-input-file loading. Value-type compatibility is checked after execution, once
-dynamic report types are known; an incompatible selection returns a diagnostic
+input-file loading. Report values have dynamic types, so compatibility is
+checked as they're reported: the run stops at the first text, list, record or
+other categorical value, at a date when mean or SD is selected, and when Boolean
+and other values meet in one report, even across sampling batches. Values known
+only by their outcomes, such as an unsampled distribution, are checked once
+execution finishes. Either way, an incompatible selection returns a diagnostic
 at that report. A never-reached report has no values to check.
 
 Selections do not change the model, its random draws, retained populations or
@@ -141,6 +145,9 @@ Selecting moments-only collection also selects mean/SD display columns. It does
 not switch the execution mode; the program or run options must request sampling.
 Collection choices persist with the source and share links like summary choices.
 `--collect ID=exact` / `ReportCollection::Exact` restores default retention.
+`"moments".parse::<ReportCollection>()` uses the CLI and WASM parser, failing
+with a `ReportCollectionError`. More policies may be added, so `ReportCollection`
+and `ReportStatistic` are non-exhaustive: a `match` on either needs a `_` arm.
 
 Moments-only collection supports sampled scalar numbers and Boolean facts.
 Weighted observations and repeated visits use the same per-run denominators,

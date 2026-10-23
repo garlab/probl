@@ -380,6 +380,7 @@ fn run_here(
     let limits = &options.limits;
     let config = interp::Config {
         report_collections: options.report_collections.clone(),
+        report_summaries: report::selected_summaries(&options.report_collections, &options.report_summaries),
         max_report_groups: limits.max_report_groups,
         report_summary_budget: report::SummaryBudget::new(limits.max_report_summary_bytes, options.cancel.clone()),
         today: options.today,

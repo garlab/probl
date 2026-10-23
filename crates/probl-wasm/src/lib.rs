@@ -276,74 +276,21 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
     let mut options = mode(&request, Options::new())
         .limits(Limits::browser())
         .conjugate(request["conjugate"].as_bool().unwrap_or(true));
-    if let Some(selections) = request.get("report_summaries") {
-        let parsed = (|| -> Result<Vec<(usize, probl::ReportSummary)>, String> {
-            let selections = selections
-                .as_object()
-                .ok_or("report_summaries must be an object of report IDs and summary strings")?;
-            if selections.len() > 256 {
-                return Err("at most 256 report summary overrides are allowed".into());
-            }
-            selections
-                .iter()
-                .map(|(id, summary)| {
-                    let index: usize = id.parse().map_err(|_| format!("invalid report summary ID `{id}`"))?;
-                    if id != &index.to_string() {
-                        return Err(format!(
-                            "invalid report summary ID `{id}`; use a canonical zero-based integer"
-                        ));
-                    }
-                    let text = summary
-                        .as_str()
-                        .ok_or_else(|| format!("report summary {id} must be a string"))?;
-                    let selection = text
-                        .parse::<probl::ReportSummary>()
-                        .map_err(|e| format!("report summary {id}: {e}"))?;
-                    Ok((index, selection))
-                })
-                .collect()
-        })();
-        match parsed {
-            Ok(selections) => {
-                for (id, selection) in selections {
-                    options = options.report_summary(id, selection);
-                }
-            }
-            Err(message) => return failed(json!({"kind":"usage", "message":message})),
-        }
+    let overridden = overrides::<probl::ReportSummary>(&request, "report_summaries", "summary").and_then(|summaries| {
+        Ok((
+            summaries,
+            overrides::<probl::ReportCollection>(&request, "report_collections", "collection")?,
+        ))
+    });
+    let (summaries, collections) = match overridden {
+        Ok(overridden) => overridden,
+        Err(message) => return failed(json!({"kind":"usage", "message":message})),
+    };
+    for (id, summary) in summaries {
+        options = options.report_summary(id, summary);
     }
-    if let Some(collections) = request.get("report_collections") {
-        let parsed = (|| -> Result<Vec<(usize, probl::ReportCollection)>, String> {
-            let collections = collections
-                .as_object()
-                .ok_or("report_collections must be an object of report IDs and collection strings")?;
-            if collections.len() > 256 {
-                return Err("at most 256 report collection overrides are allowed".into());
-            }
-            collections
-                .iter()
-                .map(|(id, policy)| {
-                    let index: usize = id.parse().map_err(|_| format!("invalid report collection ID `{id}`"))?;
-                    if id != &index.to_string() {
-                        return Err(format!(
-                            "invalid report collection ID `{id}`; use a canonical zero-based integer"
-                        ));
-                    }
-                    let policy = policy
-                        .as_str()
-                        .ok_or_else(|| format!("report collection {id} must be a string"))?;
-                    Ok((index, policy.parse()?))
-                })
-                .collect()
-        })();
-        match parsed {
-            Ok(collections) => {
-                for (id, policy) in collections {
-                    options = options.report_collection(id, policy);
-                }
-            }
-            Err(message) => return failed(json!({"kind":"usage", "message":message})),
-        }
+    for (id, collection) in collections {
+        options = options.report_collection(id, collection);
     }
     let symbolic = match request["symbolic"].as_str() {
         Some("only") => Symbolic::Only,
@@ -484,6 +431,40 @@ fn mode(request: &Json, options: Options) -> Options {
         Some("partial") => options.on_error(FailureMode::Partial),
         _ => options,
     }
+}
+
+/// A request's per-report overrides in `field`, `{"ID": "SPEC"}`, each SPEC
+/// parsed as a `T`: at most 256, with canonical zero-based IDs. `what` names
+/// them in errors. Without the field there are none.
+fn overrides<T: std::str::FromStr>(request: &Json, field: &str, what: &str) -> Result<Vec<(usize, T)>, String>
+where
+    T::Err: std::fmt::Display,
+{
+    let Some(entries) = request.get(field) else {
+        return Ok(Vec::new());
+    };
+    let entries = entries
+        .as_object()
+        .ok_or_else(|| format!("{field} must be an object of report IDs and {what} strings"))?;
+    if entries.len() > 256 {
+        return Err(format!("at most 256 report {what} overrides are allowed"));
+    }
+    entries
+        .iter()
+        .map(|(id, spec)| {
+            let index: usize = id.parse().map_err(|_| format!("invalid report {what} ID `{id}`"))?;
+            if id != &index.to_string() {
+                return Err(format!(
+                    "invalid report {what} ID `{id}`; use a canonical zero-based integer"
+                ));
+            }
+            let spec = spec
+                .as_str()
+                .ok_or_else(|| format!("report {what} {id} must be a string"))?;
+            let parsed = spec.parse().map_err(|e| format!("report {what} {id}: {e}"))?;
+            Ok((index, parsed))
+        })
+        .collect()
 }
 
 /// The files a program may read: only those given, by the path it's

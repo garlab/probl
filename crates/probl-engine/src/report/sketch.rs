@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 /// Retention/accuracy metadata, separate from Monte Carlo sampling uncertainty.
 /// Capacity controls space and measured accuracy, not a guaranteed rank error.
+/// More fields may be added, so it's only constructed by Probl.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct QuantileApproximation {
     pub capacity: usize,
     pub samples: u64,

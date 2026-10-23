@@ -15,8 +15,9 @@ pub(crate) use memory::SummaryBudget;
 pub use sketch::QuantileApproximation;
 mod results;
 use collection::OnlineNumbers;
-pub use collection::{ReportCollection, selected_summaries, validate_collections};
+pub use collection::{ReportCollection, ReportCollectionError, selected_summaries, validate_collections};
 mod selection;
+use selection::SummaryCheck;
 pub use selection::{ReportStatistic, ReportSummary, ReportSummaryError, statistic_value};
 
 pub use results::{
@@ -570,6 +571,8 @@ impl Acc {
 #[derive(Clone, Debug, Default)]
 pub struct Sink {
     summary_budget: Option<SummaryBudget>,
+    /// With explicit summary columns: whether they can summarize its values.
+    summary: Option<SummaryCheck>,
     sketch_seed: u64,
     pub collection: ReportCollection,
     max_groups: usize,
@@ -595,6 +598,12 @@ impl Sink {
         if self.collection != ReportCollection::Exact {
             self.summary_budget = Some(budget);
         }
+        self
+    }
+
+    /// The summary columns selected for report `id`, if any.
+    pub(crate) fn with_summary(mut self, id: usize, summary: Option<&ReportSummary>) -> Self {
+        self.summary = summary.map(|s| SummaryCheck::new(id, s));
         self
     }
 
@@ -640,6 +649,9 @@ impl Sink {
 
     pub(crate) fn validate_merge(&self, other: &Sink) -> crate::error::OpResult<()> {
         use crate::error::OpError;
+        if let (Some(mine), Some(theirs)) = (self.summary, other.summary) {
+            mine.merged(theirs)?;
+        }
         if self.collection == ReportCollection::Exact {
             return Ok(());
         }
@@ -746,6 +758,9 @@ impl Sink {
 
     /// Record a value reported in a world, and when sampling, by which run.
     pub fn add(&mut self, key: Value, value: &Value, weight: Weight, run: Option<u32>) -> crate::error::OpResult<()> {
+        if let Some(check) = &mut self.summary {
+            check.value(value, weight)?;
+        }
         if self.summary_budget.is_some() {
             return self.add_budgeted(key, value, weight, run);
         }
@@ -868,6 +883,9 @@ impl Sink {
     /// Add what another batch of runs reported. Batches are combined in
     /// order, so the sums don't depend on which thread ran which batch.
     pub fn absorb(&mut self, other: Sink) -> crate::error::OpResult<()> {
+        if let (Some(mine), Some(theirs)) = (&mut self.summary, other.summary) {
+            *mine = mine.merged(theirs)?;
+        }
         self.structured |= other.structured;
         self.reached += other.reached;
         self.reached_squares += other.reached_squares;
@@ -968,6 +986,8 @@ pub fn validate_summaries(
 
 /// Dynamic values are checked once their types are known. Facts keep their
 /// probability semantics even when summary columns have been configured.
+/// Sinks already stop a run at most values that fail here, as they're
+/// reported; this decides for the rest, like distributions.
 pub fn validate_summary_values(
     sites: &[ReportSite],
     results: &[ReportResult],
@@ -978,7 +998,7 @@ pub fn validate_summary_values(
         {
             return Err(crate::RuntimeError::new(
                 sites[*id].span,
-                format!("report summary {id}: mixed Boolean and other values keep their default display"),
+                format!("report summary {id}: {}", selection::MIXED),
             ));
         }
         for group in &results[*id].groups {
@@ -999,11 +1019,9 @@ pub fn validate_summary_values(
                     .iter()
                     .any(|s| matches!(s, ReportStatistic::Mean | ReportStatistic::StandardDeviation))
             {
-                Some("date reports support median and quantiles, not mean or sd")
+                Some(selection::DATE_MOMENTS)
             } else if !dates && !numeric {
-                Some(
-                    "summary columns require numeric or date values; categorical and structured reports keep their default display",
-                )
+                Some(selection::NOT_NUMERIC)
             } else {
                 None
             };
@@ -1955,5 +1973,29 @@ mod tests {
         b.end_batch().unwrap();
         assert!(a.validate_merge(&b).unwrap_err().message.contains("cannot mix"));
         assert!(b.validate_merge(&a).is_err());
+    }
+
+    #[test]
+    fn summaries_reject_facts_and_numbers_that_only_meet_across_batches() {
+        let forecast = ReportSummary::forecast();
+        let sink = || Sink::default().with_summary(3, Some(&forecast));
+        let (mut combined, mut facts, mut numbers) = (sink(), sink(), sink());
+        facts
+            .add(Value::Bool(true), &Value::Bool(true), Weight::ONE, Some(0))
+            .unwrap();
+        numbers
+            .add(Value::Unit, &Value::Float(1.0), Weight::ONE, Some(1))
+            .unwrap();
+        // Values without weight aren't in the results.
+        numbers
+            .add(Value::Unit, &Value::Bool(true), Weight::ZERO, Some(1))
+            .unwrap();
+        facts.end_batch().unwrap();
+        numbers.end_batch().unwrap();
+        combined.validate_merge(&facts).unwrap();
+        combined.absorb(facts).unwrap();
+        let error = combined.validate_merge(&numbers).unwrap_err();
+        assert_eq!(error.message, format!("report summary 3: {}", selection::MIXED));
+        assert!(combined.absorb(numbers).is_err());
     }
 }

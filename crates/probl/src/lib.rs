@@ -48,7 +48,7 @@ pub use outcome::{
 #[cfg(feature = "json")]
 pub use outcome::{ReportJsonError, ReportJsonLimits};
 pub use probl_engine::report::{
-    QuantileApproximation, ReportCollection, ReportStatistic, ReportSummary, ReportSummaryError,
+    QuantileApproximation, ReportCollection, ReportCollectionError, ReportStatistic, ReportSummary, ReportSummaryError,
 };
 pub use program::{Mode, Program, compile};
 

@@ -165,6 +165,28 @@ fn budgets_fail_without_truncation_or_mutating_the_outcome() {
 }
 
 #[test]
+fn a_string_key_costs_its_label_and_its_value_once_each() {
+    // The least work that exports a report keyed by a string of `n` bytes.
+    let least_work = |n: usize| {
+        let out = run(&format!("for k in [\"{}\"] {{ report 1 by k }}", "x".repeat(n)));
+        let fits = |max_work| {
+            out.reports_json(&ReportJsonLimits {
+                max_work,
+                ..ReportJsonLimits::default()
+            })
+            .is_ok()
+        };
+        let (mut lo, mut hi) = (0, ReportJsonLimits::default().max_work);
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if fits(mid) { hi = mid } else { lo = mid + 1 }
+        }
+        lo
+    };
+    assert_eq!(least_work(2000) - least_work(1000), 2 * 1000);
+}
+
+#[test]
 fn document_size_depends_on_groups_not_number_of_trials() {
     let sample = |runs| {
         run(&format!(

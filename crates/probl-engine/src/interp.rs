@@ -93,6 +93,9 @@ impl Stats {
 #[derive(Clone, Debug)]
 pub struct Config {
     pub report_collections: BTreeMap<usize, crate::report::ReportCollection>,
+    /// Summary columns by report ID, including collections' defaults, so
+    /// sinks can reject values they can't summarize as they're reported.
+    pub(crate) report_summaries: BTreeMap<usize, crate::report::ReportSummary>,
     pub max_report_groups: usize,
     pub(crate) report_summary_budget: crate::report::SummaryBudget,
     pub today: Option<i32>,
@@ -135,6 +138,7 @@ impl Config {
                     self.max_report_groups,
                 )
                 .with_summary_budget(self.report_summary_budget.clone())
+                .with_summary(id, self.report_summaries.get(&id))
                 .with_sketch_seed(self.sample_seed.unwrap_or_default(), id, batch)
             })
             .collect()
