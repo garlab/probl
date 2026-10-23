@@ -544,3 +544,26 @@ A final native CLI run completed 100,000 trials on twelve workers with moments
 collection on all three reports and the default 1 GiB allowance (111,600,000
 world-steps). This is a completion check; the controlled allocation measurements
 above use one worker.
+
+## Quantile sketch candidates
+
+The [candidate evaluation](quantile-sketches.md) selects a KLL-style compactor
+for the next M4 implementation slice. The reproducible `quantile-sketches`
+benchmark compares it with a mergeable priority reservoir on twelve populations,
+including zero atoms, ordered inputs, extreme floats and retirement balances.
+It measures rank and value errors separately, update/merge/query cost, retained
+capacity and overlapping allocations. This is standalone collector research;
+approximate collection is not yet an engine or playground feature.
+
+At 100,000 values and 32 seeds, the batched compactor with capacity 256 used at
+most 10.2 KiB of retained heap and had a worst observed rank error of 0.647
+percentage points. The reservoir with capacity 512 used 12.0 KiB and reached
+7.407 percentage points. Capacity 512 reduced the compactor's worst observed
+error to 0.365 percentage points. Trimming empty-level buffers reduced its
+largest retained allocation from 96.4 to 23.2 KiB without changing any answers.
+
+A four-population million-value check also completed, with exact zero counts
+and seeded replay. Retained/peak heap grew much less than tenfold. These measured
+rank errors are not guarantees, and heavy-tail dollar errors can be large.
+The evaluation records the limitations and the remaining budget, metadata,
+cancellation and native/WASM integration work.
