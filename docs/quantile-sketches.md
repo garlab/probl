@@ -2,15 +2,18 @@
 
 The M4 retirement-report work needs bounded empirical quantiles in addition to
 the implemented moments-only policy. This experiment selects a **KLL-style lazy
-compactor hierarchy** for the next implementation slice. At similar retained
+compactor hierarchy** for integration. At similar retained
 heap, it has much smaller rank errors than a mergeable reservoir on these
-fixtures. Start production work with a capacity of 512 and an explicit
+fixtures. The integrated policy defaults to capacity 512 with an explicit
 approximation method; the measurements below are **not an error guarantee**.
 
 The candidates live in the
 [`quantile-sketches` benchmark example](../crates/probl-bench/examples/quantile-sketches.rs).
-They are not available through report collection, the CLI, WASM or the playground.
-Exact reports and language-level `quantile` are unchanged. M4 remains incomplete.
+The selected compactor is now integrated in sampled report collection, Rust, the
+CLI and WASM; see [the collection contract](report-summaries.md#approximate-quantile-collection).
+The playground selector is still pending. These measurements describe the
+standalone candidates, not the integrated collector. Exact reports and
+language-level `quantile` are unchanged. M4 remains incomplete.
 
 ## Candidates
 
@@ -156,7 +159,12 @@ buffer capacities change. With `H` levels, the compactor retains fewer than
 is not an allocation allowance. Production must reserve actual capacity growth
 and overlapping merge/query storage using the existing shared summary budget.
 
-## Next implementation contract
+## Integration contract
+
+The engine now implements the collector and API portions of this contract.
+Native/WASM, worker-count, budget-failure and cancellation tests accompany it;
+full-model measurements are recorded in [benchmarks](benchmarks.md#since-approximate-quantile-collection).
+The playground's selector and chart approximation labels remain a separate step.
 
 - Promote the selected compactor into a fallible, cancellable collector. Reserve
   storage before allocation, including keys, per-run bookkeeping, pending
@@ -174,7 +182,6 @@ and overlapping merge/query storage using the existing shared summary budget.
   never consume model RNG. Fix batch construction and merge order. Compactor
   results need not match direct streaming or a different merge tree.
 - Test actual engine model draws, counts and risk estimates across policies;
-  test native/WASM and thread-count replay. The current tests cover standalone
-  candidate replay only. Then measure the full retirement reports at 100,000 and
+  test native/WASM and thread-count replay. Measure full retirement reports at 100,000 and
   1,000,000 trials, including summary budgets and cancellation. Keep the playground
   example's modest default.

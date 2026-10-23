@@ -68,10 +68,10 @@ pub struct Limits {
     pub max_outcomes: usize,
     /// Elements of one collection built by the program.
     pub max_collection: usize,
-    /// Maximum groups per moments-only report, including across batches.
+    /// Maximum groups per moments/quantile report, including across batches.
     pub max_report_groups: usize,
-    /// Accounted live collector bytes across all moments reports and batches.
-    /// Includes keys and run bookkeeping; excludes exact reports and rendering.
+    /// Accounted live collector bytes across moments/quantile reports and batches.
+    /// Includes keys, run bookkeeping and sketch/query buffers; excludes exact reports and rendering.
     pub max_report_summary_bytes: usize,
     /// Units of work: world-steps plus outcomes computed.
     pub max_work: u64,
@@ -739,7 +739,7 @@ struct Combined {
 impl Combined {
     fn new(reports: usize, config: &interp::Config) -> Combined {
         Combined {
-            sinks: config.sinks(reports),
+            sinks: config.sinks(reports, u64::MAX),
             totals: interp::SampleTotals {
                 weight: Weight::ZERO,
                 squares: Weight::ZERO,
@@ -757,8 +757,8 @@ impl Combined {
         for ((sink, theirs), site) in self.sinks.iter().zip(&batch.sinks).zip(&program.reports) {
             sink.validate_merge(theirs).map_err(|e| e.at(site.span))?;
         }
-        for (sink, theirs) in self.sinks.iter_mut().zip(batch.sinks) {
-            sink.absorb(theirs);
+        for ((sink, theirs), site) in self.sinks.iter_mut().zip(batch.sinks).zip(&program.reports) {
+            sink.absorb(theirs).map_err(|e| e.at(site.span))?;
         }
         self.totals.weight += batch.totals.weight;
         self.totals.squares += batch.totals.squares;
@@ -1028,6 +1028,9 @@ fn sampled(
     };
     // The report lines don't show unresolved weight when sampling (the
     // summary line does), but the results still say what's incomplete.
+    for (sink, site) in engine.sinks.iter_mut().zip(&program.reports) {
+        sink.finish().map_err(|e| e.at(site.span))?;
+    }
     let results = report::results(&program.reports, &engine.sinks, format, unresolved);
     let summaries = report::selected_summaries(&options.report_collections, &options.report_summaries);
     report::validate_summary_values(&program.reports, &results, &summaries)?;

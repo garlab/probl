@@ -91,6 +91,6 @@ fn plain_nested_keys_work_and_opaque_keys_are_diagnosed() {
         let e = p
             .run(&options(1024 * 1024, 10, 1).report_collection(0, ReportCollection::Moments))
             .unwrap_err();
-        assert!(e.to_string().contains("moments report keys"), "{e}");
+        assert!(e.to_string().contains("bounded report keys"), "{e}");
     }
 }

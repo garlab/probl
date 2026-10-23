@@ -223,7 +223,7 @@ pub fn docs() -> String {
 /// - `"mode"`: `"enumerate"` or `"sample"`, and `"runs"` and `"seed"`,
 ///   which override the program's `@mode` as on the command line;
 /// - `"conjugate"`: `false` to sample without exact updates;
-/// - `"report_collections"`: report ID strings mapped to "exact" or "moments".
+/// - `"report_collections"`: report ID strings mapped to "exact", "moments" or "quantiles[:CAPACITY]".
 /// - `"report_summaries"`: an object from zero-based report ID strings to summary
 ///   specifications, such as `{"0":"forecast","2":"mean,median,q:0.9"}`;
 /// - `"on_error"`: `"total"` or `"partial"`, overriding the program's

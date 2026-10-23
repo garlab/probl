@@ -52,6 +52,7 @@ let options = probl::Options::new().runs(50_000).seed(7);
 - `epsilon`, `fractions` and `conjugate` control approximation/display settings and exact conjugate updates.
 - `report_summary(id, summary)` selects ordered statistics for one report, such as `ReportSummary::forecast()` for 10/25/50/75/90 columns. `Program::report_labels()` lists labels in zero-based ID order, including duplicate labels. See [summary selection](report-summaries.md) for custom columns, validation and median conventions. With no override, output is unchanged.
 - `report_collection(id, ReportCollection::Moments)` opts a sampled numeric/fact report into moments-only retention. Its default columns become mean/SD; numeric distributions and quantiles are unavailable. `Report::collection()` identifies the policy, and `Limits::max_report_groups` caps its groups (default 10,000). [Collection details](report-summaries.md#moments-only-collection) describe supported values, weighted/repeated visits and memory bounds.
+- `report_collection(id, ReportCollection::Quantiles { capacity: 512 })` retains moments and approximate inverse-CDF quantiles for unit-weight sampled scalar numbers, once per trial/key. Use `NumericSummary::approximate_quantile()` and `approximation()`; exact `quantile()` and distributions are unavailable. [Sketch collection](report-summaries.md#approximate-quantile-collection) describes capacity, restrictions and approximation metadata.
 - `integrate(tolerance)` turns on numerical integration when enumerating, as `@integrate` does ([semantics](semantics.md#numerical-integration)). `Outcome::integration()` then gives the tolerance if results came from it: every probability, summary and the evidence can be approximate to about that tolerance.
 - `on_error(FailureMode::Total)` or `on_error(FailureMode::Partial)` chooses what a fault in one world does to the others, whatever the program's `@on_error` says. Without either, a run is total when it enumerates and partial when it samples ([partial results](#partial-results)).
 - `limits`, `cancel` and `progress` give the host control over resources and execution.
@@ -94,7 +95,7 @@ The host grants read authority. Use a restricted provider for untrusted models, 
 
 `Limits::default()` uses native defaults; `Limits::browser()` uses lower memory/work limits and one thread. The public fields can be adjusted after construction. `Cancel` is cloneable and can be triggered from another thread. Program pragmas cannot raise the host's ceilings.
 
-`max_report_summary_bytes` caps live collector storage across moments-only reports,
+`max_report_summary_bytes` caps live collector storage across moments/quantile reports,
 including keys and active/pending worker batches (1 GiB native, 128 MiB browser).
 Exact populations, model memory and result formatting are outside this allowance.
 See the [accounting and key restrictions](report-summaries.md#moments-only-collection).

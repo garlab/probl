@@ -63,7 +63,7 @@ The adapter uses [`probl`](library.md) for loading, execution and reporting, and
 
 ### Limits
 
-[`Limits::browser()`](../crates/probl/src/options.rs) sets lower ceilings than native execution, including 1,000,000 worlds, 2 × 10⁹ work units, 150 nested calls, 20,000 chain states, 1 MiB output and 8 MiB input. Moments-only reports share a 128 MiB collector budget across keys and batches; [its scope](report-summaries.md#moments-only-collection) excludes exact populations and other runtime memory. The source definition is authoritative for the full list. The page's timeout is additional to engine budgets.
+[`Limits::browser()`](../crates/probl/src/options.rs) sets lower ceilings than native execution, including 1,000,000 worlds, 2 × 10⁹ work units, 150 nested calls, 20,000 chain states, 1 MiB output and 8 MiB input. Moments and quantile reports share a 128 MiB collector budget across keys and batches; [its scope](report-summaries.md#moments-only-collection) excludes exact populations and other runtime memory. The source definition is authoritative for the full list. The page's timeout is additional to engine budgets.
 
 The resolver serves only supplied in-memory files. The page currently supplies bundled example data; it has no arbitrary local-file picker or stdin. Nor does it have environment variables: a WASM request may carry an `env` object, but the page sends none, so a model's `env` is empty. The language has no general network access. Charts consume the WASM adapter's [versioned report summaries](report-json.md); the text output remains available.
 
@@ -118,12 +118,15 @@ To test an existing deployment:
 PROBL_URL=https://playground.probl.dev bun test/page.mjs
 ```
 
-User-supplied data files, bounded-memory summaries and parallel browser sampling
-remain future work. Categorical populations still use the text view.
+User-supplied data files and parallel browser sampling remain future work.
+Categorical populations still use the text view.
 
 The per-report **Moments only (sample mode)** collection choice retains mean/SD
 and probability estimates without numeric populations. It is separate from the
 **Mean and SD** display preset, which alone keeps exact collection. The choice is
 saved in `charts.reports[id].collection` and sent as `report_collections`; share
-links and local reloads preserve it. Quantile columns require exact collection.
+links and local reloads preserve it. In the current selector, quantile columns
+require exact collection. The WASM request API also supports
+[`quantiles[:CAPACITY]`](report-summaries.md#approximate-quantile-collection);
+its selector and chart approximation labels are still pending.
 See [collection policies](report-summaries.md#moments-only-collection).

@@ -567,3 +567,85 @@ and seeded replay. Retained/peak heap grew much less than tenfold. These measure
 rank errors are not guarantees, and heavy-tail dollar errors can be large.
 The evaluation records the limitations and the remaining budget, metadata,
 cancellation and native/WASM integration work.
+
+## Since approximate quantile collection
+
+2026-10-23, the same machine. The sampled collector now implements the selected
+compactor with allocation reservations, cancellation, exact zero/sign counts,
+fixed batch ordering and shared query views. Rust, CLI and WASM expose the
+[explicit approximate policy](report-summaries.md#approximate-quantile-collection).
+The playground selector and chart approximation labels remain pending.
+
+These measurements run `retirement_balance` (101 numeric groups), with one native
+worker and seed 42. This is a different report mix from the all-report moments
+measurements above. Native binaries use one release codegen unit and full LTO.
+The runner counts peak heap separately from timing. The two 10,000-trial exact
+and moments timings are medians from a warmed before/after/after/before recheck;
+other rows are single measured runs, each with its separate allocation run.
+
+| Collection | Trials | Native time | Native peak heap |
+|---|---:|---:|---:|
+| Exact | 10,000 | 1.404 s | 53.29 MiB |
+| Exact | 20,000 | 2.698 s | 100.88 MiB |
+| Moments | 10,000 | 1.411 s | 18.25 MiB |
+| Moments | 100,000 | 13.814 s | 18.25 MiB |
+| Quantiles, capacity 512 | 10,000 | 1.453 s | 19.89 MiB |
+| Quantiles, capacity 512 | 20,000 | 2.911 s | 20.21 MiB |
+| Quantiles, capacity 512 | 100,000 | 14.523 s | 20.51 MiB |
+
+```sh
+CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_LTO=fat \
+  cargo build --release --locked -p probl-bench
+target/release/probl-bench --quick --threads=1 --runs=100000 \
+  --collect=quantiles --json retirement_balance
+```
+
+Increasing trials tenfold adds about 0.62 MiB of peak heap for sketches, rather
+than retaining another nine full populations. Active run bookkeeping remains
+the dominant cost. Approximate quantiles cost modest extra time relative to
+moments; this is a memory/capability improvement, not a speedup claim. Quantile
+errors are distinct from Monte Carlo error and have no advertised bound.
+
+For the existing paths, compared with `9451c9b` (the engine baseline before the
+sketch work), warmed exact timings were 1.403/1.381 s before and 1.437/1.371 s
+after. Moments were 1.433/1.402 s before and 1.409/1.413 s after. These overlapping
+ranges do not establish a runtime regression or speedup. Output and world-step
+counts match across builds. Peak heap changes by about 3 KiB for exact and 4 KiB
+for moments, from the extra collector fields. An earlier pass during build
+activity was noisier and is not used for this timing comparison.
+
+Actual WASM uses fresh instances of the compiled modules, a 200-trial warmup,
+the same balance-only source, seed 42 and a pinned date (2026-10-23). Its memory
+measure is linear-memory high-water, not native live heap:
+
+| Collection | Trials | WASM time | WASM linear memory |
+|---|---:|---:|---:|
+| Quantiles, capacity 512 | 5,000 | 3.011 s | 19.63 MiB |
+| Quantiles, capacity 512 | 20,000 | 9.494 s | 20.38 MiB |
+| Quantiles, capacity 512 | 100,000 | 27.405 s | 20.56 MiB |
+| Moments | 100,000 | 25.049 s | 18.31 MiB |
+
+The 5,000-trial before/after/after/before controls returned identical complete
+documents for each existing policy. Exact memory changed from 36.50 to 36.69 MiB;
+moments stayed at 18.31 MiB. Control timings were noisy (exact before 1.65–1.91 s,
+after 1.31–2.66 s; moments before 1.91–2.05 s, after 1.37–2.43 s), so they do not
+support a default-path runtime claim. The scale timings are observations, not
+browser latency targets. They fit the fixed 128 MiB collector allowance.
+
+Finally, the full three-report retirement example completed 1,000,000 native
+trials on twelve workers, using quantiles for balance and moments for depletion
+and baseline, within the default 1 GiB collector allowance. It executed
+1,116,000,000 world-steps. This is a completion/limit check, not a controlled
+million-trial heap measurement:
+
+```sh
+probl run examples/21_retirement.probl --runs 1000000 --threads 12 \
+  --collect 0=quantiles --collect 1=moments --collect 2=moments \
+  --seed 42 --today 2026-10-23 --stats
+```
+
+Validation includes workspace tests, Clippy, the 5,000-case release oracle,
+actual native/WASM bitwise sketch-answer replay, chart tests and headless Chrome.
+New tests cover unchanged draws, moments and depletion reports, exact zero mass,
+worker replay, unsupported inputs, shared allocations, failed growth/merge/query
+cleanup, cancellation and tenfold trials under a fixed collector allowance.

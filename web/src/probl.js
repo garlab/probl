@@ -56,7 +56,7 @@ export async function load(module, { onPrint = () => {}, onProgress = () => {} }
      * doesn't parse; `reports` is `[{id, label}]` when compiled, null otherwise. */
     check: (source) => JSON.parse(call(exports.probl_check, source)),
     /** Run `{source, today?, env?, mode?, runs?, seed?, conjugate?, files?, report_summaries?, report_collections?}`.
-     * `report_collections` maps report IDs to "exact" (default) or "moments".
+     * `report_collections` maps report IDs to "exact" (default), "moments", or "quantiles[:CAPACITY]".
      * `report_summaries` maps zero-based report IDs to specifications such as
      * `{"0":"forecast","2":"mean,median,q:0.9"}` (docs/report-summaries.md).
      * Successful and partial results include a versioned `reports` document,

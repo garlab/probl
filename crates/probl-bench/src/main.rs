@@ -524,7 +524,7 @@ fn main() -> std::process::ExitCode {
             .find_map(|a| a.strip_prefix("--collect="))
             .unwrap_or("exact")
             .parse()
-            .expect("--collect= needs exact or moments"),
+            .expect("--collect= needs exact, moments or quantiles[:CAPACITY]"),
         runs: args
             .iter()
             .find_map(|a| a.strip_prefix("--runs="))

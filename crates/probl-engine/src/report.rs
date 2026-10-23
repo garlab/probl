@@ -10,7 +10,9 @@ use std::fmt::Write;
 
 mod collection;
 mod memory;
+mod sketch;
 pub(crate) use memory::SummaryBudget;
+pub use sketch::QuantileApproximation;
 mod results;
 use collection::OnlineNumbers;
 pub use collection::{ReportCollection, selected_summaries, validate_collections};
@@ -40,6 +42,7 @@ pub struct Acc {
     /// When sampling: sums over the finished runs, for standard errors.
     moments: Option<Moments>,
     online: Option<OnlineNumbers>,
+    sketch: Option<Box<sketch::Sketch>>,
     continuous: bool,
     nonnumeric: bool,
     /// The values are records or lists that hold outcomes of draws, all
@@ -61,6 +64,7 @@ impl Default for Acc {
             runs: FxHashMap::default(),
             moments: None,
             online: None,
+            sketch: None,
             continuous: false,
             nonnumeric: false,
             structured: false,
@@ -407,11 +411,14 @@ impl Acc {
     }
 
     /// Add what another batch of runs reported for this key.
-    fn absorb(&mut self, other: Acc) {
+    fn absorb(&mut self, other: Acc) -> crate::error::OpResult<()> {
         debug_assert!(
             self.runs.is_empty() && other.runs.is_empty(),
             "batches end before they're combined"
         );
+        if let (Some(mine), Some(theirs)) = (&mut self.sketch, other.sketch) {
+            mine.merge(*theirs)?;
+        }
         if let (Some(mine), Some(theirs)) = (&mut self.online, other.online) {
             mine.absorb(theirs);
         }
@@ -430,6 +437,7 @@ impl Acc {
             (mine @ None, theirs) => *mine = theirs,
             (Some(_), None) => {}
         }
+        Ok(())
     }
 
     /// Whether the values come from sampled runs.
@@ -562,6 +570,7 @@ impl Acc {
 #[derive(Clone, Debug, Default)]
 pub struct Sink {
     summary_budget: Option<SummaryBudget>,
+    sketch_seed: u64,
     pub collection: ReportCollection,
     max_groups: usize,
     pub groups: BTreeMap<Value, Acc>,
@@ -583,9 +592,16 @@ impl Sink {
     }
 
     pub(crate) fn with_summary_budget(mut self, budget: SummaryBudget) -> Self {
-        if self.collection == ReportCollection::Moments {
+        if self.collection != ReportCollection::Exact {
             self.summary_budget = Some(budget);
         }
+        self
+    }
+
+    pub(crate) fn with_sketch_seed(mut self, seed: u64, site: usize, batch: u64) -> Self {
+        self.sketch_seed = sketch::mix(seed ^ 0x5155_414e_5449_4c45)
+            ^ sketch::mix(site as u64 ^ 0x5349_5445_0000_0000)
+            ^ sketch::mix(batch ^ 0x4241_5443_4800_0000);
         self
     }
 
@@ -595,7 +611,16 @@ impl Sink {
             return Ok(());
         }
         if !self.groups.contains_key(key) && self.groups.len() >= self.max_groups {
-            return Err(OpError::limit("moments report exceeded max_report_groups"));
+            return Err(OpError::limit("bounded report exceeded max_report_groups"));
+        }
+        if matches!(self.collection, ReportCollection::Quantiles { .. }) {
+            return if collection::number(value).is_some() {
+                Ok(())
+            } else {
+                Err(OpError::unsupported(
+                    "quantile collection requires sampled finite scalar numbers exactly representable as f64; use exact or moments collection for other values",
+                ))
+            };
         }
         if !matches!(value, Value::Bool(_)) && collection::number(value).is_none() {
             return Err(OpError::unsupported(
@@ -620,7 +645,7 @@ impl Sink {
         }
         let added = other.groups.keys().filter(|k| !self.groups.contains_key(*k)).count();
         if self.groups.len().saturating_add(added) > self.max_groups {
-            return Err(OpError::limit("moments report exceeded max_report_groups"));
+            return Err(OpError::limit("bounded report exceeded max_report_groups"));
         }
         for (key, a) in &other.groups {
             if self.groups.get(key).is_some_and(|b| a.is_event() != b.is_event()) {
@@ -724,6 +749,11 @@ impl Sink {
         if self.summary_budget.is_some() {
             return self.add_budgeted(key, value, weight, run);
         }
+        if matches!(self.collection, ReportCollection::Quantiles { .. }) {
+            return Err(crate::error::OpError::internal(
+                "quantile collection requires a summary budget",
+            ));
+        }
         let acc = self.groups.entry(key).or_insert_with(|| Acc {
             online: (self.collection == ReportCollection::Moments).then(OnlineNumbers::default),
             ..Acc::default()
@@ -742,6 +772,26 @@ impl Sink {
         weight: Weight,
         run: Option<u32>,
     ) -> crate::error::OpResult<()> {
+        if matches!(self.collection, ReportCollection::Quantiles { .. }) {
+            self.validate_collection(&key, value)?;
+            if run.is_none() || weight != Weight::ONE {
+                return Err(crate::error::OpError::unsupported(
+                    "quantile collection requires unweighted sampled contributions; use exact or moments collection for weighted reports",
+                ));
+            }
+            if self
+                .groups
+                .get(&key)
+                .is_some_and(|a| a.runs.contains_key(&run.unwrap()))
+            {
+                return Err(crate::error::OpError::unsupported(
+                    "quantile collection permits at most one contribution per trial/key; use exact or moments collection for repeated visits",
+                ));
+            }
+        }
+        // Encounter indices are deterministic within each fixed batch and avoid
+        // platform-dependent hashes of compound keys. No model RNG is consumed.
+        let group_index = self.groups.len() as u64;
         let acc = match self.groups.entry(key) {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::btree_map::Entry::Vacant(entry) => {
@@ -750,9 +800,18 @@ impl Sink {
                     .as_ref()
                     .map(|budget| budget.group(entry.key()))
                     .transpose()?;
+                let sketch = match self.collection {
+                    ReportCollection::Quantiles { capacity } => Some(sketch::Sketch::new(
+                        capacity,
+                        sketch::mix(self.sketch_seed ^ sketch::mix(group_index)),
+                        self.summary_budget.as_ref().unwrap(),
+                    )?),
+                    _ => None,
+                };
                 entry.insert(Acc {
                     memory,
-                    online: (self.collection == ReportCollection::Moments).then(OnlineNumbers::default),
+                    sketch,
+                    online: Some(OnlineNumbers::default()),
                     ..Acc::default()
                 })
             }
@@ -766,6 +825,9 @@ impl Sink {
         } else {
             None
         };
+        if let Some(sketch) = &mut acc.sketch {
+            sketch.add(collection::number(value).expect("validated quantile value"))?;
+        }
         acc.visit(value, weight, run);
         self.structured |= acc.structured;
         if let Some(bytes) = growth {
@@ -805,18 +867,28 @@ impl Sink {
 
     /// Add what another batch of runs reported. Batches are combined in
     /// order, so the sums don't depend on which thread ran which batch.
-    pub fn absorb(&mut self, other: Sink) {
+    pub fn absorb(&mut self, other: Sink) -> crate::error::OpResult<()> {
         self.structured |= other.structured;
         self.reached += other.reached;
         self.reached_squares += other.reached_squares;
         for (key, acc) in other.groups {
             match self.groups.entry(key) {
-                std::collections::btree_map::Entry::Occupied(mut mine) => mine.get_mut().absorb(acc),
+                std::collections::btree_map::Entry::Occupied(mut mine) => mine.get_mut().absorb(acc)?,
                 std::collections::btree_map::Entry::Vacant(slot) => {
                     slot.insert(acc);
                 }
             }
         }
+        Ok(())
+    }
+
+    pub(crate) fn finish(&mut self) -> crate::error::OpResult<()> {
+        for acc in self.groups.values_mut() {
+            if let Some(sketch) = &mut acc.sketch {
+                sketch.finish()?;
+            }
+        }
+        Ok(())
     }
 
     /// For a report without `by` of facts: the probability they're true.
@@ -967,6 +1039,9 @@ pub fn render_selected(
     for (index, (site, result)) in sites.iter().zip(results).enumerate() {
         let selection = selections.get(&(index + offset));
         let mut label = site.label.clone();
+        if matches!(result.collection, ReportCollection::Quantiles { .. }) {
+            label.push_str(" (approximate quantiles; inverse CDF)");
+        }
         if site.kind == ReportKind::PerVisit {
             label.push_str(" (per visit)");
         }
@@ -1749,7 +1824,7 @@ mod tests {
                 0,
                 "finished batches release per-run storage"
             );
-            combined.absorb(batch);
+            combined.absorb(batch).unwrap();
         }
         let acc = &combined.groups[&Value::Unit];
         assert_eq!(acc.contributing_runs(), 3000);
@@ -1763,7 +1838,7 @@ mod tests {
             .add(Value::Unit, &Value::Bool(true), Weight::new(0.1), Some(0))
             .unwrap();
         weighted.end_batch().unwrap();
-        combined.absorb(weighted);
+        combined.absorb(weighted).unwrap();
         let acc = &combined.groups[&Value::Unit];
         assert_eq!(acc.contributing_runs(), 3001);
         assert_eq!(acc.chance_interval95(ReportKind::Once), None);

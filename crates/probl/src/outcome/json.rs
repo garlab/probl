@@ -267,7 +267,14 @@ fn group(
         let mut quantiles = Vec::new();
         for statistic in columns {
             let (level, convention) = match statistic {
-                ReportStatistic::Median => (0.5, "midpoint"),
+                ReportStatistic::Median => (
+                    0.5,
+                    if g.numeric.as_ref().is_some_and(|n| n.approximation().is_some()) {
+                        "inverse_cdf"
+                    } else {
+                        "midpoint"
+                    },
+                ),
                 ReportStatistic::Quantile(q) => (*q, "inverse_cdf"),
                 _ => continue,
             };
@@ -284,9 +291,18 @@ fn group(
             "quantiles": quantiles,
             "percent": g.numeric.as_ref().is_some_and(|n| n.percent),
             "integrated_moments": g.numeric.as_ref().is_some_and(|n| n.integrated),
-            "quantile_method": if g.numeric.as_ref().is_some_and(|n| !n.has_quantiles()) { "unavailable" } else { "exact" },
-            "deterministic": g.distribution.len() == 1 && (dates || numbers),
+            "quantile_method": if g.numeric.as_ref().is_some_and(|n| n.approximation().is_some()) { "compactor_v1" }
+                else if g.numeric.as_ref().is_some_and(|n| !n.has_quantiles()) { "unavailable" } else { "exact" },
+            "deterministic": (g.distribution.len() == 1 && (dates || numbers))
+                || g.numeric.as_ref().is_some_and(|n| n.approximation().is_some()
+                    && n.inverse_quantile(0.0).and_then(|q| q.point) == n.inverse_quantile(1.0).and_then(|q| q.point)),
         });
+        if let Some(a) = g.numeric.as_ref().and_then(|n| n.approximation()) {
+            summary["approximation"] = json!({
+                "method": a.method(), "capacity": a.capacity, "samples": a.samples.to_string(), "zeros": a.zeros.to_string(),
+                "rank_error_bound": null, "confidence_level": null,
+            });
+        }
     }
     let mut fields = Vec::new();
     if let Some(fs) = &g.fields {

@@ -36,7 +36,7 @@ Reports are in source order, including unreached report sites:
 | `id` | Zero-based report index within this compiled program |
 | `label` | The explicit `as` label or expression text |
 | `key_label` | Source text of the `by` expression, or `null` |
-| `collection` | `exact` (default) or explicit `moments` retention |
+| `collection` | `exact` (default), `moments`, or `quantiles:CAPACITY` retention |
 | `summary_selection` | Ordered explicit statistic tokens, or `null` for defaults |
 | `visits` | `once`, `per_key`, or `per_visit` |
 | `reach` | `{share, standard_error}` where known, otherwise `null` |
@@ -81,11 +81,18 @@ Numeric and date summaries contain:
   quantiles. Explicit selections include only requested quantiles, in order.
 - `percent`: whether numeric values are probability parameters.
 - `integrated_moments`: whether computing moments required numerical integration.
-- `quantile_method: "exact"`: no quantile sketch or sample compression was used.
+- `quantile_method`: `"exact"` without compression, `"unavailable"` for moments-only
+  retention, or `"compactor_v1"` for an approximate quantile sketch.
+- `approximation`, present only for a sketch: `{method, capacity, samples, zeros,
+  rank_error_bound, confidence_level}`. Counts are decimal strings; the two error
+  fields are null because no calibrated guarantee is claimed. All sketch
+  quantiles, including the median, have `convention: "inverse_cdf"`, a numeric
+  estimate and no exact typed `value`. This metadata is separate from sampling
+  uncertainty; see [the sketch contract](report-summaries.md#approximate-quantile-collection).
 - `deterministic`: the resolved population consists of one concrete number/date.
 
 A true `deterministic` flag does not override incompleteness or partial-failure
-metadata. By default the 50% entry uses the midpoint median; other levels use the
+metadata. With exact collection, by default the 50% entry uses the midpoint median; other levels use the
 weighted inverse CDF. A [summary selection](report-summaries.md) can request both
 `median` and `q:0.5`: those have the same level but different conventions and can
 differ at ties. These conventions can differ from interpolated sample percentiles

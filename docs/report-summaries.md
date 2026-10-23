@@ -46,7 +46,7 @@ confidence intervals. Probability reports keep their probability and uncertainty
 
 ## Median and quantile conventions
 
-`median` uses Probl's existing midpoint rule at ties. `q:LEVEL` uses the weighted
+With exact collection, `median` uses Probl's existing midpoint rule at ties. `q:LEVEL` uses the weighted
 inverse CDF, including at `q:0.5`. With half the mass at 0 and half at 10, `median`
 is 5 and `q:0.5` is 0. Both columns may be requested together. Levels 0 and 1 are
 allowed; a continuous distribution's endpoint may be infinite.
@@ -173,7 +173,7 @@ that cost. `Limits::max_report_groups` caps groups per moments-only report acros
 batches (default 10,000), with a `Limit` error before a new group exceeds it.
 
 `Limits::max_report_summary_bytes` additionally limits accounted live collector
-storage across **all moments-only reports and workers in one execution**. It
+storage across **all moments/quantile reports and workers in one execution**. It
 defaults to 1 GiB natively and 128 MiB in the browser. The CLI accepts sizes such
 as `--max-report-summary 128M`; Rust hosts can set the field on `Limits`.
 The playground uses its fixed browser allowance.
@@ -192,12 +192,68 @@ contain functions or distributions require exact collection.
 
 This is an implementation-dependent accounting budget, not a process-memory or
 WASM-linear-memory ceiling. It excludes exact reports, model execution and
-caches, source/data, result construction/formatting, allocator overhead and
-copies made by callers. Mixing exact and moments reports leaves the exact
+caches, source/data, ordinary result construction/formatting, allocator overhead
+and copies made by callers. Sketches additionally charge their shared query
+views while constructing and retaining them. Mixing exact and bounded reports leaves the exact
 populations outside this allowance. An exceeded limit stops the execution with
 a `Limit` error; it never silently drops a report or trial. More workers and a
 different batch schedule can cross a tight live limit; completed runs retain
 the same seeded results. Reducing threads can help a native run fit.
 
-Bounded quantile sketches remain future work. The playground default remains
-5,000 retirement trials.
+## Approximate quantile collection
+
+For larger sampled numeric reports, retain moments and a bounded sketch:
+
+```sh
+probl run examples/21_retirement.probl --runs 100000 --collect 0=quantiles
+# Choose a capacity explicitly (128 through 4096; default 512):
+probl run examples/21_retirement.probl --collect 0=quantiles:1024 --summary 0=forecast
+```
+
+Rust uses `ReportCollection::Quantiles { capacity: 512 }`. WASM accepts
+`"report_collections": {"0": "quantiles"}` or `"quantiles:512"`; the returned
+collection string includes the capacity. The playground's collection selector
+still offers exact and moments-only policies; the sketch UI is a later step.
+
+The first implementation accepts finite scalar numbers exactly representable as
+`f64`, with unit-weight sampled contributions and at most one visit per trial/key.
+Boolean risk reports should keep exact or moments collection. Weighted visits,
+repeated visits to the same key, integrated distributions, structures and other
+unsupported values stop execution explicitly; no observations are silently
+dropped. Unreached reports are allowed. Conditioning that rejects runs can still
+leave unit-weight contributions; only those reaching the report are summarized.
+
+Means, SDs, contribution counts and their existing sampling-error calculations
+are preserved. Exact total, negative and zero counts, plus minimum and maximum,
+are kept outside the compactor. Zero quantiles in the true zero interval remain
+zero. All sketch quantiles, including `median`, use the **lower inverse CDF**;
+the text labels this convention and the approximation. With half the observations
+at zero and half at ten, its median is zero, while exact midpoint median is five.
+Default sketch columns are 5/25/50/75/95; explicit summary selections still apply.
+
+`NumericSummary::quantile()` and `Group::distribution()` are unavailable for
+sketches. Use `NumericSummary::approximate_quantile(q)` and `approximation()` to
+read estimates and `QuantileApproximation { capacity, samples, zeros }`. The
+method is `compactor_v1`. Approximate queries are unavailable on exact/moments
+reports, avoiding an implicit change to existing APIs.
+
+JSON sets `summary.quantile_method` to `compactor_v1` and adds `approximation`
+with `method`, `capacity`, decimal-string `samples`/`zeros`, and null
+`rank_error_bound`/`confidence_level`. Each quantile's convention is `inverse_cdf`;
+its estimate carries the usual sampling metadata, separately from approximation.
+No accuracy guarantee is claimed: capacity controls retained space and observed
+rank accuracy. Small rank errors can mean large errors in heavy-tail values;
+see the [candidate measurements](quantile-sketches.md).
+
+Sketch buffers reserve storage before growth, compaction, merge and final query
+view construction, including old/new buffers and pending batches. Cancellation
+is checked during collection and between bounded compactions. Frozen query views
+are shared, and queries allocate no new population storage. They use the same
+group cap and aggregate byte allowance as moments reports. Exact report storage
+remains outside that allowance.
+
+Sketch random state is separate from model randomness. Execution seed, report,
+batch and group encounter index determine it. Fixed batches merge in input order,
+so successful runs replay across worker counts and native/WASM. A different
+batch partition or merge tree need not yield the same approximation. The
+playground's retirement default remains 5,000 trials.

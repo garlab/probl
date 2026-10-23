@@ -413,3 +413,27 @@ fn collection_requests_validate_and_mark_unavailable_quantiles() {
         assert!(printed.is_empty());
     }
 }
+
+#[test]
+fn quantile_collection_has_explicit_approximation_metadata() {
+    let source = "@mode sample(runs:2101,seed:42)\nlet x~normal(0,1); report max(0.0,x)";
+    let (answer, _) = run(json!({"source":source,"report_collections":{"0":"quantiles"}}));
+    assert!(answer.get("error").is_none(), "{answer}");
+    let report = &answer["reports"]["reports"][0];
+    assert_eq!(report["collection"], "quantiles:512");
+    let summary = &report["groups"][0]["summary"];
+    assert_eq!(summary["quantile_method"], "compactor_v1");
+    assert_eq!(summary["approximation"]["capacity"], 512);
+    assert_eq!(summary["approximation"]["samples"], "2101");
+    assert_eq!(summary["quantiles"][2]["convention"], "inverse_cdf");
+    for policy in ["quantiles:0", "quantiles:4097"] {
+        let (answer, printed) = run(json!({"source":source,"report_collections":{"0":policy}}));
+        assert!(answer.get("error").is_some());
+        assert!(printed.is_empty());
+    }
+    let (answer, _) = run(json!({"source":"@mode sample(runs:10)\nreport 0.0","report_collections":{"0":"quantiles"}}));
+    assert_eq!(
+        answer["reports"]["reports"][0]["groups"][0]["summary"]["deterministic"],
+        true
+    );
+}

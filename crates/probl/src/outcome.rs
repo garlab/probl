@@ -757,8 +757,33 @@ impl NumericSummary {
         if !(0.0..=1.0).contains(&q) {
             return Err(SummaryError::InvalidQuantile);
         }
+        if self.numeric.approximation().is_some() {
+            return Err(SummaryError::Unavailable);
+        }
         self.numeric
             .quantile(q)
+            .map(Estimate::new)
+            .ok_or(SummaryError::Unavailable)
+    }
+
+    /// Sketch method/capacity and exact sample/zero counts. This metadata is
+    /// distinct from the estimates' Monte Carlo sampling uncertainty.
+    pub fn approximation(&self) -> Option<crate::QuantileApproximation> {
+        self.numeric.approximation()
+    }
+
+    /// Approximate lower inverse CDF, including at 0.5. Available only for a
+    /// quantile sketch; `quantile` remains unavailable without an exact retained
+    /// population. No rank- or value-error bound is promised by the capacity.
+    pub fn approximate_quantile(&self, q: f64) -> Result<Estimate, SummaryError> {
+        if !(0.0..=1.0).contains(&q) {
+            return Err(SummaryError::InvalidQuantile);
+        }
+        if self.approximation().is_none() {
+            return Err(SummaryError::Unavailable);
+        }
+        self.numeric
+            .inverse_quantile(q)
             .map(Estimate::new)
             .ok_or(SummaryError::Unavailable)
     }

@@ -92,6 +92,35 @@ for (const request of [
 }
 console.log('same  moments collection, weighted repeated visits, partial runs, live memory limit and validation in native/WASM');
 
+for (const request of [
+  { source:'@mode sample(runs:5007,seed:42)\nlet x~normal(0,1); report max(0.0,x); report x<=0; report x', report_collections:{0:'quantiles:128'} },
+  { source:'@mode sample(runs:5007,seed:42)\nlet x~normal(0,1); for k in 0..2 {report x+k by {index:k,label:"year"}}', report_collections:{0:'quantiles'} },
+  { source:'@mode sample(runs:2101,seed:42)\nlet x~d2; report 1/(x-1)', report_collections:{0:'quantiles'} },
+  { source:'@mode sample(runs:2101,seed:42)\nreport 0.0', report_collections:{0:'quantiles'} },
+  { source:'@mode sample(runs:10)\nscore 50%; report 1', report_collections:{0:'quantiles'} },
+  { source:'@mode sample(runs:10)\nfor k in 1..2 {report k by 0}', report_collections:{0:'quantiles'} },
+  { source:'@mode sample(runs:10)\nreport d6', report_collections:{0:'quantiles'} },
+  { source:'report 1', report_collections:{0:'quantiles:0'} },
+  { source:summaryLimitSource, report_collections:{0:'quantiles'} },
+]) {
+  request.today = '2026-10-23';
+  const expected = JSON.parse(execFileSync(nativeAdapter, [], { input:JSON.stringify(request), encoding:'utf8' }));
+  const actual = probl.run(request);
+  sameReports(actual.reports, expected.reports);
+  assert.equal(actual.output, expected.output);
+  assert.deepEqual(actual.error, expected.error);
+  // Sketch answers themselves replay bit-for-bit, beyond moment tolerances.
+  for (const [i, report] of (actual.reports?.reports ?? []).entries()) {
+    for (const [j, group] of report.groups.entries()) {
+      if (group.summary?.approximation) {
+        assert.deepEqual(group.summary.quantiles, expected.reports.reports[i].groups[j].summary.quantiles);
+        assert.deepEqual(group.summary.approximation, expected.reports.reports[i].groups[j].summary.approximation);
+      }
+    }
+  }
+}
+console.log('same  approximate quantiles, exact zero counts, partial runs, keys and rejection diagnostics in native/WASM');
+
 let failed = 0;
 const cases = probl.examples().map((e) => ({ ...e, path: `examples/${e.name}.probl` }));
 cases.push({ name: 'api-contracts', path: 'web/test/api-contracts.probl', source: await readFile(`${root}/web/test/api-contracts.probl`, 'utf8') });

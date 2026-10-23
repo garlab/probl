@@ -19,11 +19,22 @@ struct State {
 
 fn exceeded() -> OpError {
     OpError::limit(
-        "moments reports exceeded max_report_summary_bytes; use fewer groups or threads, or raise the host limit",
+        "report summaries exceeded max_report_summary_bytes; use fewer groups or threads, or raise the host limit",
     )
 }
 
 impl SummaryBudget {
+    #[cfg(test)]
+    pub(super) fn used(&self) -> usize {
+        self.0.used.load(Ordering::Relaxed)
+    }
+    pub(super) fn check(&self) -> OpResult<()> {
+        if self.0.cancel.as_ref().is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Err(OpError::limit("cancelled"));
+        }
+        Ok(())
+    }
+
     pub fn new(limit: usize, cancel: Option<Arc<AtomicBool>>) -> Self {
         Self(Arc::new(State {
             limit,
@@ -33,6 +44,7 @@ impl SummaryBudget {
     }
 
     pub(super) fn reserve(&self, bytes: usize) -> OpResult<Reservation> {
+        self.check()?;
         let mut reservation = Reservation {
             budget: Some(self.clone()),
             bytes: 0,
@@ -204,7 +216,7 @@ impl KeySize<'_> {
         }
         if depth > 128 {
             return Err(OpError::unsupported(
-                "moments report keys may nest at most 128 levels; use exact collection for deeper keys",
+                "bounded report keys may nest at most 128 levels; use exact collection for deeper keys",
             ));
         }
         match value {
@@ -271,7 +283,7 @@ impl KeySize<'_> {
             | Value::Analytic(_)
             | Value::Event(_) => {
                 return Err(OpError::unsupported(
-                    "moments report keys require plain data without functions or distributions; use exact collection for other keys",
+                    "bounded report keys require plain data without functions or distributions; use exact collection for other keys",
                 ));
             }
         }
@@ -307,7 +319,7 @@ mod tests {
         batch.end_batch().unwrap();
         let finished = used(&budget);
         assert!(finished > 0 && active > 4 * finished);
-        combined.absorb(batch);
+        combined.absorb(batch).unwrap();
         assert_eq!(used(&budget), finished, "moving a new group transfers its charge");
         let mut pending = sink(&budget);
         pending
@@ -315,7 +327,7 @@ mod tests {
             .unwrap();
         pending.end_batch().unwrap();
         assert_eq!(used(&budget), 2 * finished, "pending batches remain charged");
-        combined.absorb(pending);
+        combined.absorb(pending).unwrap();
         assert_eq!(
             used(&budget),
             finished,

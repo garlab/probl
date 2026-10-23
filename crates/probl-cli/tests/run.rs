@@ -223,12 +223,23 @@ fn collection_flags_are_explicit_and_checked() {
         out.contains("mean") && out.contains("sd") && !out.contains("median"),
         "{out}"
     );
+    for policy in ["quantiles", "quantiles:128", "quantiles:4096"] {
+        let (code, out, err) = run_source("quantiles.probl", source, &["--collect", &format!("0={policy}")]);
+        assert_eq!(code, Some(0), "{err}");
+        assert!(
+            out.contains("approximate quantiles; inverse CDF") && out.contains("median"),
+            "{out}"
+        );
+    }
     for args in [
         vec!["--collect", "0=bad"],
         vec!["--collect", "1=moments"],
         vec!["--collect", "0=moments", "--summary", "0=forecast"],
         vec!["--collect", "0=moments", "--collect", "0=exact"],
         vec!["--collect", "0=moments", "--mode", "enumerate"],
+        vec!["--collect", "0=quantiles:0"],
+        vec!["--collect", "0=quantiles:4097"],
+        vec!["--collect", "0=quantiles", "--mode", "enumerate"],
     ] {
         let (code, _, _) = run_source("bad-collection.probl", source, &args);
         assert_ne!(code, Some(0));

@@ -12,14 +12,19 @@ pub enum ReportCollection {
     /// Sampled scalar numbers or facts only. Numeric populations and quantiles
     /// are unavailable; weighted means, spreads and sampling errors remain.
     Moments,
+    /// Unweighted sampled scalar numbers, once per trial/key. Retains moments
+    /// and an approximate inverse-CDF sketch, not the exact population.
+    /// Capacity must be within 128..=4096; 512 is the initial default.
+    Quantiles { capacity: usize },
 }
 
 impl fmt::Display for ReportCollection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Exact => "exact",
-            Self::Moments => "moments",
-        })
+        match self {
+            Self::Exact => f.write_str("exact"),
+            Self::Moments => f.write_str("moments"),
+            Self::Quantiles { capacity } => write!(f, "quantiles:{capacity}"),
+        }
     }
 }
 
@@ -29,7 +34,16 @@ impl FromStr for ReportCollection {
         match s {
             "exact" => Ok(Self::Exact),
             "moments" => Ok(Self::Moments),
-            _ => Err("report collection must be exact or moments".into()),
+            "quantiles" => Ok(Self::Quantiles { capacity: 512 }),
+            _ => {
+                if let Some(capacity) = s.strip_prefix("quantiles:").and_then(|s| s.parse::<usize>().ok()) {
+                    if (128..=4096).contains(&capacity) {
+                        return Ok(Self::Quantiles { capacity });
+                    }
+                    return Err("quantile capacity must be within 128..=4096".into());
+                }
+                Err("report collection must be exact, moments or quantiles[:CAPACITY]".into())
+            }
         }
     }
 }
@@ -47,6 +61,18 @@ pub fn validate_collections(
         let site = sites
             .get(id)
             .ok_or_else(|| OpError::new(format!("unknown report collection ID {id}")).at(Default::default()))?;
+        if let ReportCollection::Quantiles { capacity } = policy {
+            let message = if !(128..=4096).contains(&capacity) {
+                Some("quantile capacity must be within 128..=4096")
+            } else if !matches!(mode, Mode::Sample { .. }) {
+                Some("quantile collection requires sample mode")
+            } else {
+                None
+            };
+            if let Some(message) = message {
+                return Err(OpError::new(format!("report {id}: {message}")).at(site.span));
+            }
+        }
         if policy == ReportCollection::Moments {
             let message = if !matches!(mode, Mode::Sample { .. }) {
                 Some("moments collection requires sample mode")
@@ -78,6 +104,8 @@ pub fn selected_summaries(
     for (&id, &policy) in collections {
         if policy == ReportCollection::Moments {
             selected.entry(id).or_insert_with(ReportSummary::moments);
+        } else if matches!(policy, ReportCollection::Quantiles { .. }) {
+            selected.entry(id).or_insert_with(ReportSummary::standard);
         }
     }
     selected

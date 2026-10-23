@@ -127,7 +127,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub(crate) fn sinks(&self, count: usize) -> Vec<Sink> {
+    pub(crate) fn sinks(&self, count: usize, batch: u64) -> Vec<Sink> {
         (0..count)
             .map(|id| {
                 Sink::new(
@@ -135,6 +135,7 @@ impl Config {
                     self.max_report_groups,
                 )
                 .with_summary_budget(self.report_summary_budget.clone())
+                .with_sketch_seed(self.sample_seed.unwrap_or_default(), id, batch)
             })
             .collect()
     }
@@ -397,7 +398,7 @@ impl<'p> Engine<'p> {
         print: &'p mut (dyn FnMut(&str) + Send),
     ) -> Engine<'p> {
         let sampler = config.sample_seed.map(Rng::new);
-        let sinks = config.sinks(prog.reports.len());
+        let sinks = config.sinks(prog.reports.len(), 0);
         Engine {
             prog,
             live,
@@ -502,7 +503,7 @@ impl<'p> Engine<'p> {
     /// What it prints comes back with its result, even when it fails.
     pub fn run_batch(&mut self, rng: Rng, first: u64, n: u64, printed: usize) -> (Result<Batch>, Printed) {
         self.sampler = Some(rng);
-        self.sinks = self.config.sinks(self.prog.reports.len());
+        self.sinks = self.config.sinks(self.prog.reports.len(), first);
         self.observed = false;
         self.densities = false;
         self.unresolved = Weight::ZERO;

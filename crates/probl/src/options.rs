@@ -327,11 +327,11 @@ pub struct Limits {
     pub max_outcomes: usize,
     /// Elements of one collection, in the program and in its data.
     pub max_collection: usize,
-    /// Groups retained per moments-only report (default 10,000). Exact reports
+    /// Groups retained per moments/quantile report (default 10,000). Exact reports
     /// are unaffected. Active and pending batches have their own bounded state.
     pub max_report_groups: usize,
-    /// Accounted live storage across moments-only reports and worker batches:
-    /// group keys, accumulators and per-run bookkeeping. Defaults to 1 GiB
+    /// Accounted live storage across moments/quantile reports and worker batches:
+    /// keys, accumulators, run bookkeeping, sketches and query views. Defaults to 1 GiB
     /// (128 MiB in browsers). Shared key payloads are charged per group.
     /// Excludes exact reports, model execution, result formatting and caller
     /// copies; this is not a process-memory limit. A tight limit can fail with

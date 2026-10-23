@@ -127,6 +127,7 @@ pub struct Numeric {
 #[derive(Clone, Debug)]
 enum Shape {
     Moments,
+    Sketch(Arc<super::sketch::Quantiles>),
     /// A continuous marginal, possibly mixed with point masses.
     Mixture(Arc<Mixture>),
     /// Point masses, as values (integers keep their exact value for printing).
@@ -134,6 +135,12 @@ enum Shape {
 }
 
 impl Numeric {
+    pub fn approximation(&self) -> Option<super::QuantileApproximation> {
+        match &self.shape {
+            Shape::Sketch(view) => Some(view.metadata),
+            _ => None,
+        }
+    }
     pub fn has_quantiles(&self) -> bool {
         !matches!(self.shape, Shape::Moments)
     }
@@ -145,6 +152,7 @@ impl Numeric {
         }
         let point = match &self.shape {
             Shape::Moments => None,
+            Shape::Sketch(view) => view.quantile(q),
             Shape::Mixture(m) => Some(m.quantile(q)),
             Shape::Points(points) => crate::stats::quantile(points, q).and_then(Value::as_f64),
         }?;
@@ -160,7 +168,7 @@ impl Numeric {
     pub fn mixture(&self) -> Option<&Mixture> {
         match &self.shape {
             Shape::Mixture(m) => Some(m),
-            Shape::Points(_) | Shape::Moments => None,
+            Shape::Points(_) | Shape::Moments | Shape::Sketch(_) => None,
         }
     }
 
@@ -170,6 +178,7 @@ impl Numeric {
     pub fn quantile(&self, q: f64) -> Option<Quantity> {
         let point = match &self.shape {
             Shape::Moments => None,
+            Shape::Sketch(view) => view.quantile(q),
             Shape::Mixture(m) => Some(if q == 0.5 { m.median() } else { m.quantile(q) }),
             Shape::Points(points) => summary_quantile(points, q).and_then(|v| v.as_f64()),
         }?;
@@ -186,7 +195,7 @@ impl Numeric {
     pub fn quantile_value(&self, q: f64) -> Option<Value> {
         match &self.shape {
             Shape::Points(points) => summary_quantile(points, q),
-            Shape::Mixture(_) | Shape::Moments => None,
+            Shape::Mixture(_) | Shape::Moments | Shape::Sketch(_) => None,
         }
     }
 
@@ -199,7 +208,7 @@ impl Numeric {
                     .map(|(v, p)| (v.as_f64().unwrap_or(f64::NAN), *p))
                     .collect(),
             ),
-            Shape::Mixture(_) | Shape::Moments => None,
+            Shape::Mixture(_) | Shape::Moments | Shape::Sketch(_) => None,
         }
     }
 }
@@ -544,7 +553,12 @@ fn numeric(
                 support,
             }
         });
-        return summary(n.mean, n.sd, mean_sampling, n.percent, Shape::Moments, false);
+        let shape = acc
+            .sketch
+            .as_ref()
+            .and_then(|s| s.view())
+            .map_or(Shape::Moments, |v| Shape::Sketch(v.clone()));
+        return summary(n.mean, n.sd, mean_sampling, n.percent, shape, false);
     }
     let nums: Vec<(f64, f64)> = distribution
         .iter()
