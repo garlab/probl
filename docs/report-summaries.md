@@ -220,7 +220,12 @@ probl run examples/21_retirement.probl --collect 0=quantiles:1024 --summary 0=fo
 Rust uses `ReportCollection::Quantiles { capacity: 512 }`. WASM accepts
 `"report_collections": {"0": "quantiles"}` or `"quantiles:512"`; the returned
 collection string includes the capacity. The playground's collection selector
-still offers exact and moments-only policies; the sketch UI is a later step.
+offers **Approximate quantiles (sample mode)** with an integer capacity field,
+defaulting to 512. Choose the displayed columns separately, then **Apply and run**.
+Share links and local reloads preserve the capacity with the collection policy.
+Charts, point details and tables label approximate percentiles and show their
+capacity separately from Monte Carlo uncertainty. Means, SDs and probability
+estimates retain their existing labels and sampling-error semantics.
 
 The first implementation accepts finite scalar numbers exactly representable as
 `f64`, with unit-weight sampled contributions and at most one visit per trial/key.

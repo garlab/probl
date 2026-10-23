@@ -11,9 +11,10 @@ The candidates live in the
 [`quantile-sketches` benchmark example](../crates/probl-bench/examples/quantile-sketches.rs).
 The selected compactor is now integrated in sampled report collection, Rust, the
 CLI and WASM; see [the collection contract](report-summaries.md#approximate-quantile-collection).
-The playground selector is still pending. These measurements describe the
+The playground also exposes capacity and labels approximate percentiles; see
+[the UI contract](playground.md). These measurements describe the
 standalone candidates, not the integrated collector. Exact reports and
-language-level `quantile` are unchanged. M4 remains incomplete.
+language-level `quantile` are unchanged.
 
 ## Candidates
 
@@ -164,7 +165,8 @@ and overlapping merge/query storage using the existing shared summary budget.
 The engine now implements the collector and API portions of this contract.
 Native/WASM, worker-count, budget-failure and cancellation tests accompany it;
 full-model measurements are recorded in [benchmarks](benchmarks.md#since-approximate-quantile-collection).
-The playground's selector and chart approximation labels remain a separate step.
+Playground controls preserve capacity in shared/local settings, and chart legends,
+point details and tables distinguish approximate quantiles from sampling error.
 
 - Promote the selected compactor into a fallible, cancellable collector. Reserve
   storage before allocation, including keys, per-run bookkeeping, pending

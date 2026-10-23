@@ -24,7 +24,8 @@ Open `http://localhost:8000`. The development server rebuilds when page sources,
 - The examples menu includes games, forecasts, calendars, decisions, monitoring and analytic continuous calculations. Example data files are available to `read` from memory.
 - Compile diagnostics appear in the editor; runtime errors point to the failing source. Output uses the CLI's text format, with streamed `print` lines and sampled-run progress. A partial result, where some worlds failed and the others finished, shows the output with its `failed` section, says so in the status line, and marks where the worlds failed in the editor.
 - Numeric reports grouped by numeric or date keys also draw a median and percentile bands; deterministic reports draw a line. Boolean reports draw a probability step curve. Hover or use the slider's arrow keys, Home and End to inspect values and uncertainty. “Values and uncertainty” opens an accessible table; the complete text output stays below the charts.
-- Open “Report summaries” to choose 10–90% bands, mean/SD or custom ordered columns for each report, then “Apply and run”. Controls appear after compilation, so invalid selections can be corrected before a successful run. “Default” clears an override. [Summary specifications](report-summaries.md) include `mean,sd,median,q:0.1,q:0.9`; `median` and `q:0.5` have distinct tie conventions. The selection updates text, charts and tables together.
+- Open “Report summaries” to choose 10–90% bands, mean/SD or custom ordered columns for each report, then “Apply and run”. Controls appear after compilation, so invalid selections can be corrected before a successful run. “Default” clears a column override. [Summary specifications](report-summaries.md) include `mean,sd,median,q:0.1,q:0.9`; with exact collection, `median` and `q:0.5` have distinct tie conventions. The selection updates text, charts and tables together.
+- Choose collection separately: exact retains populations, moments only retains aggregate statistics, and approximate quantiles adds bounded percentile storage. Approximate collection requires sampled numeric values with unit weights and at most one value per run/key. Its capacity defaults to 512 and accepts integers from 128 to 4096. Larger capacity uses more memory and usually improves percentile accuracy; it is not an error bound. Boolean risk reports use exact or moments collection.
 - “Overlay (same units)” selects a compatible deterministic report as a dashed baseline. Choose a report measured in the same units; labels alone do not prove that. Only matching typed keys are compared, and missing values break the line. Value formatting can explicitly select USD, EUR or GBP. No currency or baseline is inferred from a label.
 - Hover shows declarations or built-in documentation. Ctrl/⌘-click or F12 goes to a definition; F2 selects references for renaming. Completion and signature help use compiler symbols; after `catch`, completion offers the faults it can name, which the reference also lists.
 - Share encodes the program, summary selections and chart choices in the URL fragment. Older links use defaults. Running a model does not upload its source or inputs to an execution server; a share link itself contains the source and should be treated accordingly.
@@ -36,6 +37,10 @@ bands describe variation across outcomes at each key, not one run's trajectory
 or a Monte Carlo confidence band. The point details separately show sampling
 error, Wilson confidence intervals where available, incomplete-result bounds,
 support and report reach. Partial failures remain qualified beside the plot.
+Approximate percentiles are labeled in legends, point details, tables and baseline
+overlays. Their median uses the inverse CDF. Point details and table notes show
+capacity, sample/zero counts and the absence of a rank-error guarantee, separately
+from sampling uncertainty. Mean/SD and probability labels are unaffected.
 
 Custom charts prefer the selected median as the main line, then the mean, then
 the quantile nearest 0.5, or SD if it is the only column. Quantiles on opposite
@@ -54,7 +59,7 @@ The page supports light/dark themes, a resizable panel divider, keyboard navigat
 | [`worker.js`](../web/src/worker.js) | Checking/running away from the page's main thread |
 | [`app.js`](../web/src/app.js) | Editor, output, options, guide, reference and worker lifecycle |
 | [`chart-data.js`](../web/src/chart-data.js) / [`charts.js`](../web/src/charts.js) | Typed chart eligibility/alignment and SVG rendering, keyboard inspection and tables |
-| [`summary-controls.js`](../web/src/summary-controls.js) | Per-report column controls, using IDs from compiler metadata |
+| [`summary-controls.js`](../web/src/summary-controls.js) | Per-report column, collection and capacity controls, using IDs from compiler metadata |
 | [`build.mjs`](../web/build.mjs) / [`serve.mjs`](../web/serve.mjs) | Static build and rebuilding development server |
 
 Two workers share a compiled module: one checks edits and one runs programs. Each instance runs synchronously on one thread. Stop and the default 30-second timeout terminate the runner and replace it. Crashes also replace the runner, so a failed model does not require reloading the page.
@@ -100,7 +105,7 @@ bun run build
 bun run test
 ```
 
-The native Rust tests cover the adapter. `test/charts.mjs` checks chart eligibility, precision, gaps, baseline alignment, custom columns and settings against actual WASM reports. `test/examples.mjs` executes the actual WASM module and compares native/WASM outputs. `test/page.mjs` runs the page in headless Chrome, covering examples, Stop, limits, errors, share links, the guide and editor interactions, plus chart values, overlays, summary controls and error recovery, keyboard access, light/dark themes, narrow layouts and fallback text. Pass `--screenshots` to save chart screenshots under `/tmp`. These check different layers; a native adapter test alone does not test WebAssembly.
+The native Rust tests cover the adapter. `test/charts.mjs` checks chart eligibility, precision, gaps, baseline alignment, custom columns, approximate median conventions and saved capacities against actual WASM reports. `test/examples.mjs` executes the actual WASM module and compares native/WASM outputs. `test/page.mjs` runs the page in headless Chrome, covering examples, Stop, limits, errors, share links, the guide and editor interactions, plus chart values, overlays, summary/collection controls, capacity validation and persistence, approximation labels, error recovery, keyboard access, light/dark themes, narrow layouts and fallback text. Pass `--screenshots` to save chart screenshots under `/tmp`. These check different layers; a native adapter test alone does not test WebAssembly.
 
 The browser test defaults to macOS application paths. Set `PROBL_CHROME` to the Chrome executable on another installation. For Firefox, set `PROBL_FIREFOX` if needed and run `bun test/page.mjs firefox`. The browser must be installed separately.
 
@@ -125,8 +130,11 @@ The per-report **Moments only (sample mode)** collection choice retains mean/SD
 and probability estimates without numeric populations. It is separate from the
 **Mean and SD** display preset, which alone keeps exact collection. The choice is
 saved in `charts.reports[id].collection` and sent as `report_collections`; share
-links and local reloads preserve it. In the current selector, quantile columns
-require exact collection. The WASM request API also supports
-[`quantiles[:CAPACITY]`](report-summaries.md#approximate-quantile-collection);
-its selector and chart approximation labels are still pending.
+links and local reloads preserve it. **Approximate quantiles (sample mode)** saves
+its capacity in the same field as `quantiles:CAPACITY`; the API shorthand
+`quantiles` normalizes to `quantiles:512`. Invalid saved policies are discarded,
+as are other unsupported saved settings. Invalid capacity input blocks form
+submission; switching collection hides and disables that input. Display columns
+remain an independent choice, so selecting approximate collection after moments
+keeps the mean/SD selection until the user chooses percentile columns.
 See [collection policies](report-summaries.md#moments-only-collection).

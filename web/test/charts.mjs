@@ -99,3 +99,46 @@ assert.equal(chartSeries(retained.reports)[0].columns[0].kind, 'mean');
 assert.deepEqual(retained.reports.reports[0].groups[0].summary.quantiles, []);
 assert.equal(chartSettings({version:1,reports:{0:{collection:'moments'},1:{collection:'bad'}}}).reports[0].collection, 'moments');
 assert.equal(chartSettings({version:1,reports:{0:{collection:'moments'},1:{collection:'bad'}}}).reports[1].collection, undefined);
+
+for (const [collection, expected] of [
+  ['quantiles', 'quantiles:512'], ['quantiles:128', 'quantiles:128'],
+  ['quantiles:4096', 'quantiles:4096'], ['quantiles:0512', 'quantiles:512'],
+  ['quantiles:127', undefined], ['quantiles:4097', undefined], ['quantiles:', undefined],
+  ['quantiles:128.5', undefined], ['quantiles:1e3', undefined], [512, undefined],
+]) {
+  const settings = chartSettings({version:1,reports:{0:{collection,summary:'forecast',currency:'USD',baseline:2}}});
+  assert.equal(settings.reports[0].collection, expected);
+  assert.deepEqual(readChartSettings(JSON.stringify(settings)), settings, 'capacity and chart choices round-trip together');
+}
+
+const sketchSource = '@mode sample(runs:5007,seed:42)\nfor year in 0..2 {let x~normal(0,1); report max(0.0,x) by year; report x<=0 by year; report year by year}';
+const sketchRun = (summary) => engine.run({source:sketchSource,report_collections:{0:'quantiles:128',1:'moments',2:'quantiles'},...(summary ? {report_summaries:{0:summary}} : {})}).reports;
+const sketchDocument = sketchRun();
+const sketch = chartSeries(sketchDocument);
+assert.equal(sketch.length, 3, 'default approximate median must not disappear from charts');
+assert.deepEqual(sketch[0].columns.map((c) => c.label), ['Approx. 5%', 'Approx. 25%', 'Approx. Median', 'Approx. 75%', 'Approx. 95%']);
+assert.deepEqual(sketch[0].bands.map((b) => b.label), ['Approx. 5–95%', 'Approx. 25–75%']);
+for (const point of sketch[0].points) {
+  const summary = point.group.summary;
+  assert.equal(point.y, summary.quantiles.find((q) => q.level === 0.5).estimate.point);
+  assert.equal(summary.approximation.capacity, 128);
+  assert.equal(summary.approximation.samples, '5007');
+  assert.equal(summary.approximation.rank_error_bound, null);
+  assert.ok(point.values.every(Number.isFinite));
+}
+assert.equal(sketch[1].columns[0].label, 'Probability');
+assert.ok(sketch[1].points[0].group.probability.sampling.standard_error > 0);
+assert.deepEqual(compatibleBaselines(sketch[0], sketch).map((s) => s.report.id), [2]);
+assert.deepEqual(alignedBaseline(sketch[0], sketch[2]).map((p) => p.y), [0, 1, 2]);
+const sketchCustom = chartSeries(sketchRun('mean,sd,q:0.5,median,q:0.1,q:0.9'))[0];
+assert.equal(sketchCustom.primary, 3, 'requested approximate median takes priority over mean and q:0.5');
+assert.deepEqual(sketchCustom.columns.map((c) => c.label), ['Mean', 'SD', 'Approx. 50%', 'Approx. Median', 'Approx. 10%', 'Approx. 90%']);
+assert.equal(sketchCustom.points[0].values[2], sketchCustom.points[0].values[3], 'all sketch quantiles use the inverse CDF');
+assert.deepEqual(sketchCustom.bands.map((b) => b.label), ['Approx. 10–90%']);
+const sketchMoments = chartSeries(sketchRun('moments'))[0];
+assert.deepEqual(sketchMoments.columns.map((c) => c.label), ['Mean', 'SD']);
+assert.deepEqual(sketchMoments.bands, []);
+const sketchGap = structuredClone(sketch[0].report);
+sketchGap.groups[1].summary.quantiles.forEach((q) => { q.estimate = null; });
+assert.deepEqual(segments(seriesFor(sketchGap).points).map((part) => part.map((p) => p.x)), [[0], [2]]);
+console.log('all passed: approximate median conventions, labels, metadata, capacity persistence, risk and baseline compatibility');

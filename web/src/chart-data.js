@@ -5,15 +5,24 @@ export const MAX_CHARTS = 20;
 export const currencies = ['', 'USD', 'EUR', 'GBP'];
 const finite = (n) => typeof n === 'number' && Number.isFinite(n);
 
+export function quantileCapacity(collection) {
+  if (collection === 'quantiles') return 512;
+  if (typeof collection !== 'string' || !/^quantiles:\d+$/.test(collection)) return null;
+  const capacity = Number(collection.slice('quantiles:'.length));
+  return Number.isInteger(capacity) && capacity >= 128 && capacity <= 4096 ? capacity : null;
+}
+
 export function chartSettings(value) {
   const reports = {};
   if (value?.version === 1 && value.reports && typeof value.reports === 'object') {
     for (const [id, choice] of Object.entries(value.reports).slice(0, 256)) {
       if (!/^\d{1,5}$/.test(id) || !choice || typeof choice !== 'object') continue;
+      const capacity = quantileCapacity(choice.collection);
       reports[id] = {
         baseline: Number.isSafeInteger(choice.baseline) && choice.baseline >= 0 ? choice.baseline : null,
         currency: currencies.includes(choice.currency) ? choice.currency : '',
         ...(choice.collection === 'moments' ? { collection: 'moments' } : {}),
+        ...(capacity !== null ? { collection: `quantiles:${capacity}` } : {}),
         ...(typeof choice.summary === 'string' && choice.summary.length <= 4096 && choice.summary ? { summary: choice.summary } : {}),
       };
     }
@@ -72,12 +81,13 @@ function columnValue(group, column) {
 
 function columnsFor(report) {
   if (report.groups[0].kind === 'probability') return [{ kind: 'probability', label: 'Probability' }];
+  const approximate = !!report.groups[0].summary?.approximation;
   const tokens = report.summary_selection ?? ['q:0.05', 'q:0.25', 'median', 'q:0.75', 'q:0.95'];
   return tokens.map((token) => {
     if (token === 'mean' || token === 'sd') return { kind: token, label: token === 'mean' ? 'Mean' : 'SD' };
     const median = token === 'median';
     const level = median ? 0.5 : Number(token.slice(2));
-    return { kind: 'quantile', level, convention: median ? 'midpoint' : 'inverse_cdf', label: median ? 'Median' : levelLabel(level) };
+    return { kind: 'quantile', level, median, approximate, convention: median && !approximate ? 'midpoint' : 'inverse_cdf', label: `${approximate ? 'Approx. ' : ''}${median ? 'Median' : levelLabel(level)}` };
   });
 }
 
@@ -90,9 +100,9 @@ export function seriesFor(report) {
   const keyKind = first.key?.kind;
   const percent = first.kind === 'probability' || first.summary?.percent === true;
   const columns = columnsFor(report);
-  // Prefer a midpoint median, then a mean, then the requested quantile closest
+  // Prefer a requested median, then a mean, then the requested quantile closest
   // to half the mass. An SD-only request is explicitly labelled as SD.
-  let primary = columns.findIndex((c) => c.convention === 'midpoint');
+  let primary = columns.findIndex((c) => c.median);
   if (primary < 0) primary = columns.findIndex((c) => c.kind === 'mean');
   if (primary < 0) {
     primary = 0;
@@ -102,7 +112,7 @@ export function seriesFor(report) {
   const bands = [];
   for (let lo = 0, hi = quantiles.length - 1; lo < hi; lo++, hi--) {
     const a = quantiles[lo], b = quantiles[hi];
-    if (a.level < 0.5 && b.level > 0.5) bands.push({ lo: a.index, hi: b.index, label: `${levelLabel(a.level).slice(0, -1)}–${levelLabel(b.level)}` });
+    if (a.level < 0.5 && b.level > 0.5) bands.push({ lo: a.index, hi: b.index, label: `${a.approximate || b.approximate ? 'Approx. ' : ''}${levelLabel(a.level).slice(0, -1)}–${levelLabel(b.level)}` });
   }
   const points = [];
   for (const g of groups) {

@@ -574,7 +574,8 @@ cancellation and native/WASM integration work.
 compactor with allocation reservations, cancellation, exact zero/sign counts,
 fixed batch ordering and shared query views. Rust, CLI and WASM expose the
 [explicit approximate policy](report-summaries.md#approximate-quantile-collection).
-The playground selector and chart approximation labels remain pending.
+Playground controls and approximation labels were added afterward; see
+[the UI contract](playground.md). The measurements below cover the collector.
 
 These measurements run `retirement_balance` (101 numeric groups), with one native
 worker and seed 42. This is a different report mix from the all-report moments

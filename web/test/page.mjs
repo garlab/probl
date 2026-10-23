@@ -287,6 +287,88 @@ try {
   await page.select('#collection-0', 'exact');
   expect(!(await applySummaries()).error, 'switching back to exact collection restores percentile columns');
 
+  const sketchSource = '@mode sample(runs:1507,seed:42)\nfor year in 0..2 {let x~normal(0,1); report max(0.0,x+year) by year as "balance"; report x<=0 by year as "risk"; report year by year as "baseline"}';
+  await page.evaluate((source) => window.playground.setSource(source), sketchSource);
+  await page.waitForSelector('#collection-2');
+  await page.select('#collection-0', 'quantiles');
+  await page.select('#summary-0', 'forecast');
+  await page.select('#collection-1', 'moments');
+  expect(await page.$eval('#capacity-0', (el) => el.value === '512' && !el.disabled)
+    && await page.$eval('#quantile-collection-help', (el) => !el.hidden && el.textContent.includes('not an error bound')), 'approximate collection exposes capacity and explains its tradeoff');
+  const setCapacity = (value) => page.$eval('#capacity-0', (el, value) => { el.value = value; }, value);
+  for (const value of ['', '127', '4097', '128.5']) {
+    await setCapacity(value);
+    expect(await page.$eval('#report-summaries form', (form) => {
+      const before = window.playground.finished();
+      const invalid = !form.checkValidity();
+      form.requestSubmit();
+      return invalid && window.playground.finished() === before && !document.getElementById('run').disabled;
+    }), `invalid capacity ${JSON.stringify(value)} prevents submission`);
+  }
+  await setCapacity('128');
+  const sketchAnswer = await applySummaries();
+  const sketchExpected = api.run({source:sketchSource,report_collections:{0:'quantiles:128',1:'moments'},report_summaries:{0:'forecast',1:'moments'}});
+  expect(!sketchAnswer.error && sketchAnswer.result === sketchExpected.output, 'approximate collection and capacity reach the worker unchanged', sketchAnswer.result);
+  const sketchReadout = await page.$eval(`${balance} .chart-readout`, (el) => ({value:Number(el.dataset.value),text:el.textContent}));
+  expect(sketchReadout.value === sketchExpected.reports.reports[0].groups[0].summary.quantiles.find((q) => q.level === 0.5).estimate.point
+    && sketchReadout.text.includes('Approx. Median') && sketchReadout.text.includes('capacity 128')
+    && sketchReadout.text.includes('1507 samples') && sketchReadout.text.includes('No rank-error bound'), 'point details use the approximate median and retain approximation metadata', sketchReadout.text);
+  expect(await page.$$eval(`${balance} .chart-band`, (els) => els.length) === 2
+    && await page.$eval(`${balance} .chart-legend`, (el) => el.textContent.includes('Approx. 10–90%'))
+    && await page.$eval(`${balance} .chart-qualifications`, (el) => el.textContent.includes('separate from Monte Carlo uncertainty')), 'approximate outcome bands are labeled separately from sampling uncertainty');
+  expect(await page.$eval(`${depletion} .chart-readout`, (el) => !el.textContent.includes('Approx.') && el.textContent.includes('Monte Carlo standard error')), 'risk probabilities keep their sampling uncertainty');
+  await page.$eval(`${balance} details`, (el) => { el.open = true; });
+  await page.waitForSelector(`${balance} tbody tr`);
+  expect(await page.$eval(`${balance} table`, (el) => el.textContent.includes('Approx. Median') && el.textContent.includes('capacity 128')), 'table labels and notes retain quantile approximation');
+  await page.select(`${balance} .chart-currency`, 'USD');
+  await page.select(`${balance} .chart-baseline`, '2');
+  await press(page, 'share');
+  const sketchLink = await page.evaluate(() => location.href);
+  const sketchReplay = await open(sketchLink);
+  await run(sketchReplay);
+  const hasSketchChoices = (page) => page.evaluate(() => document.getElementById('collection-0').value === 'quantiles'
+    && document.getElementById('capacity-0').value === '128'
+    && document.getElementById('summary-0').value === 'forecast'
+    && document.querySelector('.chart-currency').value === 'USD'
+    && document.querySelector('.chart-baseline').value === '2');
+  expect(await hasSketchChoices(sketchReplay), 'sharing preserves capacity, summary, currency and baseline together');
+  await sketchReplay.evaluate(() => {
+    localStorage.setItem('probl-playground-source', window.playground.getSource());
+    history.replaceState(null, '', location.pathname);
+  });
+  await sketchReplay.reload();
+  await sketchReplay.waitForSelector('body[data-ready="true"]');
+  await run(sketchReplay);
+  expect(await hasSketchChoices(sketchReplay), 'local reload retains approximate collection and capacity');
+  await sketchReplay.close();
+
+  if (process.argv.includes('--screenshots')) {
+    await page.setViewport({width:1300,height:1000});
+    await page.$eval('#output', (el) => { el.scrollTop = 0; });
+    await page.screenshot({path:'/tmp/probl-quantiles-controls.png'});
+    await page.setViewport({width:390,height:844});
+    await page.$eval('#report-summaries', (el) => el.scrollIntoView());
+    await page.screenshot({path:'/tmp/probl-quantiles-phone.png'});
+    await page.$eval(`${balance} .chart-legend`, (el) => el.scrollIntoView());
+    await page.screenshot({path:'/tmp/probl-quantiles-chart-phone.png'});
+    await page.setViewport({width:800,height:600});
+  }
+
+  await page.select('#collection-2', 'quantiles');
+  await applySummaries();
+  expect(await page.$eval(`${balance} .legend-baseline`, (el) => el.textContent.includes('Approx. Median'))
+    && await page.$eval('.report-chart[data-report-id="2"] .legend-line', (el) => el.textContent === 'Approx. Median'), 'deterministic sketch baselines retain approximation labels');
+  await page.select('#summary-0', 'moments');
+  await applySummaries();
+  expect(await page.$eval(`${balance} .legend-line`, (el) => el.textContent === 'Mean')
+    && await page.$eval(`${balance} .chart-qualifications`, (el) => !el.textContent.includes('Quantile approximation')), 'sketch collection does not label mean/SD as approximate quantiles');
+  await setCapacity('127');
+  await page.select('#collection-0', 'exact');
+  await page.select('#summary-0', 'forecast');
+  expect(await page.$eval('#capacity-0', (el) => el.disabled && el.closest('label').hidden)
+    && !(await applySummaries()).error
+    && await page.$eval(`${balance} .legend-line`, (el) => el.textContent === 'Median'), 'switching to exact disables hidden capacity validation and restores exact labels');
+
   // List statistics and scalar-query errors through the real editor/worker.
   const statisticsSource = readFileSync(`${root}web/test/statistics.probl`, 'utf8');
   await page.evaluate((source) => window.playground.setSource(source), statisticsSource);

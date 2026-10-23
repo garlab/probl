@@ -5,7 +5,9 @@ const finite = (n) => typeof n === 'number' && Number.isFinite(n);
 const plain = new Intl.NumberFormat('en', { maximumSignificantDigits: 7 });
 const percent = new Intl.NumberFormat('en', { style: 'percent', maximumFractionDigits: 2 });
 const textNumber = (n) => finite(n) ? plain.format(n) : 'unavailable';
-const lineLabel = (series) => series.deterministic && !series.report.summary_selection ? 'Value' : series.columns[series.primary].label;
+const compactValues = (series) => series.deterministic && !series.report.summary_selection && !series.columns[series.primary].approximate;
+const lineLabel = (series) => compactValues(series) ? 'Value' : series.columns[series.primary].label;
+const baselineLabel = (series) => `${series.report.label}${series.columns[series.primary].approximate ? ` (${lineLabel(series)})` : ''}`;
 
 function element(tag, attrs = {}, text) {
   const node = document.createElement(tag);
@@ -46,6 +48,11 @@ function groupNotes(series, point, fmt) {
   const g = point.group;
   const quantity = columnEstimate(g, series.columns[series.primary]);
   const notes = [estimateNotes(quantity, fmt)];
+  const approximation = g.summary?.approximation;
+  if (approximation && series.columns.some((c) => c.approximate)) {
+    notes.push(`Approximate quantiles: capacity ${approximation.capacity}; ${approximation.samples} samples; ${approximation.zeros} zeros counted exactly.`);
+    if (approximation.rank_error_bound === null) notes.push('No rank-error bound is available.');
+  }
   if (g.support) notes.push(`${g.support.contributing_runs} contributing runs; ${textNumber(g.support.effective_runs)} effective.`);
   if (g.complete === false) notes.push(`Unresolved share ${percent.format(g.unresolved_share)}.`);
   return notes.filter(Boolean).join(' ');
@@ -53,6 +60,7 @@ function groupNotes(series, point, fmt) {
 
 function reportNotes(series, run) {
   const notes = [];
+  if (series.columns.some((c) => c.approximate)) notes.push('Quantile approximation is separate from Monte Carlo uncertainty. All percentiles, including Median, use the inverse CDF.');
   if (run.partial) notes.push(`Partial result: ${finite(run.failed_share) ? percent.format(run.failed_share) + ' of ' : ''}worlds/runs failed. See the failures in the text output.`);
   if (!run.unresolved.zero) notes.push('Some model weight is unresolved; estimates may be incomplete. Inspect each point’s bounds.');
   const { reach, visits } = series.report;
@@ -193,7 +201,7 @@ export function renderCharts(container, document, settings, onChange) {
       plot.append(marker);
       legend.replaceChildren(element('span', { class: 'legend-line' }, lineLabel(s)));
       if (s.bands.length && !s.deterministic) legend.append(element('span', { class: 'legend-band' }, s.bands.map((b) => b.label).join(' / ')));
-      if (baseline) legend.append(element('span', { class: 'legend-baseline' }, baseline.report.label));
+      if (baseline) legend.append(element('span', { class: 'legend-baseline' }, baselineLabel(baseline)));
       inspect();
     }
 
@@ -210,7 +218,7 @@ export function renderCharts(container, document, settings, onChange) {
         for (const band of s.bands) parts.push(`${band.label}: ${show(point.values[band.lo])} to ${show(point.values[band.hi])}`);
       }
       const baselinePoint = baseline?.points.find((p) => keyId(p.key) === keyId(point.key));
-      if (baseline) parts.push(`${baseline.report.label}: ${show(alignedBaseline(s, baseline)[Number(slider.value)].y)}`);
+      if (baseline) parts.push(`${baselineLabel(baseline)}: ${show(alignedBaseline(s, baseline)[Number(slider.value)].y)}`);
       slider.setAttribute('aria-valuetext', parts.join('; '));
       readout.replaceChildren(element('p', { class: 'chart-values' }, parts.join(' · ')), element('p', { class: 'chart-note' }, groupNotes(s, point, fmt)));
       if (baseline) readout.append(element('p', { class: 'chart-note' }, `${baseline.report.label}: ${baselinePoint ? groupNotes(baseline, baselinePoint, fmt) : 'No matching key.'} ${reportNotes(baseline, document.run)}`));
@@ -234,9 +242,9 @@ export function renderCharts(container, document, settings, onChange) {
       table.append(element('caption', {}, s.report.label));
       const head = element('thead');
       const row = element('tr');
-      const compact = s.deterministic && !s.report.summary_selection;
+      const compact = compactValues(s);
       const columns = compact ? ['Value'] : s.columns.map((c) => c.label);
-      for (const label of [s.report.key_label, ...columns, ...(baseline ? [baseline.report.label] : []), 'Uncertainty and support']) row.append(element('th', { scope: 'col' }, label));
+      for (const label of [s.report.key_label, ...columns, ...(baseline ? [baselineLabel(baseline)] : []), 'Uncertainty and support']) row.append(element('th', { scope: 'col' }, label));
       head.append(row);
       table.append(head);
       const body = element('tbody');
