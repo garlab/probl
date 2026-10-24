@@ -38,8 +38,14 @@ function expect(ok, what, detail = '') {
   failures += !ok;
 }
 
-async function open(address = url) {
+async function open(address = url, platform = null) {
   const page = await browser.newPage();
+  if (platform) {
+    // CodeMirror chooses the Mod key when its module loads.
+    await page.evaluateOnNewDocument((platform) => {
+      Object.defineProperty(navigator, 'platform', { get: () => platform });
+    }, platform);
+  }
   await page.goto(address);
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
   return page;
@@ -80,6 +86,32 @@ async function run(page, start = () => press(page, 'run')) {
 }
 
 try {
+  for (const [platform, modifier] of [['MacIntel', 'Meta'], ['Linux x86_64', 'Control']]) {
+    const shortcuts = await open(url, platform);
+    const source = 'report 6 * 7';
+    const prepare = () => shortcuts.evaluate((source) => {
+      window.playground.setSource(source);
+      const { view } = window.playground;
+      view.dispatch({ selection: { anchor: view.state.doc.length } });
+      view.focus();
+      return window.playground.finished();
+    }, source);
+    const before = await prepare();
+    await shortcuts.keyboard.press('Enter');
+    expect(await shortcuts.evaluate(() => window.playground.getSource()) === `${source}\n`, `${platform}: plain Enter inserts a newline`);
+    expect(await shortcuts.evaluate(() => window.playground.finished()) === before, `${platform}: plain Enter does not run`);
+
+    await prepare();
+    await shortcuts.keyboard.down(modifier);
+    await shortcuts.keyboard.press('Enter');
+    await shortcuts.keyboard.up(modifier);
+    const ran = await becomes(shortcuts, (n) => window.playground.finished() > n, before);
+    const result = await shortcuts.$eval('#result', (el) => el.textContent);
+    expect(ran && result.includes('42'), `${modifier}+Enter runs the program`, result);
+    expect(await shortcuts.evaluate(() => window.playground.getSource()) === source, `${modifier}+Enter leaves the source unchanged`);
+    await shortcuts.close();
+  }
+
   const page = await open();
 
   // Every example, as the command line prints it.

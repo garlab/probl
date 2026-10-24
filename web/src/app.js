@@ -8,7 +8,7 @@
 import { indentWithTab, isolateHistory } from '@codemirror/commands';
 import { syntaxHighlighting } from '@codemirror/language';
 import { linter, lintGutter, setDiagnostics } from '@codemirror/lint';
-import { Compartment } from '@codemirror/state';
+import { Compartment, Prec } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { basicSetup } from 'codemirror';
 import { intelligence, setSymbols } from './intel.js';
@@ -233,8 +233,9 @@ async function main() {
       scheme.of(EditorView.darkTheme.of(darkScheme.matches)),
       lint,
       lintGutter(),
+      // Override basicSetup's Mod-Enter binding, which inserts a blank line.
+      Prec.high(keymap.of([{ key: 'Mod-Enter', run: () => (start(), true) }])),
       keymap.of([
-        { key: 'Mod-Enter', run: () => (start(), true) },
         { key: 'Escape', run: () => (running ? (stop('Stopped.'), true) : false) },
         indentWithTab,
       ]),
