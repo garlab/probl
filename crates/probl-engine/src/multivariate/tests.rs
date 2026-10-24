@@ -341,6 +341,7 @@ fn concurrent_workers_share_one_live_allowance() {
     std::thread::scope(|scope| {
         for _ in 0..4 {
             let mut worker = budget.clone();
+            worker.multivariate = worker.multivariate.fork();
             let barrier = &barrier;
             let successes = &successes;
             scope.spawn(move || {
@@ -363,6 +364,11 @@ fn recipes_and_caches_cannot_escape_their_execution_accounting() {
     let mut first = budget(usize::MAX);
     let normal = Normal::new(&[0.0; 2], &covariance(), &mut first).unwrap();
     let mut cache = Cache::new(1, &first);
+    // A different interpreter in the same execution shares the accounting owner.
+    let mut fork = first.clone();
+    fork.multivariate = fork.multivariate.fork();
+    assert!(normal.sample(&mut Rng::new(1), &mut fork).is_ok());
+    assert!(cache.normal((0, 0), &[0.0; 2], &covariance(), &mut fork).is_ok());
     let mut other = budget(usize::MAX);
     assert_eq!(
         normal.sample(&mut Rng::new(1), &mut other).unwrap_err().kind,
@@ -398,6 +404,7 @@ fn cached_batch_draws_replay_across_worker_counts() {
             (0..workers)
                 .map(|worker| {
                     let mut budget = budget.clone();
+                    budget.multivariate = budget.multivariate.fork();
                     scope.spawn(move || {
                         let mut cache = Cache::new(2, &budget);
                         (worker..7)

@@ -146,13 +146,40 @@ pub(super) struct OnlineNumbers {
 }
 
 impl OnlineNumbers {
-    pub fn add(&mut self, value: &Value, weight: Weight) {
-        self.absorb(Self {
-            weight,
-            mean: number(value).expect("validated numeric report"),
-            sd: 0.0,
-            percent: matches!(value, Value::Prob(_)),
-        });
+    pub fn add(&mut self, value: f64, percent: bool, weight: Weight) {
+        if weight.is_zero() {
+            return;
+        }
+        if self.weight.is_zero() {
+            *self = Self {
+                weight,
+                mean: value,
+                sd: 0.0,
+                percent,
+            };
+            return;
+        }
+        let total = self.weight + weight;
+        let a = self.weight.ratio(total);
+        let b = weight.ratio(total);
+        let root_a = a.sqrt();
+        let cross = root_a * b.sqrt();
+        let delta = value - self.mean;
+        let spread = if delta.is_finite() {
+            delta * cross
+        } else {
+            value * cross - self.mean * cross
+        };
+        // A single point has zero spread: hypot(own_sd, 0) is exactly own_sd.
+        // Preserve the general merge's rounding order and overflow protection.
+        self.sd = libm::hypot(self.sd * root_a, spread);
+        self.mean = if delta.is_finite() {
+            self.mean + b * delta
+        } else {
+            a * self.mean + b * value
+        };
+        self.weight = total;
+        self.percent &= percent;
     }
     pub fn absorb(&mut self, other: Self) {
         if other.weight.is_zero() {
@@ -194,6 +221,57 @@ mod tests {
             percent: false,
         }
     }
+
+    #[test]
+    fn point_updates_match_general_merges_bit_for_bit() {
+        let values = [
+            0.0,
+            -0.0,
+            f64::from_bits(1),
+            -f64::MIN_POSITIVE,
+            1.0,
+            -3.5,
+            1e12,
+            1e12 + 1.0,
+            1e308,
+            -1e308,
+        ];
+        let weights = [
+            Weight::ZERO,
+            Weight::ONE,
+            Weight::new(0.3),
+            Weight::new(7.0),
+            Weight::from_ln(-3000.0),
+            Weight::from_ln(3000.0),
+        ];
+        for &initial in &values {
+            for &initial_weight in &weights {
+                let mut fast = OnlineNumbers {
+                    weight: initial_weight,
+                    mean: initial,
+                    sd: 0.0,
+                    percent: true,
+                };
+                let mut general = fast;
+                for (i, &value) in values.iter().cycle().take(100).enumerate() {
+                    let weight = weights[i % weights.len()];
+                    let percent = i % 3 != 0;
+                    fast.add(value, percent, weight);
+                    general.absorb(OnlineNumbers {
+                        weight,
+                        mean: value,
+                        sd: 0.0,
+                        percent,
+                    });
+                    assert_eq!(fast.weight, general.weight);
+                    assert_eq!(fast.mean.to_bits(), general.mean.to_bits());
+                    assert_eq!(fast.sd.to_bits(), general.sd.to_bits());
+                    assert_eq!(fast.percent, general.percent);
+                }
+            }
+        }
+    }
+
     #[test]
     fn central_moments_preserve_small_spreads_and_large_finite_values() {
         let mut n = point(1e12, 1.0);

@@ -2487,12 +2487,20 @@ pub fn logic(and: bool, a: &Value, b: &Value) -> OpResult<Value> {
 
 /// Scan through aggregate values too: symbolic numbers must never become
 /// categorical keys or be compared by their internal identity as user data.
+#[inline]
 pub fn contains(v: &Value) -> bool {
     match v {
-        Value::Analytic(_) | Value::Event(_) => return true,
-        Value::List(_) | Value::Map(_) | Value::Bag(_) | Value::Record(_) | Value::Dist(_) | Value::Closure(_) => {}
-        _ => return false,
+        Value::Analytic(_) | Value::Event(_) => true,
+        Value::List(_) | Value::Map(_) | Value::Bag(_) | Value::Record(_) | Value::Dist(_) | Value::Closure(_) => {
+            contains_nested(v)
+        }
+        _ => false,
     }
+}
+
+// Keep the recursive collection scan out of ordinary scalar checks.
+#[inline(never)]
+fn contains_nested(v: &Value) -> bool {
     let mut pending = vec![v];
     while let Some(v) = pending.pop() {
         match v {

@@ -72,9 +72,8 @@ pub struct Factor {
     dimension: usize,
     rank: usize,
     residual: f64,
-    covariance: Buffer<f64>,
-    lower: Buffer<f64>,
-    scales: Buffer<f64>,
+    // Covariance, factor coefficients and scales share one owned allocation.
+    storage: Buffer<f64>,
     _memory: Reservation,
 }
 
@@ -89,10 +88,14 @@ impl Factor {
         self.residual
     }
     pub fn coefficients(&self) -> &[f64] {
-        &self.lower
+        let square = self.dimension * self.dimension;
+        &self.storage[square..2 * square]
     }
     pub fn covariance(&self) -> &[f64] {
-        &self.covariance
+        &self.storage[..self.dimension * self.dimension]
+    }
+    fn scales(&self) -> &[f64] {
+        &self.storage[2 * self.dimension * self.dimension..]
     }
 
     // Called only after bounded shape and finite-entry validation.
@@ -101,8 +104,9 @@ impl Factor {
         budget.work((3 * n * n + 2 * n) as u64)?;
         let resources = budget.multivariate.clone();
         let memory = resources.reserve(size_of::<Self>() + 2 * size_of::<usize>())?;
-        let mut covariance = Buffer::filled(n * n, 0.0, &resources)?;
-        let mut scales = Buffer::filled(n, 0.0, &resources)?;
+        let mut storage = Buffer::filled(2 * n * n + n, 0.0, &resources)?;
+        let (covariance, rest) = storage.split_at_mut(n * n);
+        let (lower, scales) = rest.split_at_mut(n * n);
         let mut correlation = Buffer::filled(n * n, 0.0, &resources)?;
         let tolerance = 64.0 * n as f64 * f64::EPSILON;
         for i in 0..n {
@@ -151,8 +155,8 @@ impl Factor {
                 correlation[j * n + i] = midpoint;
             }
         }
-        let mut lower = Buffer::filled(n * n, 0.0, &resources)?;
-        let mut selected = Buffer::filled(n, false, &resources)?;
+        // Fixed, bounded stack scratch avoids a tiny allocation/reservation.
+        let mut selected = [false; MAX_DIMENSION];
         let mut rank = 0;
         for k in 0..n {
             let mut pivot = None;
@@ -160,7 +164,7 @@ impl Factor {
             for i in 0..n {
                 budget.work((k + 1) as u64)?;
                 if !selected[i] {
-                    let diagonal = correlation[i * n + i] - dot(&lower, n, i, i, k);
+                    let diagonal = correlation[i * n + i] - dot(lower, n, i, i, k);
                     if diagonal > largest {
                         largest = diagonal;
                         pivot = Some(i);
@@ -177,7 +181,7 @@ impl Factor {
             for i in 0..n {
                 budget.work((k + 2) as u64)?;
                 if !selected[i] {
-                    lower[i * n + k] = (correlation[i * n + p] - dot(&lower, n, i, p, k)) / root;
+                    lower[i * n + k] = (correlation[i * n + p] - dot(lower, n, i, p, k)) / root;
                 }
             }
             rank += 1;
@@ -186,7 +190,7 @@ impl Factor {
         for i in 0..n {
             budget.work(((i + 1) * (rank + 1)) as u64)?;
             for j in 0..=i {
-                let error = (correlation[i * n + j] - dot(&lower, n, i, j, rank)).abs();
+                let error = (correlation[i * n + j] - dot(lower, n, i, j, rank)).abs();
                 if !error.is_finite() || error > tolerance {
                     return Err(domain(format!(
                         "multivariate_normal covariance is not positive semidefinite within tolerance at [{i}, {j}]"
@@ -199,9 +203,7 @@ impl Factor {
             dimension: n,
             rank,
             residual,
-            covariance,
-            lower,
-            scales,
+            storage,
             _memory: memory,
         }))
     }
@@ -231,7 +233,7 @@ impl Normal {
         std::iter::once(self.means.len() as u64).chain(
             self.means
                 .iter()
-                .chain(self.factor.covariance.iter())
+                .chain(self.factor.covariance().iter())
                 .map(|x| x.to_bits()),
         )
     }
@@ -281,9 +283,9 @@ impl Normal {
             budget.work(0)?;
             let mut deviation = 0.0;
             for (j, normal) in z.iter().enumerate() {
-                deviation += f.lower[i * n + j] * normal;
+                deviation += f.coefficients()[i * n + j] * normal;
             }
-            let value = self.means[i] + f.scales[i] * deviation;
+            let value = self.means[i] + f.scales()[i] * deviation;
             if !value.is_finite() {
                 return Err(OpError::fault(
                     Fault::NumericOverflow,
@@ -341,7 +343,7 @@ impl Cache {
             if factor.dimension == n {
                 budget.work((n * n) as u64)?;
                 if factor
-                    .covariance
+                    .covariance()
                     .iter()
                     .copied()
                     .eq(covariance.iter().flat_map(|row| row.as_ref().iter()).copied())
@@ -444,23 +446,27 @@ impl Cache {
         }
         let resources = budget.multivariate.clone();
         budget.work(n as u64)?;
-        let mut converted_means = Buffer::filled(n, 0.0, &resources)?;
+        // One contiguous conversion allocation instead of a charged allocation
+        // and reference-count update for every row. Dimensions are already bounded.
+        let mut converted = Buffer::filled(n + n * n, 0.0, &resources)?;
         for (i, value) in means.iter().enumerate() {
-            converted_means[i] = number(value, i, None, budget)?;
+            converted[i] = number(value, i, None, budget)?;
         }
-        let mut covariance = Buffer::with_capacity(n, &resources)?;
         for (i, row) in rows.iter().enumerate() {
             budget.work(n as u64)?;
-            let mut converted = Buffer::filled(n, 0.0, &resources)?;
             let Value::List(row) = row else {
                 unreachable!("validated shape")
             };
             for (j, value) in row.iter().enumerate() {
-                converted[j] = number(value, i, Some(j), budget)?;
+                converted[n + i * n + j] = number(value, i, Some(j), budget)?;
             }
-            covariance.insert(i, converted);
         }
-        self.normal(site, &converted_means, &covariance, budget)
+        // Only row views live on the stack; all converted numeric payload is charged.
+        let mut covariance: [&[f64]; MAX_DIMENSION] = [&[]; MAX_DIMENSION];
+        for (row, values) in covariance.iter_mut().zip(converted[n..].chunks_exact(n)) {
+            *row = values;
+        }
+        self.normal(site, &converted[..n], &covariance[..n], budget)
             .map(Value::MultivariateNormal)
     }
 }

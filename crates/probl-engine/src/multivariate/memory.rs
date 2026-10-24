@@ -12,6 +12,11 @@ pub struct Resources(Arc<State>);
 struct State {
     dimension: usize,
     limit: usize,
+    counters: Arc<Counters>,
+}
+
+#[derive(Debug)]
+struct Counters {
     used: AtomicUsize,
     peak: AtomicUsize,
 }
@@ -25,17 +30,30 @@ impl Resources {
         Self(Arc::new(State {
             dimension: dimension.min(super::MAX_DIMENSION),
             limit: bytes,
-            used: AtomicUsize::new(0),
-            peak: AtomicUsize::new(0),
+            counters: Arc::new(Counters {
+                used: AtomicUsize::new(0),
+                peak: AtomicUsize::new(0),
+            }),
+        }))
+    }
+
+    /// Local ownership for one interpreter, with the same execution-wide limit.
+    /// Buffer clones/drops then update this owner's reference count instead of
+    /// bouncing a shared reference-count cache line between sampling workers.
+    pub(crate) fn fork(&self) -> Self {
+        Self(Arc::new(State {
+            dimension: self.0.dimension,
+            limit: self.0.limit,
+            counters: self.0.counters.clone(),
         }))
     }
 
     pub fn used_bytes(&self) -> usize {
-        self.0.used.load(Ordering::Relaxed)
+        self.0.counters.used.load(Ordering::Relaxed)
     }
 
     pub fn peak_bytes(&self) -> usize {
-        self.0.peak.load(Ordering::Relaxed)
+        self.0.counters.peak.load(Ordering::Relaxed)
     }
 
     pub(super) fn dimension(&self, n: usize) -> OpResult<()> {
@@ -49,19 +67,24 @@ impl Resources {
     }
 
     pub(super) fn same(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        Arc::ptr_eq(&self.0.counters, &other.0.counters)
     }
 
     #[allow(deprecated)] // fetch_update supports our Rust 1.85 MSRV.
     pub(super) fn reserve(&self, bytes: usize) -> OpResult<Reservation> {
-        let old = self
-            .0
-            .used
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
-                used.checked_add(bytes).filter(|&new| new <= self.0.limit)
-            })
-            .map_err(|_| allocation())?;
-        self.0.peak.fetch_max(old + bytes, Ordering::Relaxed);
+        if bytes != 0 {
+            let counters = &self.0.counters;
+            let old = counters
+                .used
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+                    used.checked_add(bytes).filter(|&new| new <= self.0.limit)
+                })
+                .map_err(|_| allocation())?;
+            // The peak is monotonic. Once warmed, most reservations only read it.
+            if old + bytes > counters.peak.load(Ordering::Relaxed) {
+                counters.peak.fetch_max(old + bytes, Ordering::Relaxed);
+            }
+        }
         Ok(Reservation {
             resources: self.clone(),
             bytes,
@@ -77,7 +100,9 @@ pub(super) struct Reservation {
 
 impl Drop for Reservation {
     fn drop(&mut self) {
-        self.resources.0.used.fetch_sub(self.bytes, Ordering::Relaxed);
+        if self.bytes != 0 {
+            self.resources.0.counters.used.fetch_sub(self.bytes, Ordering::Relaxed);
+        }
     }
 }
 
@@ -159,6 +184,40 @@ impl<T> AsRef<[T]> for Buffer<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn forked_owners_share_limits_peaks_and_reservation_lifetimes() {
+        let resources = Resources::new(1, 256);
+        let barrier = std::sync::Barrier::new(4);
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let owner = resources.fork();
+                assert!(!Arc::ptr_eq(&owner.0, &resources.0));
+                assert!(owner.same(&resources));
+                assert!(owner.dimension(2).is_err());
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    for _ in 0..100 {
+                        let charge = owner.reserve(64).unwrap();
+                        barrier.wait();
+                        assert_eq!(owner.used_bytes(), 256);
+                        assert!(owner.reserve(1).is_err());
+                        assert_eq!(owner.peak_bytes(), 256);
+                        barrier.wait();
+                        drop(charge);
+                        barrier.wait();
+                    }
+                });
+            }
+        });
+        let owner = resources.fork();
+        let retained = owner.reserve(32).unwrap();
+        drop(owner);
+        assert_eq!(resources.used_bytes(), 32);
+        drop(retained);
+        assert_eq!(resources.used_bytes(), 0);
+        assert_eq!(resources.peak_bytes(), 256);
+    }
 
     #[test]
     fn accounting_and_capacity_arithmetic_cannot_wrap() {

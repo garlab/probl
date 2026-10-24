@@ -14,7 +14,8 @@ The initial kernel-only measurements below were taken at `3d26f99`.
 interface. `Normal::new` validates finite means and covariance, constructs a
 shared immutable factor and owns a copy of the means. `Normal::sample` returns
 a numeric vector. Factors retain canonical covariance entries for cache keys
-and distribution identity; signed zeros in keys and means become zero.
+and distribution identity; signed zeros in keys and means become zero. Covariance,
+factor coefficients and scales share one contiguous owned allocation.
 
 The public `Limits` mirrors two new engine controls:
 
@@ -34,6 +35,12 @@ charged until their final owner drops. Reservations are released after the
 payload, including on errors. Shared clones retain the original charge instead
 of duplicating or detaching it.
 
+Each interpreter has a separate resource owner, so frequent buffer clones/drops
+update a local reference count. All owners still share the same atomic live-byte
+counter and ceiling; recipes can move between them within one execution. The
+monotonic peak counter is only written when a reservation exceeds its current
+value. This reduces contention while preserving strict aggregate accounting.
+
 This is an implementation-dependent accounting ceiling. It excludes caller-owned
 inputs/model values, returned sample lists, fixed stack/counter/cache-object
 overhead, allocator rounding/metadata and other engine storage. Returned vectors
@@ -44,9 +51,10 @@ limit. Its high-water counter measures reservations, including failed allocation
 attempts within the allowance, not physical peak heap.
 
 The numeric kernel borrows `f64` input. The language constructor validates all
-row shapes and dimensions first, then converts into charged, fallibly allocated
-means/row buffers, including the outer row buffer. These remain charged during
-factor/cache construction, then release on success or error. Sampling builds the
+row shapes and dimensions first, then converts means and covariance into one
+charged, fallibly allocated contiguous buffer. It remains charged during
+factor/cache construction, then releases on success or error. Row views and pivot
+selection flags use fixed, dimension-bounded stack arrays. Sampling builds the
 returned language list directly, without an intermediate numeric result buffer.
 Recipes and caches reject use with a different execution's resource counter,
 preventing retained factors from bypassing a new execution's allowance.
@@ -187,3 +195,8 @@ Native/WASM request cases and the real playground cover the builtin, example,
 mixtures, following draws, partial failures, dimension/live-byte limits and errors.
 The full-model benchmark fixtures are `benches/multivariate_{fixed,changing,shared}.probl`;
 see [benchmarks](benchmarks.md) for integration measurements and reproduction.
+
+The [performance follow-up](benchmarks.md#since-profiling-vector-allocation-and-scalar-reports)
+records allocation/refcount profiles and model measurements after combining
+buffers and separating interpreter ownership. Tests also exercise concurrent
+forked owners, exact shared peaks, retained reservations and cross-owner sampling.

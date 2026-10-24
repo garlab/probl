@@ -725,7 +725,25 @@ fn hash_other<H: Hasher>(value: &Value, state: &mut H) {
 }
 
 impl Ord for Value {
+    #[inline]
     fn cmp(&self, other: &Value) -> Ordering {
+        // Scalar report keys/populations dominate comparisons during sampling.
+        // Keep their order checks small enough to inline into tree lookups.
+        match (self, other) {
+            (Value::Int(a), Value::Int(b)) => a.cmp(b),
+            (Value::Float(a), Value::Float(b)) | (Value::Prob(a), Value::Prob(b)) => {
+                f64::from_bits(float_key(*a)).total_cmp(&f64::from_bits(float_key(*b)))
+            }
+            (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+            (Value::Date(a), Value::Date(b)) => a.cmp(b),
+            _ => self.cmp_other(other),
+        }
+    }
+}
+
+impl Value {
+    #[inline(never)]
+    fn cmp_other(&self, other: &Value) -> Ordering {
         let (ra, rb) = (self.rank(), other.rank());
         if ra != rb {
             return ra.cmp(&rb);
@@ -944,6 +962,42 @@ fn write_value(v: &Value, f: &mut fmt::Formatter<'_>, nested: bool) -> fmt::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scalar_storage_order_preserves_mixed_types_and_float_keys() {
+        let mut values = vec![
+            Value::Unit,
+            Value::Bool(false),
+            Value::Bool(true),
+            Value::Int((-1).into()),
+            Value::Int(0.into()),
+            Value::Int(u64::MAX.into()),
+            Value::Date(-1),
+            Value::Date(0),
+            Value::str("0"),
+            Value::list(vec![]),
+        ];
+        for x in [
+            f64::NEG_INFINITY,
+            -1.0,
+            -0.0,
+            0.0,
+            f64::from_bits(1),
+            1.0,
+            f64::INFINITY,
+            f64::NAN,
+            f64::from_bits(0xfff8000000000001),
+        ] {
+            values.push(Value::Float(x));
+            values.push(Value::Prob(x));
+        }
+        for a in &values {
+            for b in &values {
+                assert_eq!(a.cmp(b), a.cmp_other(b));
+                assert_eq!(a.cmp(b).is_eq(), a == b);
+            }
+        }
+    }
 
     fn bag(counts: &[(i64, u64)]) -> Multiset {
         Multiset::new(counts.iter().map(|&(v, n)| (Value::Int(v.into()), n)).collect())

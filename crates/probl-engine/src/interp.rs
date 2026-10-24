@@ -398,10 +398,11 @@ impl<'p> Engine<'p> {
         prog: &'p Program,
         live: &'p Liveness,
         conj: &'p Conjugacy,
-        config: Config,
+        mut config: Config,
         inputs: &'p [Value],
         print: &'p mut (dyn FnMut(&str) + Send),
     ) -> Engine<'p> {
+        config.budget.multivariate = config.budget.multivariate.fork();
         let sampler = config.sample_seed.map(Rng::new);
         let sinks = config.sinks(prog.reports.len(), 0);
         let multivariate = crate::multivariate::Cache::new(config.max_cached_calls, &config.budget);

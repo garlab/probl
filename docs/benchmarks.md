@@ -773,3 +773,104 @@ oracle, numerical-reference parity, actual native/WASM requests, chart tests and
 headless Chrome. New checks cover conversion cleanup, stable recipe identity,
 singular/fresh draws, worker/cache replay, partial failures, explicit unsupported
 operations and the example's independent portfolio moments/loss probability.
+
+## Since profiling vector allocation and scalar reports
+
+2026-10-24, compared with M5 integration commit `29670ce`. Six-second macOS
+`sample` profiles of the four-worker changing-covariance model pointed to buffer
+reservations and reference-count updates. The hottest `Buffer<f64>::filled`
+instruction offsets were the shared reservation CAS loop and `Arc` increment.
+This function accounted for about 28% of worker top-of-stack samples before the
+changes and 16% afterward. The scalar retirement profile instead spent time in
+interpreter evaluation, scalar ordering, analytic-value checks and reporting.
+
+The engine now gives each interpreter its own reference-counted resource owner
+while keeping one strict atomic live-byte limit across the execution. Peak
+accounting writes only when a new peak is reached. Covariance conversion uses
+one buffer; retained covariance, factor coefficients and scales share another.
+Bounded row views and pivot flags live on the stack. These changes reduce heap
+operations and shared atomic updates without caching draws or weakening limits.
+
+Common scalar storage comparisons and analytic-value checks are small inlined
+paths, with collection traversal and other value types handled separately.
+Numeric collectors convert each value once within the accumulator and use a
+specialized single-point central-moment update, avoiding a redundant `hypot`.
+The general weighted merge remains the reference for bitwise regression tests,
+including extreme/subnormal values and weights outside the `f64` exponent range.
+
+Same machine and one-unit/full-LTO build settings as above. Each row uses
+10,000 trials, seed 42 and before/after/after/before order, with separately
+counted allocations. These are engine execution timings from `probl-bench`;
+source compilation and text formatting are excluded. Complete text and
+world-step counts match for every comparison.
+
+| Model / collection | Workers | Before | After |
+|---|---:|---:|---:|
+| Fixed vector / moments | 1 | 0.0921–0.0929 s | 0.0884–0.0887 s |
+| Changing vector / moments | 1 | 0.2568–0.2573 s | 0.2278–0.2280 s |
+| Changing vector / moments | 4 | 0.3863–0.4149 s | 0.1596–0.1696 s |
+| Shared scalar / exact | 1 | 0.1475–0.1477 s | 0.1402–0.1406 s |
+| Retirement balance / exact | 1 | 1.3829–1.4171 s | 1.2817–1.3050 s |
+| Retirement balance / moments | 1 | 1.4170–1.4259 s | 1.3006–1.3023 s |
+| Retirement balance / quantiles | 1 | 1.4731–1.5039 s | 1.3452–1.3472 s |
+
+The changing-covariance model now benefits from four workers, though shared
+accounting and allocation still limit scaling. Its one-worker peak heap falls
+from 907,325 to 827,389 bytes. Fixed-vector peak is essentially unchanged
+(594,501 to 594,485 bytes); scalar/retirement peaks change by only 24–64 bytes.
+Four-worker peaks vary with scheduling, measuring about 3.02–3.03 MB after
+versus 3.16–3.42 MB before.
+
+At 100,000 trials on one worker, fixed and changing vectors retain those same
+594,485-byte and 827,389-byte peaks. Single observed execution times are 0.871 s
+and 2.254 s, respectively; report retention remains bounded as trials grow.
+
+A separate warmed CLI comparison with the pre-M5 `a927c1f` build checks the
+earlier scalar regression, again using matching optimized builds and alternating
+order. Retirement balance takes 1.320–1.323 s in both builds. The shared scalar
+control takes 0.1406–0.1417 s before M5 and 0.1425–0.1435 s now: roughly 1–2%
+overhead remains in this short control, reduced from the earlier 4–5% observation.
+Both complete outputs remain byte-identical. These measurements identify useful
+hot paths; they do not isolate a single compiler/runtime cause for the original
+small regression.
+
+Actual WASM uses fresh modules and a 200-trial warmup in alternating order.
+These 10,000-trial timings include parsing and report export. Complete text and
+structured report documents match exactly between builds for all six cases.
+
+| Model / collection | WASM before | WASM after | Linear memory before → after |
+|---|---:|---:|---:|
+| Fixed vector / moments | 0.169–0.171 s | 0.169–0.171 s | 1.94 → 1.94 MiB |
+| Changing vector / moments | 0.433–0.439 s | 0.414–0.415 s | 2.06 → 2.00 MiB |
+| Shared scalar / exact | 0.245–0.247 s | 0.246–0.247 s | 3.38 → 3.38 MiB |
+| Retirement balance / exact | 2.474–2.501 s | 2.386–2.427 s | 53.38 → 53.38 MiB |
+| Retirement balance / moments | 2.529–2.534 s | 2.412–2.413 s | 18.31 → 18.31 MiB |
+| Retirement balance / quantiles | 2.614–2.640 s | 2.457–2.480 s | 20.13 → 20.13 MiB |
+
+The fixed/shared WASM ranges overlap; these measurements establish no speedup
+for them. Retirement and changing covariance improve modestly. Browser execution
+uses one worker here, so it does not exercise native cross-worker contention.
+
+For native reproduction, build the baseline and current revision in separate
+worktrees/target directories with the full-LTO command above, then alternate:
+
+```sh
+probl-bench --quick --json --threads=4 --runs=10000 --collect=moments multivariate_changing
+probl-bench --quick --json --threads=1 --runs=10000 --collect=exact retirement_balance
+probl-bench --quick --json --threads=1 --runs=10000 --collect=moments retirement_balance
+probl-bench --quick --json --threads=1 --runs=10000 --collect=quantiles retirement_balance
+```
+
+The actual-WASM before/after runner also compares complete text and structured
+report documents. Save the baseline module before rebuilding the current one:
+
+```sh
+bun crates/probl-bench/examples/multivariate_normal/followups.mjs /path/to/before.wasm
+```
+
+Validation passed: workspace tests, Clippy, formatting, the 5,000-case release
+oracle, nine numerical-reference tests, actual native/WASM transport parity,
+chart tests and headless Chrome. Added regressions cover concurrent forked-owner
+limits/peaks/lifetimes, preserved scalar storage order and bitwise point-moment
+updates. Existing conversion/factor failure sweeps, worker replay and following
+RNG checks still pass.

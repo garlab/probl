@@ -303,8 +303,8 @@ impl Acc {
 
     fn add(&mut self, value: &Value, weight: Weight) {
         if let Some(online) = &mut self.online {
-            if collection::number(value).is_some() {
-                online.add(value, weight);
+            if let Some(number) = collection::number(value) {
+                online.add(number, matches!(value, Value::Prob(_)), weight);
                 return;
             }
         }
