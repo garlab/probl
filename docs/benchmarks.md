@@ -548,7 +548,7 @@ above use one worker.
 ## Quantile sketch candidates
 
 The [candidate evaluation](quantile-sketches.md) selects a KLL-style compactor
-for the next M4 implementation slice. The reproducible `quantile-sketches`
+for the next step of bounded report collection. The reproducible `quantile-sketches`
 benchmark compares it with a mergeable priority reservoir on twelve populations,
 including zero atoms, ordered inputs, extreme floats and retirement balances.
 It measures rank and value errors separately, update/merge/query cost, retained
@@ -654,7 +654,7 @@ cleanup, cancellation and tenfold trials under a fixed collector allowance.
 ## Multivariate-normal numerical prototype
 
 2026-10-24. A [standalone factorization experiment](multivariate-normal-prototype.md)
-now accompanies the M5 language/API proposal. It covers singular covariance,
+now accompanies the proposed `multivariate_normal` builtin. It covers singular covariance,
 mixed scales, invalid matrices, empirical covariance, batch replay and actual
 native/WASM fingerprints. It does not add a language builtin or change the engine.
 
@@ -743,8 +743,8 @@ Memory is module linear-memory high-water, distinct from native live heap.
 | Fixed vector | 100,000 | 1.649 s | 1.94 MiB |
 | Changing vector | 100,000 | 4.557 s | 2.06 MiB |
 
-For default-path regression checks, a fresh CLI build of `a927c1f` (before M5
-engine changes) was compared with this implementation using the same one-unit,
+For default-path regression checks, a fresh CLI build of `a927c1f` (before the
+multivariate-normal engine changes) was compared with this implementation using the same one-unit,
 full-LTO settings. Each model warmed both binaries with 1,000 trials before a
 before/after/after/before sequence of 10,000 trials, one worker, seed 42, pinned
 date and default exact collection. Complete output remained byte-identical.
@@ -776,7 +776,7 @@ operations and the example's independent portfolio moments/loss probability.
 
 ## Since profiling vector allocation and scalar reports
 
-2026-10-24, compared with M5 integration commit `29670ce`. Six-second macOS
+2026-10-24, compared with the `multivariate_normal` integration commit `29670ce`. Six-second macOS
 `sample` profiles of the four-worker changing-covariance model pointed to buffer
 reservations and reference-count updates. The hottest `Buffer<f64>::filled`
 instruction offsets were the shared reservation CAS loop and `Arc` increment.
@@ -825,10 +825,10 @@ At 100,000 trials on one worker, fixed and changing vectors retain those same
 594,485-byte and 827,389-byte peaks. Single observed execution times are 0.871 s
 and 2.254 s, respectively; report retention remains bounded as trials grow.
 
-A separate warmed CLI comparison with the pre-M5 `a927c1f` build checks the
+A separate warmed CLI comparison with the `a927c1f` build, before those engine changes, checks the
 earlier scalar regression, again using matching optimized builds and alternating
 order. Retirement balance takes 1.320–1.323 s in both builds. The shared scalar
-control takes 0.1406–0.1417 s before M5 and 0.1425–0.1435 s now: roughly 1–2%
+control takes 0.1406–0.1417 s before and 0.1425–0.1435 s now: roughly 1–2%
 overhead remains in this short control, reduced from the earlier 4–5% observation.
 Both complete outputs remain byte-identical. These measurements identify useful
 hot paths; they do not isolate a single compiler/runtime cause for the original

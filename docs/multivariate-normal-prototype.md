@@ -1,7 +1,7 @@
 # Multivariate-normal numerical prototype
 
-October 24, 2026. This is a standalone experiment for the retirement roadmap's
-M5 proposal, originally committed as `a927c1f`. The experiment itself does not
+October 24, 2026. This is a standalone experiment for the proposed
+`multivariate_normal` builtin, originally committed as `a927c1f`. The experiment itself does not
 change the language, engine sampling paths, or existing seeded results. Its
 numerical rules now back the `multivariate_normal` builtin through a
 [bounded engine implementation](multivariate-normal-kernel.md), with shared

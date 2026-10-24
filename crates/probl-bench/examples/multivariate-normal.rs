@@ -1,4 +1,4 @@
-//! Numerical experiment for the M5 proposal; this is not a language builtin.
+//! Numerical experiment for `multivariate_normal`; this is not the builtin itself.
 //! cargo run --release -p probl-bench --example multivariate-normal -- --samples=100000
 //! --replay prints fingerprints also exported by the wasm32 build.
 #[path = "multivariate_normal/factor.rs"]

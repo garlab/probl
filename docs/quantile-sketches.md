@@ -1,7 +1,8 @@
 # Quantile sketch evaluation
 
-The M4 retirement-report work needs bounded empirical quantiles in addition to
-the implemented moments-only policy. This experiment selects a **KLL-style lazy
+Reporting a forecast every year, as the [retirement example](../examples/21_retirement.probl)
+does, needs bounded empirical quantiles in addition to the implemented
+moments-only policy. This experiment selects a **KLL-style lazy
 compactor hierarchy** for integration. At similar retained
 heap, it has much smaller rank errors than a mergeable reservoir on these
 fixtures. The integrated policy defaults to capacity 512 with an explicit
