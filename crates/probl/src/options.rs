@@ -341,8 +341,8 @@ pub struct Limits {
     pub max_multivariate_dimension: usize,
     /// Live vector-normal recipes, factors, cache entries and heap scratch.
     /// Defaults to 64 MiB (16 MiB in browsers); excludes input/model values,
-    /// returned lists and allocator overhead. Reserved for the M5 kernel;
-    /// the language builtin is not exposed yet.
+    /// returned lists and allocator overhead. Numeric constructor conversion
+    /// buffers are charged along with the retained factors and means.
     pub max_multivariate_bytes: usize,
     /// Units of work: world-steps plus outcomes computed.
     pub max_work: u64,

@@ -1,0 +1,29 @@
+# Correlated returns: draw two assets together, then combine their returns.
+
+@mode sample(runs: 10_000, seed: 42)
+
+# Illustrative annual normal returns, not fitted investment parameters.
+# Asset A has mean 5% and SD 20%; B has mean 2% and SD 10%.
+# Correlation is 0.3: covariance = 0.3 * 0.20 * 0.10 = 0.006.
+# The diagonal contains variances (SD squared). Normal returns are unbounded.
+let annual = multivariate_normal(
+  [5%, 2%],
+  [[0.04, 0.006], [0.006, 0.01]],
+)
+
+# One draw preserves dependence within the pair. Drawing again gives a fresh
+# pair; a multi-year model should put the draw inside its annual loop.
+let returns ~ annual
+let portfolio = 0.6 * returns[0] + 0.4 * returns[1]
+report returns[0] as "asset A return"
+report returns[1] as "asset B return"
+report portfolio as "portfolio return"
+report portfolio < 0 as "portfolio loss"
+
+# ── Output ─────────────────────────────────────────────────────────────
+# sample · 10,000 runs · seed 42
+#
+# asset A return      mean 0.05 · sd 0.20 · 5% -0.28 · median 0.05 · 95% 0.38
+# asset B return      mean 0.02 · sd 0.10 · 5% -0.15 · median 0.02 · 95% 0.18
+# portfolio return    mean 0.04 · sd 0.14 · 5% -0.19 · median 0.04 · 95% 0.26
+# portfolio loss      39.7% ± 0.5%

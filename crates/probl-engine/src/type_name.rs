@@ -54,6 +54,9 @@ impl Names<'_> {
             let name = if outcomes && matches!(value, Value::Continuous(_)) {
                 self.budget.work(1)?;
                 self.name("float")?
+            } else if outcomes && matches!(value, Value::MultivariateNormal(_)) {
+                self.budget.work(1)?;
+                self.name("list[float]")?
             } else {
                 self.describe(value, depth)?
             };
@@ -86,6 +89,7 @@ impl Names<'_> {
             Value::Range(..) => "range",
             Value::Closure(_) | Value::Builtin(_) => "fn",
             Value::Continuous(_) => "dist[float]",
+            Value::MultivariateNormal(_) => "dist[list[float]]",
             Value::Enum(e) => &self.enums[e.ty as usize].name,
             Value::Record(r) if r.ty.is_some() => r.ty.as_deref().unwrap(),
             Value::List(items) => {

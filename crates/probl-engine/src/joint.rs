@@ -196,9 +196,12 @@ pub fn fresh(v: &Value, next: &mut u64) -> Value {
 /// value for each of its draws, from its distribution where it can be.
 #[cold]
 #[inline(never)]
-pub fn sample(d: &Dist, rng: &mut Rng) -> Value {
+pub fn sample(d: &Dist, rng: &mut Rng, budget: &mut Budget) -> OpResult<Value> {
     let i = rng.choose(d.outcomes.iter().map(|(_, p)| *p)).unwrap_or(0);
     let v = &d.outcomes[i].0;
+    if let Value::MultivariateNormal(normal) = v {
+        return normal.sample_value(rng, budget);
+    }
     let mut latents: BTreeMap<u64, Drawn> = BTreeMap::new();
     gather(v, &mut latents);
     let at: BTreeMap<u64, (f64, f64)> = latents
@@ -208,7 +211,7 @@ pub fn sample(d: &Dist, rng: &mut Rng) -> Value {
             (id, (c, family.quantile(c)))
         })
         .collect();
-    concrete(v, &at)
+    Ok(concrete(v, &at))
 }
 
 /// A latent's distribution, where it can be, and its likelihood.

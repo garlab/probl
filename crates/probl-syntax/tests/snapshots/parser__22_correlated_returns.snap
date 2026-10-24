@@ -1,0 +1,13 @@
+---
+source: crates/probl-syntax/tests/parser.rs
+assertion_line: 35
+expression: tree
+---
+(@mode (call sample runs: 10000 seed: 42))
+(let annual = (call multivariate_normal [5% 2%] [[0.04 0.006] [0.006 0.01]]))
+(let returns ~ annual)
+(let portfolio = (+ (* 0.6 (index returns 0)) (* 0.4 (index returns 1))))
+(report (index returns 0) as "asset A return")
+(report (index returns 1) as "asset B return")
+(report portfolio as "portfolio return")
+(report (< portfolio 0) as "portfolio loss")

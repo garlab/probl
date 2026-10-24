@@ -1,0 +1,11 @@
+# The same fixed two-variable covariance, expressed with shared scalar draws.
+@mode sample(runs: 10_000, seed: 42)
+var total = 0.0
+repeat 20 {
+    let common ~ normal(0, 1)
+    let independent ~ normal(0, 1)
+    let a = 0.05 + 0.2 * common
+    let b = 0.02 + 0.03 * common + sqrt(0.0091) * independent
+    total += 0.6 * a + 0.4 * b
+}
+report total

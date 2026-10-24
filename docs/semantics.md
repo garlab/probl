@@ -46,7 +46,8 @@ The operator inspects distribution objects themselves, without drawing, normaliz
 | An integer range, a function, the unit value | `range`, `fn`, `()` |
 | Lists, maps and bags | `list[T]`, `map[K, V]`, `bag[T]`, recursively describing their current contents |
 | Finite distributions | `dist[T]`, describing retained outcomes; unresolved mass provides no additional type information |
-| Continuous distributions | `dist[float]`; a continuous component of a finite mixture contributes `float` to the mixture's outcome type |
+| Scalar continuous distributions | `dist[float]`; a scalar continuous component of a finite mixture contributes `float` to the mixture's outcome type |
+| Multivariate normal | `dist[list[float]]`; a component of a finite mixture contributes `list[float]` |
 | Named records and enum variants | Their declared type name, such as `Fighter` or `Market` |
 | Anonymous records | Field descriptions in name order, such as `{a: int, b: dist[int]}` |
 
@@ -496,7 +497,7 @@ Sampling (section 14) is checked against enumeration on the same generated progr
 - `a to b` is the lognormal whose 5% and 95% quantiles are `a` and `b`. Both must be positive, as in Squiggle.
 - `normal_range(lo, hi)` is the normal whose 5% and 95% quantiles are `lo` and `hi`, for quantities that can be negative.
 
-A continuous distribution is a `dist[float]`, and a recipe like any other distribution (section 2). What can be done with one:
+A scalar continuous distribution is a `dist[float]`, and a recipe like any other distribution (section 2). What can be done with one:
 
 - **Draw from it** with `~`. Sampling produces a concrete float (section 14). Enumeration retains an analytic float with a unique draw identity, subject to the operations below.
 - **Compare it with a number.** `normal(0, 1) > 1.96` is a `dist[bool]`, true with probability 1 − F(1.96), where F is the distribution's CDF; this works in both modes. `==` is never true.
@@ -507,6 +508,67 @@ A continuous distribution is a `dist[float]`, and a recipe like any other distri
 Continuous statistical queries return only finite results. A mathematically unbounded 0%/100% quantile, a singular density, numerical failure or overflow produces an error; there is no extended-real infinity value from these queries. Densities may exceed one. Means and spreads use centered/scaled formulas, and SD is computed directly rather than by overflowing a variance first. Underflow and finite rounding remain possible. Numeric report summaries label unrepresentable fields "out of range".
 
 Arithmetic on an undrawn continuous recipe (`normal(0, 1) * 2`) and comparisons between continuous recipes remain unsupported. Bind an outcome first.
+
+### Joint normal vectors
+
+`multivariate_normal(means, covariance)` constructs a `dist[list[float]]` without
+consuming random numbers, in either mode and in pure callbacks. Both arguments
+must be settled lists: `means` contains finite real numbers, and `covariance`
+contains equally sized numeric rows. Integers and probabilities use checked
+numeric-to-float conversion. Booleans, complex values, ranges, unresolved analytic
+outcomes and distribution-valued entries are rejected; uncertain parameters are
+never implicitly lifted. Shape/domain errors use `DomainError`, numeric conversion
+or draw overflow uses `NumericOverflow`, and resource exhaustion uses `Limit`.
+
+Require matching nonempty dimensions, at most 64 (a host may lower this ceiling),
+and finite entries in both triangles. Diagonal entries are **variances**, not
+standard deviations, and must be nonnegative. A zero diagonal requires an exactly
+zero row and column. For positive standard deviations `s_i = sqrt(cov[i,i])`,
+normalize off-diagonal entries by dividing first by the larger standard deviation,
+then the smaller. Normalized magnitude must be at most `1 + tau`, and opposite
+entries must differ by at most `tau = 64*d*f64::EPSILON`; use their midpoint.
+
+Factor the normalized matrix with complete diagonal-pivoted Cholesky, breaking
+ties by lowest original coordinate. Stop at a residual pivot of at most `tau`,
+then require **every** entry of the normalized residual to be finite and have
+magnitude at most `tau`. This floating-point acceptance rule supports singular
+matrices; it can collapse small positive modes or accept small negative modes.
+It is not an exact PSD proof or a nearest-PSD repair. No jitter is added. See the
+[numerical record](multivariate-normal-prototype.md) for fixtures and limitations.
+
+In sample mode, `let x ~ d` consumes exactly `rank` standard normals in pivot-column
+order and returns one list, in original coordinate order. Each coordinate is its
+mean plus its standard deviation times the fixed-order factor dot product. Reading
+`x` again reuses that draw; another `~ d` draws independently. Zero-rank recipes
+consume no RNG. Finite choices of recipes first select a component, then draw its
+whole vector. `report d` samples one vector at that visit; reporting a finite
+mixture samples each continuous component with its original weight, as for scalar
+continuous reports. Drawn components support ordinary scalar reports, charts and
+collection policies; a whole list is not a numeric summary-collector input.
+
+Enumeration of a vector draw or report is `Unsupported`, including zero-rank
+recipes and draws inside `simulate` in either outer mode. Density/likelihood and
+statistical queries (`observe ... from`, `pdf`, `cdf`, `pmf`, `P`, `mean`, `sd`,
+`variance`, medians, quantiles and support/extrema) are unsupported, including
+finite mixtures containing a vector recipe. Arithmetic, equality/ordering
+comparisons, indexing and mapping on an undrawn recipe are unsupported. Draw in
+sample mode and work on the returned list. Construction is pure; drawing in a
+collection callback remains forbidden.
+Scalar mixture/truncation/binning and analytic/conjugate transforms are not added
+for this family.
+
+Recipes can be stored, passed, printed and annotated `dist[list[float]]`.
+Structural identity for keys/merging uses the converted finite means and covariance
+entries, with signed zeros equal, independently of factor roundoff or cache state.
+This does not define probabilistic comparison operators on undrawn recipes.
+Factors are shared, and a bounded per-interpreter cache keeps the latest covariance
+at each constructor site; means are revalidated/copied on hits. The cache clears
+at sampling batch boundaries and never caches draws. Work/cancellation checks
+and a shared live-byte limit cover conversion buffers, recipes, factors, cache
+storage and scratch, retaining charges until the last owner drops. Returned
+lists and pre-existing model values are outside that byte allowance. Successful
+seeded results are independent of cache capacity and worker count; tight shared
+memory limits can depend on scheduling. See the [resource contract](multivariate-normal-kernel.md).
 
 ### Analytic outcomes in enumeration
 

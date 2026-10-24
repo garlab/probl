@@ -1,0 +1,10 @@
+# Varying the covariance across runs and years forces factor replacement.
+@mode sample(runs: 10_000, seed: 42)
+let spread ~ uniform(1, 2)
+var total = 0.0
+for year in 1..20 {
+    let annual = multivariate_normal([0.05, 0.02], [[(0.04 + 0.05 * (year mod 2)) * spread, 0.006], [0.006, 0.01]])
+    let x ~ annual
+    total += 0.6 * x[0] + 0.4 * x[1]
+}
+report total

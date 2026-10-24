@@ -1,0 +1,13 @@
+---
+source: crates/probl-sema/tests/lower.rs
+assertion_line: 33
+expression: ir(&src)
+---
+fn#0 the top level ()
+  annual_0 = multivariate_normal([0.05, 0.02], [[0.04, 0.006], [0.006, 0.01]])    [live: annual_0]
+  returns_1 ~ annual_0    [live: returns_1]
+  portfolio_2 = (+ (* 0.6 returns_1[0]) (* 0.4 returns_1[1]))    [live: returns_1 portfolio_2]
+  report returns_1[0] as "asset A return"    [live: returns_1 portfolio_2]
+  report returns_1[1] as "asset B return"    [live: portfolio_2]
+  report portfolio_2 as "portfolio return"    [live: portfolio_2]
+  report (< portfolio_2 0) as "portfolio loss"    [live: ]

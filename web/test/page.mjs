@@ -51,6 +51,13 @@ async function press(page, id) {
   await page.evaluate((id) => document.getElementById(id).click(), id);
 }
 
+async function shareProgram(page) {
+  await press(page, 'share');
+  // Compression is asynchronous. An existing #code= may still describe the
+  // previous program until the handler writes the new link and status.
+  await page.waitForFunction(() => document.getElementById('status').textContent.includes('It contains your program;'));
+}
+
 /** Whether `test` becomes true in the page, within `timeout` ms. */
 function becomes(page, test, arg, timeout = 5000) {
   return page.waitForFunction(test, { timeout, polling: 50 }, arg).then(
@@ -92,8 +99,10 @@ try {
     }
   }
 
-  // Retirement is the last example: inspect its charts against the shared
-  // report schema, with exact values rather than rounded SVG labels.
+  // Inspect retirement charts against the shared report schema, with exact
+  // values rather than rounded SVG labels, independently of example order.
+  await page.select('#examples', '21_retirement');
+  await run(page);
   const api = await load(readFileSync(`${root}web/dist/probl.wasm`));
   const retirement = api.run({ source: readFileSync(`${root}examples/21_retirement.probl`, 'utf8'), today: '2026-10-19' }).reports;
   expect(await page.$$eval('.report-chart', (cards) => cards.length) === 3, 'retirement draws balance, depletion and baseline');
@@ -123,7 +132,7 @@ try {
   expect(tableValue === expectedMedian, 'table medians agree with the structured reports', tableValue);
   await page.$eval(`${balance} details`, (el) => { el.open = false; });
 
-  await press(page, 'share');
+  await shareProgram(page);
   await page.waitForFunction(() => location.hash.includes('charts='));
   const chartLink = await page.evaluate(() => location.href);
   const chartReplay = await open(chartLink);
@@ -241,7 +250,7 @@ try {
   await applySummaries();
   await page.select(`${balance} .chart-currency`, 'USD');
   await page.select(`${balance} .chart-baseline`, '1');
-  await press(page, 'share');
+  await shareProgram(page);
   await page.waitForFunction(() => location.hash.startsWith('#code='));
   const summaryLink = await page.evaluate(() => location.href);
   const summaryReplay = await open(summaryLink);
@@ -276,7 +285,7 @@ try {
   const momentsExpected = api.run({source:momentsSource,report_collections:{0:'moments'},report_summaries:{0:'moments'}});
   expect(momentsAnswer.result === momentsExpected.output && !momentsAnswer.error, 'moments collection works through the editor and worker', momentsAnswer.result);
   expect(await page.$$eval(`${balance} .chart-band`, (els) => els.length) === 0, 'moments collection has no invented percentile bands');
-  await press(page, 'share');
+  await shareProgram(page);
   const momentsReplay = await open(await page.evaluate(() => location.href));
   await run(momentsReplay);
   expect(await momentsReplay.$eval('#collection-0', (el) => el.value) === 'moments', 'sharing retains collection separately from summary columns');
@@ -322,7 +331,7 @@ try {
   expect(await page.$eval(`${balance} table`, (el) => el.textContent.includes('Approx. Median') && el.textContent.includes('capacity 128')), 'table labels and notes retain quantile approximation');
   await page.select(`${balance} .chart-currency`, 'USD');
   await page.select(`${balance} .chart-baseline`, '2');
-  await press(page, 'share');
+  await shareProgram(page);
   const sketchLink = await page.evaluate(() => location.href);
   const sketchReplay = await open(sketchLink);
   await run(sketchReplay);
@@ -445,7 +454,7 @@ try {
   // A share link opens the same program.
   const program = 'let x ~ 2d6\nreport x >= 10 as "ten or more"';
   await page.evaluate((src) => window.playground.setSource(src), program);
-  await press(page, 'share');
+  await shareProgram(page);
   await page.waitForFunction(() => location.hash.startsWith('#code='), { timeout: 5000 });
   const link = await page.evaluate(() => location.href);
   const other = await open(link);

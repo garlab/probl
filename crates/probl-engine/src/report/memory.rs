@@ -277,6 +277,7 @@ impl KeySize<'_> {
             | Value::Closure(_)
             | Value::Dist(_)
             | Value::Continuous(_)
+            | Value::MultivariateNormal(_)
             | Value::Counts(_)
             | Value::Joint(_)
             | Value::Delayed(_)

@@ -1,9 +1,12 @@
 # Bounded multivariate-normal kernel
 
-October 24, 2026. The engine now contains the numerical kernel and bounded
-constructor cache for M5. **The language builtin is not exposed yet.** The
-[prototype](multivariate-normal-prototype.md) remains a separate reference;
+October 24, 2026. The engine kernel and bounded constructor cache now back the
+`multivariate_normal(means, covariance)` language builtin. The
+[language contract](semantics.md#joint-normal-vectors) and
+[guide](language-overview.md#correlated-normal-draws) describe supported operations.
+The [prototype](multivariate-normal-prototype.md) remains a separate reference;
 its covariance acceptance, pivot order and random-number consumption are unchanged.
+The initial kernel-only measurements below were taken at `3d26f99`.
 
 ## Ownership and limits
 
@@ -11,7 +14,7 @@ its covariance acceptance, pivot order and random-number consumption are unchang
 interface. `Normal::new` validates finite means and covariance, constructs a
 shared immutable factor and owns a copy of the means. `Normal::sample` returns
 a numeric vector. Factors retain canonical covariance entries for cache keys
-and future distribution identity; signed zeros in keys and means become zero.
+and distribution identity; signed zeros in keys and means become zero.
 
 The public `Limits` mirrors two new engine controls:
 
@@ -20,8 +23,7 @@ The public `Limits` mirrors two new engine controls:
   The existing collection ceiling also applies to the vector/row length.
 - `max_multivariate_bytes`: 64 MiB native, 16 MiB for `Limits::browser()`.
   All clones of an execution's work budget share one live byte allowance,
-  including workers. These fields are reserved for the M5 kernel until the
-  builtin is connected to execution.
+  including workers. The builtin uses these controls in both execution modes.
 
 The allowance charges requested vector capacity for covariance keys, means,
 factor coefficients, scales, construction/draw scratch and cache entries, plus
@@ -41,11 +43,14 @@ buffers are fallible. The allowance is not a process-memory or WASM-linear-memor
 limit. Its high-water counter measures reservations, including failed allocation
 attempts within the allowance, not physical peak heap.
 
-The kernel receives already-converted `f64` inputs. Future language integration
-must also budget numeric conversion buffers; it cannot treat those temporaries
-as free caller-owned input. Recipes and caches reject use with a different
-execution's resource counter, preventing retained factors from bypassing a new
-execution's allowance. Work-budget clones within the same execution are allowed.
+The numeric kernel borrows `f64` input. The language constructor validates all
+row shapes and dimensions first, then converts into charged, fallibly allocated
+means/row buffers, including the outer row buffer. These remain charged during
+factor/cache construction, then release on success or error. Sampling builds the
+returned language list directly, without an intermediate numeric result buffer.
+Recipes and caches reject use with a different execution's resource counter,
+preventing retained factors from bypassing a new execution's allowance.
+Work-budget clones within the same execution are allowed.
 
 ## Work, cancellation and errors
 
@@ -69,7 +74,10 @@ It owns a sorted, fallibly allocated entry buffer; the caller supplies an entry
 cap, intended to be `max_cached_calls`. Zero disables retention. At the entry
 cap, a new site clears the cache, following the existing call-cache policy.
 `clear()` releases its entries and capacity, while recipes still owning factors
-keep their charges. Interpreter wiring must call it at every batch boundary.
+keep their charges. Each interpreter owns a cache capped by `max_cached_calls`;
+`run_batch` clears it at the start and end, including when the batch fails.
+Direct and first-class constructors use the calling function and source offset.
+Builtin callbacks use a reserved function identity plus their call-site offset.
 
 Keys compare finite numeric covariance entries exactly, with both signed zeros
 equal. Means do not enter the factor key: a hit still validates and copies the
@@ -150,12 +158,32 @@ seed 42 and execution date 2026-10-24 in before/after/after/before order. Text
 output was byte-identical. Times were 1.406–1.410 s before versus 1.420 s after,
 about 0.8% higher in this small comparison; no default-path speedup is claimed.
 
-## Remaining integration
+## Language integration
 
-No distribution value, builtin registration, interpreter cache or language
-syntax changed in this slice. Next wire constructor sites and batch clearing,
-typed numeric conversion, `Value` identity/formatting/type inspection, fallible
-sampling/reporting, finite mixtures and explicit unsupported query/effect paths.
-Then test through native/WASM requests and the playground, and measure actual
-model workloads. The standalone kernel/cache measurements do not establish
-interpreter speed or full-model memory use.
+The builtin is `Raw`: nested uncertain parameters are rejected rather than lifted.
+`Value::MultivariateNormal` holds an immutable shared recipe. Identity/hash/storage
+ordering use canonical finite input parameters; reservation counters do not affect
+identity. Formatting streams the means and covariance through existing text limits.
+Type inspection and annotations support `dist[list[float]]`, including components
+of finite mixtures. Scalar distribution families and conjugate rules are unchanged.
+
+Direct draws, reports and finite mixtures use fallible sampling. A `simulate`
+result mixing scalar analytic outcomes and vector recipes also draws the chosen
+vector; it cannot leak an undrawn recipe as an outcome. Enumeration, observations,
+queries and lifted vector operations diagnose unsupported capabilities. Collection
+callbacks retain their effect boundary, while pure constructor calls are allowed.
+Scalar component reports work with all collection policies; whole-list reports
+retain existing structured/categorical behavior.
+
+Language tests cover typed/indirect calls, singular dependence, fresh draws,
+following RNG state, changing covariances, disabled/limited caches, worker replay,
+malformed and unresolved parameters, partial failures, limits, numeric collectors
+and unsupported operations. Conversion tests sweep every insufficient byte/work
+allowance, and identity tests mutate counters/replace factors while retaining old
+recipes. The correlated-returns example is checked against independent portfolio
+mean, variance and normal loss-probability formulas, as well as its output block.
+
+Native/WASM request cases and the real playground cover the builtin, example,
+mixtures, following draws, partial failures, dimension/live-byte limits and errors.
+The full-model benchmark fixtures are `benches/multivariate_{fixed,changing,shared}.probl`;
+see [benchmarks](benchmarks.md) for integration measurements and reproduction.

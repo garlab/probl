@@ -156,6 +156,7 @@ builtins! {
     Roll = "roll", 2..=2, Raw, true;
     Bag = "bag", 1..=1, Lift, true;
     Normal = "normal", 2..=2, Lift, true;
+    MultivariateNormal = "multivariate_normal", 2..=2, Raw, true;
     Lognormal = "lognormal", 2..=2, Lift, true;
     Uniform = "uniform", 2..=2, Lift, true;
     Beta = "beta", 2..=2, Lift, true;

@@ -1,10 +1,11 @@
 # Multivariate-normal numerical prototype
 
 October 24, 2026. This is a standalone experiment for the retirement roadmap's
-M5 proposal. **`multivariate_normal` is not yet a Probl builtin.** The experiment
-does not change the language, engine sampling paths, or existing seeded results.
-The numerical rules now also have a [bounded engine implementation](multivariate-normal-kernel.md),
-with shared live-memory accounting, work/cancellation checks and a factor cache.
+M5 proposal, originally committed as `a927c1f`. The experiment itself does not
+change the language, engine sampling paths, or existing seeded results. Its
+numerical rules now back the `multivariate_normal` builtin through a
+[bounded engine implementation](multivariate-normal-kernel.md), with shared
+live-memory accounting, work/cancellation checks and a factor cache.
 
 The [prototype](../crates/probl-bench/examples/multivariate-normal.rs) evaluates
 a deterministic pivoted Cholesky factorization for up to 64 dimensions. It uses
@@ -90,9 +91,9 @@ fixtures, factors and draws, across three 1,000-draw batches per fixture:
 | 42 | `2c4b2bf4d83c518a` |
 | 4294967295 | `1959d7020b07885a` |
 
-This verifies the standalone kernel on the tested native/WASM builds. Engine
-integration will still need tests through the language, interpreter, effects,
-limits, report outputs, and actual WASM request adapter.
+These fingerprints verify the standalone kernel on the tested native/WASM builds.
+The integrated implementation also checks language/interpreter paths, effects,
+limits, report outputs and the actual WASM request adapter; see its linked record.
 
 ## Initial cost measurements
 
@@ -131,12 +132,12 @@ vector allocation. The general sampler additionally validates means, traverses
 the factor and allocates normal scratch. This comparison motivates constructor
 reuse and retains shared scalar draws as a useful simple alternative.
 
-## Remaining integration work
+## Integration status
 
 The original experiment still uses ordinary infallible `Vec` allocations,
 constrained only by the dimension cap. The separate bounded engine kernel adds
-resource controls and a cache; its tests now compare engine answers with this
-reference. Language/value/effect integration remains pending. Sampling-only
-diagnostics must cover enumeration, density,
-queries, lifting, mixtures and nested `simulate`; no operation may substitute
-independent marginals or silently discretize the vector.
+resource controls and a cache; its tests compare engine answers with this
+reference. The language/value/effect integration is now implemented. Sampling-only
+diagnostics cover enumeration, density, queries, lifting, mixtures and nested
+`simulate`; operations do not substitute independent marginals or silently
+discretize the vector.

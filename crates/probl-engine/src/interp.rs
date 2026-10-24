@@ -252,6 +252,7 @@ pub struct Engine<'p> {
     config: Config,
     budget: Budget,
     memo: FxHashMap<CallKey, Arc<CallResult>>,
+    multivariate: crate::multivariate::Cache,
     /// `simulate` results that are distributions whose outcomes own their
     /// draws: pure values of the block and its captures, which a call's
     /// result, holding analytic outcomes, can't be cached as.
@@ -403,6 +404,7 @@ impl<'p> Engine<'p> {
     ) -> Engine<'p> {
         let sampler = config.sample_seed.map(Rng::new);
         let sinks = config.sinks(prog.reports.len(), 0);
+        let multivariate = crate::multivariate::Cache::new(config.max_cached_calls, &config.budget);
         Engine {
             prog,
             live,
@@ -410,6 +412,7 @@ impl<'p> Engine<'p> {
             budget: config.budget.clone(),
             config,
             memo: FxHashMap::default(),
+            multivariate,
             simulated: FxHashMap::default(),
             active: FxHashMap::default(),
             approx: FxHashMap::default(),
@@ -506,6 +509,7 @@ impl<'p> Engine<'p> {
     /// its own, so batches can run on any thread; only caches carry over.
     /// What it prints comes back with its result, even when it fails.
     pub fn run_batch(&mut self, rng: Rng, first: u64, n: u64, printed: usize) -> (Result<Batch>, Printed) {
+        self.multivariate.clear();
         self.sampler = Some(rng);
         self.sinks = self.config.sinks(self.prog.reports.len(), first);
         self.observed = false;
@@ -518,6 +522,7 @@ impl<'p> Engine<'p> {
         self.lines = Some(Vec::new());
         self.budget = self.config.budget.clone();
         let result = self.sample_runs(first, n);
+        self.multivariate.clear();
         self.budget.give_back();
         (result, self.lines.take().unwrap_or_default())
     }
@@ -562,40 +567,46 @@ impl<'p> Engine<'p> {
     /// When sampling: one draw from a distribution. A finite distribution
     /// gives one of its outcomes, chosen with its probability (missing mass
     /// is ignored); a continuous one, a number.
-    fn sample(&mut self, v: &Value) -> Value {
+    fn sample(&mut self, v: &Value) -> OpResult<Value> {
         let rng = self.sampler.as_mut().expect("only called when sampling");
-        match v {
+        Ok(match v {
             Value::Dist(d) if !d.outcomes.is_empty() => {
                 let i = rng.choose(d.outcomes.iter().map(|(_, p)| *p)).unwrap_or(0);
                 match &d.outcomes[i].0 {
                     Value::Continuous(f) => Value::Float(f.sample(rng)),
-                    Value::Joint(j) => crate::joint::sample(j, rng),
+                    Value::MultivariateNormal(n) => n.sample_value(rng, &mut self.budget)?,
+                    Value::Joint(j) => crate::joint::sample(j, rng, &mut self.budget)?,
                     x => x.clone(),
                 }
             }
             Value::Continuous(f) => Value::Float(f.sample(rng)),
+            Value::MultivariateNormal(n) => n.sample_value(rng, &mut self.budget)?,
             Value::Counts(c) => Value::Int(c.sample(rng).into()),
-            Value::Joint(j) => crate::joint::sample(j, rng),
+            Value::Joint(j) => crate::joint::sample(j, rng, &mut self.budget)?,
             other => other.clone(),
-        }
+        })
     }
 
     /// When sampling, a value to report: continuous parts are drawn; a
     /// finite distribution is kept whole, so each outcome counts with its
     /// probability.
     #[inline(never)]
-    fn sample_continuous(&mut self, v: Value) -> Value {
+    fn sample_continuous(&mut self, v: Value) -> OpResult<Value> {
         match &v {
-            Value::Continuous(_) | Value::Joint(_) => self.sample(&v),
+            Value::Continuous(_) | Value::Joint(_) | Value::MultivariateNormal(_) => self.sample(&v),
             Value::Dist(d)
-                if d.outcomes
-                    .iter()
-                    .any(|(x, _)| matches!(x, Value::Continuous(_) | Value::Joint(_))) =>
+                if d.outcomes.iter().any(|(x, _)| {
+                    matches!(x, Value::Continuous(_) | Value::Joint(_) | Value::MultivariateNormal(_))
+                }) =>
             {
-                let pairs = d.outcomes.iter().map(|(x, p)| (self.sample(x), *p)).collect();
-                Dist::from_pairs(pairs, d.missing).into_value()
+                let pairs = d
+                    .outcomes
+                    .iter()
+                    .map(|(x, p)| self.sample(x).map(|value| (value, *p)))
+                    .collect::<OpResult<Vec<_>>>()?;
+                Ok(Dist::from_pairs(pairs, d.missing).into_value())
             }
-            _ => v,
+            _ => Ok(v),
         }
     }
 
@@ -1807,7 +1818,7 @@ impl<'p> Engine<'p> {
                         Callee::Value(e, named) => match each!(self, at, world w, self.eval(f, e, &w)) {
                             Value::Builtin(b) => {
                                 let value =
-                                    each!(self, at, world w, self.builtin_values(b, &key, named, w.weight, span));
+                                    each!(self, at, world w, self.builtin_values(b, &key, named, w.weight, (f, span)));
                                 let mut saved = self.snapshot(&w);
                                 let mut nw = w;
                                 each!(self, at, saved saved, self.assign(f, dest, value, &mut nw, span));
@@ -2156,8 +2167,14 @@ impl<'p> Engine<'p> {
                     // as their mixture, and a record or list of them field by
                     // field.
                     let (v, run) = if self.sampler.is_some() {
-                        (self.sample_continuous(v), Some(w.run))
+                        let drawn = each!(self, At::new(f, stmt, w), world w,
+                            self.sample_continuous(v).map_err(|e| e.at(value.span)), { failed.push(i) });
+                        (drawn, Some(w.run))
                     } else {
+                        each!(self, At::new(f, stmt, w), world w,
+                            if crate::multivariate::is_law(&v) {
+                                Err(crate::multivariate::unsupported("reporting a vector law in enumeration").at(value.span))
+                            } else { Ok(()) }, { failed.push(i) });
                         (v, None)
                     };
                     if let Value::Event(event) = &k {
@@ -2877,12 +2894,24 @@ impl<'p> Engine<'p> {
 
     /// Store each possible value of `d` into `place`, one world per outcome.
     fn split_by(&mut self, f: FnId, place: &Place, d: Value, w: World, span: Span, out: &mut Vec<World>) -> Result<()> {
+        if self.sampler.is_none() && crate::multivariate::is_law(&d) {
+            return Err(crate::multivariate::unsupported("enumerating a vector draw").at(span));
+        }
         match d {
-            Value::Dist(_) | Value::Continuous(_) | Value::Counts(_) | Value::Joint(_) if self.sampler.is_some() => {
-                let v = self.sample(&d);
+            Value::Dist(_)
+            | Value::Continuous(_)
+            | Value::Counts(_)
+            | Value::Joint(_)
+            | Value::MultivariateNormal(_)
+                if self.sampler.is_some() =>
+            {
+                let v = self.sample(&d).map_err(|e| e.at(span))?;
                 let mut w = w;
                 self.assign(f, place, v, &mut w, span)?;
                 out.push(w);
+            }
+            Value::MultivariateNormal(_) => {
+                return Err(crate::multivariate::unsupported("enumerating a vector draw").at(span));
             }
             Value::Continuous(family) => {
                 self.next_latent += 1;
@@ -2904,7 +2933,7 @@ impl<'p> Engine<'p> {
                         w.clone().unwrap()
                     };
                     let mut nw = base.scaled(*p);
-                    if matches!(v, Value::Continuous(_) | Value::Joint(_)) {
+                    if matches!(v, Value::Continuous(_) | Value::Joint(_) | Value::MultivariateNormal(_)) {
                         self.split_by(f, place, v.clone(), nw, span, out)?;
                     } else {
                         self.assign(f, place, v.clone(), &mut nw, span)?;
@@ -3092,9 +3121,13 @@ impl<'p> Engine<'p> {
             (TypeSpec::Bag(t), Value::Bag(b)) => b.keys().all(|x| self.conforms(x, t)),
             (TypeSpec::Dist(t), Value::Dist(d) | Value::Joint(d)) => d.outcomes.iter().all(|(x, _)| match x {
                 Value::Continuous(_) => **t == TypeSpec::Float,
+                Value::MultivariateNormal(_) => matches!(&**t, TypeSpec::List(item) if **item == TypeSpec::Float),
                 _ => self.conforms(x, t),
             }),
             (TypeSpec::Dist(t), Value::Continuous(_)) => **t == TypeSpec::Float,
+            (TypeSpec::Dist(t), Value::MultivariateNormal(_)) => {
+                matches!(&**t, TypeSpec::List(item) if **item == TypeSpec::Float)
+            }
             (TypeSpec::Dist(t), Value::Counts(_)) => **t == TypeSpec::Int,
             (TypeSpec::Record(r), Value::Record(rec)) => {
                 let declared = &self.prog.records[*r as usize];
@@ -3508,7 +3541,7 @@ impl<'p> Engine<'p> {
     /// Call a closure that must not split worlds (used by `map`, `filter`, …).
     fn call_pure(&mut self, closure: &Value, args: Vec<Value>, what: &'static str, span: Span) -> Result<Value> {
         if let Value::Builtin(b) = closure {
-            return self.builtin_values(*b, &args, &[], Weight::ONE, span);
+            return self.builtin_values(*b, &args, &[], Weight::ONE, (u32::MAX, span));
         }
         let Value::Closure(c) = closure else {
             return Err(RuntimeError::new(
@@ -3692,7 +3725,7 @@ impl<'p> Engine<'p> {
             }
         }
         let names: Vec<String> = named.iter().map(|(n, _)| n.clone()).collect();
-        let mut v = self.builtin_values(*func, &values, &names, w.weight, span)?;
+        let mut v = self.builtin_values(*func, &values, &names, w.weight, (f, span))?;
         if let Some(ty) = field {
             v = self.coerce(v, &ty, value.span)?;
         }
@@ -4221,7 +4254,7 @@ impl<'p> Engine<'p> {
             names.push(name.clone());
             values.push(self.eval(f, value, w)?);
         }
-        self.builtin_values(b, &values, &names, w.weight, span)
+        self.builtin_values(b, &values, &names, w.weight, (f, span))
     }
 
     fn check_function_arity(&self, value: &Value, given: usize, span: Span) -> Result<()> {
@@ -4263,8 +4296,9 @@ impl<'p> Engine<'p> {
         values: &[Value],
         named: &[String],
         weight: Weight,
-        span: Span,
+        site: (FnId, Span),
     ) -> Result<Value> {
+        let (f, span) = site;
         let extrema = matches!(b, Builtin::Minimum | Builtin::Maximum);
         if !named.is_empty() && (!extrema || named != ["default"]) {
             return Err(RuntimeError::new(
@@ -4296,6 +4330,14 @@ impl<'p> Engine<'p> {
         };
         let at = |err: OpError| err.at(span);
         builtins::check_query_input(b, values).map_err(at)?;
+        if values.first().is_some_and(crate::multivariate::is_law)
+            && !matches!(
+                b,
+                Builtin::Str | Builtin::Print | Builtin::Typeof | Builtin::MultivariateNormal
+            )
+        {
+            return Err(crate::multivariate::unsupported(b.name()).at(span));
+        }
         // Asking the built-in first spares a search of every collection
         // argument, on every call, for those that move values unseen.
         if !handles_analytic(b, values) && values.iter().any(analytic::contains) {
@@ -4352,6 +4394,10 @@ impl<'p> Engine<'p> {
             Builtin::Highest | Builtin::Lowest if values.len() == 3 => self.higher_order(b, values, span),
             Builtin::Min | Builtin::Max => builtins::call_plain(b, values, &mut self.budget).map_err(at),
             Builtin::Roll => self.roll(values).map_err(at),
+            Builtin::MultivariateNormal => self
+                .multivariate
+                .normal_values((f as usize, span.lo as usize), values, &mut self.budget)
+                .map_err(at),
             Builtin::Take => Err(RuntimeError::new(
                 span,
                 "use `deck.take()` to draw and remove an item from a mutable bag",
@@ -4465,6 +4511,9 @@ impl<'p> Engine<'p> {
 
     /// Collection operations which call a function, including custom sorting.
     fn higher_order(&mut self, b: Builtin, values: &[Value], span: Span) -> Result<Value> {
+        if crate::multivariate::is_law(&values[0]) {
+            return Err(crate::multivariate::unsupported(b.name()).at(span));
+        }
         if let Value::Dist(d) = &values[0] {
             let mut results = Vec::with_capacity(d.outcomes.len());
             for (coll, p) in &d.outcomes {
@@ -4753,7 +4802,8 @@ fn handles_analytic(b: Builtin, values: &[Value]) -> bool {
     let number = |v: &Value| matches!(v, Value::Analytic(_) | Value::Int(_) | Value::Float(_) | Value::Prob(_));
     let numbers = |v: &Value| matches!(v, Value::List(xs) if xs.iter().all(number));
     match b {
-        B::Map
+        B::MultivariateNormal
+        | B::Map
         | B::Filter
         | B::Reduce
         | B::Any
@@ -4805,6 +4855,9 @@ enum Weighs {
 }
 
 fn likelihood(d: &Value, v: &Value, sampling: bool) -> OpResult<Weighs> {
+    if crate::multivariate::is_law(d) {
+        return Err(crate::multivariate::unsupported("observing a value from this law"));
+    }
     let continuous = match d {
         Value::Continuous(f) => Some(vec![(**f, 1.0)]),
         Value::Dist(dist) if dist.outcomes.iter().any(|(x, _)| matches!(x, Value::Continuous(_))) => {

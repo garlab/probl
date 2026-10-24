@@ -63,6 +63,8 @@ pub enum Value {
     /// (docs/semantics.md, section 8): drawing from it gives each outcome's
     /// draws fresh identities (see `crate::joint`).
     Joint(Arc<crate::dist::Dist>),
+    /// Sampling-only joint vector distribution with a shared covariance factor.
+    MultivariateNormal(Arc<crate::multivariate::Normal>),
 }
 
 /// The distribution of a variable whose draw is delayed, updated exactly by
@@ -426,7 +428,11 @@ impl Value {
                 None => "record".into(),
             },
             Value::Enum(_) => "enum".into(),
-            Value::Dist(d) if d.outcomes.iter().any(|(v, _)| matches!(v, Value::Continuous(_))) => {
+            Value::Dist(d)
+                if d.outcomes
+                    .iter()
+                    .any(|(v, _)| matches!(v, Value::Continuous(_) | Value::MultivariateNormal(_))) =>
+            {
                 "mixture of distributions".into()
             }
             Value::Dist(d) => match d.outcomes.first() {
@@ -434,6 +440,7 @@ impl Value {
                 None => "distribution".into(),
             },
             Value::Continuous(f) => format!("{} distribution", f.name()),
+            Value::MultivariateNormal(_) => "multivariate_normal distribution".into(),
             Value::Closure(_) | Value::Builtin(_) => "function".into(),
             Value::Date(_) => "date".into(),
             Value::Delayed(_) => "value not drawn yet".into(),
@@ -457,7 +464,7 @@ impl Value {
     pub fn is_uncertain(&self) -> bool {
         matches!(
             self,
-            Value::Dist(_) | Value::Continuous(_) | Value::Counts(_) | Value::Joint(_)
+            Value::Dist(_) | Value::Continuous(_) | Value::Counts(_) | Value::Joint(_) | Value::MultivariateNormal(_)
         )
     }
 
@@ -504,6 +511,7 @@ impl Value {
             Value::Event(_) => 18,
             Value::Counts(_) => 20,
             Value::Joint(_) => 21,
+            Value::MultivariateNormal(_) => 22,
         }
     }
 
@@ -573,6 +581,9 @@ fn eq_other(x: &Value, y: &Value) -> bool {
         (Value::Builtin(a), Value::Builtin(b)) => a == b,
         (Value::Date(a), Value::Date(b)) => a == b,
         (Value::Continuous(a), Value::Continuous(b)) => family_key(a) == family_key(b),
+        (Value::MultivariateNormal(a), Value::MultivariateNormal(b)) => {
+            Arc::ptr_eq(a, b) || a.identity().eq(b.identity())
+        }
         (Value::Analytic(a), Value::Analytic(b)) => a.key() == b.key(),
         (Value::Event(a), Value::Event(b)) => a.key() == b.key(),
         (Value::Counts(a), Value::Counts(b)) => a.key() == b.key(),
@@ -704,6 +715,7 @@ fn hash_other<H: Hasher>(value: &Value, state: &mut H) {
         Value::Builtin(b) => b.hash(state),
         Value::Date(d) => d.hash(state),
         Value::Continuous(f) => family_key(f).hash(state),
+        Value::MultivariateNormal(n) => n.identity().for_each(|x| x.hash(state)),
         Value::Analytic(a) => a.key().hash(state),
         Value::Event(a) => a.key().hash(state),
         Value::Delayed(d) => (d.variable, family_key(&d.family)).hash(state),
@@ -753,6 +765,7 @@ impl Ord for Value {
             (Value::Closure(a), Value::Closure(b)) => a.cmp(b),
             (Value::Builtin(a), Value::Builtin(b)) => a.cmp(b),
             (Value::Continuous(a), Value::Continuous(b)) => family_key(a).cmp(&family_key(b)),
+            (Value::MultivariateNormal(a), Value::MultivariateNormal(b)) => a.identity().cmp(b.identity()),
             (Value::Analytic(a), Value::Analytic(b)) => a.key().cmp(&b.key()),
             (Value::Event(a), Value::Event(b)) => a.key().cmp(&b.key()),
             (Value::Counts(a), Value::Counts(b)) => a.key().cmp(&b.key()),
@@ -896,6 +909,28 @@ fn write_value(v: &Value, f: &mut fmt::Formatter<'_>, nested: bool) -> fmt::Resu
         Value::Closure(_) | Value::Builtin(_) => write!(f, "<function>"),
         Value::Date(d) => write!(f, "{}", crate::dates::format(*d)),
         Value::Continuous(family) => write!(f, "{family}"),
+        Value::MultivariateNormal(normal) => {
+            fn row(values: &[f64], f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "[")?;
+                for (i, x) in values.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", fmt_float(*x))?;
+                }
+                write!(f, "]")
+            }
+            write!(f, "multivariate_normal(")?;
+            row(normal.means(), f)?;
+            write!(f, ", [")?;
+            for (i, values) in normal.factor().covariance().chunks(normal.means().len()).enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                row(values, f)?;
+            }
+            write!(f, "])")
+        }
         Value::Counts(c) => write!(f, "{c}"),
         Value::Analytic(a) => match a.affine() {
             Some(g) => write!(f, "<analytic float: {} * {} + {}>", g.scale, a.family, g.offset),

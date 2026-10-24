@@ -150,6 +150,12 @@ impl<T> DerefMut for Buffer<T> {
     }
 }
 
+impl<T> AsRef<[T]> for Buffer<T> {
+    fn as_ref(&self) -> &[T] {
+        &self.values
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

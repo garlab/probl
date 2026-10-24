@@ -1,0 +1,9 @@
+# Joint returns: reuse one covariance at one constructor site across trials.
+@mode sample(runs: 10_000, seed: 42)
+let annual = multivariate_normal([0.05, 0.02], [[0.04, 0.006], [0.006, 0.01]])
+var total = 0.0
+repeat 20 {
+    let x ~ annual
+    total += 0.6 * x[0] + 0.4 * x[1]
+}
+report total

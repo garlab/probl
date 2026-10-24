@@ -690,3 +690,86 @@ seed 42) produced byte-identical output in a before/after/after/before check.
 Measured times were 1.406–1.410 s before and 1.420 s after. This small comparison
 does not establish a general runtime regression or improvement; the new kernel
 is not invoked by that model.
+
+## Since multivariate-normal language integration
+
+2026-10-24, the same machine. `multivariate_normal(means, covariance)` now draws
+joint lists in sample mode, backed by the bounded engine cache. The
+[correlated returns example](../examples/22_correlated_returns.probl) is available
+in the playground. See the [contract](semantics.md#joint-normal-vectors) for
+accepted covariance matrices and supported operations.
+
+Three complete models exercise twenty annual return draws per trial:
+`multivariate_fixed` reuses a fixed two-dimensional covariance;
+`multivariate_shared` expresses the same law through shared scalar normal draws;
+`multivariate_changing` changes covariance within and between trials, exercising
+factor replacement. The last model also draws a variance scale per trial, so
+its total cost is not an isolated cache-miss measurement. Each reports a single
+weighted sum, using moments collection to keep report retention bounded.
+
+Native builds use one release codegen unit and full LTO. Timing excludes source
+compilation and report formatting; allocation counting uses a separate untimed
+run. The fixed/shared 10,000-trial timings use fixed/shared/shared/fixed order;
+changing has two runs. Larger and four-worker rows are single observations.
+All use seed 42. Four-worker heap peaks can vary with scheduling.
+
+| Model | Trials | Workers | Native time | Native peak heap, bytes |
+|---|---:|---:|---:|---:|
+| Fixed vector | 10,000 | 1 | 0.0912–0.0916 s | 594,501 |
+| Shared scalar | 10,000 | 1 | 0.1442–0.1460 s | 658,469 |
+| Changing vector | 10,000 | 1 | 0.2550–0.2588 s | 907,325 |
+| Fixed vector | 100,000 | 1 | 0.9131 s | 594,501 |
+| Changing vector | 100,000 | 1 | 2.5467 s | 907,325 |
+| Fixed vector | 10,000 | 4 | 0.0502 s | 2,291,764 |
+| Changing vector | 10,000 | 4 | 0.3746 s | 3,455,374 |
+
+Fixed vector draws are faster than the shared-scalar formulation in this model.
+This is a complete-model comparison; numerical-kernel costs appear above.
+Increasing trials tenfold leaves peak heap unchanged for both vector models.
+Four workers help the fixed model but slow the small changing-matrix workload.
+Profiling shared reservation counters under covariance churn is a follow-up;
+these timings alone do not identify the cause of that slowdown.
+
+Actual WASM measurements use fresh modules, a 200-trial warmup, seed 42 and a
+pinned date. The measured call includes parsing, execution and report export,
+excluding module loading. Each result is checked against native CLI output.
+Memory is module linear-memory high-water, distinct from native live heap.
+
+| Model | Trials | WASM time | WASM linear memory |
+|---|---:|---:|---:|
+| Fixed vector | 10,000 | 0.174–0.179 s | 1.94 MiB |
+| Shared scalar | 10,000 | 0.249–0.251 s | 2.00 MiB |
+| Changing vector | 10,000 | 0.459–0.460 s | 2.06 MiB |
+| Fixed vector | 100,000 | 1.649 s | 1.94 MiB |
+| Changing vector | 100,000 | 4.557 s | 2.06 MiB |
+
+For default-path regression checks, a fresh CLI build of `a927c1f` (before M5
+engine changes) was compared with this implementation using the same one-unit,
+full-LTO settings. Each model warmed both binaries with 1,000 trials before a
+before/after/after/before sequence of 10,000 trials, one worker, seed 42, pinned
+date and default exact collection. Complete output remained byte-identical.
+Retirement balance took 1.340/1.347 s before and 1.390/1.400 s after; the shared
+scalar control took 0.142/0.145 s before and 0.149/0.150 s after. These short
+comparisons show roughly 4–5% added runtime on existing scalar workloads, a cost
+to retain in future performance checks. They do not identify its cause.
+
+Reproduce the integration measurements from the repository root:
+
+```sh
+CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_LTO=fat \
+  cargo build --release --locked -p probl-cli -p probl-bench
+target/release/probl-bench --quick --json --threads=1 --runs=10000 \
+  --collect=moments multivariate
+target/release/probl-bench --quick --json --threads=1 --runs=100000 \
+  --collect=moments multivariate_fixed
+target/release/probl-bench --quick --json --threads=4 --runs=10000 \
+  --collect=moments multivariate_changing
+cargo build --locked -p probl-wasm --target wasm32-unknown-unknown --profile wasm
+bun crates/probl-bench/examples/multivariate_normal/models.mjs
+```
+
+Validation passed: workspace tests, Clippy, formatting, the 5,000-case release
+oracle, numerical-reference parity, actual native/WASM requests, chart tests and
+headless Chrome. New checks cover conversion cleanup, stable recipe identity,
+singular/fresh draws, worker/cache replay, partial failures, explicit unsupported
+operations and the example's independent portfolio moments/loss probability.

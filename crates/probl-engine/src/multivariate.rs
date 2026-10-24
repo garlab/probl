@@ -1,4 +1,4 @@
-//! Bounded multivariate-normal kernel, not yet exposed as a language builtin.
+//! Bounded multivariate-normal recipes and constructor cache.
 //! Numerical rules match docs/multivariate-normal-prototype.md. Growing buffers
 //! reserve live bytes and use fallible allocation; fixed Arc headers use the
 //! standard allocator after reserving their accounted size.
@@ -9,13 +9,14 @@ mod tests;
 use crate::continuous::Rng;
 use crate::dist::Budget;
 use crate::error::{Fault, OpError, OpResult};
+use crate::value::Value;
 pub use memory::Resources;
 use memory::{Buffer, Reservation};
 use std::mem::size_of;
 use std::sync::Arc;
 
 pub const MAX_DIMENSION: usize = 64;
-/// Function identity and source offset, supplied by the eventual interpreter caller.
+/// Function identity and source offset, supplied by the interpreter caller.
 pub type Site = (usize, usize);
 
 fn domain(message: impl Into<String>) -> OpError {
@@ -30,7 +31,7 @@ fn same_execution(resources: &Resources, budget: &Budget) -> OpResult<()> {
     }
 }
 
-fn validate(means: &[f64], covariance: &[Vec<f64>], budget: &mut Budget) -> OpResult<usize> {
+fn validate(means: &[f64], covariance: &[impl AsRef<[f64]>], budget: &mut Budget) -> OpResult<usize> {
     budget.work(1)?;
     let n = covariance.len();
     if n == 0 {
@@ -48,6 +49,7 @@ fn validate(means: &[f64], covariance: &[Vec<f64>], budget: &mut Budget) -> OpRe
         }
     }
     for (i, row) in covariance.iter().enumerate() {
+        let row = row.as_ref();
         budget.work(n as u64)?;
         if row.len() != n {
             return Err(domain(format!(
@@ -94,7 +96,7 @@ impl Factor {
     }
 
     // Called only after bounded shape and finite-entry validation.
-    fn build(input: &[Vec<f64>], budget: &mut Budget) -> OpResult<Arc<Self>> {
+    fn build(input: &[impl AsRef<[f64]>], budget: &mut Budget) -> OpResult<Arc<Self>> {
         let n = input.len();
         budget.work((3 * n * n + 2 * n) as u64)?;
         let resources = budget.multivariate.clone();
@@ -105,14 +107,15 @@ impl Factor {
         let tolerance = 64.0 * n as f64 * f64::EPSILON;
         for i in 0..n {
             budget.work((n + 1) as u64)?;
-            if input[i][i] < 0.0 {
+            let row = input[i].as_ref();
+            if row[i] < 0.0 {
                 return Err(domain(format!(
                     "multivariate_normal variance at [{i}, {i}] must be nonnegative"
                 )));
             }
-            scales[i] = libm::sqrt(input[i][i]);
+            scales[i] = libm::sqrt(row[i]);
             for j in 0..n {
-                covariance[i * n + j] = if input[i][j] == 0.0 { 0.0 } else { input[i][j] };
+                covariance[i * n + j] = if row[j] == 0.0 { 0.0 } else { row[j] };
             }
         }
         for i in 0..n {
@@ -223,6 +226,21 @@ impl Normal {
         &self.factor
     }
 
+    /// Canonical finite input identity, independent of factor/cache/RNG state.
+    pub(crate) fn identity(&self) -> impl Iterator<Item = u64> + '_ {
+        std::iter::once(self.means.len() as u64).chain(
+            self.means
+                .iter()
+                .chain(self.factor.covariance.iter())
+                .map(|x| x.to_bits()),
+        )
+    }
+
+    pub(crate) fn sample_value(&self, rng: &mut Rng, budget: &mut Budget) -> OpResult<Value> {
+        // Build the language list directly, without an uncharged numeric temporary.
+        self.sample_as(rng, budget, Value::Float).map(Value::list)
+    }
+
     fn with_factor(means: &[f64], factor: Arc<Factor>, budget: &mut Budget) -> OpResult<Arc<Self>> {
         budget.work(means.len() as u64)?;
         let memory = budget
@@ -240,6 +258,10 @@ impl Normal {
     }
 
     pub fn sample(&self, rng: &mut Rng, budget: &mut Budget) -> OpResult<Vec<f64>> {
+        self.sample_as(rng, budget, |x| x)
+    }
+
+    fn sample_as<T>(&self, rng: &mut Rng, budget: &mut Budget, convert: impl Fn(f64) -> T) -> OpResult<Vec<T>> {
         same_execution(&self._memory.resources, budget)?;
         let f = &self.factor;
         let n = f.dimension;
@@ -268,7 +290,7 @@ impl Normal {
                     "multivariate_normal produced a nonfinite sample",
                 ));
             }
-            result.push(value);
+            result.push(convert(value));
         }
         Ok(result)
     }
@@ -306,7 +328,7 @@ impl Cache {
         &mut self,
         site: Site,
         means: &[f64],
-        covariance: &[Vec<f64>],
+        covariance: &[impl AsRef<[f64]>],
         budget: &mut Budget,
     ) -> OpResult<Arc<Normal>> {
         same_execution(&self.resources, budget)?;
@@ -322,7 +344,7 @@ impl Cache {
                     .covariance
                     .iter()
                     .copied()
-                    .eq(covariance.iter().flatten().copied())
+                    .eq(covariance.iter().flat_map(|row| row.as_ref().iter()).copied())
                 {
                     hit = Some(factor.clone());
                 }
@@ -355,6 +377,106 @@ impl Cache {
             }
         }
         Ok(normal)
+    }
+
+    /// Convert settled language lists with charged, fallible temporary buffers.
+    pub(crate) fn normal_values(&mut self, site: Site, args: &[Value], budget: &mut Budget) -> OpResult<Value> {
+        fn list<'a>(value: &'a Value, name: &str) -> OpResult<&'a [Value]> {
+            match value {
+                Value::List(values) => Ok(values),
+                _ => Err(OpError::new(format!(
+                    "multivariate_normal {name} must be a settled list"
+                ))),
+            }
+        }
+        fn number(value: &Value, i: usize, j: Option<usize>, budget: &mut Budget) -> OpResult<f64> {
+            let at = || match j {
+                Some(j) => format!("covariance at [{i}, {j}]"),
+                None => format!("mean at index {i}"),
+            };
+            let x = match value {
+                Value::Int(n) => {
+                    budget.integer_work(n, &probl_number::Integer::ONE, false)?;
+                    n.to_f64().ok_or_else(|| {
+                        OpError::fault(
+                            Fault::NumericOverflow,
+                            format!("multivariate_normal {} does not fit in a finite float", at()),
+                        )
+                    })?
+                }
+                Value::Float(x) | Value::Prob(x) => *x,
+                _ => {
+                    return Err(OpError::new(format!(
+                        "multivariate_normal {} must be a settled real number",
+                        at()
+                    )));
+                }
+            };
+            if !x.is_finite() {
+                return Err(domain(format!("multivariate_normal {} must be finite", at())));
+            }
+            Ok(x)
+        }
+        budget.work(1)?;
+        let means = list(&args[0], "means")?;
+        let rows = list(&args[1], "covariance")?;
+        let n = rows.len();
+        budget.multivariate.dimension(n)?;
+        budget.collection(n as u128)?;
+        if n == 0 || means.len() != n {
+            return Err(domain(
+                "multivariate_normal needs matching nonempty means and covariance dimensions",
+            ));
+        }
+        // Check every row's shape before allocating or converting numeric entries.
+        for (i, row) in rows.iter().enumerate() {
+            budget.work(1)?;
+            let Value::List(row) = row else {
+                return Err(OpError::new(format!(
+                    "multivariate_normal covariance row {i} must be a settled list"
+                )));
+            };
+            if row.len() != n {
+                return Err(domain(format!(
+                    "multivariate_normal covariance row {i} must have {n} entries"
+                )));
+            }
+        }
+        let resources = budget.multivariate.clone();
+        budget.work(n as u64)?;
+        let mut converted_means = Buffer::filled(n, 0.0, &resources)?;
+        for (i, value) in means.iter().enumerate() {
+            converted_means[i] = number(value, i, None, budget)?;
+        }
+        let mut covariance = Buffer::with_capacity(n, &resources)?;
+        for (i, row) in rows.iter().enumerate() {
+            budget.work(n as u64)?;
+            let mut converted = Buffer::filled(n, 0.0, &resources)?;
+            let Value::List(row) = row else {
+                unreachable!("validated shape")
+            };
+            for (j, value) in row.iter().enumerate() {
+                converted[j] = number(value, i, Some(j), budget)?;
+            }
+            covariance.insert(i, converted);
+        }
+        self.normal(site, &converted_means, &covariance, budget)
+            .map(Value::MultivariateNormal)
+    }
+}
+
+/// Unsupported operations must not interpret a recipe as a categorical atom.
+pub(crate) fn unsupported(operation: &str) -> OpError {
+    OpError::unsupported(format!("{operation} is not supported for multivariate_normal"))
+        .help("draw a vector in sample mode, then work with its components")
+}
+
+/// A recipe or finite mixture containing one (not a list storing recipes).
+pub(crate) fn is_law(value: &Value) -> bool {
+    match value {
+        Value::MultivariateNormal(_) => true,
+        Value::Dist(d) | Value::Joint(d) => d.outcomes.iter().any(|(v, _)| is_law(v)),
+        _ => false,
     }
 }
 

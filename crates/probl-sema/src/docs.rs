@@ -130,6 +130,7 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Roll
         | B::Bag
         | B::Normal
+        | B::MultivariateNormal
         | B::Lognormal
         | B::Uniform
         | B::Beta
@@ -605,6 +606,10 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Normal => doc(
             "normal(mean: float, sd: float) -> dist[float]",
             "The normal distribution.",
+        ),
+        B::MultivariateNormal => doc(
+            "multivariate_normal(means: list[float], covariance: list[list[float]]) -> dist[list[float]]",
+            "A sampling-only joint normal vector. The diagonal contains variances, not standard deviations. Accepts finite, symmetric positive-semidefinite covariance, including singular matrices, up to 64 dimensions. Each draw returns one correlated list; draw again for a fresh vector. Scalar density/statistical queries and enumeration are unsupported; draw and report individual components.",
         ),
         B::Lognormal => doc(
             "lognormal(mu: float, sigma: float) -> dist[float]",

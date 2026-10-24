@@ -2,4 +2,5 @@
 # changes what the collection hashes or compares as, so values containing
 # it are fine as keys of maps and sets. Neither is a likelihood's cache of
 # moments part of its identity: its key, equality and hash leave it out.
-ignore-interior-mutability = ["probl_engine::value::Hashed", "probl_engine::likelihood::Likelihood"]
+# Multivariate resource counters change reservations, never recipe parameters.
+ignore-interior-mutability = ["probl_engine::value::Hashed", "probl_engine::likelihood::Likelihood", "probl_engine::multivariate::memory::Resources"]

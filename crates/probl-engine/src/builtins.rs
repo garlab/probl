@@ -549,7 +549,8 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         | B::Reduce
         | B::Print
         | B::Roll
-        | B::Take => {
+        | B::Take
+        | B::MultivariateNormal => {
             unreachable!("`{}` is handled by the interpreter", b.name())
         }
         B::P
@@ -592,6 +593,9 @@ pub fn check_query_input(b: Builtin, args: &[Value]) -> OpResult<()> {
         _ => return Ok(()),
     };
     let v = &args[0];
+    if crate::multivariate::is_law(v) {
+        return Err(crate::multivariate::unsupported(b.name()));
+    }
     let valid = match b {
         B::Minimum | B::Maximum => matches!(
             v,

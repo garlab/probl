@@ -121,6 +121,34 @@ for (const request of [
 }
 console.log('same  approximate quantiles, exact zero counts, partial runs, keys and rejection diagnostics in native/WASM');
 
+// Vector normals use the actual language paths: constructor conversion, cache,
+// direct/indirect calls, mixtures, reports, errors and the following RNG draws.
+const vectorDimensionLimit = 'let row=map(1..65,x->0); report typeof multivariate_normal(row,map(1..65,x->row))';
+const vectorMemoryLimit = '@mode sample(runs:300,seed:42)\nlet variance~uniform(1,2); let means=map(1..64,x->0); let row=map(1..64,x->variance); let d=multivariate_normal(means,map(1..64,x->row)); let x~d; report x[0]';
+for (const source of [
+  '@mode sample(runs:2100,seed:42)\nfn annual(m) { multivariate_normal([m,0,7], [[4,-6,0],[-6,9,0],[0,0,0]]) }; for year in 0..2 {let x~annual(year); report x[0]+x[1] by year}; let after~normal(0,1); report after',
+  '@mode sample(runs:100,seed:7)\nlet make=multivariate_normal; let a=make([0,1],[[1,1],[1,1]]); let b=make([3,4],[[0,0],[0,0]]); let d: dist[list[float]]=one_of([a,b]); let x~d; report x; report d; let after~normal(0,1); report after; report typeof d',
+  '@mode sample(runs:100,seed:3)\nlet v~one_of([-1,1]); let x~multivariate_normal([0],[[v]]); report x[0]',
+  '@mode sample(runs:100,seed:42)\nlet d=simulate {let pick~d2; if pick==1 {let x~normal(0,1); x} else {multivariate_normal([9],[[0]])}}; let x~d; report x; let after~normal(0,1); report after',
+  'let d=multivariate_normal([0],[[0]]); let x~d; report x',
+  '@mode sample(runs:1)\nreport simulate {let x~multivariate_normal([0],[[1]]); x}',
+  'report mean(multivariate_normal([0],[[1]]))',
+  'report typeof multivariate_normal([0,0],[[1,2],[2,1]])',
+  'report typeof multivariate_normal([d6],[[1]])',
+  vectorDimensionLimit,
+  vectorMemoryLimit,
+]) {
+  const request = {source, today:'2026-10-24'};
+  const expected = JSON.parse(execFileSync(nativeAdapter, [], {input:JSON.stringify(request), encoding:'utf8', maxBuffer:16*1024*1024}));
+  const actual = probl.run(request);
+  if (source === vectorDimensionLimit || source === vectorMemoryLimit) assert.equal(actual.error?.kind, 'limit');
+  assert.equal(actual.output, expected.output);
+  assert.deepEqual(actual.error, expected.error);
+  assert.deepEqual(actual.partial, expected.partial);
+  sameReports(actual.reports, expected.reports);
+}
+console.log('same  multivariate draws, finite mixtures, conversion, dimension/live-byte limits and unsupported operations');
+
 let failed = 0;
 const cases = probl.examples().map((e) => ({ ...e, path: `examples/${e.name}.probl` }));
 cases.push({ name: 'api-contracts', path: 'web/test/api-contracts.probl', source: await readFile(`${root}/web/test/api-contracts.probl`, 'utf8') });

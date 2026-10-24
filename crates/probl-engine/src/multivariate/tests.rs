@@ -9,8 +9,92 @@ fn budget(bytes: usize) -> Budget {
     }
 }
 
+#[test]
+fn language_conversion_is_charged_and_released_on_every_failure() {
+    let args = [
+        Value::list(vec![Value::Float(0.0); 2]),
+        Value::list(
+            covariance()
+                .into_iter()
+                .map(|row| Value::list(row.into_iter().map(Value::Float).collect()))
+                .collect(),
+        ),
+    ];
+    let mut reference = budget(usize::MAX);
+    let mut cache = Cache::new(1, &reference);
+    let initial = reference.work_left;
+    drop(cache.normal_values((0, 0), &args, &mut reference).unwrap());
+    let work = initial - reference.work_left;
+    let peak = reference.multivariate.peak_bytes();
+    drop(cache);
+    assert_eq!(reference.multivariate.used_bytes(), 0);
+    for bytes in 0..peak {
+        let mut budget = budget(bytes);
+        let mut cache = Cache::new(1, &budget);
+        assert_eq!(
+            cache.normal_values((0, 0), &args, &mut budget).unwrap_err().kind,
+            ErrorKind::Limit
+        );
+        drop(cache);
+        assert_eq!(budget.multivariate.used_bytes(), 0, "bytes {bytes}");
+    }
+    for units in 0..work {
+        let mut budget = budget(usize::MAX);
+        budget.work_left = units;
+        let mut cache = Cache::new(1, &budget);
+        assert_eq!(
+            cache.normal_values((0, 0), &args, &mut budget).unwrap_err().kind,
+            ErrorKind::Limit
+        );
+        drop(cache);
+        assert_eq!(budget.multivariate.used_bytes(), 0, "work {units}");
+    }
+    // Shape/dimension checks precede conversion or temporary allocation.
+    let mut budget = budget(0);
+    let mut cache = Cache::new(1, &budget);
+    let bad = [
+        Value::list(vec![Value::Bool(true); 2]),
+        Value::list(vec![Value::list(vec![]); 2]),
+    ];
+    assert_eq!(
+        cache.normal_values((0, 0), &bad, &mut budget).unwrap_err().fault,
+        Some(Fault::DomainError)
+    );
+    assert_eq!(budget.multivariate.peak_bytes(), 0);
+}
+
 fn covariance() -> Vec<Vec<f64>> {
     vec![vec![4.0, 3.0], vec![3.0, 9.0]]
+}
+
+#[test]
+fn recipe_identity_ignores_shared_resource_mutation_and_factor_replacement() {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    fn hash(value: &Value) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+    let mut budget = budget(usize::MAX);
+    let mut cache = Cache::new(1, &budget);
+    let first = Value::MultivariateNormal(cache.normal((0, 0), &[-0.0, 0.0], &covariance(), &mut budget).unwrap());
+    let original_hash = hash(&first);
+    let other = Value::MultivariateNormal(
+        cache
+            .normal((0, 0), &[0.0, 1.0], &[vec![2.0, 0.0], vec![0.0, 1.0]], &mut budget)
+            .unwrap(),
+    );
+    cache.clear();
+    let equivalent = Value::MultivariateNormal(Normal::new(&[0.0; 2], &covariance(), &mut budget).unwrap());
+    assert_eq!(first, equivalent);
+    assert_eq!(first.cmp(&equivalent), std::cmp::Ordering::Equal);
+    assert_eq!(hash(&equivalent), original_hash);
+    assert_ne!(first, other);
+    drop(other);
+    assert_eq!(hash(&first), original_hash);
+    drop((first, equivalent));
+    assert_eq!(budget.multivariate.used_bytes(), 0);
 }
 
 #[test]

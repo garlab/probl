@@ -445,6 +445,7 @@ pub fn unary(op: UnOp, v: &Value, budget: &mut Budget) -> OpResult<Value> {
             Value::Float(f) | Value::Prob(f) => Ok(Value::Float(-f)),
             Value::Complex(z) => Ok(Value::Complex(z.negated())),
             Value::Analytic(a) => crate::analytic::negate(a),
+            Value::MultivariateNormal(_) => Err(crate::multivariate::unsupported("negation")),
             other => Err(OpError::new(format!("can't negate {}", article(&other.kind())))),
         }),
         UnOp::Not => not(v, budget),
@@ -470,7 +471,12 @@ pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<
 fn binary_plain(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
     // Outcomes of draws and continuous distributions are rare: one test
     // each, for all of them.
-    let unusual = |v: &Value| matches!(v, Value::Analytic(_) | Value::Continuous(_) | Value::Joint(_));
+    let unusual = |v: &Value| {
+        matches!(
+            v,
+            Value::Analytic(_) | Value::Continuous(_) | Value::Joint(_) | Value::MultivariateNormal(_)
+        )
+    };
     if unusual(a) || unusual(b) {
         return unusual_binary(op, a, b, budget);
     }
@@ -694,6 +700,9 @@ fn is_comparison(op: BinOp) -> bool {
 /// distribution whose outcomes own draws.
 #[inline(never)]
 fn unusual_binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
+    if matches!(a, Value::MultivariateNormal(_)) || matches!(b, Value::MultivariateNormal(_)) {
+        return Err(crate::multivariate::unsupported("operators on an undrawn vector law"));
+    }
     if matches!(a, Value::Analytic(_)) || matches!(b, Value::Analytic(_)) {
         return crate::analytic::binary(op, a, b, budget);
     }
@@ -1014,6 +1023,7 @@ pub fn range_count(lo: &Integer, hi: &Integer) -> OpResult<u128> {
 
 pub fn field(v: &Value, name: &str, budget: &mut Budget) -> OpResult<Value> {
     lift1(v, budget, |x, _| match x {
+        Value::MultivariateNormal(_) => Err(crate::multivariate::unsupported("field access before drawing")),
         Value::Record(r) => r.get(name).cloned().ok_or_else(|| {
             let known: Vec<String> = r.fields.iter().map(|(n, _)| format!("`{n}`")).collect();
             OpError::new(format!("{} has no field `{name}`", article(&x.kind())))
@@ -1039,6 +1049,7 @@ pub fn index(coll: &Value, i: &Value, budget: &mut Budget) -> OpResult<Value> {
 
 pub fn index_plain(coll: &Value, i: &Value, budget: &mut Budget) -> OpResult<Value> {
     match coll {
+        Value::MultivariateNormal(_) => Err(crate::multivariate::unsupported("indexing before drawing")),
         Value::List(items) => {
             let k = as_index(i, items.len() as u128, budget)?;
             Ok(items[k as usize].clone())
