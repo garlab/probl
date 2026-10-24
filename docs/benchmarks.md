@@ -650,3 +650,18 @@ actual native/WASM bitwise sketch-answer replay, chart tests and headless Chrome
 New tests cover unchanged draws, moments and depletion reports, exact zero mass,
 worker replay, unsupported inputs, shared allocations, failed growth/merge/query
 cleanup, cancellation and tenfold trials under a fixed collector allowance.
+
+## Multivariate-normal numerical prototype
+
+2026-10-24. A [standalone factorization experiment](multivariate-normal-prototype.md)
+now accompanies the M5 language/API proposal. It covers singular covariance,
+mixed scales, invalid matrices, empirical covariance, batch replay and actual
+native/WASM fingerprints. It does not add a language builtin or change the engine.
+
+For two correlated variables, two local release runs measured 117–141 ns per
+construction and 76–79 ns per draw, including temporary/output allocations.
+In an alternating general/shared/shared/general comparison, the explicit
+shared-scalar-normal kernel took 53–55 ns versus 77–81 ns for the general sampler.
+These are numerical-kernel measurements, not interpreter or retirement speedups.
+The linked record includes larger/rank-deficient cases, memory-accounting scope,
+reproduction commands and the work still needed for integration.

@@ -10,10 +10,15 @@ publish = false
 
 [dependencies]
 probl.workspace = true
+probl-engine.workspace = true
 serde_json.workspace = true
 libm.workspace = true
 
 [[example]]
 name = "quantile-sketches"
 # Include the candidate invariants in the workspace's normal `cargo test`.
+test = true
+
+[[example]]
+name = "multivariate-normal"
 test = true

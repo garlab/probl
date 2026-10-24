@@ -400,6 +400,7 @@ version = "0.3.2"
 dependencies = [
  "libm",
  "probl",
+ "probl-engine",
  "serde_json",
 ]
 
