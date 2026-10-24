@@ -4,13 +4,18 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-24
+
 ### Added
 
-- Explicit moments-only report collection through Rust, `--collect ID=moments`, WASM and the playground retains weighted means, population SDs and probability uncertainty without numeric populations. Numeric quantiles/distributions become unavailable; exact collection remains the default. Group limits bound new keys across batches. See [collection policies](docs/report-summaries.md#moments-only-collection).
-
+- `multivariate_normal(means, covariance)` is a joint normal distribution of a list of floats, a `dist[list[float]]`. The diagonal holds variances; the matrix must be symmetric and positive semidefinite within a small tolerance, and singular matrices are allowed. Building one draws nothing, in either mode. In sample mode `let x ~ d` draws a whole vector, so its components keep their correlations. Enumerating it, density and statistical queries, `observe … from` and operators on an undrawn law are unsupported. `Limits::max_multivariate_dimension` (at most 64) and `Limits::max_multivariate_bytes` (64 MiB, 16 MiB in browsers) bound it. See [joint normal vectors](docs/semantics.md#joint-normal-vectors).
+- A correlated returns example in the CLI examples and playground draws two assets' annual returns together and reports a 60/40 portfolio's return and its chance of a loss, which agree with the normal formulas.
+- A retirement forecast example reports a balance, whether it's depleted and a constant-rate baseline for each of 101 years, after Eli Bendersky's Monte Carlo article. Its depletion risks and percentiles agree with an independent NumPy simulation ([use cases](docs/use-cases.md)).
 - The library's optional `json` feature exports bounded, versioned report summaries with typed group keys, quantiles, reach, uncertainty and partial-result metadata. WASM returns the same document alongside its existing text; serialization limits leave that text available. See the [schema](docs/report-json.md).
+- Report statistics are configurable per report through `probl run --summary ID=SPEC`, Rust's `ReportSummary` / `Options::report_summary`, and the playground's “Report summaries” controls. Presets include 10/25/median/75/90 forecast columns and mean/SD; custom columns preserve their order. Explicit quantiles use the inverse CDF while `median` retains midpoint ties. Text, JSON, charts and tables agree, with unchanged defaults and seeded draws. A value the selection can't describe, such as text, or a date when mean or SD is selected, stops the run where it's reported. See [summary selection](docs/report-summaries.md).
+- Explicit moments-only report collection through Rust, `--collect ID=moments`, WASM and the playground retains weighted means, population SDs and probability uncertainty without numeric populations. Numeric quantiles/distributions become unavailable; exact collection remains the default. Group limits bound new keys across batches, and `Limits::max_report_summary_bytes` (`--max-report-summary`; 1 GiB, 128 MiB in browsers) caps the live storage of bounded collectors across keys and worker batches. See [collection policies](docs/report-summaries.md#moments-only-collection).
+- Approximate quantile collection, through `--collect ID=quantiles[:CAPACITY]`, Rust's `ReportCollection::Quantiles`, WASM and the playground's “Approximate quantiles” choice, keeps moments and a bounded sketch (capacity 128 to 4096, 512 by default) instead of every sampled value. It takes unit-weight sampled numbers, once per run and key. Its quantiles, the median included, are the lower inverse CDF, and text, JSON, charts and tables label them approximate, with no claimed error bound; Rust reads them with `NumericSummary::approximate_quantile()`. On the retirement balances, 100,000 trials peak at 20.5 MiB of heap, against 53 MiB for 10,000 exact ones. See [approximate quantile collection](docs/report-summaries.md#approximate-quantile-collection) and [its measurements](docs/benchmarks.md#since-approximate-quantile-collection).
 - The playground draws forecast percentile bands, deterministic lines and probability step curves from structured reports. Compatible baseline overlays and currency formatting are explicit choices, saved locally and in share links. Keyboard inspection and tables retain uncertainty, reach and partial-result qualifications; all reports remain available as text.
-- Report statistics are configurable per report through `probl run --summary ID=SPEC`, Rust's `ReportSummary` / `Options::report_summary`, and the playground's “Report summaries” controls. Presets include 10/25/median/75/90 forecast columns and mean/SD; custom columns preserve their order. Explicit quantiles use the inverse CDF while `median` retains midpoint ties. Text, JSON, charts and tables agree, with unchanged defaults and seeded draws. See [summary selection](docs/report-summaries.md).
 - `deck.take(n)` draws a list of items without replacement from a mutable bag, in draw order. `take()` still returns one item; zero returns an empty list, and an insufficient bag fails before removing items.
 - `combinations(xs, n)` lists groups from lists, ranges and strings in input-index order, preserving duplicate positions. It supports method syntax, checked counts, and collection/work limits.
 - A SET example in the CLI examples and playground uses `take(12)` and `combinations(3)` to estimate the probability that a hand contains no set.
@@ -20,6 +25,10 @@ All notable changes to the published crates are recorded here. The format follow
 
 - The playground's toolbar shows Run's shortcut, puts Share and Options at the far end, marks changed options and closes the options panel on an outside click or Escape. The status line stays in view and is marked by the run's state. Before a run, the output pane lists the editor's shortcuts. Charts sit in cards, errors in a tinted panel, and the reference search stays in view. Table rows in text output no longer break onto two lines in a narrow pane.
 - Reports share exact populations across rendering and numeric queries, construct per-value probability estimates on demand, and release completed batches' per-run maps. Rust's `Group::distribution()` formats its table on first access and shares the cache across cloned groups. Exact results and query capabilities are unchanged; sampled populations still grow with the number of distinct outcomes. See [forecast memory measurements](docs/benchmarks.md#since-sharing-exact-report-populations).
+
+### Fixed
+
+- In the playground, Ctrl+Enter (⌘+Enter on Apple systems) runs the program, as its hints say; it used to insert a blank line instead.
 
 ## [0.3.2] - 2026-10-17
 
@@ -111,7 +120,8 @@ The first release.
 
 The [language overview](docs/language-overview.md) and the [reference semantics](docs/semantics.md) describe the language, and [status and limits](README.md#status-and-limits) lists what isn't implemented yet.
 
-[Unreleased]: https://github.com/garlab/probl/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/garlab/probl/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/garlab/probl/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/garlab/probl/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/garlab/probl/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/garlab/probl/compare/v0.2.2...v0.3.0

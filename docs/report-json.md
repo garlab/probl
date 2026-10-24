@@ -1,14 +1,11 @@
 # Structured report JSON, version 1
 
 Probl can export report summaries without parsing its printed output. Enable the
-`json` feature of the `probl` crate. For a project beside a local Probl checkout:
+`json` feature of the `probl` crate, available from 0.3.3:
 
 ```toml
-probl = { path = "../probl/crates/probl", features = ["json"] }
+probl = { version = "0.3.3", features = ["json"] }
 ```
-
-The feature is in the unreleased source following 0.3.2. A published dependency
-can enable the same feature once a release containing it is available.
 
 ```rust
 let program = probl::compile("forecast.probl", source)?;

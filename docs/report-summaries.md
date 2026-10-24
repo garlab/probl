@@ -3,7 +3,7 @@
 Report summaries can select ordered columns for individual numeric or date
 reports. The same selection controls CLI text, the Rust JSON export and playground
 charts and tables. Reports without an override keep their existing output.
-These options are available in the unreleased source following 0.3.2.
+These options are available from 0.3.3.
 
 ## Command line and playground
 
