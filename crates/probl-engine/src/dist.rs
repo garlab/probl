@@ -34,6 +34,8 @@ const WORK_CHUNK: u64 = 1 << 14;
 /// Limits on building distributions, shared by everything in a run.
 #[derive(Clone, Debug)]
 pub struct Budget {
+    /// Live multivariate allocations shared across all sites and workers.
+    pub multivariate: crate::multivariate::Resources,
     /// Maximum bits in the magnitude of a single integer.
     pub max_integer_bits: u64,
     /// Cumulative allowance for produced large integer payloads, shared by runs.
@@ -56,6 +58,7 @@ pub struct Budget {
 impl Budget {
     pub fn unlimited() -> Budget {
         Budget {
+            multivariate: crate::multivariate::Resources::new(crate::multivariate::MAX_DIMENSION, usize::MAX),
             max_integer_bits: probl_number::MAX_INTEGER_BITS,
             integer_bytes_left: Arc::new(AtomicU64::new(u64::MAX)),
             max_string_bytes: usize::MAX,

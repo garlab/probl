@@ -665,3 +665,28 @@ shared-scalar-normal kernel took 53–55 ns versus 77–81 ns for the general sa
 These are numerical-kernel measurements, not interpreter or retirement speedups.
 The linked record includes larger/rank-deficient cases, memory-accounting scope,
 reproduction commands and the work still needed for integration.
+
+## Since the bounded multivariate-normal kernel
+
+2026-10-24. The [engine kernel and cache](multivariate-normal-kernel.md) now add
+live memory reservations, work/cancellation checks and owned covariance keys,
+without exposing the language builtin. Native/WASM fingerprints still match the
+original numerical prototype, including singular matrices and following draws.
+
+In prototype/engine/engine/prototype order, the full-rank 64-dimensional engine
+kernel took 109.8–114.6 µs per cold construction and 3.80–3.85 µs per draw, versus
+the prototype's 92.8–93.1 µs and 2.86 µs. A warm factor-cache constructor took
+3.99–4.02 µs, including validation and new means. The linked record includes
+smaller/singular cases and the work charged for a cache hit.
+
+With two sites per worker and changing covariances, accounted peaks stayed at
+232,736 bytes for one worker and 930,944 bytes for four when increasing calls
+from 100 to 1,000 per worker. All reservations were released afterward. These
+are accounted kernel-storage peaks, not physical heap, browser memory or
+retirement-model measurements.
+
+The unchanged exact retirement balance benchmark (10,000 trials, one worker,
+seed 42) produced byte-identical output in a before/after/after/before check.
+Measured times were 1.406–1.410 s before and 1.420 s after. This small comparison
+does not establish a general runtime regression or improvement; the new kernel
+is not invoked by that model.

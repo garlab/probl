@@ -1,0 +1,367 @@
+//! Bounded multivariate-normal kernel, not yet exposed as a language builtin.
+//! Numerical rules match docs/multivariate-normal-prototype.md. Growing buffers
+//! reserve live bytes and use fallible allocation; fixed Arc headers use the
+//! standard allocator after reserving their accounted size.
+mod memory;
+#[cfg(test)]
+mod tests;
+
+use crate::continuous::Rng;
+use crate::dist::Budget;
+use crate::error::{Fault, OpError, OpResult};
+pub use memory::Resources;
+use memory::{Buffer, Reservation};
+use std::mem::size_of;
+use std::sync::Arc;
+
+pub const MAX_DIMENSION: usize = 64;
+/// Function identity and source offset, supplied by the eventual interpreter caller.
+pub type Site = (usize, usize);
+
+fn domain(message: impl Into<String>) -> OpError {
+    OpError::fault(Fault::DomainError, message)
+}
+
+fn same_execution(resources: &Resources, budget: &Budget) -> OpResult<()> {
+    if resources.same(&budget.multivariate) {
+        Ok(())
+    } else {
+        Err(OpError::internal("multivariate storage belongs to another execution"))
+    }
+}
+
+fn validate(means: &[f64], covariance: &[Vec<f64>], budget: &mut Budget) -> OpResult<usize> {
+    budget.work(1)?;
+    let n = covariance.len();
+    if n == 0 {
+        return Err(domain("multivariate_normal needs a nonempty covariance matrix"));
+    }
+    budget.multivariate.dimension(n)?;
+    budget.collection(n as u128)?;
+    budget.work(n as u64)?;
+    if means.len() != n {
+        return Err(domain("multivariate_normal means and covariance dimensions differ"));
+    }
+    for (i, &value) in means.iter().enumerate() {
+        if !value.is_finite() {
+            return Err(domain(format!("multivariate_normal mean at index {i} must be finite")));
+        }
+    }
+    for (i, row) in covariance.iter().enumerate() {
+        budget.work(n as u64)?;
+        if row.len() != n {
+            return Err(domain(format!(
+                "multivariate_normal covariance row {i} must have {n} entries"
+            )));
+        }
+        for (j, &value) in row.iter().enumerate() {
+            if !value.is_finite() {
+                return Err(domain(format!(
+                    "multivariate_normal covariance at [{i}, {j}] must be finite"
+                )));
+            }
+        }
+    }
+    Ok(n)
+}
+
+#[derive(Debug)]
+pub struct Factor {
+    dimension: usize,
+    rank: usize,
+    residual: f64,
+    covariance: Buffer<f64>,
+    lower: Buffer<f64>,
+    scales: Buffer<f64>,
+    _memory: Reservation,
+}
+
+impl Factor {
+    pub fn dimension(&self) -> usize {
+        self.dimension
+    }
+    pub fn rank(&self) -> usize {
+        self.rank
+    }
+    pub fn residual(&self) -> f64 {
+        self.residual
+    }
+    pub fn coefficients(&self) -> &[f64] {
+        &self.lower
+    }
+    pub fn covariance(&self) -> &[f64] {
+        &self.covariance
+    }
+
+    // Called only after bounded shape and finite-entry validation.
+    fn build(input: &[Vec<f64>], budget: &mut Budget) -> OpResult<Arc<Self>> {
+        let n = input.len();
+        budget.work((3 * n * n + 2 * n) as u64)?;
+        let resources = budget.multivariate.clone();
+        let memory = resources.reserve(size_of::<Self>() + 2 * size_of::<usize>())?;
+        let mut covariance = Buffer::filled(n * n, 0.0, &resources)?;
+        let mut scales = Buffer::filled(n, 0.0, &resources)?;
+        let mut correlation = Buffer::filled(n * n, 0.0, &resources)?;
+        let tolerance = 64.0 * n as f64 * f64::EPSILON;
+        for i in 0..n {
+            budget.work((n + 1) as u64)?;
+            if input[i][i] < 0.0 {
+                return Err(domain(format!(
+                    "multivariate_normal variance at [{i}, {i}] must be nonnegative"
+                )));
+            }
+            scales[i] = libm::sqrt(input[i][i]);
+            for j in 0..n {
+                covariance[i * n + j] = if input[i][j] == 0.0 { 0.0 } else { input[i][j] };
+            }
+        }
+        for i in 0..n {
+            budget.work((1 + 8 * i) as u64)?;
+            correlation[i * n + i] = if scales[i] == 0.0 { 0.0 } else { 1.0 };
+            for j in 0..i {
+                let a = covariance[i * n + j];
+                let b = covariance[j * n + i];
+                if scales[i] == 0.0 || scales[j] == 0.0 {
+                    if a != 0.0 || b != 0.0 {
+                        return Err(domain(format!(
+                            "multivariate_normal zero variance requires zero covariance at [{i}, {j}] and [{j}, {i}]"
+                        )));
+                    }
+                    continue;
+                }
+                let large = scales[i].max(scales[j]);
+                let small = scales[i].min(scales[j]);
+                let a = a / large / small;
+                let b = b / large / small;
+                if !a.is_finite() || !b.is_finite() || a.abs().max(b.abs()) > 1.0 + tolerance {
+                    return Err(domain(format!(
+                        "multivariate_normal covariance at [{i}, {j}] is not positive semidefinite within tolerance"
+                    )));
+                }
+                if (a - b).abs() > tolerance {
+                    return Err(domain(format!(
+                        "multivariate_normal covariance at [{i}, {j}] and [{j}, {i}] must be symmetric within tolerance"
+                    )));
+                }
+                let midpoint = a + (b - a) * 0.5;
+                correlation[i * n + j] = midpoint;
+                correlation[j * n + i] = midpoint;
+            }
+        }
+        let mut lower = Buffer::filled(n * n, 0.0, &resources)?;
+        let mut selected = Buffer::filled(n, false, &resources)?;
+        let mut rank = 0;
+        for k in 0..n {
+            let mut pivot = None;
+            let mut largest = f64::NEG_INFINITY;
+            for i in 0..n {
+                budget.work((k + 1) as u64)?;
+                if !selected[i] {
+                    let diagonal = correlation[i * n + i] - dot(&lower, n, i, i, k);
+                    if diagonal > largest {
+                        largest = diagonal;
+                        pivot = Some(i);
+                    }
+                }
+            }
+            if largest <= tolerance {
+                break;
+            }
+            let p = pivot.expect("an unselected coordinate");
+            let root = libm::sqrt(largest);
+            lower[p * n + k] = root;
+            selected[p] = true;
+            for i in 0..n {
+                budget.work((k + 2) as u64)?;
+                if !selected[i] {
+                    lower[i * n + k] = (correlation[i * n + p] - dot(&lower, n, i, p, k)) / root;
+                }
+            }
+            rank += 1;
+        }
+        let mut residual = 0.0_f64;
+        for i in 0..n {
+            budget.work(((i + 1) * (rank + 1)) as u64)?;
+            for j in 0..=i {
+                let error = (correlation[i * n + j] - dot(&lower, n, i, j, rank)).abs();
+                if !error.is_finite() || error > tolerance {
+                    return Err(domain(format!(
+                        "multivariate_normal covariance is not positive semidefinite within tolerance at [{i}, {j}]"
+                    )));
+                }
+                residual = residual.max(error);
+            }
+        }
+        Ok(Arc::new(Self {
+            dimension: n,
+            rank,
+            residual,
+            covariance,
+            lower,
+            scales,
+            _memory: memory,
+        }))
+    }
+}
+
+#[derive(Debug)]
+pub struct Normal {
+    means: Buffer<f64>,
+    factor: Arc<Factor>,
+    _memory: Reservation,
+}
+
+impl Normal {
+    pub fn new(means: &[f64], covariance: &[Vec<f64>], budget: &mut Budget) -> OpResult<Arc<Self>> {
+        Cache::new(0, budget).normal((0, 0), means, covariance, budget)
+    }
+
+    pub fn means(&self) -> &[f64] {
+        &self.means
+    }
+    pub fn factor(&self) -> &Arc<Factor> {
+        &self.factor
+    }
+
+    fn with_factor(means: &[f64], factor: Arc<Factor>, budget: &mut Budget) -> OpResult<Arc<Self>> {
+        budget.work(means.len() as u64)?;
+        let memory = budget
+            .multivariate
+            .reserve(size_of::<Self>() + 2 * size_of::<usize>())?;
+        let mut values = Buffer::filled(means.len(), 0.0, &budget.multivariate)?;
+        for (out, &value) in values.iter_mut().zip(means) {
+            *out = if value == 0.0 { 0.0 } else { value };
+        }
+        Ok(Arc::new(Self {
+            means: values,
+            factor,
+            _memory: memory,
+        }))
+    }
+
+    pub fn sample(&self, rng: &mut Rng, budget: &mut Budget) -> OpResult<Vec<f64>> {
+        same_execution(&self._memory.resources, budget)?;
+        let f = &self.factor;
+        let n = f.dimension;
+        budget.collection(n as u128)?;
+        // Preflight work and allocations before advancing the model stream.
+        budget.work((1 + f.rank + n * (f.rank + 2)) as u64)?;
+        let mut z = Buffer::filled(f.rank, 0.0, &budget.multivariate)?;
+        let mut result = Vec::new();
+        result
+            .try_reserve_exact(n)
+            .map_err(|_| OpError::limit("cannot allocate multivariate sample list"))?;
+        for value in z.iter_mut() {
+            budget.work(0)?;
+            *value = rng.normal();
+        }
+        for i in 0..n {
+            budget.work(0)?;
+            let mut deviation = 0.0;
+            for (j, normal) in z.iter().enumerate() {
+                deviation += f.lower[i * n + j] * normal;
+            }
+            let value = self.means[i] + f.scales[i] * deviation;
+            if !value.is_finite() {
+                return Err(OpError::fault(
+                    Fault::NumericOverflow,
+                    "multivariate_normal produced a nonfinite sample",
+                ));
+            }
+            result.push(value);
+        }
+        Ok(result)
+    }
+}
+
+#[derive(Debug)]
+struct Entry {
+    site: Site,
+    factor: Arc<Factor>,
+}
+
+/// One last covariance per constructor site. The interpreter must clear this
+/// at batch boundaries; exceeding the entry cap clears it as existing call caches do.
+#[derive(Debug)]
+pub struct Cache {
+    entries: Buffer<Entry>,
+    resources: Resources,
+    max_entries: usize,
+}
+
+impl Cache {
+    pub fn new(max_entries: usize, budget: &Budget) -> Self {
+        Self {
+            entries: Buffer::empty(&budget.multivariate),
+            resources: budget.multivariate.clone(),
+            max_entries,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.entries = Buffer::empty(&self.resources);
+    }
+
+    pub fn normal(
+        &mut self,
+        site: Site,
+        means: &[f64],
+        covariance: &[Vec<f64>],
+        budget: &mut Budget,
+    ) -> OpResult<Arc<Normal>> {
+        same_execution(&self.resources, budget)?;
+        let n = validate(means, covariance, budget)?;
+        budget.work(u64::from(self.entries.len().checked_ilog2().unwrap_or(0)) + 1)?;
+        let index = self.entries.binary_search_by_key(&site, |entry| entry.site);
+        let mut hit = None;
+        if let Ok(i) = index {
+            let factor = &self.entries[i].factor;
+            if factor.dimension == n {
+                budget.work((n * n) as u64)?;
+                if factor
+                    .covariance
+                    .iter()
+                    .copied()
+                    .eq(covariance.iter().flatten().copied())
+                {
+                    hit = Some(factor.clone());
+                }
+            }
+        }
+        let cached = hit.is_some();
+        let factor = match hit {
+            Some(factor) => factor,
+            None => Factor::build(covariance, budget)?,
+        };
+        let normal = Normal::with_factor(means, factor.clone(), budget)?;
+        if !cached && self.max_entries > 0 {
+            match index {
+                Ok(i) => self.entries[i].factor = factor,
+                Err(mut i) => {
+                    budget.work((self.entries.len() + 1) as u64)?;
+                    if self.entries.len() == self.max_entries {
+                        self.clear();
+                        i = 0;
+                    }
+                    let needed = self.entries.len() + 1;
+                    if needed > self.entries.capacity() {
+                        let capacity = needed
+                            .max(self.entries.capacity().saturating_mul(2))
+                            .min(self.max_entries);
+                        self.entries.grow(capacity)?;
+                    }
+                    self.entries.insert(i, Entry { site, factor });
+                }
+            }
+        }
+        Ok(normal)
+    }
+}
+
+fn dot(lower: &[f64], n: usize, i: usize, j: usize, rank: usize) -> f64 {
+    let mut sum = 0.0;
+    for k in 0..rank {
+        sum += lower[i * n + k] * lower[j * n + k];
+    }
+    sum
+}

@@ -3,6 +3,8 @@
 October 24, 2026. This is a standalone experiment for the retirement roadmap's
 M5 proposal. **`multivariate_normal` is not yet a Probl builtin.** The experiment
 does not change the language, engine sampling paths, or existing seeded results.
+The numerical rules now also have a [bounded engine implementation](multivariate-normal-kernel.md),
+with shared live-memory accounting, work/cancellation checks and a factor cache.
 
 The [prototype](../crates/probl-bench/examples/multivariate-normal.rs) evaluates
 a deterministic pivoted Cholesky factorization for up to 64 dimensions. It uses
@@ -131,10 +133,10 @@ reuse and retains shared scalar draws as a useful simple alternative.
 
 ## Remaining integration work
 
-This experiment has no language builtin, distribution value variant, effect
-checks, constructor cache, cancellation polling or engine byte/work accounting.
-Its allocations are ordinary infallible `Vec` allocations, constrained only by
-the dimension cap. Those are required integration work, not capabilities proved
-by the prototype. Sampling-only diagnostics must cover enumeration, density,
+The original experiment still uses ordinary infallible `Vec` allocations,
+constrained only by the dimension cap. The separate bounded engine kernel adds
+resource controls and a cache; its tests now compare engine answers with this
+reference. Language/value/effect integration remains pending. Sampling-only
+diagnostics must cover enumeration, density,
 queries, lifting, mixtures and nested `simulate`; no operation may substitute
 independent marginals or silently discretize the vector.

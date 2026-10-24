@@ -2,6 +2,44 @@ use super::{Factor, factor::Error, fixtures, replay_fingerprint};
 use probl_engine::continuous::Rng;
 
 #[test]
+fn engine_kernel_preserves_prototype_factors_samples_and_following_draws() {
+    use probl_engine::{
+        dist::Budget,
+        multivariate::{Cache, Normal},
+    };
+    for fixture in fixtures::fixtures() {
+        let factor = Factor::new(&fixture.covariance).unwrap();
+        let means = vec![0.0; factor.dimension];
+        let mut budget = Budget::unlimited();
+        let mut cache = Cache::new(4, &budget);
+        let direct = Normal::new(&means, &fixture.covariance, &mut budget).unwrap();
+        let first = cache.normal((0, 0), &means, &fixture.covariance, &mut budget).unwrap();
+        let cached = cache.normal((0, 0), &means, &fixture.covariance, &mut budget).unwrap();
+        assert!(std::sync::Arc::ptr_eq(first.factor(), cached.factor()));
+        assert_eq!(direct.factor().coefficients(), factor.lower);
+        assert_eq!(direct.factor().residual(), factor.residual);
+        for seed in [0, 42, 7919] {
+            let mut expected = Rng::new(seed);
+            let mut actual = Rng::new(seed);
+            let mut cache_rng = Rng::new(seed);
+            for _ in 0..1000 {
+                let value = factor.sample(&means, &mut expected).unwrap();
+                assert_eq!(direct.sample(&mut actual, &mut budget).unwrap(), value);
+                assert_eq!(cached.sample(&mut cache_rng, &mut budget).unwrap(), value);
+            }
+            let next = expected.next_u64();
+            assert_eq!(actual.next_u64(), next);
+            assert_eq!(cache_rng.next_u64(), next);
+        }
+        drop((direct, first, cached, cache));
+        assert_eq!(budget.multivariate.used_bytes(), 0);
+    }
+    for seed in [0, 42, u32::MAX] {
+        assert_eq!(super::engine_replay_fingerprint(seed), replay_fingerprint(seed));
+    }
+}
+
+#[test]
 fn singular_and_mixed_scale_fixtures_reconstruct() {
     for fixture in fixtures::fixtures() {
         let factor = Factor::new(&fixture.covariance).unwrap_or_else(|e| panic!("{}: {e:?}", fixture.name));

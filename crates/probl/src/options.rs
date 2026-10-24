@@ -337,6 +337,13 @@ pub struct Limits {
     /// copies; this is not a process-memory limit. A tight limit can fail with
     /// more workers or a different schedule; successful results are unchanged.
     pub max_report_summary_bytes: usize,
+    /// Vector-normal dimension ceiling (default and hard maximum 64).
+    pub max_multivariate_dimension: usize,
+    /// Live vector-normal recipes, factors, cache entries and heap scratch.
+    /// Defaults to 64 MiB (16 MiB in browsers); excludes input/model values,
+    /// returned lists and allocator overhead. Reserved for the M5 kernel;
+    /// the language builtin is not exposed yet.
+    pub max_multivariate_bytes: usize,
     /// Units of work: world-steps plus outcomes computed.
     pub max_work: u64,
     /// Iterations of one loop.
@@ -383,6 +390,7 @@ impl Limits {
             max_outcomes: 1_000_000,
             max_collection: 1_000_000,
             max_report_summary_bytes: 128 * 1024 * 1024,
+            max_multivariate_bytes: 16 * 1024 * 1024,
             max_work: 2_000_000_000,
             max_call_depth: 150,
             max_cached_calls: 200_000,
@@ -412,6 +420,8 @@ impl Limits {
             max_collection: engine.max_collection,
             max_report_groups: engine.max_report_groups,
             max_report_summary_bytes: engine.max_report_summary_bytes,
+            max_multivariate_dimension: engine.max_multivariate_dimension,
+            max_multivariate_bytes: engine.max_multivariate_bytes,
             max_work: engine.max_work,
             max_iterations: engine.max_iterations,
             max_call_depth: engine.max_call_depth,
@@ -437,6 +447,8 @@ impl Limits {
             max_collection: self.max_collection,
             max_report_groups: self.max_report_groups,
             max_report_summary_bytes: self.max_report_summary_bytes,
+            max_multivariate_dimension: self.max_multivariate_dimension,
+            max_multivariate_bytes: self.max_multivariate_bytes,
             max_work: self.max_work,
             max_iterations: self.max_iterations,
             max_call_depth: self.max_call_depth,
@@ -547,3 +559,27 @@ impl fmt::Display for ParseDateError {
 }
 
 impl std::error::Error for ParseDateError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn multivariate_host_limits_round_trip_and_browser_storage_is_lower() {
+        let native = Limits::default();
+        let browser = Limits::browser();
+        assert_eq!(native.max_multivariate_dimension, 64);
+        assert_eq!(browser.max_multivariate_dimension, 64);
+        assert_eq!(native.max_multivariate_bytes, 64 * 1024 * 1024);
+        assert_eq!(browser.max_multivariate_bytes, 16 * 1024 * 1024);
+        let mut limited = browser;
+        limited.max_multivariate_dimension = 2;
+        limited.max_multivariate_bytes = 4096;
+        let engine = limited.engine();
+        assert_eq!(engine.max_multivariate_dimension, 2);
+        assert_eq!(engine.max_multivariate_bytes, 4096);
+        let restored = Limits::from_engine(engine, InputLimits::default());
+        assert_eq!(restored.max_multivariate_dimension, 2);
+        assert_eq!(restored.max_multivariate_bytes, 4096);
+    }
+}

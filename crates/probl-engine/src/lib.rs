@@ -16,6 +16,7 @@ pub mod interp;
 pub mod joint;
 pub mod likelihood;
 mod math;
+pub mod multivariate;
 pub mod ops;
 mod ordering;
 pub mod quadrature;
@@ -73,6 +74,10 @@ pub struct Limits {
     /// Accounted live collector bytes across moments/quantile reports and batches.
     /// Includes keys, run bookkeeping and sketch/query buffers; excludes exact reports and rendering.
     pub max_report_summary_bytes: usize,
+    /// Vector-normal dimension ceiling (also capped at 64 by the kernel).
+    pub max_multivariate_dimension: usize,
+    /// Live vector-normal recipe, factor, cache and scratch storage.
+    pub max_multivariate_bytes: usize,
     /// Units of work: world-steps plus outcomes computed.
     pub max_work: u64,
     /// Iterations of one loop.
@@ -109,6 +114,8 @@ impl Default for Limits {
             max_collection: 10_000_000,
             max_report_groups: 10_000,
             max_report_summary_bytes: 1024 * 1024 * 1024,
+            max_multivariate_dimension: multivariate::MAX_DIMENSION,
+            max_multivariate_bytes: 64 * 1024 * 1024,
             max_work: 20_000_000_000,
             max_iterations: 10_000_000,
             max_call_depth: 500,
@@ -394,6 +401,10 @@ fn run_here(
         max_cached_calls: limits.max_cached_calls,
         max_output: limits.max_output,
         budget: Budget {
+            multivariate: multivariate::Resources::new(
+                limits.max_multivariate_dimension,
+                limits.max_multivariate_bytes,
+            ),
             max_integer_bits: limits.max_integer_bits,
             integer_bytes_left: Arc::new(AtomicU64::new(limits.max_integer_bytes)),
             max_string_bytes: limits.max_string_bytes,

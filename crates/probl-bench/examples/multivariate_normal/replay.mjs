@@ -10,8 +10,11 @@ const native = execFileSync(fileURLToPath(new URL('target/release/examples/multi
 const bytes = await readFile(new URL('target/wasm32-unknown-unknown/wasm/examples/multivariate-normal.wasm', root));
 const { instance } = await WebAssembly.instantiate(bytes, {});
 for (const line of native.trim().split('\n')) {
-  const { seed, fingerprint } = JSON.parse(line);
+  const { seed, fingerprint, engine_fingerprint } = JSON.parse(line);
   const actual = BigInt.asUintN(64, instance.exports.replay_fingerprint(seed)).toString(16).padStart(16, '0');
   assert.equal(actual, fingerprint, `native/WASM factor and draw replay, seed ${seed}`);
+  const engine = BigInt.asUintN(64, instance.exports.engine_replay_fingerprint(seed)).toString(16).padStart(16, '0');
+  assert.equal(engine, engine_fingerprint, `engine native/WASM replay, seed ${seed}`);
+  assert.equal(engine, fingerprint, `engine/prototype replay, seed ${seed}`);
   console.log(`same  seed ${seed}: ${actual}`);
 }
