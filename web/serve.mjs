@@ -23,6 +23,7 @@ export function serveFiles(dir, { port = 0, page = (html) => html, routes = {} }
   const base = normalize(`${dir}/`);
   const headers = { 'Cache-Control': 'no-store' };
   return Bun.serve({
+    hostname: '127.0.0.1',
     port,
     routes,
     async fetch(request) {
