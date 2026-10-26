@@ -21,9 +21,10 @@ pub struct Dist {
     /// support finite, or weight a `simulate` left unresolved. Drawing counts
     /// it as unresolved.
     pub missing: f64,
-    /// The law the outcomes were listed from, if they were: `pmf` and `cdf`
-    /// ask it, rather than the outcomes, which leave out the tail. It isn't
-    /// part of the distribution's identity, which its outcomes are.
+    /// The law the outcomes were listed from, if they were. It tells `pmf`
+    /// and `cdf` that `missing` is the tail cut off, less than 1e-18, not
+    /// unresolved weight, so they answer from the outcomes. It isn't part of
+    /// the distribution's identity, which its outcomes are.
     pub law: Option<Box<Counts>>,
 }
 
