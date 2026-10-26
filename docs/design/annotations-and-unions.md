@@ -137,7 +137,7 @@ In the other direction, a prob becomes a float wherever a float is declared. So 
 So numbers compare by value everywhere, at any depth:
 
 - `[1] == [1.0]`, `{x: 1} == {x: 1.0}` and `[50%] == [prob(0.5)]` are true.
-- `1` and `1.0` are one map key, one set element and one bag element. `[1.0: "a"].contains(1)` is true, and `m[1]` finds the key `1.0`. Adding a key equal to one already there keeps that key and replaces its value, as a repeated key in a literal does today: `[1: "a", 1.0: "b"]` is `[1: "b"]`, and `bag(1, 1.0)` is `bag(1, 1)`.
+- `1` and `1.0` are one map key, one set element and one bag element. `[1.0: "a"].contains(1)` is true, and `m[1]` finds the key `1.0`. Adding a key equal to one already there keeps that key and replaces its value, as a repeated key in a literal does today: `[1: "a", 1.0: "b"]` is `[1: "b"]`, and `bag(1, 1.0)` is `bag(counts: [1: 2])`.
 - `pmf(d, x)` adds up the outcomes equal to `x`, so `pmf(one_of([1, 1.0]), 1)` is 100%, as `P(one_of([1, 1.0]) == 1)` already is. `support` lists each number once, so `pmf` over it adds up to 1. Where outcomes of different types hold one number, it lists the first of them in the order int, prob, float, complex.
 
 Equality stays exact: an int equals a float only if the float holds that int, so `2^60 + 1 == 2.0^60` stays false. Text, booleans and dates never equal a number.
@@ -176,7 +176,12 @@ Error: `d` should be a dist[float], but geometric(1e-16) has outcomes that no fl
 
 The decision depends only on the law, not on the outcome limit, the seed or the mode. `dist[int]` and `dist[int or float]` need no conversion, and always work.
 
-A law that converts is kept as a law, and each outcome converts as it's listed or drawn, including by the shortcuts that draw from a law directly. A draw that no float holds, which has a chance below 1e-18, counts as unresolved, as the tail does when the law is listed. The numbers don't change, so queries answer as they do for the law today. A listed law answers `pmf` and `cdf` from its listed outcomes, so its cut tail gives 0. A law too broad to list answers `mean` and `sd` from formulas, and `pmf` and `cdf` too for `geometric`; for `poisson` and `binomial`, they aren't supported yet. `support` gives floats. The outcome limit can still stop a law that converts from being listed.
+A law that converts is kept as a law, and each outcome converts as it's listed or drawn, including by the shortcuts that draw from a law directly. A draw that no float holds, which has a chance below 1e-18, counts as unresolved, as the tail does when the law is listed. The numbers don't change, so queries mostly answer as they do for the law today. A listed law answers `pmf` and `cdf` from its listed outcomes, so its cut tail gives 0. A law too broad to list answers `mean` and `sd` from formulas, and `pmf` and `cdf` too for `geometric`; for `poisson` and `binomial`, they aren't supported yet. Two answers change:
+
+- `pmf(d, x)` is 0 where no float holds `x`, since no outcome can equal it, and the law's answer otherwise. `cdf` keeps the law's answer. The only weight it counts that isn't an outcome lies beyond 2^53, where `cdf` is already within 1e-18 of 1, and no float can show a difference that small.
+- `quantile`, `median`, the smallest outcome and `support` give floats. Each converts exactly: the law has less than 1e-18 beyond 2^53, less than the gap of about 1.1 × 10⁻¹⁶ between 1 and the largest float below it, so every quantile short of 100% is at most 2^53.
+
+The outcome limit can still stop a law that converts from being listed.
 
 An int computed from a continuous draw needs no special rule. `floor`, `round`, `ceil` and `trunc` of a float always give an int that a float holds, since a float beyond 2^53 is already whole. So wherever `floor(x)` can be computed, its result converts: for any draw when sampling, and for a bounded one, like a uniform draw, when enumerating. Enumerating can't round an unbounded draw, like a normal one, yet, with or without a declaration. Once a world has drawn an int, a declared `float` checks only that int. A declared `dist[float]` promises more: it checks every outcome the distribution can have.
 
@@ -188,13 +193,13 @@ The rule applies to values when the program runs, so a number passed through a f
 
 ### Collection literals
 
-`[…]` with elements is a list by default, and a set or a bag where one is declared. `[k: v, …]` is a map, or a bag where one is declared, where each value gives the count of its key, as `bag([k: v, …])` does today.
+`[…]` with elements is a list by default, and a set or a bag where one is declared. `[k: v, …]` is a map, or a bag where one is declared, where each value gives the count of its key, as in `bag(counts: [k: v, …])`.
 
 ```probl
 # Proposed.
 let xs = [1, 2]                         # list[int]
 let s: set[int] = [1, 2, 2]             # set(1, 2)
-let b: bag[int] = [1, 1, 2]             # bag(1, 1, 2)
+let b: bag[int] = [1, 1, 2]             # bag(counts: [1: 2, 2: 1])
 let deck: bag[str] = ["A": 4, "K": 4]
 let t: set[int] = xs                    # error: `t` should be a set[int], but it's a list[int]
 let u = set(...xs)                      # set(1, 2)
@@ -379,11 +384,15 @@ A type's name builds a value from its parts, as `date(2027, 1, 31)` and `complex
 ```probl
 # Proposed.
 set(1, 2, 2)          # set(1, 2)
-bag("A", "A", "K")    # bag("A", "A", "K")
+bag("A", "A", "K")    # bag(counts: ["A": 2, "K": 1])
 list(1, 2)            # [1, 2]
 set()                 # an empty set, a set[unknown]
 set(xs)               # a set with one element: the list xs
 ```
+
+A bag can also be given counts, with a named argument, as `maximum(xs, default: 0)` takes one today: `bag(counts: [2: 4, 3: 4, 10: 16])`. Items given one by one and by count add up, so `bag("A", counts: ["K": 2])` holds an A and two Ks.
+
+A constructor builds from its arguments as they are, as a literal does, and never lifts over a distribution. `list(d6, 0)` is `[d6, 0]`, a list that holds a recipe. Today `bag` lifts: `bag(one_of([[1], [2]]))` is a `dist[bag[int]]`. It would be a bag holding one recipe.
 
 So a collection's type name never converts. Spreading does: `...xs` passes what `for x in xs` gives, as separate elements or arguments.
 
@@ -395,16 +404,17 @@ list(...b)            # a bag's items, repeated by their counts
 bag(...xs)            # each element is one item
 [...xs, ...ys]        # both lists, one after the other
 set(...a, ...b)       # the elements of both sets
-max(...xs)            # the largest element
 ```
 
-A map spreads as its `[key, value]` pairs, as `for` gives them, so `bag(...m)` is a bag of pairs, not a bag with `m`'s counts. A bag with given counts is written as a literal, which the declared type makes a bag: `var deck: bag[int] = [2: 4, 3: 4, 10: 16]`.
+`f(...xs)` means exactly `f(x1, …, xn)`, so `max(...[d6, 3])` lifts, as `max(d6, 3)` does. (For a list's largest element, `maximum(xs)` already exists, and takes a `default:` for an empty list.) Spreading a distribution is an error, as a `for` over one is today: a value has to be drawn first. So `list(...xs)` is `xs`, for any list.
+
+A map spreads as its `[key, value]` pairs, as `for` gives them, so `bag(...m)` is a bag of pairs, not a bag with `m`'s counts. That's `bag(counts: m)`, or a literal that a declared type makes a bag: `var deck: bag[int] = [2: 4, 3: 4, 10: 16]`.
 
 Spreading works in collection literals, and in calls to the built-ins that take any number of arguments: `set`, `list`, `bag`, `min` and `max`. A literal with a spread takes its kind like any other, so `let s: set[int] = [...xs, 4]` is a set; the spread shows the conversion, as `set(...xs)` does. A user function has a fixed number of parameters, and a spread's length can differ between worlds, so the compiler couldn't check the count. Spreading into one can come later.
 
-Today, `bag(xs)` converts a list or a map of counts, and in Python, `set(xs)` converts a list. Such a call would now build a collection of one element, without any sign. So for one release, `set`, `list` or `bag` given a single collection is an error, whose help suggests `...` or a literal. After that, it builds a collection of one element. Meanwhile, a set of one list can be written `let s: set[list[int]] = [xs]`.
+Today, `bag(xs)` converts a list or a map of counts, and in Python, `set(xs)` converts a list. Such a call would now build a collection of one element, without any sign. So for one release, `set`, `list` or `bag` given a single collection, and nothing else, is an error, whose help suggests `...`, or `counts:` for a map. After that, it builds a collection of one element. Meanwhile, a set of one list can be written `let s: set[list[int]] = [xs]`.
 
-A set prints as `set(1, 2)` and a bag as `bag(1, 1, 2)`, so what's printed builds the same value. A bag prints as `bag([1: 2, 2: 1])` today, which would now read as a bag that holds a map.
+A set prints as `set(1, 2)` and a bag as `bag(counts: [1: 2, 2: 1])`, so what's printed builds the same value. Counts keep a bag short, however many items it holds: `bag(counts: [1: 10^12])`. A bag prints as `bag([1: 2, 2: 1])` today, which would now read as a bag that holds a map. During the release that rejects a single collection, one kind of value prints in a form that release rejects: a set holding exactly one collection, such as `set([1])`. Lists print as literals, and bags with `counts:`, so nothing else does.
 
 JavaScript (`[...xs]`, `Math.max(...xs)`), Python (`[*xs]`, `{*xs}`, `f(*args)`) and Kotlin (`setOf(*array)`) spread the same way.
 
@@ -426,8 +436,9 @@ Today a built-in's integer arguments accept a whole float, like `xs.get(1.0)` an
 | `let d: dist[float] = d6`, or `poisson(3)`, gives a `dist[int]` | A `dist[float]` |
 | `let q: {x: float} = Point {x: 1}` is a `Point` with an int `x` | An error |
 | `let b: bag[int] = [1, 1, 2]` is an error | A bag |
-| `bag([1, 1, 2])`, `bag(cards)` and `bag(["A": 4])` convert to a bag | An error for one release, then a bag of one item: write `bag(1, 1, 2)`, `bag(...cards)`, or a declared literal |
-| A bag prints as `bag([1: 2, 2: 1])` | `bag(1, 1, 2)` |
+| `bag([1, 1, 2])`, `bag(cards)` and `bag(["A": 4])` convert to a bag | An error for one release, then a bag of one item: write `bag(1, 1, 2)`, `bag(...cards)` or `bag(counts: ["A": 4])` |
+| `bag(one_of([[1], [2]]))` is a `dist[bag[int]]` | A bag holding one recipe |
+| A bag prints as `bag([1: 2, 2: 1])` | `bag(counts: [1: 2, 2: 1])` |
 | `[1] == [1.0]` and `{x: 1} == {x: 1.0}` are false | True |
 | `[1: "a"].contains(1.0)` is false, and `[1: "a", 1.0: "b"]` has two keys | True, and it's `[1: "b"]` |
 | `pmf(one_of([1, 1.0]), 1)` is 50% | 100% |
@@ -536,11 +547,11 @@ In a statically checked language, a trait or an interface also says which operat
 ## Implementation order and validation
 
 1. **Numbers compare by value.** `==`, map keys, set and bag elements, `pmf` and `support` compare numbers by exact value, at any depth ([numbers compare by value](#numbers-compare-by-value)). Hashing and key order must match: a float that holds an int hashes as that int, and a complex number with no imaginary part as its real part. World merging, memoization and a distribution's stored outcomes keep comparing with types, so the [architecture notes](../architecture.md)' two comparisons stay apart; only the public one changes. Update the reference semantics, the architecture and testing notes, the collection values design, `web/test/api-contracts.probl` and the engine's API contract tests. This step stands alone, and should come before step 2, which turns ints into floats.
-2. **Numeric conversions.** In the engine's declared-type conversion, an int becomes a float only if a float holds it, and a float no longer becomes an int. The compiler gets the matching literal checks. Add `int(x)` and `float(x)`. A distribution's conversion is decided from its outcomes or its law, before anything is listed or drawn ([distributions](#distributions)). A count law's chance of an outcome no float holds comes from its parameters: exactly for `geometric`, and from a Chernoff bound for `poisson` and `binomial`. Converting to `prob` allows no tail. A draw from a law that converted, which no float holds, counts as unresolved. Queries on a converted law answer as its source does today. A named record fits an anonymous record type only if no field converts. A listed count law keeps its law in `Dist.law`, and `Dist.missing` records the tail it cut off, so the check must read the law, not only `Dist.outcomes`. A law kept as a law carries its conversion, which enumerating, sampling, direct draws and `support` all apply. `Dist`'s equality and hash ignore `law`, so world merging and memoized calls need checking: they mustn't lose a law a conversion depends on. The oracle (`probl-oracle`) rejects annotations today, so it can't check these rules until it supports them. Until then, engine tests cover them, in both modes.
+2. **Numeric conversions.** In the engine's declared-type conversion, an int becomes a float only if a float holds it, and a float no longer becomes an int. The compiler gets the matching literal checks. Add `int(x)` and `float(x)`. A distribution's conversion is decided from its outcomes or its law, before anything is listed or drawn ([distributions](#distributions)). A count law's chance of an outcome no float holds comes from its parameters: exactly for `geometric`, and from a Chernoff bound for `poisson` and `binomial`. Converting to `prob` allows no tail. A draw from a law that converted, which no float holds, counts as unresolved. Queries on a converted law answer as its source does today, except that `pmf` at a value no float holds is 0, and `quantile`, `median`, the smallest outcome and `support` give floats. A named record fits an anonymous record type only if no field converts. A listed count law keeps its law in `Dist.law`, and `Dist.missing` records the tail it cut off, so the check must read the law, not only `Dist.outcomes`. A law kept as a law carries its conversion, which enumerating, sampling, direct draws and `support` all apply. `Dist`'s equality and hash ignore `law`, so world merging and memoized calls need checking: they mustn't lose a law a conversion depends on. The oracle (`probl-oracle`) rejects annotations today, so it can't check these rules until it supports them. Until then, engine tests cover them, in both modes.
 3. **Programs and documents.** Update `web/test/integers.probl`, the reference semantics (section 1's conversion paragraphs) and the language overview, and record the breaking change.
 4. **Built-in integer arguments**, if adopted, as a separate breaking change.
 5. **Collection literals as bags.** The compiler flows a declared type into collection literals, through branches and nested literals, including map keys, and chooses the kind before converting any element ([collection literals](#collection-literals)). A union's kinds come with step 7. The engine's field types for a `with` on a record of unknown type still convert values, but don't choose a kind, so a literal written in place and one in a branch agree. Test literals in branches and in other literals, by name and through a function value.
-6. **Sets and spreading:** `set[T]`, the constructors `set(…)`, `list(…)` and `bag(…)`, and `...` in collection literals and in calls to `set`, `list`, `bag`, `min` and `max` ([building collections](#building-collections)). The lexer reads `...` before `..` and `..<`. A single collection given to `set`, `list` or `bag` is an error for one release. Sets and bags print as they're built. Move the 16 `bag(…)` calls to `...` or a declared literal, and update the language overview's table.
+6. **Sets and spreading:** `set[T]`, the constructors `set(…)`, `list(…)` and `bag(…)`, and `...` in collection literals and in calls to `set`, `list`, `bag`, `min` and `max` ([building collections](#building-collections)). The lexer reads `...` before `..` and `..<`. `bag` takes `counts:`, and stops lifting over a distribution; constructors build from their arguments as they are, and spreading a distribution is an error. A single collection given to `set`, `list` or `bag` is an error for one release. Sets and bags print as they're built, a bag with `counts:`. Move the 16 `bag(…)` calls to `...` or `counts:`, and update the language overview's table.
 7. **Unions:** the grammar (`type { "or" type }`), a union in the compiler's types, flattened and without repeats, the conversion steps, and the check that a union has at most one type of each kind, at any depth ([unions](#unions)). The check follows named record types into their fields, stopping at a record type it has already seen. A collection literal chooses its kind from a union's types. `typeof` merges types of one kind to describe mixed contents, and records as far as a union allows ([collections and their element types](#collections-and-their-element-types)). The compiler never merges a declared union's types: `list[int] or list[str]` stays an error.
 8. **Errors that describe the value.** Done: a failed declaration describes the value as `typeof` does, as in "but it's a list[any]" until unions exist. A declared record type is written as `typeof` writes one, `{a: int}`.
 
@@ -553,9 +564,9 @@ The rules above need at least these tests. The syntax doesn't run yet.
 | Area | Tests |
 |---|---|
 | Comparing numbers | `[1] == [1.0]`, `{x: 1} == {x: 1.0}` and `[1] == [complex(1, 0)]` are true, and `[2^60 + 1] == [2.0^60]` is false. A map built from `1` then `1.0` has one key, the first, with the last value. `contains`, `get`, indexing and removal find a key of either type, in maps, sets and bags. `pmf` adds up equal outcomes, and `support` lists each number once. `typeof` across worlds still tells `1` from `1.0`. |
-| Building collections | `set(1, 1, 2)`, `set()`, `bag("A", "A")`, and a single collection as an error, with its help. `...` of a list, a set, a bag, a map, a range and a string, in literals and in each built-in that takes it, with lengths that differ between worlds. `let s: set[int] = [...xs, 4]`. Printed sets and bags build the same value. `1..6` and `0..<n` still read as ranges. |
+| Building collections | `set(1, 1, 2)`, `set()`, `bag("A", "A")`, `bag(counts: …)` alone and with items, and a single collection as an error, with its help. `list(d6, 0)` holds a recipe, and `bag` no longer lifts. `max(...[d6, 3])` lifts like `max(d6, 3)`, and spreading a distribution is an error. `...` of a list, a set, a bag, a map, a range and a string, in literals and in each built-in that takes it, with lengths that differ between worlds. `let s: set[int] = [...xs, 4]`. Printed sets and bags build the same value, apart from a set holding one collection during the transition, and a bag with a count of 10^12 prints at once. `1..6` and `0..<n` still read as ranges. |
 | Unions | Every error example above, including inside map keys and values and record fields, with the same error in either order. Repeated types are removed; types of different kinds, and named records with the same fields, are allowed. A named record fits an anonymous record type only if no field converts. |
 | `typeof` | Mixed anonymous records, a named record with an anonymous one, and a `list[Point or Vector]`. Every description of mixed contents passes the union check, and the value fits it. |
 | Literal kinds | Every literal example above, both empty forms, and nested literals. The default kind is kept even when an element doesn't convert, and a union with a set and a bag asks for `set(…)` or `bag(…)`. |
 | Where the type reaches | Literals as the result of `if`, `match`, `chance` and blocks, in `list[bag[int]]`, and as map keys and values. Through a function value, or a `with` on a record of unknown type, a literal is a list, written in place or in a branch. A variable holding a list fails a bag parameter. |
-| Distributions | Each count law on both sides of its line: `geometric(1e-12)` and `geometric(1e-16)`, `poisson(3)` and a rate near 2^53, `binomial` with n just above 2^53, and laws with one outcome. The bound for `poisson` and `binomial` never accepts a law whose exact chance is 1e-18 or more. Listed outcomes at ±2^53, 2^53 + 1, 2^60 and 2^60 + 1, whatever their weight. `floor` of a bounded draw converts in both modes, and of an unbounded one when sampling; a partly listed distribution with no law doesn't convert. `binomial(1, p)` is a `dist[prob]`, and `poisson(1e-10)` isn't. Each decision is the same when enumerating and sampling, with a different outcome limit, and whether or not the distribution is used. Converting draws nothing. Converted outcomes are floats with the same numbers, when listed, drawn or given by `support`, and queries give the source's answers, including 0 for a listed law's cut tail. `float(d)` of a law too broad to list fails on the outcome limit. |
+| Distributions | Each count law on both sides of its line: `geometric(1e-12)` and `geometric(1e-16)`, `poisson(3)` and a rate near 2^53, `binomial` with n just above 2^53, and laws with one outcome. The bound for `poisson` and `binomial` never accepts a law whose exact chance is 1e-18 or more. Listed outcomes at ±2^53, 2^53 + 1, 2^60 and 2^60 + 1, whatever their weight. `floor` of a bounded draw converts in both modes, and of an unbounded one when sampling; a partly listed distribution with no law doesn't convert. `binomial(1, p)` is a `dist[prob]`, and `poisson(1e-10)` isn't. Each decision is the same when enumerating and sampling, with a different outcome limit, and whether or not the distribution is used. Converting draws nothing. Converted outcomes are floats with the same numbers, when listed, drawn or given by `support`, and queries give the source's answers, including 0 for a listed law's cut tail. `float(d)` of a law too broad to list fails on the outcome limit. A converted `geometric(5e-15)` gives 0 for `pmf` at 2^53 + 1, and floats for its quantiles. |
