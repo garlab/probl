@@ -31,9 +31,11 @@ fn law_queries_are_exact_despite_the_tail() {
     // C(10, k) 0.3^k 0.7^(10 − k), summed to 3.
     let b = |k: i32| [1.0, 10.0, 45.0, 120.0][k as usize] * 0.3f64.powi(k) * 0.7f64.powi(10 - k);
     close(prob("report cdf(binomial(10, 0.3), 3)"), (0..4).map(b).sum());
-    // An alias asks the same law, and `pmf` is of ints, as of the outcomes.
+    // An alias asks the same law, and `pmf` is of a number of any kind
+    // that's the same as an outcome, as `==` finds them.
     close(prob("let d = poisson(3)\nreport pmf(d, 2)"), e3 * 4.5);
-    assert_eq!(prob("report pmf(poisson(3), 2.0)"), 0.0);
+    close(prob("report pmf(poisson(3), 2.0)"), e3 * 4.5);
+    assert_eq!(prob("report pmf(poisson(3), 2.5)"), 0.0);
     // What's computed from the outcomes keeps their tail.
     assert!(error("report P(poisson(3) > 2)").contains("unresolved"));
 }

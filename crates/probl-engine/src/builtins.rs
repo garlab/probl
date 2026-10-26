@@ -744,7 +744,16 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
         B::Support => {
             let d = stat_dist(v, b.name(), budget)?;
             budget.collection(d.outcomes.len() as u128)?;
-            Ok(Value::list(d.outcomes.iter().map(|(x, _)| x.clone()).collect()))
+            // Outcomes the language sees as the same, like `1` and `1.0`,
+            // sort together, the int first: `support` lists each once, so
+            // `pmf` over it adds up to 1.
+            let mut items: Vec<Value> = Vec::with_capacity(d.outcomes.len());
+            for (x, _) in &d.outcomes {
+                if !items.last().is_some_and(|last| crate::value::same(last, x)) {
+                    items.push(x.clone());
+                }
+            }
+            Ok(Value::list(items))
         }
         B::Cdf => {
             let d = stat_dist(v, b.name(), budget)?;
@@ -758,7 +767,12 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
         }
         B::Pmf => {
             let d = stat_dist(v, b.name(), budget)?;
-            let p = crate::stats::sum(d.outcomes.iter().filter(|(x, _)| *x == args[1]).map(|(_, w)| *w));
+            let p = crate::stats::sum(
+                d.outcomes
+                    .iter()
+                    .filter(|(x, _)| crate::value::same(x, &args[1]))
+                    .map(|(_, w)| *w),
+            );
             ops::computed_prob(p / d.total(), "pmf")
         }
         B::IterItems => iter_items(v, budget),
@@ -857,7 +871,7 @@ fn listed_law_query(b: Builtin, d: &Dist, x: &Value) -> OpResult<Value> {
     let mut p = crate::stats::Sum::default();
     for (outcome, w) in &d.outcomes {
         let counts = if b == Builtin::Pmf {
-            outcome == x
+            crate::value::same(outcome, x)
         } else {
             statistical_compare(outcome, x)?.is_le()
         };
@@ -868,13 +882,16 @@ fn listed_law_query(b: Builtin, d: &Dist, x: &Value) -> OpResult<Value> {
     ops::computed_prob(p.value(), b.name())
 }
 
-/// `pmf` or `cdf` of a count law from its formulas. As with its outcomes,
-/// `pmf` is of an int: a float is none of them.
+/// `pmf` or `cdf` of a count law from its formulas. Its outcomes are ints,
+/// so `pmf` is of a whole number, of any kind: `2.0` is the outcome `2`.
 fn law_query(b: Builtin, law: &Counts, x: &Value) -> OpResult<Value> {
     if b == Builtin::Pmf {
         let p = match x {
             Value::Int(_) => law.pmf(x.as_f64().unwrap_or(f64::INFINITY)),
-            _ => 0.0,
+            _ => match ops::whole_number(x) {
+                Some(k) => law.pmf(k),
+                None => 0.0,
+            },
         };
         return ops::computed_prob(p, "pmf");
     }
@@ -964,15 +981,15 @@ fn continuous_parts(v: &Value) -> bool {
 /// one, answered from the formulas (docs/semantics.md, section 13).
 fn continuous_query(b: Builtin, args: &[Value]) -> OpResult<Value> {
     use Builtin as B;
-    // PMF is a typed-outcome query even when continuous components are mixed
-    // in. Converting atoms to f64 here would collapse distinct outcomes.
+    // PMF adds up the atoms equal to its argument, as `==` finds them, even
+    // when continuous components are mixed in, which have none.
     if b == B::Pmf {
         return match &args[0] {
             Value::Dist(d) => {
                 let at = crate::stats::sum(
                     d.outcomes
                         .iter()
-                        .filter(|(x, _)| !matches!(x, Value::Continuous(_)) && *x == args[1])
+                        .filter(|(x, _)| !matches!(x, Value::Continuous(_)) && crate::value::same(x, &args[1]))
                         .map(|(_, p)| *p),
                 );
                 ops::computed_prob(at / d.total(), "pmf")
@@ -1129,7 +1146,7 @@ fn range_query(b: Builtin, lo: &Integer, hi: &Integer, arg: Option<&Value>, budg
             Ok(Value::Int(lo.add(&rank.sub(&Integer::ONE)?)?))
         }
         B::Pmf => {
-            let present = matches!(arg, Some(Value::Int(k)) if lo <= k && k <= hi);
+            let present = arg.is_some_and(|x| ops::in_range(lo, hi, x));
             ops::computed_prob(
                 if present {
                     Integer::ONE.ratio(&n).unwrap_or(0.0)
@@ -1977,7 +1994,7 @@ fn sum(v: &Value, budget: &mut Budget) -> OpResult<Value> {
 
 fn get(coll: &Value, key: &Value, default: Option<&Value>, budget: &mut Budget) -> OpResult<Value> {
     let found = match coll {
-        Value::Map(m) => m.get(key).cloned(),
+        Value::Map(m) => crate::value::get_key(m, key).cloned(),
         Value::List(items) => integer(key, "index", budget)?
             .to_u64()
             .and_then(|n| usize::try_from(n).ok())
@@ -2131,7 +2148,7 @@ fn insert(coll: &Value, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<V
             budget.collection(m.len() as u128 + 1)?;
             budget.work(m.len() as u64)?;
             let mut m = BTreeMap::clone(m);
-            m.insert(a.clone(), b.clone());
+            crate::value::insert_key(&mut m, a.clone(), b.clone());
             Ok(Value::map(m))
         }
         other => Err(expected("a list or a map", other, "insert")),
@@ -2150,7 +2167,7 @@ fn remove(coll: &Value, key: &Value, budget: &mut Budget) -> OpResult<Value> {
         Value::Map(m) => {
             budget.work(m.len() as u64)?;
             let mut m = BTreeMap::clone(m);
-            m.remove(key);
+            crate::value::remove_key(&mut m, key);
             Ok(Value::map(m))
         }
         Value::Bag(b) => match b.without(key) {
@@ -2243,16 +2260,13 @@ fn bag(v: &Value, budget: &mut Budget) -> OpResult<Value> {
                 let n = n
                     .to_u64()
                     .ok_or_else(|| OpError::new("bag count exceeds the supported count range"))?;
+                // A map's keys are never the same as each other.
                 if n > 0 {
                     counts.insert(k.clone(), n);
                 }
             }
         }
-        Value::List(items) => {
-            for item in items.iter() {
-                *counts.entry(item.clone()).or_insert(0) += 1;
-            }
-        }
+        Value::List(items) => return Ok(Value::multiset(crate::value::count_items(items.iter()))),
         other => return Err(expected("a map of counts or a list", other, "bag")),
     }
     Ok(Value::bag(counts))

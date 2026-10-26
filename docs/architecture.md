@@ -34,7 +34,7 @@ The internal crates are implementation details. Embedders should use [`probl`](l
 
 A world contains a frame of values and a weight. Values and collections are shared with reference counting and copied on write, so forking does not eagerly duplicate all their contents. Collections cache structural hashes to make repeated state comparisons cheaper.
 
-Storage identity is typed and structural: integer `1` and float `1.0` are distinct map keys and PMF outcomes. Language numeric equality and ordering can compare across numeric types. These contracts must not be collapsed into one implementation comparator; see [semantics §1](semantics.md#1-values-and-types).
+Storage identity is typed and structural: world merging, memoization and a distribution's outcomes keep integer `1` and float `1.0` apart, so `typeof` can tell them apart. The language's `==`, map keys, bag elements and `pmf` compare numbers by value at any depth. `Value`'s order sorts by the language's comparison first and by kind second, so values `==` finds the same sort next to each other, which map and bag lookups rely on; its hash agrees with both. These contracts must not be collapsed into one comparator; see [semantics §1](semantics.md#1-values-and-types).
 
 Integers grow beyond machine size within host limits. Probabilities and weights use floating-point arithmetic; `Weight` extends the exponent range to preserve extremely small likelihoods. This avoids ordinary floating-point underflow, but does not make inference rational or eliminate rounding. `--fractions` displays an approximation.
 

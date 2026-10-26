@@ -4,6 +4,10 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+### Changed
+
+- Numbers compare by value at any depth, whatever their kind: `[1] == [1.0]`, `{x: 1} == {x: 1.0}` and `[1] == [complex(1, 0)]` are true, and `[2^60 + 1] == [2.0^60]` is still false. Map keys and bag elements follow `==`: `1` and `1.0` are one key, so `[1.0: "a"].contains(1)` is true, and a repeated key keeps the key first written and the value last written, so `[1: "a", 1.0: "b"]` is `[1: "b"]`. `pmf` adds up the outcomes equal to its argument, so `pmf(one_of([1, 1.0]), 1)` is 100%, and `support` lists each number once. Worlds keep their types, so `typeof` still tells `1` from `1.0`. This reverses the typed key and outcome identity of earlier releases. See [the semantics](docs/semantics.md#1-values-and-types) and [the annotations proposal](docs/design/annotations-and-unions.md#numbers-compare-by-value), whose first step this is.
+
 ## [0.3.3] - 2026-10-24
 
 ### Added

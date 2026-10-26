@@ -1,6 +1,6 @@
 # Type annotations: conversions, literals and unions
 
-> Draft proposal, revised 26 October 2026. Only the last step of the [plan](#implementation-order-and-validation) is implemented. Today's behavior is in the [reference semantics](../semantics.md#1-values-and-types). The examples marked as proposed don't run yet. The first draft proposed annotations that only check; [why that changed](#annotations-that-only-check).
+> Draft proposal, revised 26 October 2026. Steps 1 and 8 of the [plan](#implementation-order-and-validation) are implemented. Today's behavior is in the [reference semantics](../semantics.md#1-values-and-types). The examples marked as proposed don't run yet. The first draft proposed annotations that only check; [why that changed](#annotations-that-only-check).
 
 ## Recommendation
 
@@ -132,7 +132,7 @@ In the other direction, a prob becomes a float wherever a float is declared. So 
 
 ### Numbers compare by value
 
-`1 == 1.0` is true today, and so is `1 == complex(1, 0)`. But inside a collection, numbers compare with their types: `[1] == [1.0]` is false, `1` and `1.0` are different map keys, and `pmf(one_of([1.0, 2.0]), 1)` is 0%. Conversions would make that matter. After `let m: map[float, str] = [1: "a"]`, the key becomes `1.0`, so `m.contains(1)` would turn false, and after `let d: dist[float] = d6`, `pmf(d, 3)` would be 0%.
+Done (step 1). `1 == 1.0` was true, and so was `1 == complex(1, 0)`. But inside a collection, numbers compared with their types: `[1] == [1.0]` was false, `1` and `1.0` were different map keys, and `pmf(one_of([1.0, 2.0]), 1)` was 0%. Conversions would have made that matter. After `let m: map[float, str] = [1: "a"]`, the key becomes `1.0`, so `m.contains(1)` would turn false, and after `let d: dist[float] = d6`, `pmf(d, 3)` would be 0%.
 
 So numbers compare by value everywhere, at any depth:
 
@@ -441,9 +441,9 @@ Today a built-in's integer arguments accept a whole float, like `xs.get(1.0)` an
 | `bag([1, 1, 2])`, `bag(cards)` and `bag(["A": 4])` convert to a bag | An error for one release, then a bag of one item: write `bag(1, 1, 2)`, `bag(...cards)` or `bag(counts: ["A": 4])` |
 | `bag(one_of([[1], [2]]))` is a `dist[bag[int]]` | A bag holding one recipe |
 | A bag prints as `bag([1: 2, 2: 1])` | `bag(counts: [1: 2, 2: 1])` |
-| `[1] == [1.0]` and `{x: 1} == {x: 1.0}` are false | True |
-| `[1: "a"].contains(1.0)` is false, and `[1: "a", 1.0: "b"]` has two keys | True, and it's `[1: "b"]` |
-| `pmf(one_of([1, 1.0]), 1)` is 50% | 100% |
+| `[1] == [1.0]` and `{x: 1} == {x: 1.0}` were false | True (step 1, done) |
+| `[1: "a"].contains(1.0)` was false, and `[1: "a", 1.0: "b"]` had two keys | True, and it's `[1: "b"]` (step 1, done) |
+| `pmf(one_of([1, 1.0]), 1)` was 50% | 100% (step 1, done) |
 | `typeof [1, "a"]` is `"list[any]"` | `"list[int or str]"` |
 | `xs.get(1.0)`, `factorial(5.0)` | Errors, if built-ins follow |
 | `let p: prob = 33%`, `let p: prob = rate`, `f(30%)` for `p: prob` | Unchanged |
@@ -464,7 +464,7 @@ Conversions of a number to and from `prob` keep working, so they weren't counted
 
 That measurement came before the rule for a distribution's outcomes. But no example, benchmark, playground test or documentation block declares a `dist[float]` or a `dist[prob]`, so the rule can't break any of them.
 
-Comparing numbers by value reverses a documented contract: map keys, bag elements and `pmf` use typed identity today. The reference semantics (section 1, and `pmf`), the architecture and testing notes and the [collection values](collection-values.md) design describe it, and `web/test/api-contracts.probl` and the engine's API contract tests check it. How often a program relies on it hasn't been measured.
+Comparing numbers by value reversed a documented contract: map keys, bag elements and `pmf` used typed identity. Step 1 updated the reference semantics, the architecture and testing notes and the [collection values](collection-values.md) design, and rewrote the engine tests that checked it, ten of them, to check the opposite. No example, benchmark or playground test program changed its output.
 
 ## Alternatives considered
 
@@ -548,7 +548,7 @@ In a statically checked language, a trait or an interface also says which operat
 
 ## Implementation order and validation
 
-1. **Numbers compare by value.** `==`, map keys, set and bag elements, `pmf` and `support` compare numbers by exact value, at any depth ([numbers compare by value](#numbers-compare-by-value)). Hashing and key order must match: a float that holds an int hashes as that int, and a complex number with no imaginary part as its real part. World merging, memoization and a distribution's stored outcomes keep comparing with types, so the [architecture notes](../architecture.md)' two comparisons stay apart; only the public one changes. Update the reference semantics, the architecture and testing notes, the collection values design, `web/test/api-contracts.probl` and the engine's API contract tests. This step stands alone, and should come before step 2, which turns ints into floats.
+1. **Numbers compare by value.** Done. `==`, map keys, bag elements, `pmf` and `support` compare numbers by exact value, at any depth ([numbers compare by value](#numbers-compare-by-value)). `Value`'s order sorts by that comparison first and by kind second, so values `==` finds the same sort next to each other, and a lookup checks the neighbours of where a key would go. Its hash agrees with both: a float that holds an int hashes as that int, and a complex number with no imaginary part as its real part. World merging, memoization and a distribution's stored outcomes keep comparing with types, so the [architecture notes](../architecture.md)' two comparisons stay apart. Sets, when step 6 adds them, use the same lookups.
 2. **Numeric conversions.** In the engine's declared-type conversion, an int becomes a float only if a float holds it, and a float no longer becomes an int. The compiler gets the matching literal checks. Add `int(x)` and `float(x)`. A distribution's conversion is decided from its outcomes or its law, before anything is listed or drawn ([distributions](#distributions)). A count law's chance of an outcome no float holds comes from its parameters: exactly for `geometric`, and from a Chernoff bound for `poisson` and `binomial`. Converting to `prob` allows no tail. A draw from a law that converted, which no float holds, counts as unresolved. Queries on a converted law answer as its source does today, except that `pmf` at a value no float holds is 0, and `quantile`, `median`, the smallest outcome and `support` give floats. A named record fits an anonymous record type only if no field converts. A listed count law keeps its law in `Dist.law`, and `Dist.missing` records the tail it cut off, so the check must read the law, not only `Dist.outcomes`. A law kept as a law carries its conversion, which enumerating, sampling, direct draws and `support` all apply. `Dist`'s equality and hash ignore `law`, so world merging and memoized calls need checking: they mustn't lose a law a conversion depends on. The oracle (`probl-oracle`) rejects annotations today, so it can't check these rules until it supports them. Until then, engine tests cover them, in both modes.
 3. **Programs and documents.** Update `web/test/integers.probl`, the reference semantics (section 1's conversion paragraphs) and the language overview, and record the breaking change.
 4. **Built-in integer arguments**, if adopted, as a separate breaking change.

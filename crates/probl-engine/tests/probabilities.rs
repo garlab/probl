@@ -145,7 +145,7 @@ fn nested_declared_probability_types_convert_numeric_values() {
     for source in [
         "let xs = [[0.3]]; let ps: list[list[prob]] = xs; report typeof ps[0][0]",
         "let xs = [0.3: 0.7]; let ps: map[prob, prob] = xs; report typeof ps[prob(0.3)]",
-        "var xs: bag[prob] = bag([0.3: 1, prob(0.3): 2]); let p = xs.take(); report typeof p",
+        "var xs: bag[prob] = bag([0.3, prob(0.3), prob(0.3)]); let p = xs.take(); report typeof p",
         "let xs: dist[prob] = one_of([0.3, 0.7]); let p = ~xs; report typeof p",
         "let r = { p: 0.3 }; let s: { p: prob } = r; report typeof s.p",
         "fn f(): list[prob] { let xs = [0.3]; xs }; report typeof f()[0]",
@@ -154,7 +154,7 @@ fn nested_declared_probability_types_convert_numeric_values() {
         assert_eq!(value(source), Value::str("prob"), "{source}");
     }
     close(
-        mean("let xs: bag[prob] = bag([0.3: 1, prob(0.3): 2]); report len(xs)"),
+        mean("let xs: bag[prob] = bag([0.3, prob(0.3), prob(0.3)]); report len(xs)"),
         3.0,
     );
 }
@@ -248,7 +248,7 @@ fn probability_arithmetic_and_widening() {
             "map[float, float]",
         ),
         (
-            "let xs: bag[float] = bag([prob(0.3): 1, 0.3: 2])\nreport typeof xs",
+            "let xs: bag[float] = bag([prob(0.3), 0.3, 0.3])\nreport typeof xs",
             "bag[float]",
         ),
         (
@@ -260,7 +260,7 @@ fn probability_arithmetic_and_widening() {
         assert_eq!(value(source), Value::str(expected), "{source}");
     }
     assert_eq!(
-        value("let xs: bag[float] = bag([prob(0.3): 1, 0.3: 2])\nreport len(xs)"),
+        value("let xs: bag[float] = bag([prob(0.3), 0.3, 0.3])\nreport len(xs)"),
         Value::Int(3.into())
     );
     for expr in ["0.3 and 0.5", "true + 1"] {

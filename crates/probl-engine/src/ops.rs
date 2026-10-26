@@ -844,9 +844,10 @@ fn numeric_compare(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
     }
 }
 
-/// The language's `==`: numbers compare by value across int, float and prob.
+/// The language's `==`: numbers compare by value across int, float, prob
+/// and complex, at any depth.
 pub fn equals(a: &Value, b: &Value) -> bool {
-    equal_numbers(a, b).unwrap_or_else(|| a == b)
+    equal_numbers(a, b).unwrap_or_else(|| crate::value::same(a, b))
 }
 
 /// `equals`, counting a unit of work for each pair of elements of
@@ -962,15 +963,9 @@ pub fn contains(coll: &Value, item: &Value, budget: &mut Budget) -> OpResult<boo
             budget.work(compared)?;
             found
         }
-        Value::Map(m) => m.contains_key(item),
+        Value::Map(m) => crate::value::key_in(m, item).is_some(),
         Value::Bag(b) => b.get(item).is_some_and(|n| *n > 0),
-        Value::Range(lo, hi) => match item {
-            Value::Int(n) => n >= lo && n <= hi,
-            Value::Float(x) | Value::Prob(x) if x.is_finite() && x.fract() == 0.0 => {
-                lo.cmp_f64(*x).is_some_and(|c| !c.is_gt()) && hi.cmp_f64(*x).is_some_and(|c| !c.is_lt())
-            }
-            _ => false,
-        },
+        Value::Range(lo, hi) => in_range(lo, hi, item),
         Value::Str(s) => match item {
             Value::Str(sub) => s.contains(&**sub),
             _ => {
@@ -982,6 +977,27 @@ pub fn contains(coll: &Value, item: &Value, budget: &mut Budget) -> OpResult<boo
         },
         other => return Err(OpError::new(format!("can't look inside {}", article(&other.kind())))),
     })
+}
+
+/// Whether a range holds `item`: an int, or a number of another kind that's
+/// the same as one, like `2.0`.
+pub fn in_range(lo: &Integer, hi: &Integer, item: &Value) -> bool {
+    match item {
+        Value::Int(n) => n >= lo && n <= hi,
+        _ => whole_number(item)
+            .is_some_and(|x| lo.cmp_f64(x).is_some_and(|c| !c.is_gt()) && hi.cmp_f64(x).is_some_and(|c| !c.is_lt())),
+    }
+}
+
+/// A float, a probability or a complex number that's the same as an int,
+/// as that number.
+pub fn whole_number(v: &Value) -> Option<f64> {
+    let x = match v {
+        Value::Float(x) | Value::Prob(x) => *x,
+        Value::Complex(z) if z.im() == 0.0 => z.re(),
+        _ => return None,
+    };
+    (x.is_finite() && x.fract() == 0.0).then_some(x)
 }
 
 fn range(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
@@ -1071,7 +1087,7 @@ pub fn index_plain(coll: &Value, i: &Value, budget: &mut Budget) -> OpResult<Val
             let c = s.chars().nth(k as usize).expect("checked scalar index");
             crate::text::value(c.encode_utf8(&mut [0; 4]), budget)
         }
-        Value::Map(m) => m.get(i).cloned().ok_or_else(|| {
+        Value::Map(m) => crate::value::get_key(m, i).cloned().ok_or_else(|| {
             OpError::fault(Fault::MissingKey, format!("the key {i:?} isn't in the map"))
                 .help("use `get(key, default)` for keys that may be missing")
         }),

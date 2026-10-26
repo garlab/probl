@@ -1423,11 +1423,15 @@ fn number(v: &Value) -> Option<Q> {
     }
 }
 
-/// The language's `==`: numbers compare by value, whatever their kind.
+/// The language's `==`: numbers compare by value, whatever their kind, at
+/// any depth.
 fn equals(a: &Value, b: &Value) -> bool {
     match (number(a), number(b)) {
         (Some(x), Some(y)) => x == y,
-        _ => a == b,
+        _ => match (a, b) {
+            (Value::List(x), Value::List(y)) => x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| equals(p, q)),
+            _ => a == b,
+        },
     }
 }
 

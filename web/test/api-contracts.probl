@@ -1,4 +1,4 @@
-# Typed key and point-mass identity, with explicit numeric-equality events.
+# Keys and point masses compare numbers by value, as `==` does.
 let m = [1: "int", 1.0: "float", prob(1): "prob", complex(1): "complex"]
 report [m[1], m[1.0], m[prob(1)], m[complex(1)]]
 report get([1: "a"], 1.0, "absent")

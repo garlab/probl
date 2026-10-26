@@ -3042,7 +3042,7 @@ impl<'p> Engine<'p> {
                 for (k, v) in xs.iter() {
                     let key = self.coerce_at(k.clone(), kt, span, depth + 1)?;
                     let value = self.coerce_at(v.clone(), vt, span, depth + 1)?;
-                    if out.insert(key, value).is_some() {
+                    if crate::value::insert_key(&mut out, key, value).is_some() {
                         return Err(RuntimeError::new(span, "map key collision during type conversion"));
                     }
                 }
@@ -3052,9 +3052,7 @@ impl<'p> Engine<'p> {
                 let mut out = BTreeMap::<Value, u64>::new();
                 for (x, n) in xs.iter() {
                     let key = self.coerce_at(x.clone(), t, span, depth + 1)?;
-                    let count = out.entry(key).or_default();
-                    *count = count
-                        .checked_add(*n)
+                    crate::value::add_count(&mut out, key, *n)
                         .ok_or_else(|| RuntimeError::new(span, "bag count overflow during type conversion"))?;
                 }
                 Value::multiset(crate::value::Multiset::new(out))
@@ -3837,12 +3835,11 @@ impl<'p> Engine<'p> {
             }
             (Builtin::Insert, Value::Map(m)) => {
                 let value = std::mem::replace(&mut values[2], Value::Unit);
-                unshared(m, |m| m.len(), budget)
-                    .map_err(at)?
-                    .insert(std::mem::replace(&mut values[1], Value::Unit), value);
+                let m = unshared(m, |m| m.len(), budget).map_err(at)?;
+                crate::value::insert_key(m, std::mem::replace(&mut values[1], Value::Unit), value);
             }
             (Builtin::Remove, Value::Map(m)) => {
-                unshared(m, |m| m.len(), budget).map_err(at)?.remove(&values[1]);
+                crate::value::remove_key(unshared(m, |m| m.len(), budget).map_err(at)?, &values[1]);
             }
             _ => {
                 return Err(RuntimeError::new(
@@ -3941,7 +3938,8 @@ impl<'p> Engine<'p> {
                     if key.is_uncertain() {
                         return Err(RuntimeError::new(k.span, "map keys can't be distributions"));
                     }
-                    out.insert(key, self.eval_expected(f, v, w, vt)?);
+                    let value = self.eval_expected(f, v, w, vt)?;
+                    crate::value::insert_key(&mut out, key, value);
                 }
                 Ok(Value::map(out))
             }
@@ -4069,7 +4067,7 @@ impl<'p> Engine<'p> {
                         return Err(RuntimeError::new(k.span, "map keys can't be distributions"));
                     }
                     let value = self.eval(f, v, w)?;
-                    map.insert(key, value);
+                    crate::value::insert_key(&mut map, key, value);
                 }
                 Ok(Value::map(map))
             }
@@ -4715,11 +4713,10 @@ fn update(target: &mut Value, keys: &[PathKey], v: Value, budget: &mut Budget) -
         (PathKey::Index(k), Value::Map(m)) => {
             let m = unshared(m, |m| m.len(), budget)?;
             if rest.is_empty() {
-                m.insert(k.clone(), v);
+                crate::value::insert_key(m, k.clone(), v);
                 return Ok(());
             }
-            let slot = m
-                .get_mut(k)
+            let slot = crate::value::get_key_mut(m, k)
                 .ok_or_else(|| OpError::new(format!("the key {k:?} isn't in the map")))?;
             update(slot, rest, v, budget)
         }
@@ -4762,8 +4759,7 @@ fn place_mut<'v>(target: &'v mut Value, keys: &[PathKey], budget: &mut Budget) -
             place_mut(&mut items[k], rest, budget)
         }
         (PathKey::Index(k), Value::Map(m)) => {
-            let slot = unshared(m, |m| m.len(), budget)?
-                .get_mut(k)
+            let slot = crate::value::get_key_mut(unshared(m, |m| m.len(), budget)?, k)
                 .ok_or_else(|| OpError::new(format!("the key {k:?} isn't in the map")))?;
             place_mut(slot, rest, budget)
         }

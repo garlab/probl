@@ -85,10 +85,21 @@ both_modes! {
     }
 
     #[test]
-    fn typed_keys_are_consistent_across_operations() {
-        let keys = ["1", "1.0", "prob(1)", "complex(1)", "[1]", "[1.0]", "{x:1}", "{x:1.0}"];
-        for (i, a) in keys.iter().enumerate() {
-            for (j, b) in keys.iter().enumerate() {
+    fn keys_follow_numeric_equality_across_operations() {
+        // Each key with the group of keys that `==` finds the same.
+        let keys = [
+            ("1", 0),
+            ("1.0", 0),
+            ("prob(1)", 0),
+            ("complex(1)", 0),
+            ("2", 1),
+            ("[1]", 2),
+            ("[1.0]", 2),
+            ("{x:1}", 3),
+            ("{x:1.0}", 3),
+        ];
+        for (a, i) in keys {
+            for (b, j) in keys {
                 let same = i == j;
                 facts(
                     MODE,
@@ -106,28 +117,31 @@ both_modes! {
                 );
             }
         }
-        rejects(MODE, "let m=[1:99]; report m[1.0]", "isn't in the map");
-        rejects(MODE, "let b=bag([1]); report remove(b,1.0)", "isn't in the bag");
-        facts(MODE, "let m=[1:10,1.0:20]; report m[1]==10 and m[1.0]==20");
+        rejects(MODE, "let m=[1:99]; report m[1.5]", "isn't in the map");
+        rejects(MODE, "let b=bag([1]); report remove(b,1.5)", "isn't in the bag");
         facts(
             MODE,
-            "report 1==1.0 and [1].contains(1.0) and [1]!=[1.0] and {x:1}!={x:1.0}",
+            "let m=[1:10,1.0:20]; report m[1]==20 and m[1.0]==20 and len(m)==1 and typeof m==\"map[int, int]\"",
+        );
+        facts(
+            MODE,
+            "report 1==1.0 and [1].contains(1.0) and [1]==[1.0] and {x:1}=={x:1.0}",
         );
     }
 
     #[test]
-    fn typed_pmf_partitions_support_and_equality_queries_remain_explicit() {
+    fn pmf_and_support_follow_numeric_equality() {
         for population in ["xs", "one_of(xs)"] {
             facts(
                 MODE,
                 &format!(
                     r#"
-                let xs=[1,1.0,prob(1),complex(1)]
+                let xs=[1,1.0,prob(1),complex(1),2.0]
                 let d={population}
-                report len(support(d))==4
-                report support(d).map(x->pmf(d,x))==[prob(25%),prob(25%),prob(25%),prob(25%)]
+                report support(d)==[1,2.0] and typeof support(d)[0]=="int"
+                report support(d).map(x->pmf(d,x))==[prob(80%),prob(20%)]
                 report sum(support(d).map(x->pmf(d,x)))==1
-                report P(one_of(xs)==1)==100%
+                report P(one_of(xs)==1)==80%
             "#
                 ),
             );
@@ -136,13 +150,13 @@ both_modes! {
             MODE,
             r#"
             let d=one_of([1,1.0,prob(1),complex(1),uniform(0,2)])
-            report pmf(d,1)==20% and pmf(d,1.0)==20% and pmf(d,prob(1))==20% and pmf(d,complex(1))==20%
+            report pmf(d,1)==80% and pmf(d,1.0)==80% and pmf(d,prob(1))==80% and pmf(d,complex(1))==80%
             report pmf(d,"1")==0% and pmf(uniform(0,2),1)==0%
             let huge=2^100
             let e=one_of([huge,huge+1,uniform(0,1)])
             report pmf(e,huge)==prob(1/3) and pmf(e,huge+1)==prob(1/3)
             let nested=one_of([[1],[1.0],{x:1},{x:1.0}])
-            report pmf(nested,[1])==25% and pmf(nested,{x:1.0})==25%
+            report pmf(nested,[1])==50% and pmf(nested,{x:1.0})==50%
         "#,
         );
     }

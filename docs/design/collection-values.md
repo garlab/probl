@@ -83,7 +83,7 @@ A method that changes a collection updates its place directly, as element assign
 2. **Different hashes, both already computed:** not equal, in constant time. Hashes are computed when worlds merge, and a collection keeps its hash until it changes. `==` doesn't compute one, since that costs as much as comparing.
 3. **Otherwise:** it compares the lengths, then the elements in order, stopping at the first difference. Two equal collections in separate allocations always take a full pass, recursively for nested collections.
 
-Equality inside collections is typed, as the [reference semantics](../semantics.md#1-values-and-types) specifies. `1 == 1.0` is true, but `[1] == [1.0]` and `[50%] == [prob(0.5)]` are false. `[1].contains(1.0)` is true. The [annotations proposal](annotations-and-unions.md#numbers-compare-by-value) would compare numbers by value inside collections too.
+Equality inside collections compares numbers by value, as the [reference semantics](../semantics.md#1-values-and-types) specifies: `[1] == [1.0]` and `[50%] == [prob(0.5)]`, as `1 == 1.0`. Collections' hashes agree with it, so different hashes still prove two collections differ. This was [step 1 of the annotations proposal](annotations-and-unions.md#numbers-compare-by-value); equality inside collections was typed before it.
 
 ### Comparisons aren't counted as work
 

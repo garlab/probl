@@ -2,9 +2,11 @@
 //!
 //! Values have value semantics: collections are shared through `Arc` and
 //! copied on write, so forking a world is cheap and worlds never affect each
-//! other. Equality and hashing are *structural* (they decide which worlds
-//! merge); the language's `==` lives in [`crate::ops`] and compares numbers
-//! across types.
+//! other. Equality is *structural* and typed: it decides which worlds merge,
+//! so `1` and `1.0` stay apart. The language's `==` compares numbers by
+//! value at any depth ([`same`]), and map keys and bag items follow it: the
+//! order puts values it finds the same next to each other, and the hash
+//! agrees with it.
 
 use crate::complex::Complex;
 use crate::continuous::Family;
@@ -198,9 +200,19 @@ impl Multiset {
     pub(crate) fn capacity(&self) -> usize {
         self.entries.capacity()
     }
-    /// From counts, leaving out zeros.
+    /// From counts, leaving out zeros. No two items may be the same, as
+    /// `1` and `1.0` are: [`add_count`] keeps them one.
     pub fn new(counts: BTreeMap<Value, u64>) -> Multiset {
-        let entries: Vec<(Value, u64)> = counts.into_iter().filter(|(_, n)| *n > 0).collect();
+        Multiset::from_sorted(counts.into_iter().filter(|(_, n)| *n > 0).collect())
+    }
+
+    /// From counts sorted by item, none of them zero.
+    fn from_sorted(entries: Vec<(Value, u64)>) -> Multiset {
+        debug_assert!(entries.windows(2).all(|w| w[0].0 < w[1].0 && w[0].1 > 0));
+        debug_assert!(
+            entries.windows(2).all(|w| !same(&w[0].0, &w[1].0)),
+            "a bag with two items that are the same"
+        );
         let sum = entries
             .iter()
             .fold(0u64, |sum, (v, n)| sum.wrapping_add(entry_hash(v, *n)));
@@ -223,10 +235,26 @@ impl Multiset {
         self.entries.iter().map(|(_, n)| n)
     }
 
+    /// Where the item that's the same as `v` is, if the bag has one: `1` and
+    /// `1.0` are one item. Items the same as `v` sort next to it.
+    fn position(&self, v: &Value) -> Option<usize> {
+        let i = match self.entries.binary_search_by(|(k, _)| k.cmp(v)) {
+            Ok(i) => return Some(i),
+            Err(i) => i,
+        };
+        let is = |j: usize| self.entries.get(j).is_some_and(|(k, _)| same(k, v));
+        if is(i) {
+            return Some(i);
+        }
+        if !kinds_matter(v) || ints_only(v) {
+            return None;
+        }
+        i.checked_sub(1).filter(|&j| is(j))
+    }
+
     /// How many times `v` is in the bag, if it is.
     pub fn get(&self, v: &Value) -> Option<&u64> {
-        let i = self.entries.binary_search_by(|(k, _)| k.cmp(v)).ok()?;
-        Some(&self.entries[i].1)
+        Some(&self.entries[self.position(v)?].1)
     }
 
     /// The bag without one of its `i`-th distinct value.
@@ -245,8 +273,7 @@ impl Multiset {
 
     /// The bag without one `v`, if it has one.
     pub fn without(&self, v: &Value) -> Option<Multiset> {
-        let i = self.entries.binary_search_by(|(k, _)| k.cmp(v)).ok()?;
-        Some(self.without_nth(i))
+        Some(self.without_nth(self.position(v)?))
     }
 }
 
@@ -351,7 +378,13 @@ impl Value {
         Value::List(Arc::new(Hashed::new(items)))
     }
 
+    /// No two keys may be the same, as `1` and `1.0` are: [`insert_key`]
+    /// keeps them one.
     pub fn map(entries: BTreeMap<Value, Value>) -> Value {
+        debug_assert!(
+            entries.keys().zip(entries.keys().skip(1)).all(|(a, b)| !same(a, b)),
+            "a map with two keys that are the same"
+        );
         Value::Map(Arc::new(Hashed::new(entries)))
     }
 
@@ -492,7 +525,7 @@ impl Value {
             Value::Dead => 0,
             Value::Unit => 1,
             Value::Bool(_) => 2,
-            Value::Int(_) | Value::Float(_) | Value::Prob(_) => 3,
+            Value::Int(_) | Value::Float(_) | Value::Prob(_) | Value::Complex(_) => 3,
             Value::Str(_) => 4,
             Value::Date(_) => 5,
             Value::Enum(_) => 6,
@@ -506,7 +539,6 @@ impl Value {
             Value::Builtin(_) => 19,
             Value::Continuous(_) => 14,
             Value::Delayed(_) => 15,
-            Value::Complex(_) => 16,
             Value::Analytic(_) => 17,
             Value::Event(_) => 18,
             Value::Counts(_) => 20,
@@ -515,13 +547,134 @@ impl Value {
         }
     }
 
+    /// Order of the number kinds, among numbers that are equal: an int, a
+    /// probability, a float, then a complex number. `support` keeps the
+    /// first of them.
     fn number_rank(&self) -> u8 {
         match self {
             Value::Int(_) => 0,
-            Value::Float(_) => 1,
-            _ => 2,
+            Value::Prob(_) => 1,
+            Value::Float(_) => 2,
+            _ => 3,
         }
     }
+}
+
+/// Whether a value's kinds can tell it apart from one the language sees as
+/// the same: a number, or something that can hold one.
+pub(crate) fn kinds_matter(v: &Value) -> bool {
+    matches!(
+        v,
+        Value::Int(_)
+            | Value::Float(_)
+            | Value::Prob(_)
+            | Value::Complex(_)
+            | Value::List(_)
+            | Value::Map(_)
+            | Value::Bag(_)
+            | Value::Record(_)
+    )
+}
+
+/// Whether the language sees two values as the same, as `==` does: numbers
+/// by value, at any depth, whatever their kinds. `[1] == [1.0]`, and `1`
+/// and `1.0` are one map key.
+pub fn same(a: &Value, b: &Value) -> bool {
+    a.order(b).0.is_eq()
+}
+
+/// Whether every number in `v` is an int. Ints come first among numbers
+/// that are equal, so `v` then sorts first among the values the language
+/// sees as the same as it: only the next key can be one.
+fn ints_only(v: &Value) -> bool {
+    match v {
+        Value::Float(_) | Value::Prob(_) | Value::Complex(_) => false,
+        Value::List(xs) => xs.iter().all(ints_only),
+        Value::Map(m) => m.iter().all(|(k, v)| ints_only(k) && ints_only(v)),
+        Value::Bag(b) => b.keys().all(ints_only),
+        Value::Record(r) => r.fields.iter().all(|(_, v)| ints_only(v)),
+        _ => true,
+    }
+}
+
+/// The key in `m` that's the same as `k`, if there is one. Keys the same
+/// as `k` sort next to it, and a map has at most one.
+pub fn key_in<'a, V>(m: &'a BTreeMap<Value, V>, k: &Value) -> Option<&'a Value> {
+    if let Some((key, _)) = m.range(k..).next().filter(|(key, _)| same(key, k)) {
+        return Some(key);
+    }
+    if !kinds_matter(k) || ints_only(k) {
+        return None;
+    }
+    m.range(..k).next_back().map(|(key, _)| key).filter(|key| same(key, k))
+}
+
+/// The value at the key that's the same as `k`.
+pub fn get_key<'a, V>(m: &'a BTreeMap<Value, V>, k: &Value) -> Option<&'a V> {
+    m.get(key_in(m, k)?)
+}
+
+pub fn get_key_mut<'a, V>(m: &'a mut BTreeMap<Value, V>, k: &Value) -> Option<&'a mut V> {
+    let key = key_in(m, k)?.clone();
+    m.get_mut(&key)
+}
+
+/// Sets the value at `k`. A key that's the same as `k` already there stays,
+/// as it does when a literal repeats a key: `[1: "a", 1.0: "b"]` is
+/// `[1: "b"]`.
+pub fn insert_key<V>(m: &mut BTreeMap<Value, V>, k: Value, v: V) -> Option<V> {
+    match get_key_mut(m, &k) {
+        Some(slot) => Some(std::mem::replace(slot, v)),
+        None => m.insert(k, v),
+    }
+}
+
+pub fn remove_key<V>(m: &mut BTreeMap<Value, V>, k: &Value) -> Option<V> {
+    let key = key_in(m, k)?.clone();
+    m.remove(&key)
+}
+
+/// A bag of `items`, in order: an item the same as one before it, like
+/// `1.0` after `1`, counts as that one. The items are sorted, which puts
+/// those the language sees as the same together, and then counted.
+pub fn count_items<'a>(items: impl Iterator<Item = &'a Value>) -> Multiset {
+    let mut sorted: Vec<(&Value, usize)> = items.enumerate().map(|(i, v)| (v, i)).collect();
+    sorted.sort_by(|a, b| a.0.cmp(b.0));
+    let mut entries: Vec<(Value, u64)> = Vec::new();
+    // The item that came first among those the same as each other, where
+    // it came, and how many there are.
+    let mut run: Option<(&Value, usize, u64)> = None;
+    for (v, i) in sorted {
+        match &mut run {
+            Some((first, at, total)) if same(first, v) => {
+                if i < *at {
+                    (*first, *at) = (v, i);
+                }
+                *total += 1;
+            }
+            _ => {
+                if let Some((first, _, total)) = run.replace((v, i, 1)) {
+                    entries.push((first.clone(), total));
+                }
+            }
+        }
+    }
+    if let Some((first, _, total)) = run {
+        entries.push((first.clone(), total));
+    }
+    Multiset::from_sorted(entries)
+}
+
+/// Adds `n` of `item` to a bag's counts, as the item already there if one
+/// is the same: `bag([1, 1.0])` holds two of `1`.
+pub fn add_count(counts: &mut BTreeMap<Value, u64>, item: Value, n: u64) -> Option<()> {
+    match get_key_mut(counts, &item) {
+        Some(count) => *count = count.checked_add(n)?,
+        None => {
+            counts.insert(item, n);
+        }
+    }
+    Some(())
 }
 
 fn plural_kind(kind: &str) -> String {
@@ -597,9 +750,9 @@ fn eq_other(x: &Value, y: &Value) -> bool {
 
 impl Eq for Value {}
 
-/// `a == b`, counting a unit of work for each pair of elements of
-/// collections it compares, which `==` can't: it has no budget. It takes
-/// the same shortcuts.
+/// [`same`], counting a unit of work for each pair of elements of
+/// collections it compares, and taking `Value`'s `==` shortcuts: hashes
+/// agree with both.
 pub fn eq_counted(a: &Value, b: &Value, budget: &mut crate::dist::Budget) -> crate::error::OpResult<bool> {
     // Different hashes, both known, decide it, as `Hashed`'s `==` does.
     fn differ<T>(x: &Hashed<T>, y: &Hashed<T>) -> bool {
@@ -609,7 +762,7 @@ pub fn eq_counted(a: &Value, b: &Value, budget: &mut crate::dist::Budget) -> cra
     fn same(p: &Value, q: &Value, budget: &mut crate::dist::Budget) -> crate::error::OpResult<bool> {
         match p {
             Value::List(_) | Value::Map(_) | Value::Bag(_) | Value::Record(_) => eq_counted(p, q, budget),
-            _ => Ok(p == q),
+            _ => Ok(crate::value::same(p, q)),
         }
     }
     // Elements are counted as they're compared, then charged together: a
@@ -677,32 +830,63 @@ pub fn eq_counted(a: &Value, b: &Value, budget: &mut crate::dist::Budget) -> cra
                 }
             }
         }
-        _ => return Ok(a == b),
+        _ => return Ok(crate::value::same(a, b)),
     }
     budget.work(compared)?;
     Ok(equal)
 }
 
+/// What a number's hash starts with, whatever its kind.
+const NUMBER: u8 = u8::MAX;
+
 impl Hash for Value {
-    /// Like equality: small values inlined, the rest out of line.
+    /// Like equality: small values inlined, the rest out of line. Numbers
+    /// the language sees as the same, like `1`, `1.0` and `complex(1, 0)`,
+    /// hash alike, and so do values that hold them: different hashes then
+    /// tell `==` that two collections differ, as they tell `Value`'s.
     #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
-        std::mem::discriminant(self).hash(state);
         match self {
-            Value::Dead | Value::Unit => {}
-            Value::Bool(b) => b.hash(state),
-            Value::Int(i) => i.hash(state),
+            Value::Int(i) => {
+                NUMBER.hash(state);
+                i.hash(state);
+            }
+            Value::Dead | Value::Unit => std::mem::discriminant(self).hash(state),
+            Value::Bool(b) => {
+                std::mem::discriminant(self).hash(state);
+                b.hash(state);
+            }
             other => hash_other(other, state),
         }
     }
+}
+
+/// A number other than an int: as an int if it's a whole real number.
+fn hash_number<H: Hasher>(re: f64, im: f64, state: &mut H) {
+    NUMBER.hash(state);
+    if float_key(im) != 0 {
+        return (float_key(re), float_key(im)).hash(state);
+    }
+    if re.is_finite() && re.fract() == 0.0 {
+        if let Some(n) = probl_number::Integer::from_f64(re) {
+            return n.hash(state);
+        }
+    }
+    float_key(re).hash(state)
 }
 
 #[inline(never)]
 fn hash_other<H: Hasher>(value: &Value, state: &mut H) {
     match value {
         Value::Dead | Value::Unit | Value::Bool(_) | Value::Int(_) => {}
-        Value::Float(f) | Value::Prob(f) => float_key(*f).hash(state),
-        Value::Complex(z) => (float_key(z.re()), float_key(z.im())).hash(state),
+        Value::Float(f) | Value::Prob(f) => return hash_number(*f, 0.0, state),
+        Value::Complex(z) => return hash_number(z.re(), z.im(), state),
+        _ => {}
+    }
+    std::mem::discriminant(value).hash(state);
+    match value {
+        Value::Dead | Value::Unit | Value::Bool(_) | Value::Int(_) => {}
+        Value::Float(_) | Value::Prob(_) | Value::Complex(_) => {}
         Value::Str(s) => s.hash(state),
         Value::List(items) => items.hash(state),
         Value::Map(m) => m.hash(state),
@@ -744,56 +928,147 @@ impl Ord for Value {
 impl Value {
     #[inline(never)]
     fn cmp_other(&self, other: &Value) -> Ordering {
+        let (by_value, by_kind) = self.order(other);
+        by_value.then(by_kind)
+    }
+
+    /// How two values compare: first as the language sees them, with
+    /// numbers by value at any depth, whatever their kinds; then, between
+    /// values it sees as the same, like `[1]` and `[1.0]`, by those kinds.
+    /// So values the language sees as the same sort next to each other,
+    /// which map keys and bag items rely on, and the order still tells
+    /// apart every two values that `==` on `Value` does.
+    pub(crate) fn order(&self, other: &Value) -> (Ordering, Ordering) {
+        // Elements of collections are mostly scalars of one kind: compare
+        // those here, as `cmp` does, before working out kinds.
+        match (self, other) {
+            (Value::Int(a), Value::Int(b)) => return (a.cmp(b), Ordering::Equal),
+            (Value::Float(a), Value::Float(b)) | (Value::Prob(a), Value::Prob(b)) => {
+                let o = f64::from_bits(float_key(*a)).total_cmp(&f64::from_bits(float_key(*b)));
+                return (o, Ordering::Equal);
+            }
+            (Value::Str(a), Value::Str(b)) => return (a.cmp(b), Ordering::Equal),
+            (Value::Bool(a), Value::Bool(b)) => return (a.cmp(b), Ordering::Equal),
+            (Value::Date(a), Value::Date(b)) => return (a.cmp(b), Ordering::Equal),
+            _ => {}
+        }
         let (ra, rb) = (self.rank(), other.rank());
         if ra != rb {
-            return ra.cmp(&rb);
+            return (ra.cmp(&rb), Ordering::Equal);
         }
+        let by_value = |o: Ordering| (o, Ordering::Equal);
         match (self, other) {
-            (Value::Int(a), Value::Int(b)) => a.cmp(b),
-            (Value::Int(a), Value::Float(b) | Value::Prob(b)) => a
-                .cmp_f64(*b)
-                .unwrap_or(Ordering::Less)
-                .then_with(|| self.number_rank().cmp(&other.number_rank())),
-            (Value::Float(a) | Value::Prob(a), Value::Int(b)) => b
-                .cmp_f64(*a)
-                .unwrap_or(Ordering::Less)
-                .reverse()
-                .then_with(|| self.number_rank().cmp(&other.number_rank())),
-            (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
-            (a, b) if ra == 3 => {
-                // Numbers compare by value, then by kind so the order stays total.
-                let (x, y) = (a.as_f64().unwrap(), b.as_f64().unwrap());
-                f64::from_bits(float_key(x))
-                    .total_cmp(&f64::from_bits(float_key(y)))
-                    .then_with(|| a.number_rank().cmp(&b.number_rank()))
-                    .then_with(|| float_key(x).cmp(&float_key(y)))
+            (a, b) if ra == 3 => (number_order(a, b), a.number_rank().cmp(&b.number_rank())),
+            (Value::List(a), Value::List(b)) => {
+                if Arc::ptr_eq(a, b) {
+                    return (Ordering::Equal, Ordering::Equal);
+                }
+                in_order(a.iter().zip(b.iter()).map(|(p, q)| p.order(q)), a.len().cmp(&b.len()))
             }
-            (Value::Str(a), Value::Str(b)) => a.cmp(b),
-            (Value::Date(a), Value::Date(b)) => a.cmp(b),
-            // Storage order only; the language's comparison operators reject
-            // complex values. Components are finite with canonical zeros.
-            (Value::Complex(a), Value::Complex(b)) => a.re().total_cmp(&b.re()).then(a.im().total_cmp(&b.im())),
-            (Value::Enum(a), Value::Enum(b)) => (a.ty, a.variant).cmp(&(b.ty, b.variant)),
-            (Value::List(a), Value::List(b)) => a.cmp(b),
-            (Value::Range(a, b), Value::Range(c, d)) => (a, b).cmp(&(c, d)),
-            (Value::Map(a), Value::Map(b)) => a.cmp(b),
-            (Value::Bag(a), Value::Bag(b)) => a.cmp(b),
-            (Value::Record(a), Value::Record(b)) => a.cmp(b),
-            (Value::Dist(a), Value::Dist(b)) => a.cmp(b),
-            (Value::Closure(a), Value::Closure(b)) => a.cmp(b),
-            (Value::Builtin(a), Value::Builtin(b)) => a.cmp(b),
-            (Value::Continuous(a), Value::Continuous(b)) => family_key(a).cmp(&family_key(b)),
-            (Value::MultivariateNormal(a), Value::MultivariateNormal(b)) => a.identity().cmp(b.identity()),
-            (Value::Analytic(a), Value::Analytic(b)) => a.key().cmp(&b.key()),
-            (Value::Event(a), Value::Event(b)) => a.key().cmp(&b.key()),
-            (Value::Counts(a), Value::Counts(b)) => a.key().cmp(&b.key()),
-            (Value::Joint(a), Value::Joint(b)) => a.cmp(b),
+            (Value::Map(a), Value::Map(b)) => {
+                if Arc::ptr_eq(a, b) {
+                    return (Ordering::Equal, Ordering::Equal);
+                }
+                in_order(
+                    a.iter()
+                        .zip(b.iter())
+                        .map(|((k, v), (l, u))| then(k.order(l), || v.order(u))),
+                    a.len().cmp(&b.len()),
+                )
+            }
+            (Value::Bag(a), Value::Bag(b)) => {
+                if Arc::ptr_eq(a, b) {
+                    return (Ordering::Equal, Ordering::Equal);
+                }
+                in_order(
+                    a.entries
+                        .iter()
+                        .zip(b.entries.iter())
+                        .map(|((v, n), (u, m))| then(v.order(u), || by_value(n.cmp(m)))),
+                    a.entries.len().cmp(&b.entries.len()),
+                )
+            }
+            (Value::Record(a), Value::Record(b)) => {
+                if Arc::ptr_eq(a, b) {
+                    return (Ordering::Equal, Ordering::Equal);
+                }
+                then(by_value(a.ty.cmp(&b.ty)), || {
+                    in_order(
+                        a.fields
+                            .iter()
+                            .zip(b.fields.iter())
+                            .map(|((n, v), (m, u))| then(by_value(n.cmp(m)), || v.order(u))),
+                        a.fields.len().cmp(&b.fields.len()),
+                    )
+                })
+            }
+            (Value::Bool(a), Value::Bool(b)) => by_value(a.cmp(b)),
+            (Value::Str(a), Value::Str(b)) => by_value(a.cmp(b)),
+            (Value::Date(a), Value::Date(b)) => by_value(a.cmp(b)),
+            (Value::Enum(a), Value::Enum(b)) => by_value((a.ty, a.variant).cmp(&(b.ty, b.variant))),
+            (Value::Range(a, b), Value::Range(c, d)) => by_value((a, b).cmp(&(c, d))),
+            (Value::Dist(a), Value::Dist(b)) => by_value(a.cmp(b)),
+            (Value::Closure(a), Value::Closure(b)) => by_value(a.cmp(b)),
+            (Value::Builtin(a), Value::Builtin(b)) => by_value(a.cmp(b)),
+            (Value::Continuous(a), Value::Continuous(b)) => by_value(family_key(a).cmp(&family_key(b))),
+            (Value::MultivariateNormal(a), Value::MultivariateNormal(b)) => by_value(a.identity().cmp(b.identity())),
+            (Value::Analytic(a), Value::Analytic(b)) => by_value(a.key().cmp(&b.key())),
+            (Value::Event(a), Value::Event(b)) => by_value(a.key().cmp(&b.key())),
+            (Value::Counts(a), Value::Counts(b)) => by_value(a.key().cmp(&b.key())),
+            (Value::Joint(a), Value::Joint(b)) => by_value(a.cmp(b)),
             (Value::Delayed(a), Value::Delayed(b)) => {
-                (a.variable, family_key(&a.family)).cmp(&(b.variable, family_key(&b.family)))
+                by_value((a.variable, family_key(&a.family)).cmp(&(b.variable, family_key(&b.family))))
             }
-            _ => Ordering::Equal,
+            _ => (Ordering::Equal, Ordering::Equal),
         }
     }
+}
+
+/// Two numbers by value, whatever their kinds: their real parts, then their
+/// imaginary parts, which are 0 for an int, a float or a probability. The
+/// language's comparison operators reject complex values; this is storage
+/// order. Components are finite with canonical zeros.
+fn number_order(a: &Value, b: &Value) -> Ordering {
+    fn parts(v: &Value) -> (f64, f64) {
+        match v {
+            Value::Float(x) | Value::Prob(x) => (f64::from_bits(float_key(*x)), 0.0),
+            Value::Complex(z) => (z.re(), z.im()),
+            _ => (0.0, 0.0),
+        }
+    }
+    let re = match (a, b) {
+        (Value::Int(x), Value::Int(y)) => x.cmp(y),
+        (Value::Int(x), _) => x.cmp_f64(parts(b).0).unwrap_or(Ordering::Less),
+        (_, Value::Int(y)) => y.cmp_f64(parts(a).0).unwrap_or(Ordering::Less).reverse(),
+        _ => parts(a).0.total_cmp(&parts(b).0),
+    };
+    re.then_with(|| parts(a).1.total_cmp(&parts(b).1))
+}
+
+/// `a`, or `b` if `a` sees two values as the same.
+fn then(a: (Ordering, Ordering), b: impl FnOnce() -> (Ordering, Ordering)) -> (Ordering, Ordering) {
+    if a.0.is_ne() {
+        return a;
+    }
+    let b = b();
+    (b.0, if b.0.is_eq() { a.1.then(b.1) } else { Ordering::Equal })
+}
+
+/// Sequences in lexicographic order, then by length: the first part that
+/// differs in value decides, and between sequences the language sees as the
+/// same, the first that differs in kind.
+fn in_order(parts: impl Iterator<Item = (Ordering, Ordering)>, lengths: Ordering) -> (Ordering, Ordering) {
+    let mut by_kind = Ordering::Equal;
+    for (v, k) in parts {
+        if v.is_ne() {
+            return (v, Ordering::Equal);
+        }
+        by_kind = by_kind.then(k);
+    }
+    if lengths.is_ne() {
+        return (lengths, Ordering::Equal);
+    }
+    (Ordering::Equal, by_kind)
 }
 
 impl PartialOrd for Value {
@@ -997,6 +1272,110 @@ mod tests {
                 assert_eq!(a.cmp(b).is_eq(), a == b);
             }
         }
+    }
+
+    fn hash_of(v: &Value) -> u64 {
+        let mut hasher = FxHasher::default();
+        v.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn values_the_language_sees_as_the_same_sort_together_and_hash_alike() {
+        let int = |n: i64| Value::Int(n.into());
+        let complex = |re: f64, im: f64| Value::Complex(Complex::new(re, im).unwrap());
+        let list = |xs: Vec<Value>| Value::list(xs);
+        let record = |x: Value| {
+            Value::record(Record {
+                ty: None,
+                fields: vec![(Arc::from("x"), x)],
+            })
+        };
+        let map = |k: Value, v: Value| Value::map([(k, v)].into_iter().collect());
+        let big = probl_number::Integer::from_f64(2f64.powi(60)).unwrap();
+        let values = vec![
+            int(1),
+            Value::Float(1.0),
+            Value::Prob(1.0),
+            complex(1.0, 0.0),
+            complex(1.0, 1.0),
+            int(2),
+            Value::Float(2.0),
+            Value::Float(-0.0),
+            int(0),
+            Value::Float(0.5),
+            Value::Prob(0.5),
+            Value::Int(big.clone()),
+            Value::Int(big.add(&probl_number::Integer::ONE).unwrap()),
+            Value::Float(2f64.powi(60)),
+            Value::str("1"),
+            list(vec![int(1)]),
+            list(vec![Value::Float(1.0)]),
+            list(vec![int(1), int(5)]),
+            list(vec![Value::Float(1.0), int(2)]),
+            list(vec![Value::Float(1.0), Value::Float(5.0)]),
+            list(vec![int(1), int(2), int(3)]),
+            list(vec![]),
+            record(int(1)),
+            record(Value::Float(1.0)),
+            map(int(1), Value::str("a")),
+            map(Value::Float(1.0), Value::str("a")),
+            map(int(1), Value::str("b")),
+            Value::bag([(int(1), 2)].into_iter().collect()),
+            Value::bag([(Value::Float(1.0), 2)].into_iter().collect()),
+        ];
+        for a in &values {
+            for b in &values {
+                // The order tells apart what `Value`'s `==` does, and is antisymmetric.
+                assert_eq!(a.cmp(b).is_eq(), a == b, "{a:?} {b:?}");
+                assert_eq!(a.cmp(b), b.cmp(a).reverse(), "{a:?} {b:?}");
+                assert_eq!(same(a, b), a.order(b).0.is_eq(), "{a:?} {b:?}");
+                if same(a, b) {
+                    assert_eq!(hash_of(a), hash_of(b), "{a:?} {b:?}");
+                }
+            }
+        }
+        assert!(same(&values[0], &values[3]) && !same(&values[0], &values[4]));
+        assert!(same(&values[15], &values[16]) && same(&values[17], &values[19]));
+        assert!(!same(&values[11], &values[12]) && same(&values[11], &values[13]));
+        // Sorted, the values the language sees as the same are next to each other.
+        let mut sorted = values.clone();
+        sorted.sort();
+        for (i, a) in sorted.iter().enumerate() {
+            let group: Vec<usize> = (0..sorted.len()).filter(|&j| same(a, &sorted[j])).collect();
+            assert_eq!(group, (group[0]..=group[group.len() - 1]).collect::<Vec<_>>(), "{a:?}");
+            assert!(group.contains(&i));
+        }
+        // Lookups find a key or an item by any value that's the same.
+        let keys: BTreeMap<Value, Value> = [
+            (list(vec![int(1), int(5)]), Value::str("a")),
+            (list(vec![Value::Float(1.0), int(2)]), Value::str("b")),
+            (int(7), Value::str("c")),
+        ]
+        .into_iter()
+        .collect();
+        let found = |k: Value| get_key(&keys, &k).cloned();
+        assert_eq!(
+            found(list(vec![Value::Float(1.0), Value::Float(5.0)])),
+            Some(Value::str("a"))
+        );
+        assert_eq!(found(list(vec![int(1), Value::Prob(1.0)])), None);
+        assert_eq!(found(list(vec![int(1), int(2)])), Some(Value::str("b")));
+        assert_eq!(found(complex(7.0, 0.0)), Some(Value::str("c")));
+        let mut m = keys.clone();
+        insert_key(&mut m, Value::Float(7.0), Value::str("d"));
+        assert_eq!(m.len(), 3);
+        assert_eq!(m.get(&int(7)), Some(&Value::str("d")));
+        assert_eq!(remove_key(&mut m, &Value::Prob(7.0)), Some(Value::str("d")));
+        let mut counts = BTreeMap::new();
+        for item in [Value::Float(1.0), int(1), Value::Prob(1.0), int(2)] {
+            add_count(&mut counts, item, 1).unwrap();
+        }
+        let b = Multiset::new(counts);
+        assert_eq!(b.distinct_len(), 2);
+        assert_eq!(b.get(&complex(1.0, 0.0)), Some(&3));
+        assert!(b.keys().next().is_some_and(|k| matches!(k, Value::Float(_))));
+        assert_eq!(b.without(&Value::Float(2.0)).map(|b| b.distinct_len()), Some(1));
     }
 
     fn bag(counts: &[(i64, u64)]) -> Multiset {

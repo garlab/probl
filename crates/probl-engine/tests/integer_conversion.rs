@@ -110,13 +110,21 @@ both_modes! {
             report abs(pmf(d, 1) - 2/3) < 1e-15
         "#,
         );
-        for source in [
-            "let m: map[int,str] = [1: \"a\", 1.0: \"b\"]; report m",
-            "let raw = [1: \"a\", 1.0: \"b\"]; let m: map[int,str] = raw; report m",
-            "let raw = [[1]: \"a\", [1.0]: \"b\"]; let m: map[list[int],str] = raw; report m",
-        ] {
-            rejects(MODE, source, "collision");
-        }
+        // Keys that are the same number are one key, the first written, with
+        // the last value, so converting them can't collide.
+        facts(
+            MODE,
+            r#"
+            let m: map[int,str] = [1: "a", 1.0: "b"]
+            report m == [1: "b"] and typeof m == "map[int, str]"
+            let raw = [1.0: "a", 1: "b"]
+            let n: map[int,str] = raw
+            report typeof raw == "map[float, str]" and n == [1: "b"] and typeof n == "map[int, str]"
+            let lists = [[1]: "a", [1.0]: "b"]
+            let l: map[list[int],str] = lists
+            report len(l) == 1 and l[[1]] == "b" and typeof l == "map[list[int], str]"
+        "#,
+        );
     }
 
     #[test]

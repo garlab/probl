@@ -132,10 +132,6 @@ fn declared_types_check_what_goes_in() {
             "`xs` should be a list[list[int]], but it's a list[list[str]]",
         ),
         (
-            "var m: map[int, str] = [2: \"a\"]\nm.insert(2.0, \"b\")",
-            "map key collision during type conversion",
-        ),
-        (
             "var ps: list[prob] = []\nlet h = 1.5\nps.push(h)",
             "prob needs a finite number between 0 and 1",
         ),

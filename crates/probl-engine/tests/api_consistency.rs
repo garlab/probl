@@ -164,17 +164,27 @@ both_modes! {
     }
 
     #[test]
-    fn map_key_conversion_rejects_collisions() {
-        for source in [
-            "let original=[1: \"int\", 1.0: \"float\"]; let typed: map[prob,str]=original; report typed",
-            "let original=[prob(0.5): \"prob\", 0.5: \"float\"]; let typed: map[float,str]=original; report typed",
-            "let typed: map[prob,str]=[1: \"int\", 1.0: \"float\"]; report typed",
-        ] {
-            // The exact wording is not specified yet, but the failure must be
-            // a language error, not a panic, a limit, or silent data loss.
-            let e = run(MODE, source).expect_err("colliding keys must not lose a value");
-            assert_eq!(e.kind, ErrorKind::Language, "{e:?}");
-        }
+    fn map_keys_that_are_the_same_number_are_one_key() {
+        // A repeated key keeps the key first written and the value last
+        // written, whatever the number's kind, so converting the keys of a
+        // declared map can't make two of them collide.
+        assert_eq!(
+            values(
+                MODE,
+                "let m=[1: \"int\", 1.0: \"float\"]; report typeof m; report len(m); report m[1.0]; \
+                 let typed: map[prob,str]=m; report len(typed); report typed[1]; \
+                 let n=[prob(0.5): \"prob\", 0.5: \"float\"]; report typeof n; report n[0.5]"
+            ),
+            vec![
+                Value::str("map[int, str]"),
+                Value::Int(1.into()),
+                Value::str("float"),
+                Value::Int(1.into()),
+                Value::str("float"),
+                Value::str("map[prob, str]"),
+                Value::str("float"),
+            ]
+        );
     }
 
     #[test]
@@ -264,11 +274,13 @@ both_modes! {
     }
 
     #[test]
-    fn numeric_equality_events_are_distinct_from_typed_pmf() {
-        // Numeric equality and list membership remain explicit value searches.
+    fn pmf_agrees_with_numeric_equality() {
+        // `pmf` adds up the outcomes equal to its argument, as `==` finds
+        // them, and `support` lists each number once, so `pmf` over it adds
+        // up to 1.
         truth(
             MODE,
-            "report 1 == 1.0 and contains([1],1.0) and pmf([1,2],1.0) == 0% and P(one_of([1,1.0]) == 1) == 100%",
+            "report 1 == 1.0 and contains([1],1.0) and pmf([1,2],1.0) == 50% and pmf(one_of([1,1.0]),1) == 100% and P(one_of([1,1.0]) == 1) == 100% and support(one_of([1.0,1,2])) == [1,2] and pmf(geometric(0.5),2.0) == pmf(geometric(0.5),2) and pmf(0..4,2.0) == 20%",
         );
     }
 
@@ -281,14 +293,33 @@ both_modes! {
     }
 
     #[test]
-    fn container_equality_preserves_typed_contents() {
-        // Container equality deliberately preserves typed contents.
+    fn updates_follow_numeric_equality_and_worlds_keep_number_kinds() {
+        truth(
+            MODE,
+            "var m=[1: \"a\"]; m[1.0]=\"b\"; m.insert(prob(1), \"c\"); \
+             var n=[[1]: [1]]; n[[1.0]].push(2); var k=[1: 0, 2: 0]; k.remove(2.0); \
+             report m==[1: \"c\"] and typeof m==\"map[int, str]\" and n==[[1]: [1, 2]] and k==[1: 0]",
+        );
+        // `typeof` still tells the worlds apart: they don't merge.
+        let outcome = run(MODE, "let x = if 50% { 1 } else { 1.0 }\nreport typeof x").unwrap();
+        let kinds: Vec<Value> = outcome.reports[0].distribution().into_iter().map(|(v, _)| v).collect();
+        assert_eq!(kinds, vec![Value::str("float"), Value::str("int")]);
+    }
+
+    #[test]
+    fn container_equality_compares_numbers_by_value() {
+        // Inside a collection, numbers compare by value as they do outside
+        // one, at any depth, and keys and bag items follow `==`.
         assert_eq!(
             values(
                 MODE,
-                "report [1]==[1.0]; report {x:1}=={x:1.0}; report contains([[1]],[1.0])"
+                "report [1]==[1.0]; report {x:1}=={x:1.0}; report contains([[1]],[1.0]); \
+                 report [[1]: \"a\"]==[[1.0]: \"a\"]; report bag([1,1.0])==bag([1,1]); \
+                 report [1]==[complex(1,0)]; report [50%]==[prob(0.5)]; \
+                 report [2^60+1]!=[2.0^60]; report [[1, 2]: \"a\"][[1.0, 2.0]]==\"a\"; \
+                 report contains([1.0: \"a\"],1) and contains(bag([1]),1.0)"
             ),
-            vec![Value::Bool(false); 3]
+            vec![Value::Bool(true); 10]
         );
     }
 
