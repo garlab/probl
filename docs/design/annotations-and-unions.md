@@ -374,7 +374,7 @@ A collection converts by spreading into another ([building collections](#buildin
 
 ### Building collections
 
-A type's name builds a value from its parts, as `date(2027, 1, 31)` and `complex(1, 2)` do today. A collection's parts are its elements:
+A type's name builds a value from its parts, as `date(2027, 1, 31)` and `complex(1, 2)` do today. `date("2027-01-31")` parses text instead, so it gives way to a date literal, `'2027-01-31'` ([literals](literals.md)). A collection's parts are its elements:
 
 ```probl
 # Proposed.
