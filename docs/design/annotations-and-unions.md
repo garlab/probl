@@ -1,18 +1,18 @@
 # Type annotations: conversions, literals and unions
 
-> Draft proposal, revised 15 October 2026. Nothing here is implemented. Today's behavior is in the [reference semantics](../semantics.md#1-values-and-types). The examples marked as proposed don't run yet. The first draft proposed annotations that only check; [why that changed](#annotations-that-only-check).
+> Draft proposal, revised 25 October 2026. The conversion, literal and union rules below are proposed; completed implementation work is marked in the plan. Today's behavior is in the [reference semantics](../semantics.md#1-values-and-types). The examples marked as proposed don't run yet. The first draft proposed annotations that only check; [why that changed](#annotations-that-only-check).
 
 ## Recommendation
 
 1. **A declared type is the type the value has.** After `let z: float = 1`, `typeof z` is `"float"`. Until the program converts it explicitly, a value given a declared type reports that type, or one of a union's types. For a collection, it reports a type the declaration allows (item 5).
 2. **Close numeric types convert automatically. The type changes, the number doesn't.** An int becomes a float when a float holds the same number, and a probability becomes a float. A number in [0, 1] becomes a probability, as it already does in `if 50%` and `bernoulli(rate)`. Nothing becomes an int automatically. Text, booleans, dates and collections never convert to another kind.
-3. **Literals follow the same rule**, and are checked during compilation. `let z: float = 1` makes a float, and `let y: int = 1.0` is an error before the program runs.
-4. **A collection literal takes its kind from the declared type.** `[1, 2]` is a list unless a set or a bag is declared, or a union with one of them and no list. An existing collection never changes kind automatically: `set(xs)` converts it.
+3. **Literals follow the same rule**, and are checked during compilation when the expected type is known. `let z: float = 1` makes a float, and `let y: int = 1.0` is an error before the program runs. A dynamically selected parameter type is checked when its literal executes.
+4. **A collection literal takes its kind from the declared type.** Its default kind wins if present: list for `[1, 2]`, map for `[1: 2]`. Otherwise exactly one compatible kind must be declared. With `set[int] or bag[int]`, use `set([1, 2])` or `bag([1, 2])`. An existing collection never changes kind automatically: `set(xs)` converts it.
 5. **A collection's `typeof` describes its elements. A declaration limits the variable, not the value.** This is today's rule, kept. After `var c = [1]`, `c.push("bar")` works, and `typeof c` becomes `"list[int or str]"`. For `var b: list[int]`, the same push is an error. An empty list reports `"list[unknown]"`, which fits any declared list.
-6. **Unions, `A or B`.** A value that has one of the types is kept. Otherwise it converts to `float` if it can, then to `prob`. Each step has at most one candidate, so the order of the types doesn't matter. A union has at most one type of each collection kind, so a collection's parts convert in only one way. `typeof` uses unions to describe mixed contents, in place of `any`.
+6. **Unions, `A or B`.** A value that has one of the types is kept. Otherwise it converts to `float` if it can, then to `prob`. Each scalar step has at most one candidate, so the order of the types doesn't matter. Every nested union is checked: at most one alternative per collection or distribution kind, and no overlapping record alternatives. A container's parts then convert recursively. `typeof` uses unions to describe mixed contents, in place of `any`.
 7. **Explicit conversions** cover what doesn't happen automatically: `int(x)`, `float(x)` and `prob(x)`, and `set(xs)`, `list(xs)` and `bag(xs)`.
 
-Two things break. A float no longer becomes an int where an int is declared: `let n: int = 4 / 2` is an error. And an int becomes a float where a float is declared, so `typeof` says `"float"` and it prints as `1.0`. Measured, the first happens only in a playground test program written to test it. The second happens in one documentation example, whose output doesn't change ([measurement](#what-would-break)). `typeof` also describes mixed contents differently: `"list[int or str]"` rather than `"list[any]"`.
+Scalar annotations change in two ways. A float no longer becomes an int where an int is declared: `let n: int = 4 / 2` is an error. And an int becomes a float where a float is declared, so `typeof` says `"float"` and it prints as `1.0`. Measured, the first happens only in a playground test program written to test it. The second happens in one documentation example, whose output doesn't change ([measurement](#what-would-break)). Distribution conversion adds a stricter whole-support check: an unbounded integer law cannot become `dist[float]`, even if its retained outcomes could. `typeof` also describes mixed contents differently: `"list[int or str]"` rather than `"list[any]"`.
 
 ## Requirements
 
@@ -128,19 +128,36 @@ In the other direction, a prob becomes a float wherever a float is declared. So 
 
 ### Distributions
 
-A declared `dist[T]` converts a distribution's outcomes, as `list[T]` converts a list's elements: `let d: dist[float] = d6` has the outcomes 1.0 to 6.0. An outcome converts where it exists, and that depends on the distribution:
+A declared `dist[T]` converts a distribution's outcomes, as `list[T]` converts a list's elements: `let d: dist[float] = d6` has the outcomes 1.0 to 6.0. **Conversion must be valid for the whole support before the declaration succeeds.** Support means the outcomes of the source law, including any tail omitted by enumeration. Retained outcomes, a small tail probability, or successful sample draws are not evidence that every outcome converts.
 
-- **Listed outcomes** convert at the declaration, and one that can't stops the run there. A count law like `poisson(3)` or `geometric(0.5)` is listed up to a tail it cuts off, too small to matter. The tail is never an outcome, when enumerating or sampling, so nothing in it needs to convert.
-- **A count law too broad to list**, like `geometric(1e-16)`, has no outcomes until one is drawn. The declaration keeps the law, with float outcomes. When sampling, each draw converts as it's drawn, and one that no float holds stops the run there, as a failed declaration does. `geometric(1e-16)` draws past 2^53, where floats start skipping integers, four times in ten. Enumerating lists the law, which fails on the outcome limit, with or without the declaration. `mean`, `sd`, `pmf`, `cdf` and the other queries the law answers by formula don't draw, so they give the law's answers, as floats.
-- **An int computed from a continuous draw**, like `floor(x)` when enumerating, converts if every int it can be does: its bounds must be within 2^53 of zero. Otherwise the declaration is an error.
+The engine needs one of these proofs when changing outcome types:
 
-So no conversion lists an infinite support, and the two modes agree where both run: a listed distribution gives both the same outcomes, and a law too broad to list can only be sampled.
+- **Complete finite outcomes:** check each outcome recursively at the declaration. This covers dice and `one_of` over an explicit list. One invalid outcome rejects the declaration, even if its weight is tiny. Exact representability is checked for each integer; `2^60` converts, while `2^60 + 1` does not.
+- **A known law or symbolic support:** use its parameters or a sound support bound, without listing it. Every integer in the inclusive interval `[-2^53, 2^53]` is exactly representable as binary64. This bound suffices for an integer interval; a known singleton outside it can use the scalar exactness check. For the initial implementation, other symbolic integer supports are rejected unless one of these proofs applies. A conversion to `prob` similarly needs proof that the whole numeric support lies in [0, 1]. Already-float outcomes need no integer conversion.
+- **No complete support evidence:** reject the conversion at the declaration with a diagnostic that exact conversion cannot be established. An arbitrary lazy computation, or a partial listing with unresolved mass and no support bound, cannot acquire a new outcome type just by changing `typeof`.
 
-Rejecting every law that could draw an int no float holds would be stricter. But it would reject `geometric(1e-12)`, which draws one with probability e^−9007, and accept `geometric(0.5)`, whose listing cuts that tail off. Whether a law is listed depends on its spread, and a declaration shouldn't.
+For the built-in count laws, this gives an explicit contract:
+
+| Source | Automatic `dist[float]` conversion |
+|---|---|
+| `d6`, `one_of([2^60])` | Accept; all outcomes convert exactly |
+| `one_of([2^60 + 1])` | Reject at the declaration |
+| `binomial(n, p)`, 0 < p < 1 | Accept exactly when n ≤ 2^53; its support is every integer from 0 through n |
+| `binomial(n, 0)` or `binomial(n, 1)` | Check the single outcome, 0 or n, for exact representability |
+| `geometric(1)`, `poisson(0)` | Accept the single outcome, 1 or 0 |
+| `geometric(p)`, 0 < p < 1; `poisson(rate)`, rate > 0 | Reject: their unbounded integer support includes integers binary64 cannot represent |
+
+Thus `let d: dist[float] = geometric(1e-16)` fails at the declaration, before any sampling or support enumeration. So do `geometric(0.5)` and `poisson(3)`, even when the engine can list almost all their mass. This is deliberately stricter than checking only a truncated listing. A law's admissibility must not depend on its spread, the outcome budget, the random seed or the execution mode. Keeping `dist[int]` or `dist[int or float]` needs no outcome conversion and remains valid.
+
+An accepted lazy conversion retains the source law and an outcome-conversion plan. Enumeration applies that plan to each listed outcome; sampling applies the same plan to each draw, including direct-sampling shortcuts. The support proof guarantees that neither path discovers an unrepresentable integer later. Outcome-returning operations, such as `support`, apply the plan too. Numeric queries such as `mean`, `sd`, `pmf` and `cdf` may use the source law's formulas because conversion preserves the numbers; their ordinary floating-point approximation rules stay in force. Resource limits can still prevent enumeration of an admissible law.
+
+The source law or support evidence must survive materialization and conversion. In today's engine, a listed count law retains `Dist.law`; a conversion must consult that law, not just `Dist.outcomes`, and must not discard evidence that a tail exists. Merging worlds or memoizing calls must preserve distinctions that affect support checking or converted outcome types; today's distribution identity ignores `Dist.law`, so this needs an audit too. Unknown unresolved mass cannot be treated as empty support. A finite distribution with no omitted outcomes needs no such law metadata.
+
+Integer-valued symbolic outcomes, such as a retained `floor(x)`, use the same bound or singleton proof before conversion. If the engine instead has an already drawn concrete integer, the scalar rule checks that integer alone. Converting a distribution before a draw promises more than converting the drawn scalar; a successful scalar conversion does not establish that its source distribution is admissible.
 
 ### Literals
 
-A literal is a value like any other, so the same rule gives it its type: `let z: float = 1` makes a float, `let p: prob = 50%` makes a prob, and `let y: int = 1.0` is an error. Literals are checked during compilation, so these are errors before the program runs: `let y: int = 1.0`, `let p: prob = 2`, `let s: str = 1`, and `let x: float = 9007199254740993`, which no float holds.
+A literal is a value like any other, so the same rule gives it its type: `let z: float = 1` makes a float, `let p: prob = 50%` makes a prob, and `let y: int = 1.0` is an error. Literal conversions with a statically known expected type are checked during compilation, so these are errors before the program runs: `let y: int = 1.0`, `let p: prob = 2`, `let s: str = 1`, and `let x: float = 9007199254740993`, which no float holds. With a runtime expected-type reference, the same check occurs when the literal executes.
 
 The rule applies to values when the program runs, so a literal passed through a function value behaves like one passed by name. With `fn f(p: prob)` and `let g = f`, `f(30%)` and `g(30%)` both give `p` a prob.
 
@@ -160,13 +177,51 @@ let u = set(xs)                         # set([1, 2])
 
 An existing collection never changes kind automatically: turning a list into a set drops its order and its duplicates, which changes the value. Within a kind, elements convert as above.
 
-In a union, a literal takes its kind from the union's types that it could be. `[…]` could be a list, a set or a bag, and a union has at most one of each ([unions](#unions)). If the union has a list, or none of the three, it's a list, as by default. Otherwise it's the union's set or bag. A union with both can't choose: `let x: set[int] or bag[int] = [1, 1, 2]` would be a set of two elements or a bag of three, so it's an error, which asks for `set([1, 1, 2])` or `bag([1, 1, 2])`. `[k: v, …]` is a map if the union has one, and otherwise a bag if it has one.
+Choose the kind from the literal's syntax and the expected type **before considering element values or numeric conversions**. For a union, inspect only its immediate alternatives, after normalization ([unions](#unions)):
+
+| Literal syntax | Compatible kinds | Default |
+|---|---|---|
+| `[…]`, including `[]` | list, set, bag | list |
+| `[k: v, …]`, including `[:]` | map, bag | map |
+
+If the default kind is an alternative, it wins. Otherwise, if exactly one compatible kind is present, choose it. If several remain, reject the literal and ask for an explicit constructor. If none is present, construct the default kind and let the expected-type check reject it. With no expected type, use the default. Once a kind is chosen, its member type supplies the context for the literal's parts; failure to convert a part never retries another kind. In a bag written `[item: count]`, the key receives the bag's element context and the count must be a nonnegative int.
+
+```probl
+# Proposed.
+let a: list[float] or set[int] = [1, 1, 2]  # list [1.0, 1.0, 2.0]
+let b: list[str] or bag[int] = [1, 2]       # error in list elements; no fallback to bag
+let c: set[int] or bag[int] = [1, 1, 2]     # error: choose set(...) or bag(...)
+let d: set[int] or bag[int] = []            # also ambiguous; emptiness does not choose a kind
+let e: set[int] or bag[int] = set([1, 1, 2]) # set of two elements
+let f: set[int] or bag[int] = bag([1, 1, 2]) # bag of three items
+let g: map[int, int] or bag[int] = [1: 2]   # map; the default wins
+```
+
+Swapping union alternatives changes none of these results. An explicit constructor selects the collection kind; ordinary recursive conversion of its result may still be needed. Context does not flow backwards through the constructor call into its argument.
 
 The kind is decided where the literal is built, from the declared type known there. That can be a binding, an assignment, a return, a record field, an element of another literal, or a branch of a typed `if`, `match`, `chance` or block: the type flows through each, as an expected type does today for numbers.
 
-When a function is called by name, the compiler knows its parameter types. Through a function value, or in a `with` on a record whose type the compiler doesn't know, the type is known only when the program runs, from a value: the function, or the record. The language already evaluates that value first, before the arguments or the new field values. So the compiler marks each literal that the type would reach, through branches and nested literals, with where its type is: in that value, and along which path, like the elements of the second parameter. When the engine builds the literal, in each world, it reads the type there. With `fn f(b: bag[int])` and `let g = f`, `f(if c { [1, 2] } else { [3] })` and `g(if c { [1, 2] } else { [3] })` build the same bags, and evaluation order doesn't change.
+When a function is called by name, the compiler knows its parameter types. Through a function value, or in a `with` on a record whose type the compiler doesn't know, the type is known only when the program runs. This requires compiler and IR changes as well as runtime evaluation changes. Today's lowering hoists argument branches into statements before `StmtKind::Call`; evaluating the callee first inside that statement cannot give context to literals already built in those branches.
 
-Converting the argument at the call, as numbers are converted today, wouldn't do: by then the branches have built lists, and the call can't tell them from a list held in a variable, which never changes kind automatically. The engine already builds a `with`'s values against the record's field types when the program runs, but only for literals written in place, not in branches, for the same reason.
+The IR must carry an expected-type reference: either a static type, or a saved function/record value plus a parameter/field selector and a path through nested types. Lowering a dynamic call first saves the callee in an immutable temporary. Result branches of `if`, `match`, `chance`, `try` and blocks inherit the argument's expected-type reference before they are hoisted. Collection constructors retain it and project it into elements, map keys and values, or record fields. Each projection selects the applicable union member using the kind rule above. For example, a parameter of `list[bag[int]]` gives its outer literal list context and each nested literal bag context.
+
+For `g(if c { [1, 2] } else { [3] })`, the intended IR is schematically:
+
+```text
+$callee = g
+if c {
+  $arg = collection_literal([1, 2], expected = parameter_type($callee, 0))
+} else {
+  $arg = collection_literal([3], expected = parameter_type($callee, 0))
+}
+$result = call $callee($arg)
+```
+
+The engine resolves the reference in each world when that literal executes. Both branches build bags when the saved function accepts `bag[int]`, even if another world selects a function accepting `list[int]`. A parameter without an annotation supplies no context. The function's parameter schemas must be available in runtime IR metadata; built-in function values use their declared argument rules. Dynamic ambiguity or literal-conversion errors occur at the executed literal, with its source span. With static context, these literal checks happen during compilation; computed elements still convert when evaluated. A missing parameter or a non-callable saved value supplies no context, leaving callability and arity errors at the final call check after argument evaluation.
+
+The saved value is evaluated once, before arguments or updated fields, and the final call or `with` uses that same value even if an argument reassigns its original variable. Arguments and literal parts retain left-to-right order; only the selected branch executes. Expected-type references are slot reads for liveness and world merging, so the saved callee or record cannot be cleared or merged away while a literal still needs it. Type lookup itself runs no user code and consumes no draws.
+
+Context reaches only the result expressions and nested literals just described. It does not flow through a variable read, an intervening binding, or an arbitrary function call's returned value. Thus `let xs = [1, 2]; g(xs)` still passes an existing list, and fails for a `bag[int]` parameter. Final argument conversion remains necessary for such existing values, but it cannot change collection kind. A dynamic `with` needs the same lowering support for branches and nested literals; today's runtime field context only reaches literals still present in its expression tree.
 
 A set literal drops duplicates rather than reporting them. Elements are often computed, and they may be equal in only some worlds: `let s: set[int] = [x, y]`.
 
@@ -178,13 +233,13 @@ This is a new type. Its elements compare the way map keys and bag elements do, s
 
 `A or B or …` is a type wherever a type can be written: `let x: int or str`, `fn f(): prob or str`, `list[int or str]`, `dist[int or str]`, and record fields. `or` reads naturally, and it's how the built-in reference already writes such results, as in `sqrt(x) -> float or complex`.
 
-In each world, a value fits a union at the first of these steps that applies:
+In each world, a scalar value fits a union at the first of these steps that applies:
 
 1. It has one of the types. It's kept.
 2. It converts to `float` without changing its number: an int or a prob.
 3. It converts to `prob`, with the range check.
 
-Otherwise, it's an error. Step 2 can only give a `float` and step 3 only a `prob`, so no step has two candidates. The order of the types doesn't matter, and adding a type never changes a value that already fitted.
+Otherwise, it's an error. For scalars, step 2 can only give a `float` and step 3 only a `prob`, so no step has two candidates. The order of the types doesn't matter, and adding an alternative preserves an existing value that already fits without conversion. Collection construction follows its separate kind rule above.
 
 | Declared | Given | Result |
 |---|---|---|
@@ -206,11 +261,31 @@ fn fifty(): prob or float {
 }
 ```
 
-A collection, a distribution or a record fits the union's type of its kind, and each of its parts then fits its own declared type by the same steps: `[1, 2.5]` fits `list[float] or str` as `[1.0, 2.5]`, and `list[int or float]` as it is.
+A collection, a distribution or a record first selects the union's single compatible alternative by kind or record identity/shape. Each of its parts then fits its own declared type recursively: `[1, 2.5]` fits `list[float] or str` as `[1.0, 2.5]`, and `list[int or float]` as it is. A distribution uses the whole-support contract above. The scalar precedence rules do not rank whole containers by how many parts convert, or by the latest conversion step any part needs.
 
-Two types of one kind could both take a value by converting different parts of it. `[1: 1]` would fit `map[int, float] or map[float, int]` by converting its value in one and its key in the other, with different results. So a union has at most one type of each kind, at any depth. The compiler rejects two list types, two map types, or two of any other collection or distribution, and two record types with the same fields unless both are named: `map[int, float] or map[float, int]`, `list[float] or list[prob or float]`, and `{a: float, b: prob} or {a: prob, b: float}`. Its help suggests the union inside: `map[int or float, float or int]`. A record of a named type has that type and no other, so `Point or Vector`, with the same fields, is allowed. `Point or {x: float, y: float}` isn't, since a `Point` fits both.
+Two types of one kind could both take a value by converting different parts of it. In `let m: map[int, float] or map[float, int] = [1: 1]`, one alternative converts the value and the other converts the key. Both require only int-to-float conversion, but their keys have different typed identity and lookup behavior. Numeric equality of the results' parts cannot resolve this ambiguity.
 
-It also rules out some unions that would be unambiguous, like `list[int] or list[str]`, a list of all ints or all strings. `list[int or str]` takes both, and mixed lists. A later version could allow two types of one kind when no part could fit both ([alternatives](#types-of-one-kind-in-a-union)).
+The initial rule rejects this conservatively during type validation, independently of the supplied value:
+
+1. Normalize each union by flattening unions and removing identical alternatives, including equivalent nested unions with different ordering. Repeating `list[int]` is redundant, not ambiguous.
+2. At each union node, allow at most one distinct alternative of each container kind: `list`, `set`, `bag`, `map` and `dist`. Different kinds remain allowed; literal construction must still choose a kind. Reject two anonymous record alternatives with the same field names, or a named and an anonymous record alternative with the same field names. Distinct named record identities remain disjoint, even with the same fields.
+3. Apply the same validation recursively to every element type, both map key and value types, distribution outcome types, and all named and anonymous record field types. Each type position is checked independently; two maps in different record fields are fine. Validate referenced record definitions too, with a visited set for recursive references.
+
+For example, all of these declarations are invalid, in either union order:
+
+```text
+map[int, float] or map[float, int]
+list[float] or list[prob or float]
+set[int] or set[float]
+bag[int] or bag[str]
+dist[int] or dist[float]
+list[map[int, float] or map[float, int]]
+{a: float, b: prob} or {a: prob, b: float}
+```
+
+Diagnostics identify the conflicting alternatives and their nested type position, such as "list element: two map alternatives". They may suggest putting the union inside a container, but must explain that this broadens the accepted values. `map[int or float, int or float]` also allows both positions to be ints or both to be floats; it does not preserve the relationship between key and value types in the rejected declaration. The compiler never silently rewrites the declaration this way. If that relationship matters, use distinct named record wrappers. A named `Point` has no other named record identity, so `Point or Vector` is allowed. `Point or {x: float, y: float}` is rejected when those are `Point`'s fields.
+
+The rule also rejects unions that would have no conflicting conversion, like `list[int] or list[str]`. `list[int or str]` takes both, and mixed lists. Empty containers do not need a special tie-break: the invalid union is rejected before seeing one. A later version could admit more same-kind alternatives with a recursive ambiguity analysis ([alternatives](#types-of-one-kind-in-a-union)).
 
 `typeof` describes a value, not its declaration, so it never names a union: `typeof fifty()` is `"float"`.
 
@@ -298,6 +373,7 @@ Today a built-in's integer arguments accept a whole float, like `xs.get(1.0)` an
 | `let z: float = 1` is an int, printed as `1` | A float, printed as `1.0` |
 | `fn f(x: float)`, with `f(2)` | `x` is `2.0` |
 | `let d: dist[float] = d6` gives a `dist[int]` | A `dist[float]` |
+| `let d: dist[float] = geometric(0.5)` accepts retained int outcomes | An error: the source law's whole support cannot convert exactly |
 | `let b: bag[int] = [1, 1, 2]` is an error | A bag |
 | `typeof [1, "a"]` is `"list[any]"` | `"list[int or str]"` |
 | `xs.get(1.0)`, `factorial(5.0)` | Errors, if built-ins follow |
@@ -314,7 +390,9 @@ Each relevant conversion was logged in the engine. The logged runs covered every
 - **An int kept where a float is declared:** one place, the language overview's `fee(100)` for `fn fee(amount: float)`. `amount * rate` is a float either way, so the output doesn't change.
 - **A whole float given to a built-in's integer argument:** one line, `"é🦀a".get(1.0)`, in `web/test/api-contracts.probl`, which tests that contract.
 
-Conversions to and from `prob` keep working, so they weren't counted. Unit tests weren't counted either, since many exist to test conversion.
+Scalar conversions to and from `prob` keep working, so they weren't counted. Unit tests weren't counted either, since many exist to test conversion.
+
+That measurement predates the whole-support rule for distributions. The stricter check for omitted outcomes, including distribution conversions to `prob`, needs a separate compatibility audit; the counts above do not measure it.
 
 ## Alternatives considered
 
@@ -373,12 +451,25 @@ In a statically checked language, a trait or an interface also says which operat
 
 ## Implementation order and validation
 
-1. **Numeric conversions.** In the engine's declared-type conversion, an int becomes a float, or it's an error if no float holds it. A float no longer becomes an int. A distribution converts its listed outcomes. A count law too broad to list keeps its law, and its draws convert when sampling. An int computed from a continuous draw converts if its bounds are within 2^53 ([distributions](#distributions)). The compiler gets the matching literal checks. Add `int(x)` and `float(x)`. The oracle (`probl-oracle`) converts declared types too, and changes with the engine. Its generated programs then check the new rules against the engine, as before.
+1. **Numeric conversions and distribution support.** In the engine's declared-type conversion, an int becomes a float only if exact, and a float no longer becomes an int. The compiler gets matching literal checks. Add `int(x)` and `float(x)`. For distribution conversion, first establish whole-support admissibility from complete outcomes, law parameters, or symbolic bounds ([distributions](#distributions)). Preserve support evidence in both listed and lazy representations, and attach a conversion plan shared by enumeration, sampling, direct-draw shortcuts and outcome queries. Audit distribution identity and memoization so neither loses that evidence or plan. Reject unsupported or unprovable conversions at the declaration; never wait for a bad sample. Cover exact boundary integers, degenerate and nondegenerate count laws, partial listings and symbolic bounds. The oracle (`probl-oracle`) currently rejects annotations; add annotation/conversion support before claiming differential coverage. Until then, use engine tests for these contracts, including both execution modes.
 2. **Programs and documents.** Update `web/test/integers.probl`, the reference semantics (section 1's conversion paragraphs) and the language overview, and record the breaking change.
 3. **Built-in integer arguments**, if adopted, as a separate breaking change.
-4. **Collection literals as bags.** The compiler flows a declared type into collection literals, through branches and nested literals, and chooses a union's kind ([collection literals](#collection-literals)). Where the type is known only when the program runs, through a function value or a `with`, it marks each literal the type reaches with the value and the path to read the type from. It keeps that value in a temporary while the arguments run, as it already does when they have statements. Test that a literal in a branch or in another literal builds the same value by name and through a function value.
+4. **Collection literals as bags, including dynamic context.** Extend `probl-sema`'s expected-type lowering and IR with static or runtime expected-type references, runtime-visible function parameter schemas, and contextual literal construction. Save the callee or `with` receiver before lowering arguments/fields; propagate its type reference through branch-result temporaries and nested literals, including map keys. Update liveness, IR visitors and world merging to retain these dependencies. In `probl-engine`, resolve the selected parameter/field type at each constructor and keep the final value checks. Follow the kind-selection rule before converting any parts ([collection literals](#collection-literals)); union cases become available in step 6. Add lowering snapshots and execution tests for branches, nested literals, functions selected differently across worlds, and side effects that verify evaluation order.
 5. **Sets:** `set[T]`, `set(xs)` and `list(xs)`.
-6. **Unions:** the grammar (`type { "or" type }`), a union in the compiler's types, the conversion steps, and the check that a union has at most one type of each kind, at any depth. `typeof` describes mixed contents with unions, merging types of one kind.
+6. **Unions:** the grammar (`type { "or" type }`), normalized unions in the compiler's types, scalar conversion precedence, and recursive validation at every type position ([unions](#unions)). Reject duplicate container kinds and overlapping record alternatives after removing identical alternatives. Test lists, sets, bags, both map positions, distribution outcomes and record fields, including nested conflicts and reversed union order. Integrate union member selection with static and dynamic literal context. `typeof` describes mixed contents with unions, merging types of one kind; that descriptive merge does not rewrite annotations.
 7. **Errors that describe the value.** Done: a failed declaration describes the value as `typeof` does, as in "but it's a list[any]" until unions exist. A declared record type is written as `typeof` writes one, `{a: int}`.
 
 Steps 1 to 3 break programs, and step 6 changes how `typeof` describes mixed contents. The rest only add.
+
+### Acceptance cases for these rules
+
+These are implementation checks, not claims that the proposed syntax runs today:
+
+| Area | Required checks |
+|---|---|
+| Recursive ambiguity | Reject the crossed map example and every same-kind pair above, including inside map keys/values and record fields. Reverse alternatives and expect the same diagnostic. Deduplicate identical alternatives; allow different container kinds and distinct named records. |
+| Literal kind | Check every literal example above, both empty forms, and nested literals. A declared default wins even if its element conversion fails; a set/bag ambiguity requires an explicit constructor. Check static diagnostics and errors from dynamically selected parameter types. |
+| Context through control flow | Pass literals through `if`, `match`, `chance`, `try` and block results, by name and through a function value. Cover `list[bag[int]]`, map key/value context and dynamic `with` fields. A variable holding a list still fails a bag parameter. |
+| Evaluation order | Use a callee expression with an observable effect, arguments that print/draw or reassign the original callee, and an unselected branch that would fail. Verify one callee evaluation, source-order arguments, the saved function's parameter context, and no evaluation of the other branch. Inspect lowered IR for context dependencies before the call. |
+| Exact distribution conversion | Accept complete finite support at ±2^53 and the singleton 2^60; reject a support containing 2^53 + 1 or 2^60 + 1. Check the count-law table, bounded symbolic ints and unknown omitted support. Verify converted draws are floats with the same numbers and that outcome queries apply conversion. |
+| Mode and representation independence | Reject `geometric(1e-16)`, `geometric(0.5)` and positive-rate Poisson at the declaration in enumeration and sampling, even if unused. Vary the outcome budget to force listed/lazy representations of the same law. For admissible laws, check the same conversion decision and outcome types; resource-limit errors remain separate. Check that conversion does not consume RNG state. |
