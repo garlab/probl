@@ -13,7 +13,7 @@
 7. **Unions, `A or B`.** A value that has one of the types is kept. Otherwise it converts to `float` if it can, then to `prob`. Each step has at most one candidate, so the order of the types doesn't matter. At any depth, a union has at most one type of each collection or distribution kind, and no two record types one record could fit, so a collection's parts convert in only one way. `typeof` uses unions to describe mixed contents, in place of `any`.
 8. **Explicit conversions** cover what doesn't happen automatically: `int(x)`, `float(x)` and `prob(x)`, and `set(xs)`, `list(xs)` and `bag(xs)`.
 
-For single numbers, two things break. A float no longer becomes an int where an int is declared: `let n: int = 4 / 2` is an error. And an int becomes a float where a float is declared, so `typeof` says `"float"` and it prints as `1.0`. Measured, the first happens only in a playground test program written to test it. The second happens in one documentation example, whose output doesn't change ([measurement](#what-would-break)). A distribution converts only if every outcome it can have does, so a count law with no largest outcome, like `poisson(3)`, can't be a `dist[float]`. That hasn't been measured. Inside collections, numbers compare by value: `[1] == [1.0]` becomes true, and so does `[1: "a"].contains(1.0)`. `typeof` also describes mixed contents differently: `"list[int or str]"` rather than `"list[any]"`.
+For single numbers, two things break. A float no longer becomes an int where an int is declared: `let n: int = 4 / 2` is an error. And an int becomes a float where a float is declared, so `typeof` says `"float"` and it prints as `1.0`. Measured, the first happens only in a playground test program written to test it. The second happens in one documentation example, whose output doesn't change ([measurement](#what-would-break)). A distribution converts only if its outcomes do, apart from the far tail a count law already cuts off: `poisson(3)` can be a `dist[float]`, but `geometric(1e-16)`, which passes 2^53 four times in ten, can't. No program measured declares a `dist[float]`. Inside collections, numbers compare by value: `[1] == [1.0]` becomes true, and so does `[1: "a"].contains(1.0)`. `typeof` also describes mixed contents differently: `"list[int or str]"` rather than `"list[any]"`.
 
 ## Requirements
 
@@ -146,28 +146,37 @@ Python, Julia and Lua do the same. In Python, `[1] == [1.0]` is true, `{1: "a"}[
 
 ### Distributions
 
-A declared `dist[T]` converts a distribution's outcomes, as `list[T]` converts a list's elements: `let d: dist[float] = d6` has the outcomes 1.0 to 6.0. Every outcome the distribution can have must convert, including the tail a count law's listing cuts off, and that's decided at the declaration, before anything is drawn. Outcomes that happen to be listed, or drawn, aren't enough.
+A declared `dist[T]` converts a distribution's outcomes, as `list[T]` converts a list's elements: `let d: dist[float] = d6` has the outcomes 1.0 to 6.0. Its outcomes must all convert, and that's decided at the declaration, from the distribution itself, before anything is listed or drawn.
+
+A count law with no largest outcome, like `poisson(3)` or `geometric(0.5)`, already has a line for what counts as an outcome. When it's listed, the listing stops once less than 1e-18 of its weight is left, far out in its tail, and that weight counts as unresolved, like weight a `simulate` couldn't resolve. Converting uses the same line: a count law converts if the outcomes that can't convert have a chance below 1e-18 together. For `float`, those are ints no float holds. A float holds every int from −2^53 to 2^53, and skips more and more of them beyond that, so the engine counts every outcome beyond 2^53 as one that can't convert.
 
 The engine decides from what it knows about the distribution:
 
-- **Every outcome is listed**, as for dice and `one_of` over a list. Each outcome must convert, however small its weight. `one_of([2^60])` converts, since a float holds 2^60, and `one_of([2^60 + 1])` is an error.
-- **A count law** is decided from its parameters, without listing it. A float holds every int from −2^53 to 2^53, so a law whose outcomes all lie in that range converts, and so does a law with one outcome that a float holds. Converting to `prob` needs every outcome in [0, 1]. Other laws are errors, for now.
+- **Every outcome is listed**, as for dice and `one_of` over a list. Nothing is cut off, so each outcome must convert, however small its weight. `one_of([2^60])` converts, since a float holds 2^60, and `one_of([2^60 + 1])` is an error.
+- **A count law** is decided from its parameters, whether it can be listed or not. The chance of an outcome beyond 2^53 is exact for `geometric`, and an upper bound for `poisson` and `binomial`, so where the bound is off, it's only ever too strict. A law with one outcome converts if a float holds it. Converting to `prob` works the same way, with outcomes above 1 as the ones that can't convert.
 - **Anything else** is an error, which says the conversion can't be checked. That includes a distribution that's only partly listed, with no law to say what's left out, such as one where a `simulate` left weight unresolved.
 
 For the count laws:
 
 | Law | As a `dist[float]` |
 |---|---|
-| `binomial(n, p)`, 0 < p < 1 | Converts if n ≤ 2^53, since its outcomes are 0 to n |
-| `binomial(n, 0)`, `binomial(n, 1)` | Converts if a float holds its one outcome, 0 or n |
-| `geometric(1)`, `poisson(0)` | Converts its one outcome, 1 or 0 |
-| `geometric(p)`, 0 < p < 1, and `poisson(rate)`, rate > 0 | An error: they have no largest outcome, so some are ints no float holds |
+| `geometric(p)` | Converts if p is above about 4.6 × 10⁻¹⁵. Its chance of passing 2^53 is (1 − p)^(2^53) |
+| `poisson(rate)` | Converts unless the rate is within about 10⁹ of 2^53, or above it |
+| `binomial(n, p)` | Converts if n ≤ 2^53, or if its chance of passing 2^53 is below 1e-18 |
+| A law with one outcome, like `geometric(1)` or `binomial(n, 1)` | Converts if a float holds that outcome |
 
-So `let d: dist[float] = geometric(1e-16)` is an error at the declaration, and so are `geometric(0.5)` and `poisson(3)`, though the engine lists almost all of their weight. Checking only what's listed would make a declaration depend on the law's spread, the outcome limit, the seed and the mode. `dist[int]` and `dist[int or float]` need no conversion, and still work.
+So `poisson(3)`, `geometric(0.5)` and `geometric(1e-12)` convert, whether they're listed or not: `geometric(1e-12)` passes 2^53 with a chance of about e^−9007. `geometric(1e-16)` is an error at the declaration. It passes 2^53 four times in ten, and most ints out there have no float.
 
-A law that converts is kept as a law, and each outcome converts as it's listed or drawn, including by the shortcuts that draw from a law directly. `support` gives floats. `mean`, `sd`, `pmf` and `cdf` still come from the law's formulas, since the numbers don't change. The outcome limit can still stop a law that converts from being listed.
+```
+Error: `d` should be a dist[float], but geometric(1e-16) has outcomes that no float holds
+  Help: `dist[int]` keeps them as ints, and `float(…)` rounds them to the nearest float
+```
 
-An int computed from a continuous draw, like `floor(x)` when enumerating, is checked the same way, from its bounds. Once a world has drawn an int, a declared `float` checks only that int. A declared `dist[float]` promises more: it checks every outcome the distribution could have.
+The decision depends only on the law, not on the outcome limit, the seed or the mode. `dist[int]` and `dist[int or float]` need no conversion, and always work.
+
+A law that converts is kept as a law, and each outcome converts as it's listed or drawn, including by the shortcuts that draw from a law directly. A draw beyond 2^53, which has a chance below 1e-18, counts as unresolved, as the tail does when the law is listed. `support` gives floats. `mean`, `sd`, `pmf` and `cdf` still come from the law's formulas, since the numbers don't change. The outcome limit can still stop a law that converts from being listed.
+
+An int computed from a continuous draw needs no special rule. `floor`, `round`, `ceil` and `trunc` of a float always give an int that a float holds, since a float beyond 2^53 is already whole. So `floor(x)` always converts, when enumerating and when sampling. Once a world has drawn an int, a declared `float` checks only that int. A declared `dist[float]` promises more: it checks every outcome the distribution can have.
 
 ### Literals
 
@@ -351,7 +360,7 @@ Probl is in the first group, with a `typeof` that reads the elements.
 |---|---|---|
 | `prob(x)` | a number in [0, 1], a bool, a prob | As today |
 | `int(x)` | an int, an exactly integral float | New. It never rounds, as an `int` annotation doesn't today; `round`, `floor`, `ceil` and `trunc` round |
-| `float(x)` | an int, a float, a prob | New. Unlike the automatic conversion, it rounds an int that no float holds to the nearest float |
+| `float(x)` | an int, a float, a prob | New. Unlike the automatic conversion, it rounds an int that no float holds to the nearest float. Given a distribution, it converts each outcome, and keeps a count law as a law |
 | `set(xs)` | a list, a set, a bag | New. It drops order and duplicates |
 | `list(xs)` | a list, a set, a bag | New. A set's or a bag's elements in order, with a bag's elements repeated by their count |
 | `bag(xs)` | a list, a set, `[item: count, …]` | As today, and also takes a set |
@@ -373,8 +382,7 @@ Today a built-in's integer arguments accept a whole float, like `xs.get(1.0)` an
 | `fn f(n: int)`, with `f(x / 2)` | An error: write `f(x div 2)`, or `f(int(x / 2))` |
 | `let z: float = 1` is an int, printed as `1` | A float, printed as `1.0` |
 | `fn f(x: float)`, with `f(2)` | `x` is `2.0` |
-| `let d: dist[float] = d6` gives a `dist[int]` | A `dist[float]` |
-| `let d: dist[float] = geometric(0.5)` gives a `dist[int]` | An error: some of its outcomes are ints no float holds |
+| `let d: dist[float] = d6`, or `poisson(3)`, gives a `dist[int]` | A `dist[float]` |
 | `let b: bag[int] = [1, 1, 2]` is an error | A bag |
 | `[1] == [1.0]` and `{x: 1} == {x: 1.0}` are false | True |
 | `[1: "a"].contains(1.0)` is false, and `[1: "a", 1.0: "b"]` has two keys | True, and it's `[1: "b"]` |
@@ -396,7 +404,7 @@ Each relevant conversion was logged in the engine. The logged runs covered every
 
 Conversions of a number to and from `prob` keep working, so they weren't counted. Unit tests weren't counted either, since many exist to test conversion.
 
-That measurement came before the rule that a distribution converts only if every outcome it can have does, to `float` or to `prob`. No example, benchmark, playground test or documentation block declares a `dist[float]`, though, so the rule can't break any of them.
+That measurement came before the rule for a distribution's outcomes. But no example, benchmark, playground test or documentation block declares a `dist[float]` or a `dist[prob]`, so the rule can't break any of them.
 
 Comparing numbers by value reverses a documented contract: map keys, bag elements and `pmf` use typed identity today. The reference semantics (section 1, and `pmf`), the architecture and testing notes and the [collection values](collection-values.md) design describe it, and `web/test/api-contracts.probl` and the engine's API contract tests check it. How often a program relies on it hasn't been measured.
 
@@ -438,6 +446,12 @@ As in JavaScript and Python, `typeof [1]` would be `"list"`, which always matche
 
 `let s: set[int] = xs` would convert a list. That changes the value, and when `xs` has duplicates in only some worlds, they'd be dropped there without any sign.
 
+### Every outcome, however unlikely
+
+The previous revision rejected every `geometric(p)` with p < 1 and every `poisson(rate)` with a positive rate as a `dist[float]`, since their outcomes have no bound, and some have no float. That's simple, and it breaks no program measured. But it rejects `poisson(3)`, whose chance of passing 2^53 is far below anything the engine keeps, for a reason about floats that has nothing to do with the program. So a function declared with `d: dist[float]` couldn't take a Poisson count. The engine already treats the last 1e-18 of a listed count law's weight as unresolved, so conversion draws its line in the same place.
+
+An earlier revision went the other way: a law too broad to list kept its law, and each draw converted as it was made, stopping the run at one no float held. Then whether a program runs would depend on the seed and the mode.
+
 ### Collection kind through function values
 
 A literal passed through a function value could take its kind from the function's parameter, as one passed by name does. The type is known only when the program runs, after the function value is evaluated. The compiler would mark each literal an argument reaches, through branches and nested literals, with where to read its type: in the function, at this parameter, along this path. Converting at the call is too late, since by then the branches have built lists, and a list never changes kind automatically.
@@ -465,7 +479,7 @@ In a statically checked language, a trait or an interface also says which operat
 ## Implementation order and validation
 
 1. **Numbers compare by value.** `==`, map keys, set and bag elements, `pmf` and `support` compare numbers by exact value, at any depth ([numbers compare by value](#numbers-compare-by-value)). Hashing and key order must match: a float that holds an int hashes as that int, and a complex number with no imaginary part as its real part. World merging, memoization and a distribution's stored outcomes keep comparing with types, so the [architecture notes](../architecture.md)' two comparisons stay apart; only the public one changes. Update the reference semantics, the architecture and testing notes, the collection values design, `web/test/api-contracts.probl` and the engine's API contract tests. This step stands alone, and should come before step 2, which turns ints into floats.
-2. **Numeric conversions.** In the engine's declared-type conversion, an int becomes a float only if a float holds it, and a float no longer becomes an int. The compiler gets the matching literal checks. Add `int(x)` and `float(x)`. A distribution's conversion is decided from its outcomes, its law or its bounds, before anything is drawn ([distributions](#distributions)). A listed count law keeps its law in `Dist.law`, and `Dist.missing` records the tail it cut off, so the check must read the law, not only `Dist.outcomes`. A law kept as a law carries its conversion, which enumerating, sampling, direct draws and `support` all apply. `Dist`'s equality and hash ignore `law`, so world merging and memoized calls need checking: they mustn't lose a law a conversion depends on. The oracle (`probl-oracle`) rejects annotations today, so it can't check these rules until it supports them. Until then, engine tests cover them, in both modes.
+2. **Numeric conversions.** In the engine's declared-type conversion, an int becomes a float only if a float holds it, and a float no longer becomes an int. The compiler gets the matching literal checks. Add `int(x)` and `float(x)`. A distribution's conversion is decided from its outcomes or its law, before anything is listed or drawn ([distributions](#distributions)). A count law's chance of an outcome that can't convert comes from its parameters: exactly for `geometric`, and from a Chernoff bound for `poisson` and `binomial`. A draw from a law that converted that lands beyond 2^53 counts as unresolved. `float(d)` rounds, and keeps a count law as a law. A listed count law keeps its law in `Dist.law`, and `Dist.missing` records the tail it cut off, so the check must read the law, not only `Dist.outcomes`. A law kept as a law carries its conversion, which enumerating, sampling, direct draws and `support` all apply. `Dist`'s equality and hash ignore `law`, so world merging and memoized calls need checking: they mustn't lose a law a conversion depends on. The oracle (`probl-oracle`) rejects annotations today, so it can't check these rules until it supports them. Until then, engine tests cover them, in both modes.
 3. **Programs and documents.** Update `web/test/integers.probl`, the reference semantics (section 1's conversion paragraphs) and the language overview, and record the breaking change.
 4. **Built-in integer arguments**, if adopted, as a separate breaking change.
 5. **Collection literals as bags.** The compiler flows a declared type into collection literals, through branches and nested literals, including map keys, and chooses the kind before converting any element ([collection literals](#collection-literals)). A union's kinds come with step 7. The engine's field types for a `with` on a record of unknown type still convert values, but don't choose a kind, so a literal written in place and one in a branch agree. Test literals in branches and in other literals, by name and through a function value.
@@ -485,4 +499,4 @@ The rules above need at least these tests. The syntax doesn't run yet.
 | Unions | Every error example above, including inside map keys and values and record fields, with the same error in either order. Repeated types are removed; types of different kinds, and named records with the same fields, are allowed. |
 | Literal kinds | Every literal example above, both empty forms, and nested literals. The default kind is kept even when an element doesn't convert, and a union with a set and a bag asks for `set(…)` or `bag(…)`. |
 | Where the type reaches | Literals as the result of `if`, `match`, `chance` and blocks, in `list[bag[int]]`, and as map keys and values. Through a function value, or a `with` on a record of unknown type, a literal is a list, written in place or in a branch. A variable holding a list fails a bag parameter. |
-| Distributions | The count-law table, listed outcomes at ±2^53, 2^53 + 1, 2^60 and 2^60 + 1, `floor` of a bounded and an unbounded draw, and a partly listed distribution with no law. Each decision is the same when enumerating and sampling, with a different outcome limit, and whether or not the distribution is used. Converting draws nothing. Converted outcomes are floats with the same numbers, when listed, drawn or given by `support`. |
+| Distributions | Each count law on both sides of its line: `geometric(1e-12)` and `geometric(1e-16)`, `poisson(3)` and a rate near 2^53, `binomial` with n just above 2^53, and laws with one outcome. The bound for `poisson` and `binomial` never accepts a law whose exact chance is 1e-18 or more. Listed outcomes at ±2^53, 2^53 + 1, 2^60 and 2^60 + 1, whatever their weight. `floor` of an unbounded draw converts; a partly listed distribution with no law doesn't. Each decision is the same when enumerating and sampling, with a different outcome limit, and whether or not the distribution is used. Converting draws nothing. Converted outcomes are floats with the same numbers, when listed, drawn or given by `support`. `float(d)` rounds, and keeps a law as a law. |
