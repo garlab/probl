@@ -1,6 +1,6 @@
 # Type annotations: conversions, literals and unions
 
-> Draft proposal, revised 26 October 2026. Steps 1 to 5 and 8 of the [plan](#implementation-order-and-validation) are implemented. Today's behavior is in the [reference semantics](../semantics.md#1-values-and-types). The examples marked as proposed don't run yet. The first draft proposed annotations that only check; [why that changed](#annotations-that-only-check).
+> Draft proposal, revised 28 October 2026. Steps 1 to 5 and 8 of the [plan](#implementation-order-and-validation) are implemented. Bare `bag` annotations and the new constructors belong to step 6. Today's behavior is in the [reference semantics](../semantics.md#1-values-and-types). The examples marked as proposed don't run yet. The first draft proposed annotations that only check; [why that changed](#annotations-that-only-check).
 
 ## Recommendation
 
@@ -8,7 +8,7 @@
 2. **Close numeric types convert automatically. The type changes, the number doesn't.** An int becomes a float when a float holds the same number, and a probability becomes a float. A number in [0, 1] becomes a probability, as it already does in `if 50%` and `bernoulli(rate)`. Nothing becomes an int automatically. Text, booleans, dates and collections never convert to another kind.
 3. **Numbers compare by value, at any depth.** `1 == 1.0` already, and now `[1] == [1.0]` too. `1` and `1.0` are one map key, one set element and one bag element, and `pmf` finds either. So a conversion never changes what a comparison or a lookup finds.
 4. **Literals follow the same rule**, and are checked during compilation where the compiler knows the declared type. `let z: float = 1` makes a float, and `let y: int = 1.0` is an error before the program runs.
-5. **A collection literal takes its kind from the declared type**, where the compiler knows it: `let b: bag[int] = [1, 1, 2]` makes a bag. In a union, the default kind wins: a list for `[1, 2]`, a map for `[1: 2]`. Otherwise the union must have exactly one kind the literal could be. For `set[int] or bag[int]`, write `set(1, 2)` or `bag(1, 2)`. An existing collection never changes kind automatically: `set(...xs)` converts it.
+5. **A collection literal takes its kind from the declared type**, where the compiler knows it: `let b: bag = [1, 1, 2]` makes a bag, as does `let b: bag = [1: 2, 2: 1]`. Bare `bag` checks only the kind; `bag[int]` also checks the elements. In a union, the default kind wins: a list for `[1, 2]`, a map for `[1: 2]`. Otherwise the union must have exactly one kind the literal could be. For `set[int] or bag[int]`, write `set(1, 2)` or `bag(1, 2)`. An existing collection never changes kind automatically: `set(...xs)` converts it.
 6. **A collection's `typeof` describes its elements. A declaration limits the variable, not the value.** This is today's rule, kept. After `var c = [1]`, `c.push("bar")` works, and `typeof c` becomes `"list[int or str]"`. For `var b: list[int]`, the same push is an error. An empty list reports `"list[unknown]"`, which fits any declared list.
 7. **Unions, `A or B`.** A value that has one of the types is kept. Otherwise it converts to `float` if it can, then to `prob`. Each step has at most one candidate, so the order of the types doesn't matter. At any depth, a union has at most one type of each collection or distribution kind, and no two record types one record could fit, so a collection's parts convert in only one way. `typeof` uses unions to describe mixed contents, in place of `any`.
 8. **Explicit conversions** cover what doesn't happen automatically. A number converts with its type's name: `int(x)`, `float(x)` and `prob(x)`. A collection's type name builds one from its elements, as in `set(1, 2, 3)`, so a collection converts by spreading into another: `set(...xs)`, `list(...s)` or `bag(...xs)`.
@@ -137,7 +137,7 @@ Done (step 1). `1 == 1.0` was true, and so was `1 == complex(1, 0)`. But inside 
 So numbers compare by value everywhere, at any depth:
 
 - `[1] == [1.0]`, `{x: 1} == {x: 1.0}` and `[50%] == [prob(0.5)]` are true.
-- `1` and `1.0` are one map key, one set element and one bag element. `[1.0: "a"].contains(1)` is true, and `m[1]` finds the key `1.0`. Adding a key equal to one already there keeps that key and replaces its value, as a repeated key in a literal does today: `[1: "a", 1.0: "b"]` is `[1: "b"]`, and `bag(1, 1.0)` is `bag(counts: [1: 2])`.
+- `1` and `1.0` are one map key, one set element and one bag element. `[1.0: "a"].contains(1)` is true, and `m[1]` finds the key `1.0`. Adding a key equal to one already there keeps that key and replaces its value, as a repeated key in a literal does today: `[1: "a", 1.0: "b"]` is `[1: "b"]`, and `bag(1, 1.0)` holds two copies of the int `1`.
 - `pmf(d, x)` adds up the outcomes equal to `x`, so `pmf(one_of([1, 1.0]), 1)` is 100%, as `P(one_of([1, 1.0]) == 1)` already is. `support` lists each number once, so `pmf` over it adds up to 1. Where outcomes of different types hold one number, it lists the first of them in the order int, prob, float, complex.
 
 Equality stays exact: an int equals a float only if the float holds that int, so `2^60 + 1 == 2.0^60` stays false. Text, booleans and dates never equal a number.
@@ -193,17 +193,19 @@ The rule applies to values when the program runs, so a number passed through a f
 
 ### Collection literals
 
-`[…]` with elements is a list by default, and a set or a bag where one is declared. `[k: v, …]` is a map, or a bag where one is declared, where each value gives the count of its key, as in `bag(counts: [k: v, …])`.
+`[…]` with elements is a list by default, and a set or a bag where one is declared. `[k: v, …]` is a map, or a bag where one is declared, where each value gives the count of its key: `let b: bag = [1: 2, 2: 1]` holds two copies of 1 and one of 2.
 
 ```probl
 # Proposed.
 let xs = [1, 2]                         # list[int]
 let s: set[int] = [1, 2, 2]             # set(1, 2)
-let b: bag[int] = [1, 1, 2]             # bag(counts: [1: 2, 2: 1])
+let b: bag[int] = [1, 1, 2]             # a bag of three items
 let deck: bag[str] = ["A": 4, "K": 4]
 let t: set[int] = xs                    # error: `t` should be a set[int], but it's a list[int]
 let u = set(...xs)                      # set(1, 2)
 ```
+
+Bare `bag` is a declared type wherever `bag[T]` is allowed. It chooses the literal's kind and requires the variable to remain a bag, but leaves its elements' types unchanged. `let b: bag = [1, "A"]` is allowed, and `typeof b` describes those contents as usual; it doesn't report just `"bag"`. `bag[T]` adds the element checks and conversions. Both `let b: bag = []` and `let b: bag = [:]` make an empty bag. In a union, bare `bag` counts as the bag kind, so `bag or bag[int]` is rejected by the same rule as two parameterized bag types.
 
 An existing collection never changes kind automatically: turning a list into a set drops its order and its duplicates, which changes the value. Within a kind, elements convert as above.
 
@@ -214,7 +216,7 @@ The kind comes from the brackets and the declared type, before any element is lo
 3. If it includes several, as `set[int] or bag[int]` does, it's an error, which asks for `set(…)` or `bag(…)`.
 4. If it includes none, the literal is the default kind, and the declaration rejects it.
 
-Without a declared type, it's the default kind. Once the kind is chosen, its type gives the elements theirs, and an element that doesn't convert is an error: the compiler doesn't try another kind. In a bag written `[item: count]`, each item gets the bag's element type, and each count must be an int that isn't negative.
+Without a declared type, it's the default kind. Once the kind is chosen, its type gives the elements theirs, if an element type is declared, and an element that doesn't convert is an error: the compiler doesn't try another kind. In a bag written `[item: count]`, each item gets the bag's element type if present, and each count must be an int that isn't negative. Counts are checked even for bare `bag`.
 
 ```probl
 # Proposed.
@@ -384,13 +386,22 @@ A type's name builds a value from its parts, as `date(2027, 1, 31)` and `complex
 ```probl
 # Proposed.
 set(1, 2, 2)          # set(1, 2)
-bag("A", "A", "K")    # bag(counts: ["A": 2, "K": 1])
+bag("A", "A", "K")    # a bag holding two As and one K
 list(1, 2)            # [1, 2]
 set()                 # an empty set, a set[unknown]
 set(xs)               # a set with one element: the list xs
 ```
 
-A bag can also be given counts, with a named argument, as `maximum(xs, default: 0)` takes one today: `bag(counts: [2: 4, 3: 4, 10: 16])`. Items given one by one and by count add up, so `bag("A", counts: ["K": 2])` holds an A and two Ks.
+A bag has three construction forms. These build equal values:
+
+```probl
+# Proposed.
+let a = bag(1, 1, 2, 3)
+let b: bag = [1, 1, 2, 3]
+let c: bag = [1: 2, 2: 1, 3: 1]
+```
+
+The constructor enumerates items. The declared type makes either bracket form a bag, with the mapping form giving counts. Items and counts can be computed expressions, so `let deck: bag = [card: copies]` doesn't need to enumerate `copies` items. Write `bag[T]` when the elements should also be checked or converted. The constructor has no named count argument.
 
 A constructor builds from its arguments as they are, as a literal does, and never lifts over a distribution. `list(d6, 0)` is `[d6, 0]`, a list that holds a recipe. Today `bag` lifts: `bag(one_of([[1], [2]]))` is a `dist[bag[int]]`. It would be a bag holding one recipe.
 
@@ -408,15 +419,17 @@ set(...a, ...b)       # the elements of both sets
 
 `f(...xs)` means exactly `f(x1, …, xn)`, so `max(...[d6, 3])` lifts, as `max(d6, 3)` does. (For a list's largest element, `maximum(xs)` already exists, and takes a `default:` for an empty list.) Spreading a distribution is an error, as a `for` over one is today: a value has to be drawn first. So `list(...xs)` is `xs`, for any list.
 
-A map spreads as its `[key, value]` pairs, as `for` gives them, so `bag(...m)` is a bag of pairs, not a bag with `m`'s counts. That's `bag(counts: m)`, or a literal that a declared type makes a bag: `var deck: bag[int] = [2: 4, 3: 4, 10: 16]`.
+A map spreads as its `[key, value]` pairs, as `for` gives them, so `bag(...m)` is a bag of pairs. To build from counts, write the mapping literal where a bag is declared: `var deck: bag = [2: 4, 3: 4, 10: 16]`. This proposal doesn't add a direct conversion from an existing map of counts: `let b: bag = m` is still an error. Moving an existing `bag(m)` call therefore needs a decision about whether its entries are items or counts; spreading preserves the pairs as items, while counts should be constructed in a bag-typed literal.
 
 Spreading works in collection literals, and in calls to the built-ins that take any number of arguments: `set`, `list`, `bag`, `min` and `max`. A literal with a spread takes its kind like any other, so `let s: set[int] = [...xs, 4]` is a set; the spread shows the conversion, as `set(...xs)` does. A user function has a fixed number of parameters, and a spread's length can differ between worlds, so the compiler couldn't check the count. Spreading into one can come later.
 
-Today, `bag(xs)` converts a list or a map of counts, and in Python, `set(xs)` converts a list. Such a call would now build a collection of one element, without any sign. So for one release, `set`, `list` or `bag` with a single collection written as its only argument is an error, whose help suggests `...`, or `counts:` for a map. An argument that comes from a spread is never rejected, so `list(...xs)` is `xs` even when `xs` is `[[1]]`. After that release, a single collection builds a collection of one element. Meanwhile, a set of one list can be written `set(...[xs])`.
+Today, `bag(xs)` converts a list or a map of counts, and in Python, `set(xs)` converts a list. Such a call would now build a collection of one element, without any sign. So for one release, `set`, `list` or `bag` with a single collection written as its only argument is an error. Its help suggests `...` for elements, and a bag-typed mapping literal for counts. An argument that comes from a spread is never rejected, so `list(...xs)` is `xs` even when `xs` is `[[1]]`. After that release, a single collection builds a collection of one element. Meanwhile, a set of one list can be written `set(...[xs])`.
 
-A set prints as `set(1, 2)` and a bag as `bag(counts: [1: 2, 2: 1])`, so what's printed builds an equal value. Counts keep a bag short, however many items it holds: `bag(counts: [1: 10^12])`. A bag prints as `bag([1: 2, 2: 1])` today, which would now read as a bag that holds a map. During the release that rejects a single collection, a set holding exactly one collection prints with a spread, `set(...[[1]])`, which that release accepts.
+A set prints as `set(1, 2)`. When its elements print as source code, that builds an equal value. During the release that rejects a single collection, a set holding exactly one collection prints with a spread, `set(...[[1]])`, which that release accepts.
 
-A value that holds a distribution is the exception. A listed distribution prints as `dist(1: 16.67%, …)`, which isn't code, and a map can't have a distribution as a key. So a bag of recipes prints with `counts:` like any other bag, `bag(counts: [dist(…): 2])`, for reading. (A prob prints as `50%`, which builds an equal float.)
+A bag's display must keep counts compact and identify it as a bag, including inside another collection. A count of 10^12 must never expand into 10^12 printed items. Its exact display notation remains an [open question](#open-questions); it needn't be an executable expression. To write that value as source, use `let b: bag = [1: 10^12]`. Today's `bag([1: 2, 2: 1])` display must change when the constructor changes, since it would then describe a bag holding one map.
+
+A value that holds a distribution already can't always print as code. A listed distribution prints as `dist(1: 16.67%, …)`, which isn't code, and a map can't have a distribution as a key. A bag of recipes still needs a compact display of items and their counts, without requiring that display to parse. (A prob prints as `50%`, which builds an equal float.)
 
 JavaScript (`[...xs]`, `Math.max(...xs)`), Python (`[*xs]`, `{*xs}`, `f(*args)`) and Kotlin (`setOf(*array)`) spread the same way.
 
@@ -439,9 +452,10 @@ Done (step 4). A built-in's integer arguments accepted a whole float, like `xs.g
 | `let d: dist[int] = poisson(3)` lost its law, so `pmf(d, 2)` was an error | The law survives, and `pmf(d, 2)` is `pmf(poisson(3), 2)` (step 2, done) |
 | `let q: {x: float} = Point {x: 1}` was a `Point` with an int `x` | An error (step 2, done) |
 | `let b: bag[int] = [1, 1, 2]` was an error | A bag (step 5, done) |
-| `bag([1, 1, 2])`, `bag(cards)` and `bag(["A": 4])` convert to a bag | An error for one release, then a bag of one item: write `bag(1, 1, 2)`, `bag(...cards)` or `bag(counts: ["A": 4])` |
+| `let b: bag = [1, 1, 2]` rejects the bare type | A bag, with no restriction on its element types |
+| `bag([1, 1, 2])`, `bag(cards)` and `bag(["A": 4])` convert to a bag | An error for one release, then a bag of one item: write `bag(1, 1, 2)`, `bag(...cards)` or `let b: bag = ["A": 4]` |
 | `bag(one_of([[1], [2]]))` is a `dist[bag[int]]` | A bag holding one recipe |
-| A bag prints as `bag([1: 2, 2: 1])` | `bag(counts: [1: 2, 2: 1])` |
+| A bag prints as `bag([1: 2, 2: 1])` | A compact display that identifies it as a bag; exact notation to be decided |
 | `[1] == [1.0]` and `{x: 1} == {x: 1.0}` were false | True (step 1, done) |
 | `[1: "a"].contains(1.0)` was false, and `[1: "a", 1.0: "b"]` had two keys | True, and it's `[1: "b"]` (step 1, done) |
 | `pmf(one_of([1, 1.0]), 1)` was 50% | 100% (step 1, done) |
@@ -517,7 +531,11 @@ The previous revision converted with the type's name, as Python and Swift do: `s
 
 ### Conversion methods
 
-`xs.to_set()`, `s.to_list()` and `xs.to_bag()`, as in Kotlin (`setOf(1, 2)` builds, `xs.toSet()` converts) and Ruby. They read well, and `to_bag` could take a map's values as counts. But they're three new names that do what a spread does, and a spread also concatenates, takes a union, and passes a list's elements to a built-in.
+`xs.to_set()`, `s.to_list()` and `xs.to_bag()`, as in Kotlin (`setOf(1, 2)` builds, `xs.toSet()` converts) and Ruby. They read well, but spreading already converts collections by their elements, concatenates, takes a union, and passes elements to a built-in. A method that interpreted a map's values as counts would do something different; that conversion isn't proposed here.
+
+### A named argument for bag counts
+
+A named count argument would add a fourth construction form. The bag-typed mapping literal already expresses the items and their counts directly, so the constructor only enumerates items. Compact printing is a display concern and doesn't require another constructor form.
 
 ### `xs as set`
 
@@ -544,7 +562,8 @@ In a statically checked language, a trait or an interface also says which operat
 
 ## Open questions
 
-- **Bare collection types.** `let s: set = [1, 2]` and `let xs: list = …` are errors today, since `list` needs its element type. Allowing a bare name to check only the kind seems reasonable. The elements would keep their own types.
+- **Other bare collection types.** Bare `bag` is part of this proposal. Whether `list`, `set` and `map` should also check only their kind without type arguments remains open.
+- **Bag printing.** Choose a compact display with an explicit bag label, including for nested bags and bags holding recipes. It must stay proportional to the distinct items, and mustn't look like a constructor call that now builds a different value. Source construction uses the three forms above; the display needn't be source code.
 - **Set operations** beyond size, membership and iteration. Spreading gives a union, `set(...a, ...b)`. Intersection and difference need their own, and could be operators.
 
 ## Implementation order and validation
@@ -554,7 +573,7 @@ In a statically checked language, a trait or an interface also says which operat
 3. **Programs and documents.** Done. Update `web/test/integers.probl`, the reference semantics (section 1's conversion paragraphs) and the language overview, and record the breaking change.
 4. **Built-in integer arguments.** Done, as a separate breaking change: `ops::integer` takes only ints, and `int(x)` keeps its own check for a whole float.
 5. **Collection literals as bags.** Done. The compiler flows a declared type into collection literals, through branches and nested literals, including map keys, and chooses the kind before converting any element ([collection literals](#collection-literals)). A union's kinds come with step 7. The engine's field types for a `with` on a record of unknown type still convert values, but don't choose a kind, so a literal written in place and one in a branch agree. Test literals in branches and in other literals, by name and through a function value.
-6. **Sets and spreading:** `set[T]`, the constructors `set(…)`, `list(…)` and `bag(…)`, and `...` in collection literals and in calls to `set`, `list`, `bag`, `min` and `max` ([building collections](#building-collections)). The lexer reads `...` before `..` and `..<`. `bag` takes `counts:`, and stops lifting over a distribution; constructors build from their arguments as they are, and spreading a distribution is an error. A single collection written as the only argument to `set`, `list` or `bag` is an error for one release, but not one that comes from a spread. Sets and bags print as they're built, a bag with `counts:`. Move the 16 `bag(…)` calls to `...` or `counts:`, and update the language overview's table.
+6. **Sets, constructors and spreading:** `set[T]`, the constructors `set(…)`, `list(…)` and `bag(…)`, and `...` in collection literals and in calls to `set`, `list`, `bag`, `min` and `max` ([building collections](#building-collections)). Accept bare `bag` wherever a type is allowed: choose the bag literal kind, check counts, leave element types unchanged, and require assignments to remain bags. `bag[T]` keeps its existing element checks. The lexer reads `...` before `..` and `..<`. `bag` accepts only positional items and stops lifting over a distribution; constructors build from their arguments as they are, and spreading a distribution is an error. A single collection written as the only argument to `set`, `list` or `bag` is an error for one release, but not one that comes from a spread. Sets print as they're built; settle the compact bag display before changing its constructor. Move the 16 `bag(…)` calls to enumeration, spreading or bag-typed mapping literals, and update the language overview's table.
 7. **Unions:** the grammar (`type { "or" type }`), a union in the compiler's types, flattened and without repeats, the conversion steps, and the check that a union has at most one type of each kind, at any depth ([unions](#unions)). The check follows named record types into their fields, stopping at a record type it has already seen. A collection literal chooses its kind from a union's types. `typeof` merges types of one kind to describe mixed contents, and records as far as a union allows ([collections and their element types](#collections-and-their-element-types)). The compiler never merges a declared union's types: `list[int] or list[str]` stays an error.
 8. **Errors that describe the value.** Done: a failed declaration describes the value as `typeof` does, as in "but it's a list[any]" until unions exist. A declared record type is written as `typeof` writes one, `{a: int}`.
 
@@ -567,7 +586,8 @@ The rules above need at least these tests. The syntax doesn't run yet.
 | Area | Tests |
 |---|---|
 | Comparing numbers | `[1] == [1.0]`, `{x: 1} == {x: 1.0}` and `[1] == [complex(1, 0)]` are true, and `[2^60 + 1] == [2.0^60]` is false. A map built from `1` then `1.0` has one key, the first, with the last value. `contains`, `get`, indexing and removal find a key of either type, in maps, sets and bags. `pmf` adds up equal outcomes, and `support` lists each number once. `typeof` across worlds still tells `1` from `1.0`. |
-| Building collections | `set(1, 1, 2)`, `set()`, `bag("A", "A")`, `bag(counts: …)` alone and with items, and a single collection as an error, with its help. `list(d6, 0)` holds a recipe, and `bag` no longer lifts. `max(...[d6, 3])` lifts like `max(d6, 3)`, and spreading a distribution is an error. `...` of a list, a set, a bag, a map, a range and a string, in literals and in each built-in that takes it, with lengths that differ between worlds. `let s: set[int] = [...xs, 4]`. Printed sets and bags build an equal value, including a set holding one collection during the transition, unless they hold a distribution; a bag of recipes still prints with `counts:`, and a bag with a count of 10^12 prints at once. `list(...[[1]])` is `[[1]]` during the transition too. `1..6` and `0..<n` still read as ranges. |
+| Building collections | `set(1, 1, 2)`, `set()`, `bag("A", "A")`, `bag()`, and a single collection as an error, with its help. The three bag forms above build equal values, and a named count argument is rejected. `list(d6, 0)` holds a recipe, and `bag` no longer lifts. `max(...[d6, 3])` lifts like `max(d6, 3)`, and spreading a distribution is an error. `...` of a list, a set, a bag, a map, a range and a string, in literals and in each built-in that takes it, with lengths that differ between worlds. `let s: set[int] = [...xs, 4]`. Printed sets build an equal value, including a set holding one collection during the transition, unless an element's display isn't source code. Bag display stays compact for a count of 10^12, identifies nested bags, and handles recipes. `list(...[[1]])` is `[[1]]` during the transition too. `1..6` and `0..<n` still read as ranges. |
+| Bare bags | Both bracket forms, both empty forms, mixed element types without conversion, and counts that are zero, negative or not ints. Bare `bag` in bindings, assignments, parameters, returns and nested types uses the same contextual rules as `bag[T]`. Reassigning a bare bag variable to a list or map fails. `typeof` describes its contents. `bag[T]` still checks and converts elements. Annotating an existing map as a bag fails; `bag(...m)` builds a bag of pairs, without interpreting the values as counts. |
 | Unions | Every error example above, including inside map keys and values and record fields, with the same error in either order. Repeated types are removed; types of different kinds, and named records with the same fields, are allowed. A named record fits an anonymous record type only if no field converts. |
 | `typeof` | Mixed anonymous records, a named record with an anonymous one, and a `list[Point or Vector]`. Every description of mixed contents passes the union check, and the value fits it. |
 | Literal kinds | Every literal example above, both empty forms, and nested literals. The default kind is kept even when an element doesn't convert, and a union with a set and a bag asks for `set(…)` or `bag(…)`. |
