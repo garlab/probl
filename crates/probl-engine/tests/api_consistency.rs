@@ -486,11 +486,15 @@ both_modes! {
 
     #[test]
     fn get_and_index_use_the_same_index_admissibility() {
-        for expr in ["xs[1.0]", "xs.get(1.0,-1)"] {
+        for expr in ["xs[1]", "xs.get(1,-1)", "xs[int(1.0)]"] {
             assert_eq!(
                 scalar(MODE, &format!("let xs=[10,20]; report {expr}")),
                 Value::Int(20.into())
             );
+        }
+        // A float is never an index, even a whole one.
+        for expr in ["xs[1.0]", "xs.get(1.0,-1)"] {
+            language_error(MODE, &format!("let xs=[10,20]; report {expr}"), "needs an int");
         }
     }
 
@@ -617,9 +621,10 @@ both_modes! {
             relative(number(MODE, &format!("report {query}")), 2.0);
         }
         assert_eq!(
-            scalar(MODE, "report slice([10,20],1.0)"),
+            scalar(MODE, "report slice([10,20],1)"),
             Value::list(vec![Value::Int(20.into())])
         );
+        language_error(MODE, "report slice([10,20],1.0)", "needs an int");
         assert_eq!(scalar(MODE, "report \"abc\".get(1,\"?\")"), Value::str("b"));
         for query in ["sort([true,false])", "minimum([true,false])"] {
             language_error(MODE, &format!("report {query}"), "compare");

@@ -10,27 +10,38 @@ use std::sync::Arc;
 
 /// Checked integer context: preserve ints, convert exactly integral finite
 /// floats, and never round or admit other numeric types implicitly.
-pub fn integer<'a>(v: &'a Value, context: &str, budget: &mut Budget) -> OpResult<Cow<'a, Integer>> {
+pub fn integer<'a>(v: &'a Value, context: &str, _budget: &mut Budget) -> OpResult<Cow<'a, Integer>> {
     match v {
         Value::Int(n) => Ok(Cow::Borrowed(n)),
+        Value::Analytic(a) if a.int => Err(crate::analytic::unsupported(&format!(
+            "an int outcome of a continuous draw as `{context}`"
+        ))),
+        // A float never becomes an int on its own, even a whole one, as for
+        // a declared int.
+        Value::Float(f) => Err(OpError::new(format!("`{context}` needs an int, found the float {f:?}"))
+            .help("`int(…)` converts a float that's a whole number; `round(…)`, `floor(…)` and `ceil(…)` round one")),
+        _ => Err(OpError::new(format!(
+            "`{context}` needs an int, found {}",
+            article(&v.kind())
+        ))),
+    }
+}
+
+/// `int(x)`: an int, or a float that's exactly a whole number, as an int.
+/// It never rounds.
+pub fn whole(v: &Value, budget: &mut Budget) -> OpResult<Integer> {
+    match v {
         Value::Float(f) if f.is_finite() && f.fract() == 0.0 => {
             let n = Integer::from_f64(*f).expect("finite integral float fits the integer hard limit");
             budget.integer_allocation(n.bits(), 1)?;
             budget.work(n.bits().div_ceil(64).max(1))?;
-            Ok(Cow::Owned(n))
+            Ok(n)
         }
-        Value::Analytic(a) if a.int => Err(crate::analytic::unsupported(&format!(
-            "an int outcome of a continuous draw as `{context}`"
-        ))),
-        _ => {
-            let found = match v {
-                Value::Float(f) => format!("the float {f:?}"),
-                _ => article(&v.kind()),
-            };
-            Err(OpError::new(format!(
-                "`{context}` needs an int (or an exactly integral finite float), found {found}"
-            )))
-        }
+        Value::Float(f) => Err(
+            OpError::new(format!("`int` needs a whole number, found the float {f:?}"))
+                .help("`round(…)`, `floor(…)` and `ceil(…)` round a float"),
+        ),
+        _ => integer(v, "int", budget).map(Cow::into_owned),
     }
 }
 

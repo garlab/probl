@@ -1,6 +1,7 @@
-//! Exact conversion at integer boundaries, without changing float inference:
-//! a declared float takes an int a float holds, a declared int never takes a
-//! float, and `int(x)` and `float(x)` convert explicitly.
+//! Ints and floats at declared types and built-in integer arguments: a
+//! declared float takes an int a float holds; a declared int, an index, a
+//! count or another integer argument never takes a float, even a whole one;
+//! and `int(x)` and `float(x)` convert explicitly.
 mod common;
 
 use common::*;
@@ -160,7 +161,7 @@ both_modes! {
             let xs = [[1, 2]]
             let ys: list[list[float]] = xs
             var zs: list[float] = [1, 2]
-            zs[0.0] = 3
+            zs[0] = 3
             zs.push(4)
             let m: map[float, list[float]] = [1: [2]]
             let b: bag[float] = bag([1, 1.0, 2])
@@ -191,24 +192,38 @@ both_modes! {
     }
 
     #[test]
-    fn float_indices_work_for_reads_writes_and_collection_methods() {
+    fn a_float_is_never_an_index_even_a_whole_one() {
+        for expression in [
+            "xs[1.0]",
+            "xs.get(1.0,-1)",
+            "xs.get(-0.0)",
+            "slice(xs,1.0,3.0)",
+            "slice(xs,0,2.0)",
+            "insert(xs,3.0,50)",
+            "remove(xs,0.0)",
+            "\"a🙂b\"[1.0]",
+            "slice(\"a🙂b\",1.0,2.0)",
+            "(10..20)[2.0]",
+            "slice(10..20,2.0,4.0)",
+        ] {
+            rejects(MODE, &format!("let xs=[10,20,30]; report {expression}"), "needs an int");
+        }
+        rejects(MODE, "var ys=[10,20]; ys[1.0]=40; report ys", "needs an int");
         facts(
             MODE,
             r#"
             let xs = [10,20,30]
             var ys = xs
-            ys[1.0] = 40
-            ys.insert(3.0,50)
-            ys.remove(0.0)
-            report xs[1.0] == 20 and xs.get(1.0,-1) == 20 and xs.get(-0.0) == 10
+            ys[int(1.0)] = 40
+            ys.insert(3,50)
+            ys.remove(0)
+            report xs[int(1.0)] == 20 and xs.get(1,-1) == 20
             report ys == [40,30,50] and xs == [10,20,30]
-            report slice(xs,1.0,3.0) == [20,30]
-            report "a🙂b"[1.0] == "🙂" and slice("a🙂b",1.0,2.0) == "🙂"
-            report (10..20)[2.0] == 12 and slice(10..20,2.0,4.0) == (12..13)
-            report slice(xs,3.0,3.0) == []
+            report slice(xs,1,3) == [20,30] and slice(xs,3,3) == []
+            report "a🙂b"[1] == "🙂" and (10..20)[2] == 12 and slice(10..20,2,4) == (12..13)
         "#,
         );
-        for position in ["-1.0", "3.0", "1e100", "10^400"] {
+        for position in ["-1", "3", "10^400"] {
             facts(MODE, &format!("let xs=[10,20,30]; report xs.get({position},-1) == -1"));
             rejects(MODE, &format!("report [10,20,30][{position}]"), "out of range");
         }
@@ -252,42 +267,39 @@ both_modes! {
     }
 
     #[test]
-    fn integer_builtins_counts_ranges_and_dates_share_conversion() {
+    fn integer_builtins_counts_ranges_and_dates_take_ints() {
         facts(
             MODE,
             r#"
-            report factorial(5.0) == 120 and choose(5.0,2.0) == 10
-            report mean(factorial(one_of([2.0,3.0]))) == 4
-            report gcd(12.0,18.0) == 6 and lcm(4.0,6.0) == 12 and euler_phi(9.0) == 6
-            report prime_factors(12.0) == [2,2,3] and is_prime(7.0) and is_squarefree(6.0)
-            report divisors(6.0) == [1,2,3,6] and primes(2.0,5.0) == [2,3,5] and primes(5.0) == [2,3,5]
-            report next_prime(7.0) == 11 and prev_prime(7.0) == 5 and isqrt(16.0) == 4
-            report mod_pow(2.0,3.0,5.0) == 3 and mod_inverse(3.0,7.0) == 5
-            report bit_length(8.0) == 4 and ilog2(8.0) == 3 and bit_count(7.0) == 3
-            report bit_and(6.0,3.0) == 2 and bit_or(6.0,3.0) == 7
-            report bit_xor(6.0,3.0) == 5 and bit_not(0.0) == -1
-            report round(1.25,1.0) == 1.3 and round(1250,-2.0) == 1300
-            report mean(binomial(2.0,50%)) == 1 and highest([1,2,3],2.0) == [3,2]
-            report lowest([1,2,3],2.0) == [1,2] and len(bag(["a":2.0])) == 2
-            report mean(len(roll(2.0,1))) == 2
-            report mean(sum(roll(1,1.0))) == 1
-            report (1.0..3.0) == (1..3) and (1.0..<3.0) == (1..2)
+            report factorial(5) == 120 and choose(5,2) == 10 and factorial(int(5.0)) == 120
+            report mean(factorial(one_of([2,3]))) == 4
+            report gcd(12,18) == 6 and lcm(4,6) == 12 and euler_phi(9) == 6
+            report prime_factors(12) == [2,2,3] and is_prime(7) and is_squarefree(6)
+            report divisors(6) == [1,2,3,6] and primes(2,5) == [2,3,5] and primes(5) == [2,3,5]
+            report next_prime(7) == 11 and prev_prime(7) == 5 and isqrt(16) == 4
+            report mod_pow(2,3,5) == 3 and mod_inverse(3,7) == 5
+            report bit_length(8) == 4 and ilog2(8) == 3 and bit_count(7) == 3
+            report bit_and(6,3) == 2 and bit_or(6,3) == 7 and bit_xor(6,3) == 5 and bit_not(0) == -1
+            report round(1.25,1) == 1.3 and round(1250,-2) == 1300
+            report mean(binomial(2,50%)) == 1 and highest([1,2,3],2) == [3,2]
+            report lowest([1,2,3],2) == [1,2] and len(bag(["a":2])) == 2
+            report mean(len(roll(2,1))) == 2 and mean(sum(roll(1,1))) == 1
+            report (1..<3) == (1..2)
             var count = 0
-            repeat 3.0 { count += 1 }
+            repeat 3 { count += 1 }
             report count == 3
-            let d = date(2026.0,10.0,4.0)
-            report d + 1.0 == date("2026-10-05") and 1.0 + d == d + 1
-            report d - 1.0 == date("2026-10-03")
-            report d.add_months(1.0) == date("2026-11-04")
-            report d.add_years(1.0) == date("2027-10-04")
-            report d.add_workdays(1.0) == date("2026-10-05")
+            let d = date(2026,10,4)
+            report d + 1 == date("2026-10-05") and 1 + d == d + 1 and d - 1 == date("2026-10-03")
+            report d.add_months(1) == date("2026-11-04") and d.add_years(1) == date("2027-10-04")
+            report d.add_workdays(1) == date("2026-10-05")
         "#,
         );
     }
 
     #[test]
     fn invalid_values_fail_at_all_integer_argument_boundaries() {
-        for value in ["1.4", "true", "\"1\"", "complex(1)", "prob(1)"] {
+        // A whole float is no more an int than 1.4 is.
+        for value in ["1.4", "5.0", "-0.0", "true", "\"1\"", "complex(1)", "prob(1)"] {
             for expression in [
                 "factorial(x)",
                 "choose(x,1)",
@@ -408,8 +420,8 @@ both_modes! {
             var x = 1
             fn first(n:float, ignored) { n }
             let n = first(x, { x=2; 0 })
-            let k ~ binomial(3.0,1)
-            let faces ~ roll(2.0,1.0)
+            let k ~ binomial(3,1)
+            let faces ~ roll(2,1)
             report n == 1 and typeof n == "float" and x == 2
             report k == 3 and typeof k == "int" and faces == [1,1]
         "#,
@@ -419,7 +431,7 @@ both_modes! {
         // separate, restricted analytic-continuous engine.
         if matches!(MODE, Mode::Sample { .. }) {
             let out = exec_raw(
-                "let p ~ beta(1,1); observe 2 from binomial(2.0,p); report typeof p",
+                "let p ~ beta(1,1); observe 2 from binomial(2,p); report typeof p",
                 &options(MODE),
             ).unwrap();
             assert!(out.stats.updates.iter().any(|u| u.exact > 0));
@@ -445,17 +457,17 @@ both_modes! {
             report n == 2^100 and typeof n == "int" and typeof x == "float"
             report exact == -(2^200+1) and rounded == 9007199254740992
             report exact_literal == -9007199254740993
-            report bit_length(x) == 101 and (0..2^101)[x] == 2^100
-            report slice(0..2^101,x,x+2.0^50)[0] == 2^100
+            report bit_length(int(x)) == 101 and (0..2^101)[int(x)] == 2^100
+            report slice(0..2^101,int(x),int(x+2.0^50))[0] == 2^100
         "#,
         );
         for source in [
             "report int(1e100)",
             "let x=1e100; let n:int=int(x); report n",
-            "report bit_length(1e100)",
-            "report round(1,1e100)",
-            "report [0].get(1e100,-1)",
-            "report (1e100..1e100)",
+            "report bit_length(int(1e100))",
+            "report round(1,int(1e100))",
+            "report [0].get(int(1e100),-1)",
+            "report (int(1e100)..int(1e100))",
         ] {
             let opts = Options {
                 limits: Limits {
@@ -474,7 +486,7 @@ both_modes! {
             },
             ..options(MODE)
         };
-        for source in ["report int(1e100)", "report bit_length(1e100)"] {
+        for source in ["report int(1e100)", "report bit_length(int(1e100))"] {
             let e = exec_raw(source, &opts).expect_err(source);
             assert_eq!(e.kind, ErrorKind::Limit, "{source}: {e:?}");
         }

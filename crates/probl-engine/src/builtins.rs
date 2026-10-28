@@ -402,7 +402,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             Ok(Value::list(items[..n].to_vec()))
         }
         B::Prob => ops::make_prob(a(0)),
-        B::Int => Ok(Value::Int(ops::integer(a(0), "int", budget)?.into_owned())),
+        B::Int => Ok(Value::Int(ops::whole(a(0), budget)?)),
         B::Float => ops::to_float(a(0)),
         B::BooleanLaw => ops::boolean_law(a(0)),
         B::Bernoulli | B::ScoreLaw => Ok(Dist::bernoulli(to_prob(a(0))?).into_value()),

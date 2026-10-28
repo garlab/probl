@@ -502,7 +502,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         B::Slice => doc(
             "slice(xs, start: int, end: int?)",
-            "A sequence from start (inclusive) to end (exclusive, defaults to length). Bounds accept ints or exactly integral finite floats, without rounding, and require 0 <= start <= end <= length. Strings count Unicode scalar values and return strings; lists return lists; ranges stay compact ranges. Equal bounds give an empty result. Does not mutate xs.",
+            "A sequence from start (inclusive) to end (exclusive, defaults to length). Bounds are ints, and require 0 <= start <= end <= length. Strings count Unicode scalar values and return strings; lists return lists; ranges stay compact ranges. Equal bounds give an empty result. Does not mutate xs.",
         ),
         B::Sum => doc("sum(xs: list)", "The items added up; 0 for an empty list."),
         B::Combinations => doc(
@@ -545,7 +545,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Values => doc("values(m: map) -> list", "A map's values, in the order of their keys."),
         B::Get => doc(
             "get(m, key) or get(m, key, default)",
-            "A map's value for key, a list/range/string element at index key (from 0), or the count of an item in a bag. Strings use Unicode scalar positions. Sequence indices accept ints or exactly integral finite floats. Map keys and bag items compare numbers by value, as `==` does: 1 and 1.0 are one key. For maps/sequences, default handles absence; without it, absence is an error. Invalid index types always fail. Bag counts are always defined: absent items return zero, even when a default is supplied.",
+            "A map's value for key, a list/range/string element at index key (from 0), or the count of an item in a bag. Strings use Unicode scalar positions. Sequence indices are ints; a float, even a whole one, is an error. Map keys and bag items compare numbers by value, as `==` does: 1 and 1.0 are one key. For maps/sequences, default handles absence; without it, absence is an error. Invalid index types always fail. Bag counts are always defined: absent items return zero, even when a default is supplied.",
         ),
         B::Contains => doc(
             "contains(xs, x) -> bool",

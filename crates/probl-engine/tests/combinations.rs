@@ -11,7 +11,7 @@ fn combinations_follow_input_positions_and_preserve_equal_values() {
             "report (1..4).combinations(3)==[[1,2,3],[1,2,4],[1,3,4],[2,3,4]]",
             "report \"a🙂é\".combinations(2)==[[\"a\",\"🙂\"],[\"a\",\"é\"],[\"🙂\",\"é\"]]",
             "report [1,2].combinations(0)==[[]] and [].combinations(0)==[[]] and [].combinations(1)==[]",
-            "report [1,2].combinations(3)==[] and [1,2].combinations(1.0)==[[1],[2]] and [1,2].combinations(2)==[[1,2]]",
+            "report [1,2].combinations(3)==[] and [1,2].combinations(1)==[[1],[2]] and [1,2].combinations(2)==[[1,2]]",
             "let f=combinations; report f([complex(1),complex(2)],2)==[[complex(1),complex(2)]]",
             "let xs=[d2,prob(25%)]; let ys=xs.combinations(1); report typeof ys[0][0]==\"dist[int]\" and typeof ys[1][0]==\"prob\"",
             "report [1,2,3,4].combinations(2).count(pair -> sum(pair)==5)==2",

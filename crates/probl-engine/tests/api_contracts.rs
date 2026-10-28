@@ -336,9 +336,9 @@ both_modes! {
             MODE,
             r#"
             let s="é🦀a"
-            report s.get(0)==s[0] and s.get(1.0)==s[1] and s.get(3,"?")=="?" and s.get(-1,"?")=="?"
+            report s.get(0)==s[0] and s.get(1)==s[1] and s.get(3,"?")=="?" and s.get(-1,"?")=="?"
             report "".get(0,"?")=="?"
-            report (2^100..2^100+2).get(1.0)==2^100+1 and (2..4).get(3,-1)==-1
+            report (2^100..2^100+2).get(1)==2^100+1 and (2..4).get(3,-1)==-1
             report minimum(s)=="a" and maximum(s)=="🦀" and minimum(["x"])=="x"
             report min(3,1,2)==1 and max(3,1,2)==3
             report P(min(d6,3)<=3)==100%

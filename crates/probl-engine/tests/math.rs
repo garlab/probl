@@ -399,7 +399,7 @@ fn divisors_ranges_of_primes_roots_and_modular_arithmetic() {
         "(3..300).count(n -> prev_prime(n) != primes(n - 1).reverse()[0]) == 0",
         "isqrt(0) == 0 and isqrt(99) == 9 and isqrt(100) == 10",
         "isqrt(10^400) == 10^200 and isqrt(10^400 - 1) == 10^200 - 1",
-        "isqrt(2^64) == 2^32 and isqrt(9.0) == 3",
+        "isqrt(2^64) == 2^32 and isqrt(9) == 3 and isqrt(int(9.0)) == 3",
         "(0..3000).count(n -> isqrt(n)^2 > n or (isqrt(n) + 1)^2 <= n) == 0",
         "mod_pow(3, 10^20, 7) == 4 and mod_pow(2, 2^127 - 2, 2^127 - 1) == 1",
         "mod_pow(5, 0, 7) == 1 and mod_pow(5, 0, 1) == 0 and mod_pow(0, 0, 7) == 1",

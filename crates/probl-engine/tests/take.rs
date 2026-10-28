@@ -203,7 +203,7 @@ fn batch_taking_has_the_same_ordered_distribution_as_successive_draws() {
 fn batch_taking_preserves_items_types_and_evaluation_order() {
     for mode in ["enumerate", "sample(runs: 100, seed: 7)"] {
         for source in [
-            "var b=bag([1,2]); let empty=b.take(0); let one=b.take(1.0); let last=b.take(); report empty==[] and len(one)==1 and one[0]!=last and len(b)==0",
+            "var b=bag([1,2]); let empty=b.take(0); let one=b.take(1); let last=b.take(); report empty==[] and len(one)==1 and one[0]!=last and len(b)==0",
             "var b=bag([]); report b.take(0)==[] and len(b)==0",
             "var b=bag([d2,d4]); let hand: list[dist[int]]=b.take(2); report hand.map(mean).sum()==4 and len(b)==0",
             "var b=bag([prob(25%)]); let hand=b.take(1); report typeof hand[0]==\"prob\" and hand[0]==prob(25%)",
