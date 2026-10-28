@@ -34,6 +34,37 @@ pub fn integer<'a>(v: &'a Value, context: &str, budget: &mut Budget) -> OpResult
     }
 }
 
+/// The float that holds `n`: an int becomes a float only if the number
+/// doesn't change.
+pub fn exact_float(n: &Integer) -> OpResult<f64> {
+    match n.to_f64() {
+        Some(x) if n.cmp_f64(x).is_some_and(|c| c.is_eq()) => Ok(x),
+        _ => {
+            let n = if n.bits() <= 64 {
+                n.to_string()
+            } else {
+                format!("an int of {} bits", n.bits())
+            };
+            Err(OpError::new(format!("no float holds {n}")).help("`float(…)` rounds an int to the nearest float"))
+        }
+    }
+}
+
+/// `float(x)`: a number as a float, rounding an int to the nearest one.
+pub fn to_float(v: &Value) -> OpResult<Value> {
+    match v {
+        Value::Float(x) | Value::Prob(x) => Ok(Value::Float(*x)),
+        Value::Int(n) => n
+            .to_f64()
+            .map(Value::Float)
+            .ok_or_else(|| OpError::new(format!("an int of {} bits is too large for a float", n.bits()))),
+        other => Err(OpError::new(format!(
+            "`float` needs an int, a float or a probability, found {}",
+            article(&other.kind())
+        ))),
+    }
+}
+
 /// A count law with its outcomes listed, for what needs them; anything
 /// else as it is. (Out of line: a lazy law is rare, and the lifting
 /// functions, generic and hot, must stay small enough to inline.)

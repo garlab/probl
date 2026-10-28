@@ -28,7 +28,7 @@ fn named_function_values_read_globals_when_called_and_preserve_declared_boundari
             fn scale(x:int): int {x*factor}
             let f=scale
             factor=3
-            report f(4.0)==12 and scale(4)==12
+            report f(4)==12 and scale(4)==12
             report [1,2].map(f)==[3,6]
             fn compare(a,b) {a-b}
             report [3,1,2].sort(compare)==[1,2,3]

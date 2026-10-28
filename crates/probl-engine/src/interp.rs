@@ -3011,13 +3011,15 @@ impl<'p> Engine<'p> {
             (Value::Analytic(_) | Value::Event(_), TypeSpec::Prob) => {
                 return Err(analytic::unsupported("converting this outcome to prob").at(span));
             }
-            (v @ Value::Float(_), TypeSpec::Int) => Value::Int(
-                ops::integer(&v, "int conversion", &mut self.budget)
-                    .map_err(|e| e.at(span))?
-                    .into_owned(),
-            ),
-            // An outcome like `floor(x)` is an int; another is never rounded
-            // into one.
+            // An int becomes a float if a float holds the same number. A
+            // float never becomes an int: `div`, `round` or `int(x)` say how.
+            (Value::Int(n), TypeSpec::Float) => Value::Float(ops::exact_float(&n).map_err(|e| e.at(span))?),
+            // An outcome like `floor(x)` is an int, which a float holds:
+            // every piece is a whole float. Another is never rounded into one.
+            (Value::Analytic(a), TypeSpec::Float) if a.int => Value::Analytic(Arc::new(analytic::Analytic {
+                int: false,
+                ..(*a).clone()
+            })),
             (Value::Analytic(a), TypeSpec::Int) if a.int => Value::Analytic(a),
             (Value::Analytic(_), TypeSpec::Int) => {
                 return Err(analytic::unsupported("converting this outcome to int").at(span));
@@ -3090,11 +3092,22 @@ impl<'p> Engine<'p> {
             (Value::Record(r), TypeSpec::AnonRecord(types)) => {
                 let mut fields = Vec::with_capacity(r.fields.len());
                 for (name, value) in &r.fields {
-                    let value = match types.iter().find(|(n, _)| n == &**name) {
+                    let converted = match types.iter().find(|(n, _)| n == &**name) {
                         Some((_, t)) => self.coerce_at(value.clone(), t, span, depth + 1)?,
                         None => value.clone(),
                     };
-                    fields.push((name.clone(), value));
+                    // A named record fits as it is, or not at all: a field
+                    // that converts would leave a record that isn't one of
+                    // its type, without a sign that it lost its name.
+                    if let Some(named) = r.ty.as_deref().filter(|_| converted != *value) {
+                        return Err(OpError::new(format!(
+                            "a `{named}` can't become {}: its field `{name}` would convert, and it wouldn't be a `{named}` any more",
+                            ty.describe(self.prog)
+                        ))
+                        .help("build a record without the name, from its fields")
+                        .at(span));
+                    }
+                    fields.push((name.clone(), converted));
                 }
                 ops::make_record(r.ty.clone(), fields)
             }
@@ -3106,7 +3119,8 @@ impl<'p> Engine<'p> {
     fn conforms(&self, v: &Value, ty: &TypeSpec) -> bool {
         match (ty, v) {
             (TypeSpec::Int, Value::Int(_)) => true,
-            (TypeSpec::Float, Value::Float(_) | Value::Int(_) | Value::Analytic(_)) => true,
+            (TypeSpec::Float, Value::Float(_)) => true,
+            (TypeSpec::Float, Value::Analytic(a)) => !a.int,
             (TypeSpec::Complex, Value::Complex(_)) => true,
             (TypeSpec::Prob, Value::Prob(_)) => true,
             (TypeSpec::Bool, Value::Bool(_) | Value::Event(_)) => true,
@@ -3674,14 +3688,18 @@ impl<'p> Engine<'p> {
             format!("`{name}`")
         };
         let found = self.described(&w.slots[slot as usize]);
-        Err(RuntimeError::new(
+        let mut e = RuntimeError::new(
             span,
             format!(
                 "{what} should be {}, but it's {}",
                 ops::article(&ty.describe(self.prog)),
                 ops::article(&found)
             ),
-        ))
+        );
+        if float_for_int(&w.slots[slot as usize], ty) {
+            e.help = Some("`div` divides to an int; `round(…)`, `floor(…)` and `int(…)` convert a float".into());
+        }
+        Err(e)
     }
 
     /// A value that fails a declared type, described as `typeof` would, or
@@ -4728,6 +4746,19 @@ fn update(target: &mut Value, keys: &[PathKey], v: Value, budget: &mut Budget) -
             "can't set an element of {}",
             ops::article(&other.kind())
         ))),
+    }
+}
+
+/// Whether a value holds a float where its declared type has an int, which
+/// a declaration never converts.
+fn float_for_int(v: &Value, ty: &TypeSpec) -> bool {
+    match (v, ty) {
+        (Value::Float(_), TypeSpec::Int) => true,
+        (Value::List(xs), TypeSpec::List(t)) => xs.iter().any(|x| float_for_int(x, t)),
+        (Value::Map(m), TypeSpec::Map(k, t)) => m.iter().any(|(a, b)| float_for_int(a, k) || float_for_int(b, t)),
+        (Value::Bag(b), TypeSpec::Bag(t)) => b.keys().any(|x| float_for_int(x, t)),
+        (Value::Dist(d), TypeSpec::Dist(t)) => d.outcomes.iter().any(|(x, _)| float_for_int(x, t)),
+        _ => false,
     }
 }
 

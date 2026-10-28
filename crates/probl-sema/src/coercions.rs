@@ -20,3 +20,12 @@ pub fn float_literal(e: &Expr) -> Option<f64> {
         _ => None,
     }
 }
+
+/// An int literal, negated or not, as the int it is.
+pub fn int_literal(e: &Expr) -> Option<probl_number::Integer> {
+    match &e.kind {
+        ExprKind::Lit(Lit::Int(n)) => Some(n.clone()),
+        ExprKind::Unary(UnOp::Neg, x) => int_literal(x).and_then(|n| probl_number::Integer::ZERO.sub(&n).ok()),
+        _ => None,
+    }
+}

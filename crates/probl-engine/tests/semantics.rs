@@ -453,8 +453,10 @@ fn declared_types_are_checked() {
     close(chance("let n: int = 3\nreport n == 3"), 1.0);
     close(chance("fn half(x: float): float { x / 2 }\nreport half(3) == 1.5"), 1.0);
     assert!(error("fn f(x: int) { x }\nreport f(\"a\") == 1").contains("`x` should be an int, but it's a str"));
-    assert!(error("fn f(x): int { x / 2 }\nreport f(3) == 1").contains("exactly integral finite float"));
-    assert!(error("var n: int = 1\nn = n / 2").contains("exactly integral finite float"));
+    // A declared int never converts a float, even a whole one.
+    assert!(error("fn f(x): int { x / 2 }\nreport f(4) == 2").contains("should be an int, but it's a float"));
+    assert!(error("var n: int = 1\nn = n * 2 / 2").contains("`n` should be an int, but it's a float"));
+    close(chance("let x: float = 3\nreport typeof x == \"float\""), 1.0);
     assert!(error("let d: dist[int] = one_of([\"a\"])").contains("should be a dist[int], but it's a dist[str]"));
     // A value that fails is described as `typeof` would describe it.
     for (src, message) in [

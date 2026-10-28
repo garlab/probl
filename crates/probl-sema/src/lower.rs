@@ -466,15 +466,28 @@ impl<'a> Lowerer<'a> {
     /// Other numbers are checked at the receiving runtime type boundary.
     fn contextualize(&mut self, e: &mut Expr, ty: &TypeSpec) {
         if *ty == TypeSpec::Int {
+            // A float never becomes an int, even a whole one.
             if let Some(n) = crate::coercions::float_literal(e) {
-                if !n.is_finite() || n.fract() != 0.0 {
-                    self.error(
-                        e.span,
-                        "an int needs an exactly integral finite float; conversion never rounds",
-                    );
+                let help = if n.is_finite() && n.fract() == 0.0 {
+                    format!("write `{n:.0}`, without the decimal point")
+                } else {
+                    "`round(…)`, `floor(…)` and `ceil(…)` turn a float into an int".to_string()
+                };
+                self.error(e.span, "expected an int, found a float").help(help);
+            }
+            return;
+        }
+        if *ty == TypeSpec::Float {
+            // An int becomes a float if a float holds the same number.
+            if let Some(n) = crate::coercions::int_literal(e) {
+                match n.to_f64().filter(|x| n.cmp_f64(*x).is_some_and(|c| c.is_eq())) {
+                    Some(x) => e.kind = ExprKind::Lit(Lit::Float(x + 0.0)),
+                    None => {
+                        self.error(e.span, format!("no float holds {n}"))
+                            .help("`float(…)` rounds an int to the nearest float");
+                    }
                 }
             }
-            // Runtime conversion accounts for integer allocation and host limits.
             return;
         }
         if *ty == TypeSpec::Prob {
@@ -500,7 +513,8 @@ impl<'a> Lowerer<'a> {
                     self.contextualize(b, v);
                 }
             }
-            (ExprKind::Record { fields, .. }, TypeSpec::AnonRecord(ts)) => {
+            // A named record's fields have its own types.
+            (ExprKind::Record { ty: None, fields }, TypeSpec::AnonRecord(ts)) => {
                 for (n, x) in fields {
                     if let Some((_, t)) = ts.iter().find(|(m, _)| m == n) {
                         self.contextualize(x, t);

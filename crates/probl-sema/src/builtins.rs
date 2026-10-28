@@ -51,6 +51,8 @@ builtins! {
     Ceil = "ceil", 1..=1, Lift, true;
     Trunc = "trunc", 1..=1, Lift, true;
     Round = "round", 1..=2, Lift, true;
+    Int = "int", 1..=1, Lift, true;
+    Float = "float", 1..=1, Lift, true;
     Sqrt = "sqrt", 1..=1, Lift, true;
     Cbrt = "cbrt", 1..=1, Lift, true;
     Exp = "exp", 1..=1, Lift, true;

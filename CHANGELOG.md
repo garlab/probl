@@ -4,7 +4,13 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+### Added
+
+- `int(x)` and `float(x)` convert explicitly. `int(x)` takes an int or a float that's exactly a whole number and never rounds: `int(4 / 2)` is 2, and `int(2.5)` is an error. `float(x)` takes an int, a float or a probability, rounding an int to the nearest float: `float(2^53 + 1)` is `2^53`. Both lift over a finite distribution's outcomes, and neither parses text.
+
 ### Changed
+
+- A declared type is the type the value has. An int becomes a float where a float is declared, if a float holds the same number: after `let z: float = 1`, `typeof z` is `"float"` and `z` prints as `1.0`, and `fn f(x: float)` called with `f(2)` gets `2.0`. No float holds `2^53 + 1`, so declaring it a float is an error. A float no longer becomes an int where an int is declared, even a whole one: `let n: int = 4 / 2` is an error, whose help suggests `4 div 2`, `round`, `floor` or `int(…)`. Literals are checked during compilation: `let n: int = 2.0` and `let x: float = 9007199254740993` are errors before the program runs. Built-in integer arguments, like `factorial(5.0)` and `xs.get(1.0)`, still accept whole floats. A named record fits an anonymous record type only if none of its fields converts. See [the semantics](docs/semantics.md#1-values-and-types).
 
 - Numbers compare by value at any depth, whatever their kind: `[1] == [1.0]`, `{x: 1} == {x: 1.0}` and `[1] == [complex(1, 0)]` are true, and `[2^60 + 1] == [2.0^60]` is still false. Map keys and bag elements follow `==`: `1` and `1.0` are one key, so `[1.0: "a"].contains(1)` is true, and a repeated key keeps the key first written and the value last written, so `[1: "a", 1.0: "b"]` is `[1: "b"]`. `pmf` adds up the outcomes equal to its argument, so `pmf(one_of([1, 1.0]), 1)` is 100%, and `support` lists each number once. Worlds keep their types, so `typeof` still tells `1` from `1.0`. This reverses the typed key and outcome identity of earlier releases. See [the semantics](docs/semantics.md#1-values-and-types) and [the annotations proposal](docs/design/annotations-and-unions.md#numbers-compare-by-value), whose first step this is.
 

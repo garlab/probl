@@ -101,20 +101,20 @@ fn declared_types_check_what_goes_in() {
         facts(
             mode,
             r#"
-            var xs: list[int] = []
-            xs.push(2.0)
-            xs.insert(0, 1.0)
-            report xs == [1, 2] and typeof xs == "list[int]"
+            var xs: list[float] = []
+            xs.push(2)
+            xs.insert(0, 1)
+            report xs == [1, 2] and typeof xs == "list[float]"
             var ps: list[list[prob]] = [[]]
             ps[0].push(30%)
             report typeof ps == "list[list[prob]]"
             var m: map[str, float] = [:]
             m.insert("a", 1%)
             report typeof m["a"] == "float"
-            type Hand = { cards: list[int] }
+            type Hand = { cards: list[float] }
             var h = Hand { cards: [] }
-            h.cards.push(1.0)
-            report h.cards == [1] and typeof h.cards == "list[int]"
+            h.cards.push(1)
+            report h.cards == [1] and typeof h.cards == "list[float]"
         "#,
         );
     }
@@ -124,8 +124,8 @@ fn declared_types_check_what_goes_in() {
             "`xs` should be a list[int], but it's a list[str]",
         ),
         (
-            "var xs: list[list[int]] = [[]]\nlet h = 1.5\nxs[0].push(h)",
-            "needs an int (or an exactly integral finite float), found the float 1.5",
+            "var xs: list[list[int]] = [[]]\nlet h = 2.0\nxs[0].push(h)",
+            "`xs` should be a list[list[int]], but it's a list[list[float]]",
         ),
         (
             "var xs: list[list[int]] = [[]]\nxs[0].push(\"a\")",

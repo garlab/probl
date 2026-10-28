@@ -29,6 +29,8 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Ceil
         | B::Trunc
         | B::Round
+        | B::Int
+        | B::Float
         | B::Sqrt
         | B::Cbrt
         | B::Exp
@@ -223,6 +225,14 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Round => doc(
             "round(x, digits?: int)",
             "Round to the nearest value, halves away from zero. With no `digits`, returns an int. With `digits`, rounds that many decimal places: `round(1.234, 2)` is 1.23; `round(1234, -2)` is 1200. Int inputs stay exact ints (integer size and work limits apply); other numbers return floats. Float scaling is approximate near halfway cases. This changes the value, not its display format.",
+        ),
+        B::Int => doc(
+            "int(x) -> int",
+            "The int that `x` is: an int, or a float that's a whole number, exactly. It never rounds, so `int(2.5)` is an error; `round`, `floor`, `ceil` and `trunc` round. A declared `int` never converts a float, so `let n: int = 4 / 2` needs `int(4 / 2)` or `4 div 2`. It doesn't parse text: `int(\"42\")` is an error.",
+        ),
+        B::Float => doc(
+            "float(x) -> float",
+            "`x` as a float: an int, a float or a probability. Unlike a declared `float`, which converts an int only if a float holds it, it rounds an int to the nearest float: `float(2^53 + 1)` is 2^53. It doesn't parse text.",
         ),
         B::Sqrt => doc(
             "sqrt(x) -> float or complex",
