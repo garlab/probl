@@ -362,6 +362,7 @@ impl Lexer<'_> {
     fn punct(&mut self) {
         let lo = self.pos;
         let (tok, len) = match (self.peek(0), self.peek(1), self.peek(2)) {
+            (b'.', b'.', b'.') => (Tok::Ellipsis, 3),
             (b'.', b'.', b'<') => (Tok::DotDotLt, 3),
             (b'.', b'.', _) => (Tok::DotDot, 2),
             (b'-', b'>', _) => (Tok::Arrow, 2),

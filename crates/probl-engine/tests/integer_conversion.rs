@@ -164,7 +164,7 @@ both_modes! {
             zs[0] = 3
             zs.push(4)
             let m: map[float, list[float]] = [1: [2]]
-            let b: bag[float] = bag([1, 1.0, 2])
+            let b: bag[float] = bag(1, 1.0, 2)
             let d: dist[float] = one_of([1, 1.0, 2])
             report typeof xs == "list[list[int]]" and typeof ys == "list[list[float]]"
             report zs == [3, 2, 4] and typeof zs == "list[float]"
@@ -282,7 +282,7 @@ both_modes! {
             report bit_and(6,3) == 2 and bit_or(6,3) == 7 and bit_xor(6,3) == 5 and bit_not(0) == -1
             report round(1.25,1) == 1.3 and round(1250,-2) == 1300
             report mean(binomial(2,50%)) == 1 and highest([1,2,3],2) == [3,2]
-            report lowest([1,2,3],2) == [1,2] and len(bag(["a":2])) == 2
+            report lowest([1,2,3],2) == [1,2] and len({ let b: bag = ["a":2]; b }) == 2
             report mean(len(roll(2,1))) == 2 and mean(sum(roll(1,1))) == 1
             report (1..<3) == (1..2)
             var count = 0
@@ -333,7 +333,7 @@ both_modes! {
                 "binomial(x,50%)",
                 "highest([1,2],x)",
                 "lowest([1,2],x)",
-                "bag([1:x])",
+                "{ let b: bag = [1:x]; b }",
                 "roll(x,d1)",
                 "date(2026,1,x)",
                 "date(2026,1,1).add_months(x)",

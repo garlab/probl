@@ -40,7 +40,7 @@ fn callback_validation_and_effects_apply_only_to_visited_elements() {
             "{ observe true; true }",
             "{ score 50%; true }",
             "if 50% { true } else { false }",
-            "{ var b=bag([true]); b.take() }",
+            "{ var b=bag(true); b.take() }",
         ] {
             let source = format!("@mode {mode}\nfn test(x) {{ if x==0 {{ true }} else {{ {body} }} }}\n");
             close(chance(&(source.clone() + "report [0,1].any(test)")), 1.0);

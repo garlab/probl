@@ -105,7 +105,7 @@ both_modes! {
                     MODE,
                     &format!(
                         r#"
-                    let m=[{a}:"found"]; let bagged=bag([{a},{a}]); let k={b}
+                    let m=[{a}:"found"]; let bagged=bag({a},{a}); let k={b}
                     report m.contains(k)=={same}
                     report (m.get(k,"absent")=="found")=={same}
                     report (len(remove(m,k))==0)=={same}
@@ -118,7 +118,7 @@ both_modes! {
             }
         }
         rejects(MODE, "let m=[1:99]; report m[1.5]", "isn't in the map");
-        rejects(MODE, "let b=bag([1]); report remove(b,1.5)", "isn't in the bag");
+        rejects(MODE, "let b=bag(1); report remove(b,1.5)", "isn't in the bag");
         facts(
             MODE,
             "let m=[1:10,1.0:20]; report m[1]==20 and m[1.0]==20 and len(m)==1 and typeof m==\"map[int, int]\"",

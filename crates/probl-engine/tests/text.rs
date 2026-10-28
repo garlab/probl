@@ -191,7 +191,7 @@ fn text_arguments_and_arities_are_checked() {
     for args in ["", "[]", "[], 0, 0, 0"] {
         assert!(compile_error(&format!("report slice({args})")).contains("takes"));
     }
-    for value in ["1", "true", "[:]", "bag([1])"] {
+    for value in ["1", "true", "[:]", "bag(1)"] {
         assert!(error(&format!("report slice({value}, 0)")).contains("list, range or string"));
     }
 }

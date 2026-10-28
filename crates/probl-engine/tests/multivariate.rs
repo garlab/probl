@@ -32,7 +32,7 @@ let annual: dist[list[float]] = make([0, 0])
 let recipes = [annual, multivariate_normal([-0.0, 0.0], [[1.0, 1.0], [1.0, 1.0]])]
 report typeof annual
 report typeof one_of(recipes)
-report len(keys(bag(recipes)))
+report len(keys(bag(...recipes)))
 report str(annual)
 report map([0, 1], x -> typeof make([x, 0]))
 "#;

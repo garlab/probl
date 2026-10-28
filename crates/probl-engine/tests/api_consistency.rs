@@ -192,7 +192,7 @@ both_modes! {
         truth(
             MODE,
             r#"
-    let original = bag([1, 1.0])
+    let original = bag(1, 1.0)
     let typed: bag[prob] = original
     report len(original) == 2 and len(typed) == 2 and typed.get(prob(1)) == 2
     "#,
@@ -238,7 +238,7 @@ both_modes! {
         for key in ["1.0", "prob(1)", "complex(1)"] {
             truth(
                 MODE,
-                &format!("let b=bag([1]); let k={key}; report contains(b,k) == (get(b,k)>0)"),
+                &format!("let b=bag(1); let k={key}; report contains(b,k) == (get(b,k)>0)"),
             );
         }
     }
@@ -247,7 +247,7 @@ both_modes! {
     fn a_bag_member_can_be_removed() {
         truth(
             MODE,
-            "let b=bag([1]); report if contains(b,1.0) { len(remove(b,1.0)) == 0 } else { true }",
+            "let b=bag(1); report if contains(b,1.0) { len(remove(b,1.0)) == 0 } else { true }",
         );
     }
 
@@ -265,7 +265,7 @@ both_modes! {
             MODE,
             r#"
     let m = [1: "a"]
-    let b = bag([1,1])
+    let b = bag(1,1)
     report (m.contains(1) and m.get(1) == "a" and len(remove(m,1)) == 0
         and insert(m,1,"b").get(1) == "b" and b.contains(1) and b.get(1) == 2
         and remove(b,1).get(1) == 1)
@@ -314,10 +314,10 @@ both_modes! {
             values(
                 MODE,
                 "report [1]==[1.0]; report {x:1}=={x:1.0}; report contains([[1]],[1.0]); \
-                 report [[1]: \"a\"]==[[1.0]: \"a\"]; report bag([1,1.0])==bag([1,1]); \
+                 report [[1]: \"a\"]==[[1.0]: \"a\"]; report bag(1,1.0)==bag(1,1); \
                  report [1]==[complex(1,0)]; report [50%]==[prob(0.5)]; \
                  report [2^60+1]!=[2.0^60]; report [[1, 2]: \"a\"][[1.0, 2.0]]==\"a\"; \
-                 report contains([1.0: \"a\"],1) and contains(bag([1]),1.0)"
+                 report contains([1.0: \"a\"],1) and contains(bag(1),1.0)"
             ),
             vec![Value::Bool(true); 10]
         );
@@ -649,7 +649,7 @@ both_modes! {
         assert_eq!(
             values(
                 MODE,
-                "report typeof round(1.5); report typeof round(1.5,0); let b=bag([1]); report b.get(2); report b.get(2,-1)"
+                "report typeof round(1.5); report typeof round(1.5,0); let b=bag(1); report b.get(2); report b.get(2,-1)"
             ),
             vec![
                 Value::str("int"),

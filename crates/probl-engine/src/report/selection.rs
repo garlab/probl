@@ -228,6 +228,7 @@ impl SummaryCheck {
             | Value::List(_)
             | Value::Map(_)
             | Value::Bag(_)
+            | Value::Set(_)
             | Value::Record(_) => Some(NOT_NUMERIC),
             _ => None,
         };

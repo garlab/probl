@@ -1006,7 +1006,7 @@ pub fn contains(coll: &Value, item: &Value, budget: &mut Budget) -> OpResult<boo
             found
         }
         Value::Map(m) => crate::value::key_in(m, item).is_some(),
-        Value::Bag(b) => b.get(item).is_some_and(|n| *n > 0),
+        Value::Bag(b) | Value::Set(b) => b.get(item).is_some_and(|n| *n > 0),
         Value::Range(lo, hi) => in_range(lo, hi, item),
         Value::Str(s) => match item {
             Value::Str(sub) => s.contains(&**sub),

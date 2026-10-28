@@ -224,6 +224,7 @@ impl Printer<'_> {
                 }
             },
             ExprKind::Slot(s) => self.slot(*s),
+            ExprKind::Spread(value) => format!("...{}", self.expr(value)),
             ExprKind::Unary(op, inner) => {
                 let op = match op {
                     probl_syntax::ast::UnOp::Neg => "-",

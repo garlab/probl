@@ -37,6 +37,8 @@ pub enum Value {
     Map(Arc<Hashed<BTreeMap<Value, Value>>>),
     /// A multiset: value → count.
     Bag(Arc<Hashed<Multiset>>),
+    /// Distinct values; every stored multiplicity is one.
+    Set(Arc<Hashed<Multiset>>),
     /// Integers from `.0` to `.1`, both included.
     Range(probl_number::Integer, probl_number::Integer),
     Record(Arc<Hashed<Record>>),
@@ -396,6 +398,19 @@ impl Value {
         Value::Bag(Arc::new(Hashed::new(contents)))
     }
 
+    pub fn set(items: &[Value]) -> Value {
+        let contents = count_items(items.iter());
+        let entries = contents.entries.into_iter().map(|(v, _)| (v, 1)).collect();
+        Value::Set(Arc::new(Hashed::new(Multiset::from_sorted(entries))))
+    }
+
+    pub fn is_collection(&self) -> bool {
+        matches!(
+            self,
+            Value::List(_) | Value::Set(_) | Value::Bag(_) | Value::Map(_) | Value::Range(..)
+        )
+    }
+
     pub fn record(record: Record) -> Value {
         Value::Record(Arc::new(Hashed::new(record)))
     }
@@ -437,6 +452,7 @@ impl Value {
                 entries: b.entries.iter().map(|(v, n)| (v.unshared_with(names), *n)).collect(),
                 sum: b.sum,
             }),
+            Value::Set(b) => Value::set(&b.keys().map(|v| v.unshared_with(names)).collect::<Vec<_>>()),
             other => other.clone(),
         }
     }
@@ -455,6 +471,7 @@ impl Value {
             Value::List(_) => "list".into(),
             Value::Map(_) => "map".into(),
             Value::Bag(_) => "bag".into(),
+            Value::Set(_) => "set".into(),
             Value::Range(..) => "range".into(),
             Value::Record(r) => match &r.ty {
                 Some(t) => t.to_string(),
@@ -534,6 +551,7 @@ impl Value {
             Value::Range(..) => 8,
             Value::Map(_) => 9,
             Value::Bag(_) => 10,
+            Value::Set(_) => 23,
             Value::Record(_) => 11,
             Value::Dist(_) => 12,
             Value::Closure(_) => 13,
@@ -573,6 +591,7 @@ pub(crate) fn kinds_matter(v: &Value) -> bool {
             | Value::List(_)
             | Value::Map(_)
             | Value::Bag(_)
+            | Value::Set(_)
             | Value::Record(_)
     )
 }
@@ -592,7 +611,7 @@ fn ints_only(v: &Value) -> bool {
         Value::Float(_) | Value::Prob(_) | Value::Complex(_) => false,
         Value::List(xs) => xs.iter().all(ints_only),
         Value::Map(m) => m.iter().all(|(k, v)| ints_only(k) && ints_only(v)),
-        Value::Bag(b) => b.keys().all(ints_only),
+        Value::Bag(b) | Value::Set(b) => b.keys().all(ints_only),
         Value::Record(r) => r.fields.iter().all(|(_, v)| ints_only(v)),
         _ => true,
     }
@@ -667,7 +686,7 @@ pub fn count_items<'a>(items: impl Iterator<Item = &'a Value>) -> Multiset {
 }
 
 /// Adds `n` of `item` to a bag's counts, as the item already there if one
-/// is the same: `bag([1, 1.0])` holds two of `1`.
+/// is the same: `bag(1, 1.0)` holds two of `1`.
 pub fn add_count(counts: &mut BTreeMap<Value, u64>, item: Value, n: u64) -> Option<()> {
     match get_key_mut(counts, &item) {
         Some(count) => *count = count.checked_add(n)?,
@@ -726,7 +745,7 @@ fn eq_other(x: &Value, y: &Value) -> bool {
         (Value::Str(a), Value::Str(b)) => a == b,
         (Value::List(a), Value::List(b)) => Arc::ptr_eq(a, b) || a == b,
         (Value::Map(a), Value::Map(b)) => Arc::ptr_eq(a, b) || a == b,
-        (Value::Bag(a), Value::Bag(b)) => Arc::ptr_eq(a, b) || a == b,
+        (Value::Bag(a), Value::Bag(b)) | (Value::Set(a), Value::Set(b)) => Arc::ptr_eq(a, b) || a == b,
         (Value::Range(a, b), Value::Range(c, d)) => a == c && b == d,
         (Value::Record(a), Value::Record(b)) => Arc::ptr_eq(a, b) || a == b,
         (Value::Enum(a), Value::Enum(b)) => a.ty == b.ty && a.variant == b.variant,
@@ -762,7 +781,9 @@ pub fn eq_counted(a: &Value, b: &Value, budget: &mut crate::dist::Budget) -> cra
     }
     fn same(p: &Value, q: &Value, budget: &mut crate::dist::Budget) -> crate::error::OpResult<bool> {
         match p {
-            Value::List(_) | Value::Map(_) | Value::Bag(_) | Value::Record(_) => eq_counted(p, q, budget),
+            Value::List(_) | Value::Map(_) | Value::Bag(_) | Value::Set(_) | Value::Record(_) => {
+                eq_counted(p, q, budget)
+            }
             _ => Ok(crate::value::same(p, q)),
         }
     }
@@ -801,7 +822,7 @@ pub fn eq_counted(a: &Value, b: &Value, budget: &mut crate::dist::Budget) -> cra
                 }
             }
         }
-        (Value::Bag(x), Value::Bag(y)) => {
+        (Value::Bag(x), Value::Bag(y)) | (Value::Set(x), Value::Set(y)) => {
             if Arc::ptr_eq(x, y) {
                 return Ok(true);
             }
@@ -891,7 +912,7 @@ fn hash_other<H: Hasher>(value: &Value, state: &mut H) {
         Value::Str(s) => s.hash(state),
         Value::List(items) => items.hash(state),
         Value::Map(m) => m.hash(state),
-        Value::Bag(b) => b.hash(state),
+        Value::Bag(b) | Value::Set(b) => b.hash(state),
         Value::Range(a, b) => (a, b).hash(state),
         Value::Record(r) => r.hash(state),
         Value::Enum(e) => (e.ty, e.variant).hash(state),
@@ -977,7 +998,7 @@ impl Value {
                     a.len().cmp(&b.len()),
                 )
             }
-            (Value::Bag(a), Value::Bag(b)) => {
+            (Value::Bag(a), Value::Bag(b)) | (Value::Set(a), Value::Set(b)) => {
                 if Arc::ptr_eq(a, b) {
                     return (Ordering::Equal, Ordering::Equal);
                 }
@@ -1158,8 +1179,19 @@ fn write_value(v: &Value, f: &mut fmt::Formatter<'_>, nested: bool) -> fmt::Resu
             }
             write!(f, "]")
         }
+        Value::Set(s) => {
+            let singleton_collection = s.distinct_len() == 1 && s.keys().next().is_some_and(Value::is_collection);
+            write!(f, "{}", if singleton_collection { "set(...[" } else { "set(" })?;
+            for (i, item) in s.keys().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write_value(item, f, true)?;
+            }
+            write!(f, "{}", if singleton_collection { "])" } else { ")" })
+        }
         Value::Bag(b) => {
-            write!(f, "bag([")?;
+            write!(f, "bag [")?;
             for (i, (k, n)) in b.iter().enumerate() {
                 if i > 0 {
                     write!(f, ", ")?;
@@ -1167,7 +1199,7 @@ fn write_value(v: &Value, f: &mut fmt::Formatter<'_>, nested: bool) -> fmt::Resu
                 write_value(k, f, true)?;
                 write!(f, ": {n}")?;
             }
-            write!(f, "])")
+            write!(f, "]")
         }
         Value::Range(a, b) => write!(f, "{a}..{b}"),
         Value::Record(r) => {
@@ -1324,6 +1356,10 @@ mod tests {
             map(int(1), Value::str("b")),
             Value::bag([(int(1), 2)].into_iter().collect()),
             Value::bag([(Value::Float(1.0), 2)].into_iter().collect()),
+            Value::set(&[int(1), int(2)]),
+            Value::set(&[Value::Float(1.0), int(2)]),
+            Value::set(&[list(vec![int(1)])]),
+            Value::set(&[list(vec![Value::Float(1.0)])]),
         ];
         for a in &values {
             for b in &values {

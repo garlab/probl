@@ -436,6 +436,9 @@ pub enum TypeSpec {
     List(Box<TypeSpec>),
     Map(Box<TypeSpec>, Box<TypeSpec>),
     Bag(Box<TypeSpec>),
+    /// A bag with no declared element type.
+    BareBag,
+    Set(Box<TypeSpec>),
     Dist(Box<TypeSpec>),
     Record(u32),
     Enum(u32),
@@ -464,6 +467,8 @@ impl TypeSpec {
             TypeSpec::List(t) => format!("list[{}]", describe(t)),
             TypeSpec::Map(k, v) => format!("map[{}, {}]", describe(k), describe(v)),
             TypeSpec::Bag(t) => format!("bag[{}]", describe(t)),
+            TypeSpec::BareBag => "bag".into(),
+            TypeSpec::Set(t) => format!("set[{}]", describe(t)),
             TypeSpec::Dist(t) => format!("dist[{}]", describe(t)),
             TypeSpec::Record(r) => records[*r as usize].name.clone(),
             TypeSpec::Enum(e) => enums[*e as usize].name.clone(),
@@ -519,6 +524,9 @@ pub enum ExprKind {
     /// contains hoisted statements, so it can be evaluated lazily).
     Binary(BinOp, Box<Expr>, Box<Expr>),
     List(Vec<Expr>),
+    /// Expanded by its containing list or call. The operand evaluates to
+    /// a list, prepared at the spread's original evaluation position.
+    Spread(Box<Expr>),
     Map(Vec<(Expr, Expr)>),
     Record {
         ty: Option<u32>,

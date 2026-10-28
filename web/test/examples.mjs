@@ -160,6 +160,7 @@ cases.push({ name: 'text', path: 'web/test/text.probl', source: await readFile(`
 cases.push({ name: 'dates', path: 'web/test/dates.probl', source: await readFile(`${root}/web/test/dates.probl`, 'utf8') });
 cases.push({ name: 'reporting', path: 'web/test/reporting.probl', source: await readFile(`${root}/web/test/reporting.probl`, 'utf8') });
 cases.push({ name: 'types', path: 'web/test/types.probl', source: await readFile(`${root}/web/test/types.probl`, 'utf8') });
+cases.push({ name: 'collections', path: 'web/test/collections.probl', source: await readFile(`${root}/web/test/collections.probl`, 'utf8') });
 cases.push({ name: 'catching', path: 'web/test/catching.probl', source: await readFile(`${root}/web/test/catching.probl`, 'utf8') });
 cases.push({
   name: 'integers', path: 'web/test/integers.probl',
@@ -192,7 +193,7 @@ for (const mode of ['enumerate', 'sample']) {
     'report [1].map(x -> ~d6)',
     'report [2,1].sort((a,b) -> { let r ~ d1; a-b })',
     'report [2,1].sort_desc((a,b) -> { observe true; a-b })',
-    'report [1].map(x -> { var deck = bag([1]); deck.take() })',
+    'report [1].map(x -> { var deck = bag(1); deck.take() })',
     'report [1].map(x -> { score 50%; x })',
     'report [1].map(x -> if 30% { x } else { x })',
     'report [1].reduce((a, x) -> chance { 50% => a, else => a }, 0)',
@@ -222,12 +223,14 @@ for (const mode of ['enumerate', 'sample']) {
 }
 console.log('same  explicit conversions and observation restrictions in both modes');
 
-// Integer conversions reject fractions and invalid index types in both engines.
+// Annotations and indices reject floats; int(...) converts explicitly.
 for (const mode of ['enumerate', 'sample']) {
   for (const source of [
     'let x=1.4; let n:int=x; report n',
+    'let x=1.0; let n:int=x; report n',
     'let x=1.0000000000000002; let n:int=x; report n',
     'let xs=[10,20]; report xs.get(1.4,-1)',
+    'let xs=[10,20]; report xs.get(1.0,-1)',
     'report [].get("wrong",-1)',
     'report slice([10,20],0,1.4)',
     'report factorial(1.4)',
@@ -235,19 +238,23 @@ for (const mode of ['enumerate', 'sample']) {
     'report roll(1.4,d1)',
     'report date(2026,1,1).add_months(1.4)',
     'let n:dist[int]=one_of([1.0,1.4]); report n',
-    'let m:map[int,str]=[1:"int",1.0:"float"]; report m',
-    'let m:map[prob,str]=[1:"int",1.0:"float"]; report m',
   ]) {
     const result = probl.run({ source, mode, ...(mode === 'sample' ? { runs: 10, seed: 19 } : {}) });
     assert.equal(result.error?.kind, 'language', source);
-    assert.match(result.error?.message, /int|collision/, source);
+    assert.match(result.error?.message, /int/, source);
   }
   const result = probl.run({
-    source: 'let x=1.0; let n:int=x; report typeof n == "int" and typeof x == "float" and [10,20].get(x,-1)==20',
+    source: 'let x=1.0; let n:int=int(x); report typeof n == "int" and typeof x == "float" and [10,20].get(int(x),-1)==20 and [1:"a"][x]=="a"',
     mode, ...(mode === 'sample' ? { runs: 10, seed: 19 } : {}),
   });
   assert.equal(result.error, undefined);
   assert.match(result.output, /100(?:\.0+)?%/);
+  for (const type of ['int', 'prob']) {
+    const source = `let raw=[1:"int",1.0:"float"]; let m:map[${type},str]=raw; report len(m)==1 and m[1]=="float" and typeof m=="map[${type}, str]"`;
+    const result = probl.run({ source, mode, ...(mode === 'sample' ? { runs: 10, seed: 19 } : {}) });
+    assert.equal(result.error, undefined, source);
+    assert.match(result.output, /100(?:\.0+)?%/, source);
+  }
 }
 console.log('same  checked integer conversion in both modes');
 
@@ -283,7 +290,6 @@ for (const mode of ['enumerate', 'sample']) {
     '@epsilon 0.1\nlet d=simulate {var n=0; while 50% {n+=1}; n}; report cdf(d,200)',
     '@epsilon 0.1\nlet d=simulate {var n=0; while 50% {n+=1}; n}; report pmf(one_of([d,uniform(100,101)]),0)',
     'report P(geometric(50%)>1)',
-    'report [1:"a"][1.0]',
     'report maximum([complex(1)])',
     'report "abc".get(0.5,"?")',
     'report mean(1..0)',

@@ -971,7 +971,7 @@ impl Parser {
                 } else {
                     None
                 };
-                let value = p.expr()?;
+                let value = if name.is_none() { p.spread_item()? } else { p.expr()? };
                 args.push(Arg { name, value });
                 if !p.eat(&Tok::Comma) {
                     break;
@@ -1131,6 +1131,19 @@ impl Parser {
         segments
     }
 
+    fn spread_item(&mut self) -> PResult<Expr> {
+        if self.at(&Tok::Ellipsis) {
+            let lo = self.bump().span;
+            let value = self.expr()?;
+            Ok(Expr {
+                span: lo.to(value.span),
+                kind: ExprKind::Spread(Box::new(value)),
+            })
+        } else {
+            self.expr()
+        }
+    }
+
     fn list_or_map(&mut self) -> PResult<Expr> {
         let lo = self.bump().span; // [
         self.with_restriction(false, |p| {
@@ -1149,8 +1162,12 @@ impl Parser {
                     span: lo.to(hi),
                 });
             }
-            let first = p.expr()?;
+            let first = p.spread_item()?;
             if p.eat(&Tok::Colon) {
+                if matches!(first.kind, ExprKind::Spread(_)) {
+                    p.error(first.span, "a spread can't be a map key");
+                    return Err(Failed);
+                }
                 let value = p.expr()?;
                 let mut entries = vec![(first, value)];
                 while p.eat(&Tok::Comma) {
@@ -1173,7 +1190,7 @@ impl Parser {
                     if p.at(&Tok::RBracket) {
                         break;
                     }
-                    items.push(p.expr()?);
+                    items.push(p.spread_item()?);
                 }
                 let hi = p.expect(&Tok::RBracket, "to close the list")?;
                 Ok(Expr {

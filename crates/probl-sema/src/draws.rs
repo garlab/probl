@@ -263,7 +263,7 @@ fn expr_reads(e: &Expr, f: &mut impl FnMut(SlotId), include_type_reads: bool) {
         } if !include_type_reads && matches!(args[0].kind, ExprKind::Slot(_)) => {}
         ExprKind::Lit(_) | ExprKind::Input(_) => {}
         ExprKind::Slot(s) => f(*s),
-        ExprKind::Unary(_, x) | ExprKind::Field(x, _) => recurse(x, f),
+        ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Spread(x) => recurse(x, f),
         ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => {
             recurse(a, f);
             recurse(b, f);

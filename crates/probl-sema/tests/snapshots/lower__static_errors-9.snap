@@ -1,6 +1,6 @@
 ---
 source: crates/probl-sema/tests/lower.rs
-expression: "errors(\"let deck = bag([1: 2])\\nlet c = deck.take()\")"
+expression: "errors(\"let deck: bag = [1: 2]\\nlet c = deck.take()\")"
 ---
 Error: can't take an item from `deck`: it was declared with `let`
    ╭─[ test.probl:2:9 ]

@@ -64,6 +64,8 @@ Both modes use deterministic queries, a pinned date, and a fixed sampling seed. 
 
 [reduction_defaults.rs](../crates/probl-engine/tests/reduction_defaults.rs) tests `reduce(xs, f, initial?)` and extrema defaults. It covers empty/filtered/singleton collections, left-fold order, callback validation and effects, distribution lifting and independence, named defaults through aliases, malformed keywords, eager evaluation order, and print-aware optimization. The former `reduce(xs, initial, f)` call sites are migrated; there is no automatic argument-order detection. Defaults apply only to empty extrema collections and do not compete with existing elements or hide invalid distributions.
 
+[sets_and_spreads.rs](../crates/probl-engine/tests/sets_and_spreads.rs) checks element constructors, sets, bare bags, spread evaluation order across mutation and world splits, first-class variadic built-ins, recipe preservation, rejection diagnostics, collection limits and compact printing. The native/WASM fixture `web/test/collections.probl` covers the same construction paths and output. Set equality, hashing and internal typed identity also run through the value-order properties. The oracle explicitly rejects spreads until it supports them.
+
 The existing shared `close` helper uses absolute error below `1e-9`. That is suitable for some moderate-size values, but would accept zero for a `1e-13` tail and would miss a small violation of `[0,1]`. Choose assertions according to the property rather than applying one tolerance everywhere.
 
 [`report_storage.rs`](../crates/probl/tests/report_storage.rs) measures retained

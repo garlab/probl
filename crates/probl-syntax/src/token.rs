@@ -61,6 +61,8 @@ pub enum Tok {
     RBrace,
     Comma,
     Dot,
+    /// `...`, in collection literals and call arguments.
+    Ellipsis,
     Colon,
     Semi,
     At,
@@ -222,6 +224,7 @@ impl Tok {
             Tok::RBrace => "}",
             Tok::Comma => ",",
             Tok::Dot => ".",
+            Tok::Ellipsis => "...",
             Tok::Colon => ":",
             Tok::Semi => ";",
             Tok::At => "@",

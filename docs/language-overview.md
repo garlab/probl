@@ -469,7 +469,7 @@ let hero = Fighter { hp: 12, ac: 16, to_hit: 5, dice: 1d8, bonus: 3 }
 let tougher = hero with { hp: 20 }       # a copy with some fields changed
 ```
 
-The built-in types are `bool`, `int`, `float`, `prob`, `str`, `date`, `list[T]`, `map[K, V]`, `bag[T]` and `dist[T]`, plus records and enums. Note `dice: dist[int]`: distributions are ordinary values you can store, pass and return.
+The built-in types are `bool`, `int`, `float`, `prob`, `str`, `date`, `list[T]`, `map[K, V]`, `bag[T]`, `set[T]` and `dist[T]`, plus records and enums. Note `dice: dist[int]`: distributions are ordinary values you can store, pass and return.
 
 Use the prefix operator `typeof` to inspect a runtime value. It returns a string and inspects a distribution without drawing from it:
 
@@ -536,7 +536,7 @@ Three of these types describe uncertainty, and keeping them apart is what lets `
 | Choices | `one_of(["rock", "paper", "scissors"])`, `one_of(1..10)`, `one_of([Boom: 20%, Steady: 60%, Slump: 20%])` |
 | Yes/no | `bernoulli(30%)`: `true` with probability 30%, so `let rain ~ bernoulli(30%)` is a fact |
 | Counts | `binomial(n, p)`, `poisson(rate)`, `geometric(p)` |
-| Cards | `var deck: bag[str] = [card: count, …]`, or `bag([card: count, …])`, then `let c = deck.take()` draws without replacement |
+| Cards | `var deck: bag = [card: count, …]`, or `bag(card, card, …)`, then `let c = deck.take()` draws without replacement |
 | Scalar continuous | `normal(mean, sd)`, `lognormal(mu, sigma)`, `uniform(lo, hi)`, `beta(a, b)`, `gamma(shape, scale)`, `exponential(rate)`, `triangular(lo, mode, hi)`, `pert(lo, mode, hi)` |
 | Estimates | `5 to 10`: 90% confident it's between 5 and 10, as a lognormal, so both ends must be positive (as in Squiggle). For a quantity that can be negative, say which shape you mean: `normal_range(-8%, 0%)` is a normal with that 90% interval |
 | Joint vectors | `multivariate_normal(means, covariance)` gives a `dist[list[float]]`, drawn in sample mode |
@@ -545,6 +545,10 @@ Three of these types describe uncertainty, and keeping them apart is what lets `
 A list or map literal is a bag wherever a bag is declared: `var deck: bag[str] = ["A": 4, "K": 4]` holds eight cards, and `var hand: bag[int] = [1, 1, 2]` three. `deck.take()` selects an item, removes one copy from `deck` in that world, and returns the item unchanged. The deck must be declared with `var`; taking from an empty bag is an error. Each call selects anew from the remaining items. `one_of(deck)` instead constructs a distribution without changing the bag, and `~one_of(deck)` draws without removing anything. If an item is itself a probability or distribution, `deck.take()` returns that recipe; `~deck.take()` additionally draws from the returned recipe.
 
 Scalar continuous distributions can't list their outcomes, so what you can do with them depends on the mode. Drawing one (`let x ~ normal(0, 1)`) produces a float: a concrete value in sampling, or an analytic outcome in enumeration. Enumeration supports affine arithmetic on a shared draw, `abs`, `min`, `max` and `clamp` of it, threshold conditions, exact updates of a beta, gamma or normal draw by a conjugate observation (`let p ~ beta(2, 3); observe 3 from binomial(5, p)` makes `p` a beta(5, 5)), rounding a bounded draw into ints (`floor(x)`), squares, roots, exponentials, logarithms and reciprocals of it (`x * x`, `exp(x)`), events of independent draws (`x > 0 and y > 0`), sums of normal draws (`x + y`, and `let y ~ normal(mu, 1)`) with their covariance through normal observations, and numeric reports; other nonlinear and multivariate calculations require sampling. With `@integrate`, enumeration also computes observations of one draw that aren't conjugate (`observe true from bernoulli(1 - p)`, `observe 3 from poisson(rate)` for a lognormal `rate`) and means without formulas, by numerical integration to a tolerance, and the summary line says `integrated to 1e-9`. Comparing one with a number works in both modes, from its CDF: `normal(0, 1) > 1.96` is 2.50%. `mean`, `sd`, `median`, `quantile`, `cdf` and `pdf` use the formulas. A choice among options that include one, such as `chance { 35% => 1 to 3, else => 0 }`, is a mixture, and drawing from it picks an option first. Arithmetic on a continuous distribution (`normal(0, 1) * 2`) isn't supported yet: draw a value, then compute with it.
+
+Collections can also be built from their elements: `list(1, 2)`, `set(1, 1, 2)` and `bag(1, 1, 2)`. A set keeps each distinct item once. Spread an existing collection with `...`: `set(...xs)` removes duplicates, `list(...deck)` repeats a bag’s items by their counts, and `[...xs, ...ys]` joins two sequences. `max(...xs)` passes the elements as arguments. Constructors keep distribution recipes as values; spreading a distribution requires drawing it first.
+
+A bare `bag` annotation chooses the collection kind without restricting the elements: `let b: bag = [1, 1, 2]`, or `let b: bag = [1: 2, 2: 1]`. Add an element type when needed, as in `bag[int]` or `set[int]`. Bags print compactly as `bag [1: 2, 2: 1]`; this display is not source code.
 
 To draw a whole hand, pass a count: `let hand = deck.take(12)`. This removes twelve items and returns a list in draw order. `deck.take(0)` returns `[]`; requesting more items than remain is an error before any removal. The count must be a settled nonnegative int. As with `take()`, a fresh bag at the start of a sampled program gives each run a fresh deck. The [SET example](../examples/20_set.probl) uses `not hand.combinations(3).any(is_set)` to check whether a hand has no set, stopping at the first matching triple.
 
@@ -1016,7 +1020,7 @@ From loosest to tightest binding:
 
 | Area | Functions |
 |---|---|
-| Distributions | `bernoulli` `one_of` `binomial` `poisson` `geometric` `normal` `lognormal` `normal_range` `uniform` `beta` `gamma` `exponential` `triangular` `pert` `mixture`\* `roll` `bag` |
+| Distributions | `bernoulli` `one_of` `binomial` `poisson` `geometric` `normal` `lognormal` `normal_range` `uniform` `beta` `gamma` `exponential` `triangular` `pert` `mixture`\* `roll` |
 | Distribution helpers | `take` `truncate(d, lo, hi)`\* `bins(d, n)`\* |
 | Queries | `P` `mean` `sd` `variance` `median` `median_low` `median_high` `quantile` `support` `cdf` `pmf` `pdf` |
 | Probability | `odds(p)` `logit(p)` `inv_logit(x)` |
@@ -1024,7 +1028,7 @@ From loosest to tightest binding:
 | Integer and special functions | `choose(n, k)` `factorial(n)` `gcd(a, b)` `lcm(a, b)` `euler_phi(n)` `prime_factors(n)` `is_prime(n)` `is_squarefree(n)` `divisors(n)` `primes(lo?, hi)` `next_prime(n)` `prev_prime(n)` `isqrt(n)` `mod_pow(b, e, m)` `mod_inverse(a, m)` `ln_gamma(x)` `erf(x)` `erfc(x)` |
 | Complex numbers | `complex(re, im?)` `real(z)` `imag(z)` `conj(z)` `abs(z)` `abs2(z)` `arg(z)` `cis(theta)` |
 | Constants | `pi` `e` `euler_gamma` `today` `env`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
-| Collections | `len` `slice(xs, start, end?)` `combinations(xs, n)` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `any(xs, test)` `minimum` `maximum` `highest(n, compare?)` `lowest(n, compare?)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
+| Collections | `list` `set` `bag` `len` `slice(xs, start, end?)` `combinations(xs, n)` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `any(xs, test)` `minimum` `maximum` `highest(n, compare?)` `lowest(n, compare?)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
 | Text | `str` `upper` `lower` `trim(s, chars?)` `trim_start(s, chars?)` `trim_end(s, chars?)` `starts_with` `ends_with` `chars` `split` `join` |
 | Dates | `date("2027-01-31")` or `date(year, month, day)`; `days(n)` `weeks(n)` `add_workdays(d, n, holidays?)` `is_workday(d, holidays?)` `weekday(d)` `add_months(d, n)` `add_years(d, n)` `start_of_month(d)` `end_of_month(d)` `year(d)` `month(d)` `day(d)` |
 | Debugging | `print` |

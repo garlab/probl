@@ -77,11 +77,11 @@ tail -n +2 pilot.csv | cut -d, -f3 | probl run counts.probl   # with: let counts
 | `json` | `.json` | any type data can have |
 | `lines` | `.txt`, and stdin by default | `list[T]`, for a plain type `T`: one value per non-blank line |
 
-**Data has these types:** the plain types `int`, `float`, `prob`, `bool`, `date`, `str` and enums, and records, `list`, `map` and `bag` of those. The compiler checks the whole declared type, through every named record it refers to:
+**Data has these types:** the plain types `int`, `float`, `prob`, `bool`, `date`, `str` and enums, and records, `list`, `map`, `set` and `bag` of those. Collections need declared element types; bare `bag` is not a data schema. The compiler checks the whole declared type, through every named record it refers to:
 - A distribution or a function anywhere in it is an error at the field that has it.
 - So is a CSV field that isn't plain, or a map from JSON whose keys can't be text (below).
 
-Record types may refer to each other in any order, and to themselves inside a list, map or bag. A record type that contains itself outside those has no values, and is an error.
+Record types may refer to each other in any order, and to themselves inside a list, map, set or bag. A record type that contains itself outside those has no values, and is an error.
 
 ### Names
 
@@ -122,6 +122,7 @@ The same rules apply to a CSV cell, a line, and a JSON string read as a date, an
 - **Objects** read as records, by the name rule above. They can also read as `map[K, V]`, where `K` is `str`, `int`, `bool`, `date` or an enum, and each key is read as a `K`: `map[date, float]` reads `{"2027-01-01": 1.5}`.
 - **Duplicate keys:** an object may not have the same key twice. Nor may a map have two keys that read as the same `K`: `{"1": …, "01": …}` as a `map[int, str]` is an error.
 - **Bags:** a `bag[T]` reads an array of items, or, when `T` can be a key, an object of counts like `{"ace": 4}`.
+- **Sets:** a `set[T]` reads an array of items, checking each item as `T` and discarding equal elements.
 - **Null** is an error for now.
 
 **Lines** are read one value per line, and blank lines are skipped. `\n` and `\r\n` both end a line.
@@ -166,7 +167,7 @@ The host limits what a program may read, for all its data together:
 |---|---|---|
 | bytes read, from all the files together | 64 MiB | `--max-input 64M` |
 | values made, from all the files together: every number, string, record and element | 10,000,000 | |
-| elements of one list, map or bag | the engine's collection limit | |
+| elements of one list, map, set or bag | the engine's collection limit | |
 | how deeply JSON nests | 64 | |
 
 Limits are charged as the data is read and decoded, before memory is allocated:

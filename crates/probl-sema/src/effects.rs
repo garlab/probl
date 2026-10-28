@@ -345,7 +345,7 @@ impl Direct {
             ExprKind::Bind { value, .. } => self.expr(value),
             ExprKind::Lit(Lit::Builtin(Builtin::Print)) => self.references_print = true,
             ExprKind::Lit(_) | ExprKind::Slot(_) | ExprKind::Input(_) => {}
-            ExprKind::Unary(_, x) | ExprKind::Field(x, _) => self.expr(x),
+            ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Spread(x) => self.expr(x),
             ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => {
                 self.expr(a);
                 self.expr(b);

@@ -5,7 +5,8 @@ report [typeof 33%, typeof 0.33, typeof (33% + 1%), typeof 150%, typeof (-33%)]
 report [typeof true, typeof (2^100), typeof complex(0, 1), typeof today]
 report [typeof d6, typeof (d6 > d6), typeof normal(0, 1), typeof (x -> x)]
 report [typeof [d6, d8], typeof roll(2, d6), typeof [], typeof [1, 2.0]]
-report [typeof [:], typeof ["a": 1], typeof bag([1: 2])]
+let counted: bag = [1: 2]
+report [typeof [:], typeof ["a": 1], typeof counted]
 report [typeof On, typeof one_of([On, Off]), typeof Box { value: 1 }]
 report typeof { b: d6, a: 1 }
 report typeof one_of([normal(0, 1), 1.0])
@@ -35,16 +36,16 @@ report [typeof (p and p), typeof (not p), typeof ((d6 > 3) and (d6 > 3))]
 report (d6 > 3) and (d6 > 3)
 
 # Bag extraction returns an item unchanged; drawing it is a separate operation.
-var rates = bag([prob(25%), prob(75%)])
+var rates = bag(prob(25%), prob(75%))
 let selected = rates.take()
 report [typeof selected, selected, len(rates)]
-report simulate { var rates = bag([prob(25%), prob(75%)]); observe ~rates.take(); rates.take() }
-var recipes = bag([d2, d4])
+report simulate { var rates = bag(prob(25%), prob(75%)); observe ~rates.take(); rates.take() }
+var recipes = bag(d2, d4)
 let recipe = recipes.take()
 report [typeof recipe, mean(recipe), len(recipes)]
 let drawn = ~recipes.take()
 report [typeof drawn, drawn, len(recipes)]
-var ordered = bag([1, 2])
+var ordered = bag(1, 2)
 report [len(ordered), ordered.take(), len(ordered), ordered.take(), len(ordered)]
 
 # Expected probability types validate numeric variables and calculations.

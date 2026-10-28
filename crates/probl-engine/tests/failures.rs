@@ -268,7 +268,7 @@ fn value_dependent_errors_are_faults() {
         ("let x ~ d2 - 2\nlet v = sqrt(x)\nreport v", 0.5),
         ("let p ~ one_of([0%, 50%])\nlet v = logit(p)\nreport v", 0.5),
         (
-            "let n ~ d2\nvar deck = bag([\"a\": 1])\nrepeat n { let c = deck.take() }\nreport n",
+            "let n ~ d2\nvar deck: bag = [\"a\": 1]\nrepeat n { let c = deck.take() }\nreport n",
             0.5,
         ),
         ("let n ~ d2 - 1\nlet v = date(9999, 12, 31) + n\nreport v", 0.5),

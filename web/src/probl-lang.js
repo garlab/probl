@@ -13,7 +13,7 @@ const keywords = new Set([
   'as', 'by', 'from', 'to',
 ]);
 const atoms = new Set(['true', 'false']);
-const types = new Set(['int', 'float', 'complex', 'prob', 'bool', 'str', 'date', 'list', 'map', 'bag', 'dist']);
+const types = new Set(['int', 'float', 'complex', 'prob', 'bool', 'str', 'date', 'list', 'map', 'bag', 'set', 'dist']);
 
 /** The rest of a string, up to its closing quote or the end of the line. */
 function string(stream, state) {
@@ -61,7 +61,7 @@ export const probl = StreamLanguage.define({
       if (stream.match(/^\s*\(/, false)) return 'variableName.function';
       return 'variableName';
     }
-    if (stream.match(/^(->|=>|==|!=|<=|>=|\.\.<|\.\.|\+=|-=|\*=|\/=|[-+*/<>=~])/)) return 'operator';
+    if (stream.match(/^(->|=>|==|!=|<=|>=|\.\.\.|\.\.<|\.\.|\+=|-=|\*=|\/=|[-+*/<>=~])/)) return 'operator';
     const c = stream.next();
     if (opening.has(c)) state.open.push(stream.indentation());
     else if (closing.has(c)) state.open.pop();

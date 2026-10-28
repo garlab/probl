@@ -2,7 +2,7 @@
 let m = [1: "int", 1.0: "float", prob(1): "prob", complex(1): "complex"]
 report [m[1], m[1.0], m[prob(1)], m[complex(1)]]
 report get([1: "a"], 1.0, "absent")
-report contains(bag([1]), 1.0)
+report contains(bag(1), 1.0)
 let d = one_of([1, 1.0, prob(1), complex(1)])
 report support(d).map(x -> pmf(d, x))
 report P(d == 1)
@@ -67,7 +67,7 @@ let max_alias=maximum
 report max_alias([],default:9)
 
 # Batch extraction and combinations share native and WebAssembly behavior.
-var deck = bag([1:2,2:1])
+var deck: bag = [1:2,2:1]
 let hand = deck.take(2)
 report hand
 report len(deck)
@@ -76,9 +76,9 @@ report "a🙂é".combinations(2)
 report [].combinations(0)
 report (0..10^100).combinations(0)
 report (1..4).combinations(3).count(xs -> sum(xs) >= 8)
-var empty = bag([])
+var empty = bag()
 report empty.take(0)
-var short = bag([1])
+var short = bag(1)
 report try { short.take(2) } catch EmptyCollection { [] }
 report len(short)
 

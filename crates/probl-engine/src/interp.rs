@@ -1771,7 +1771,7 @@ impl<'p> Engine<'p> {
                             span,
                             format!("`take` needs a bag, found {}", ops::article(&current.kind())),
                         )
-                        .with_help("make one with `bag([card: count, …])`"));
+                        .with_help("make one with `var deck: bag = [card: count, …]`"));
                     };
                     let total: u128 = cards.values().map(|n| *n as u128).sum();
                     if total == 0 {
@@ -1802,24 +1802,23 @@ impl<'p> Engine<'p> {
                 Ok(Flow::next(self.merge(out, stmt.id)))
             }
             StmtKind::Call { dest, callee, args } => {
+                let spread = args.iter().any(|a| matches!(a.kind, ExprKind::Spread(_)));
                 let mut out = Vec::with_capacity(worlds.len());
                 for w in worlds {
                     let at = At::new(f, stmt, &w);
-                    let mut key = Vec::with_capacity(args.len() + 4);
-                    let evaluated: Result<()> = args.iter().try_for_each(|a| {
-                        key.push(self.eval(f, a, &w)?);
-                        Ok(())
-                    });
-                    each!(self, at, world w, evaluated);
+                    let target = match callee {
+                        Callee::Value(e, _) => Some(each!(self, at, world w, self.eval(f, e, &w))),
+                        _ => None,
+                    };
+                    let mut key = each!(self, at, world w, self.eval_items(f, args, &w, span));
                     let func = match callee {
                         Callee::Fn { func, capture_args } => {
                             self.capture(&mut key, f, *func, capture_args, &w, span, false)?;
                             *func
                         }
-                        Callee::Value(e, named) => match each!(self, at, world w, self.eval(f, e, &w)) {
+                        Callee::Value(e, named) => match target.unwrap() {
                             Value::Builtin(b) => {
-                                let value =
-                                    each!(self, at, world w, self.builtin_values(b, &key, named, w.weight, (f, span)));
+                                let value = each!(self, at, world w, self.builtin_values(b, &key, named, w.weight, (f, span), spread));
                                 let mut saved = self.snapshot(&w);
                                 let mut nw = w;
                                 each!(self, at, saved saved, self.assign(f, dest, value, &mut nw, span));
@@ -1827,6 +1826,12 @@ impl<'p> Engine<'p> {
                                 continue;
                             }
                             Value::Closure(c) => {
+                                if spread {
+                                    return Err(RuntimeError::new(
+                                        span,
+                                        "spreading into a user function isn't supported",
+                                    ));
+                                }
                                 if !named.is_empty() {
                                     return Err(RuntimeError::new(
                                         span,
@@ -3081,6 +3086,16 @@ impl<'p> Engine<'p> {
                 }
                 Value::multiset(crate::value::Multiset::new(out))
             }
+            (Value::Set(xs), TypeSpec::Set(t)) => {
+                self.budget
+                    .collection(xs.distinct_len() as u128)
+                    .map_err(|e| e.at(span))?;
+                let mut out = Vec::with_capacity(xs.distinct_len());
+                for x in xs.keys() {
+                    out.push(self.coerce_at(x.clone(), t, span, depth + 1)?);
+                }
+                Value::set(&out)
+            }
             (Value::Dist(d), TypeSpec::Dist(t)) => {
                 // A listed count law is decided from its law, which says
                 // what its listing cut off.
@@ -3195,6 +3210,8 @@ impl<'p> Engine<'p> {
             (TypeSpec::List(t), Value::Range(..)) => **t == TypeSpec::Int,
             (TypeSpec::Map(k, t), Value::Map(m)) => m.iter().all(|(a, b)| self.conforms(a, k) && self.conforms(b, t)),
             (TypeSpec::Bag(t), Value::Bag(b)) => b.keys().all(|x| self.conforms(x, t)),
+            (TypeSpec::BareBag, Value::Bag(_)) => true,
+            (TypeSpec::Set(t), Value::Set(s)) => s.keys().all(|x| self.conforms(x, t)),
             (TypeSpec::Dist(t), Value::Dist(d) | Value::Joint(d)) => d.outcomes.iter().all(|(x, _)| match x {
                 Value::Continuous(_) => **t == TypeSpec::Float,
                 Value::MultivariateNormal(_) => matches!(&**t, TypeSpec::List(item) if **item == TypeSpec::Float),
@@ -3617,7 +3634,7 @@ impl<'p> Engine<'p> {
     /// Call a closure that must not split worlds (used by `map`, `filter`, …).
     fn call_pure(&mut self, closure: &Value, args: Vec<Value>, what: &'static str, span: Span) -> Result<Value> {
         if let Value::Builtin(b) = closure {
-            return self.builtin_values(*b, &args, &[], Weight::ONE, (u32::MAX, span));
+            return self.builtin_values(*b, &args, &[], Weight::ONE, (u32::MAX, span), false);
         }
         let Value::Closure(c) = closure else {
             return Err(RuntimeError::new(
@@ -3803,7 +3820,7 @@ impl<'p> Engine<'p> {
             }
         }
         let names: Vec<String> = named.iter().map(|(n, _)| n.clone()).collect();
-        let mut v = self.builtin_values(*func, &values, &names, w.weight, (f, span))?;
+        let mut v = self.builtin_values(*func, &values, &names, w.weight, (f, span), false)?;
         if let Some(ty) = field {
             v = self.coerce(v, &ty, value.span)?;
         }
@@ -4129,12 +4146,12 @@ impl<'p> Engine<'p> {
             }
             ExprKind::List(items) => {
                 self.budget.collection(items.len() as u128).map_err(at)?;
-                let mut values = Vec::with_capacity(items.len());
-                for item in items {
-                    values.push(self.eval(f, item, w)?);
-                }
-                Ok(Value::list(values))
+                self.eval_items(f, items, w, span).map(Value::list)
             }
+            ExprKind::Spread(_) => Err(RuntimeError::new(
+                span,
+                "a spread needs a collection literal or variadic call",
+            )),
             ExprKind::Map(entries) => {
                 let mut map = BTreeMap::new();
                 for (k, v) in entries {
@@ -4309,6 +4326,35 @@ impl<'p> Engine<'p> {
         })
     }
 
+    /// Expand prepared spread operands in place, retaining source order.
+    fn eval_items(&mut self, f: FnId, args: &[Expr], w: &World, span: Span) -> Result<Vec<Value>> {
+        let spread = args.iter().any(|a| matches!(a.kind, ExprKind::Spread(_)));
+        let mut values = Vec::with_capacity(args.len());
+        if spread {
+            self.budget.collection(args.len() as u128).map_err(|e| e.at(span))?;
+        }
+        for arg in args {
+            if let ExprKind::Spread(source) = &arg.kind {
+                let Value::List(items) = self.eval(f, source, w)? else {
+                    unreachable!("spread operands are materialized lists")
+                };
+                self.budget
+                    .collection(values.len() as u128 + items.len() as u128)
+                    .map_err(|e| e.at(arg.span))?;
+                self.budget.work(items.len() as u64).map_err(|e| e.at(arg.span))?;
+                values.extend(items.iter().cloned());
+            } else {
+                if spread {
+                    self.budget
+                        .collection(values.len() as u128 + 1)
+                        .map_err(|e| e.at(arg.span))?;
+                }
+                values.push(self.eval(f, arg, w)?);
+            }
+        }
+        Ok(values)
+    }
+
     fn builtin(
         &mut self,
         f: FnId,
@@ -4327,16 +4373,14 @@ impl<'p> Engine<'p> {
             };
             return crate::type_name::of(&v, &self.prog.enums, &mut self.budget).map_err(|e| e.at(span));
         }
-        let mut values = Vec::with_capacity(args.len());
-        for a in args {
-            values.push(self.eval(f, a, w)?);
-        }
+        let spread = args.iter().any(|a| matches!(a.kind, ExprKind::Spread(_)));
+        let mut values = self.eval_items(f, args, w, span)?;
         let mut names = Vec::with_capacity(named.len());
         for (name, value) in named {
             names.push(name.clone());
             values.push(self.eval(f, value, w)?);
         }
-        self.builtin_values(b, &values, &names, w.weight, (f, span))
+        self.builtin_values(b, &values, &names, w.weight, (f, span), spread)
     }
 
     fn check_function_arity(&self, value: &Value, given: usize, span: Span) -> Result<()> {
@@ -4379,8 +4423,24 @@ impl<'p> Engine<'p> {
         named: &[String],
         weight: Weight,
         site: (FnId, Span),
+        spread: bool,
     ) -> Result<Value> {
         let (f, span) = site;
+        if spread && !b.accepts_spread() {
+            return Err(RuntimeError::new(
+                span,
+                "spreading is only supported by set, list, bag, min and max",
+            ));
+        }
+        if b.is_collection_constructor()
+            && named.is_empty()
+            && !spread
+            && values.len() == 1
+            && values[0].is_collection()
+        {
+            return Err(RuntimeError::new(span, format!("`{}` with a single collection argument is temporarily rejected", b.name()))
+                .with_help("use `...` to pass its elements, or a bag-typed mapping literal for counts; to keep one collection as an item, spread a singleton list"));
+        }
         let extrema = matches!(b, Builtin::Minimum | Builtin::Maximum);
         if !named.is_empty() && (!extrema || named != ["default"]) {
             return Err(RuntimeError::new(
@@ -4413,6 +4473,8 @@ impl<'p> Engine<'p> {
         let at = |err: OpError| err.at(span);
         builtins::check_query_input(b, values).map_err(at)?;
         if values.first().is_some_and(crate::multivariate::is_law)
+            && !b.is_collection_constructor()
+            && b != Builtin::SpreadItems
             && !matches!(
                 b,
                 Builtin::Str | Builtin::Print | Builtin::Typeof | Builtin::MultivariateNormal
@@ -4828,10 +4890,15 @@ fn mismatch_help(v: &Value, ty: &TypeSpec) -> Option<String> {
     if float_for_int(v, ty) {
         return Some("`div` divides to an int; `round(…)`, `floor(…)` and `int(…)` convert a float".into());
     }
-    if let (Value::List(_), TypeSpec::Bag(_)) = (v, ty) {
+    if let (Value::List(_), TypeSpec::Bag(_) | TypeSpec::BareBag) = (v, ty) {
         return Some(
-            "a list never becomes a bag: a literal is a bag where a bag is declared, and `bag(xs)` makes one of a list's items"
+            "a list never becomes a bag: a literal is a bag where a bag is declared, and `bag(...xs)` builds one from a list's items"
                 .into(),
+        );
+    }
+    if let (Value::List(_), TypeSpec::Set(_)) = (v, ty) {
+        return Some(
+            "a list never becomes a set: use a set-typed literal, or `set(...xs)` for an existing list".into(),
         );
     }
     None
@@ -4844,7 +4911,7 @@ fn float_for_int(v: &Value, ty: &TypeSpec) -> bool {
         (Value::Float(_), TypeSpec::Int) => true,
         (Value::List(xs), TypeSpec::List(t)) => xs.iter().any(|x| float_for_int(x, t)),
         (Value::Map(m), TypeSpec::Map(k, t)) => m.iter().any(|(a, b)| float_for_int(a, k) || float_for_int(b, t)),
-        (Value::Bag(b), TypeSpec::Bag(t)) => b.keys().any(|x| float_for_int(x, t)),
+        (Value::Bag(b), TypeSpec::Bag(t)) | (Value::Set(b), TypeSpec::Set(t)) => b.keys().any(|x| float_for_int(x, t)),
         (Value::Dist(d), TypeSpec::Dist(t)) => d.outcomes.iter().any(|(x, _)| float_for_int(x, t)),
         _ => false,
     }
@@ -4929,7 +4996,9 @@ fn handles_analytic(b: Builtin, values: &[Value]) -> bool {
         | B::BooleanLaw
         | B::IsListOfLen => true,
         // They move values without looking at them.
-        B::Slice
+        B::List
+        | B::SpreadItems
+        | B::Slice
         | B::Combinations
         | B::Reverse
         | B::Keys

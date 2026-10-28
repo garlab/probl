@@ -3,7 +3,8 @@ source: crates/probl-sema/tests/lower.rs
 expression: ir(&src)
 ---
 fn#0 the top level ()
-  deck_0 = bag([2: 4, 3: 4, 4: 4, 5: 4, 6: 4, 7: 4, 8: 4, 9: 4, 10: 16, 11: 4])    [live: deck_0]
+  deck_0 = $bag_literal([2: 4, 3: 4, 4: 4, 5: 4, 6: 4, 7: 4, 8: 4, 9: 4, 10: 16, 11: 4])    [live: deck_0]
+  check deck_0: bag    [live: deck_0]
   $1 = deck_0.take()    [live: deck_0 $1]
   up_2 = $1    [live: deck_0 up_2]
   total_3 = up_2    [live: deck_0 up_2 total_3]

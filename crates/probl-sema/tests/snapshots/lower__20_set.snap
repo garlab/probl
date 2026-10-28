@@ -4,7 +4,7 @@ expression: ir(&src)
 ---
 fn#0 the top level ()
   cards_0 = map((..< 0 81), closure fn#2 [])    [live: cards_0]
-  deck_1 = bag(cards_0)    [live: deck_1]
+  deck_1 = bag(...$spread_items(cards_0))    [live: deck_1]
   $2 = deck_1.take(12)    [live: $2]
   hand_3 = $2    [live: hand_3]
   report (not any(combinations(hand_3, 3), closure fn#1 [])) as "no set in 12 cards"    [live: ]

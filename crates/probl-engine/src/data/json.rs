@@ -219,7 +219,7 @@ impl<'de> Visitor<'de> for Visit<'_, '_, '_> {
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
         let Visit { ty, cx } = self;
         match ty {
-            TypeSpec::List(item) => {
+            TypeSpec::List(item) | TypeSpec::Set(item) => {
                 let mut items = Vec::new();
                 loop {
                     cx.path.push(PathPart::Index(items.len()));
@@ -234,7 +234,11 @@ impl<'de> Visitor<'de> for Visit<'_, '_, '_> {
                     }
                     cx.path.pop();
                 }
-                Ok(Value::list(items))
+                if matches!(ty, TypeSpec::Set(_)) {
+                    Ok(Value::set(&items))
+                } else {
+                    Ok(Value::list(items))
+                }
             }
             TypeSpec::Bag(item) => {
                 let mut counts: BTreeMap<Value, u64> = BTreeMap::new();

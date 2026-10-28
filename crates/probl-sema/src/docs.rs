@@ -100,6 +100,9 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Join
         | B::Print => "Text",
         B::Len
+        | B::List
+        | B::Set
+        | B::Bag
         | B::Slice
         | B::Combinations
         | B::Sum
@@ -130,7 +133,6 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Poisson
         | B::Geometric
         | B::Roll
-        | B::Bag
         | B::Normal
         | B::MultivariateNormal
         | B::Lognormal
@@ -183,6 +185,8 @@ pub fn category(b: Builtin) -> &'static str {
         | B::IsListOfLen
         | B::Settled
         | B::BagLiteral
+        | B::SetLiteral
+        | B::SpreadItems
         | B::Last
         | B::DropLast
         | B::BooleanLaw
@@ -611,8 +615,16 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "`n` dice, sorted from highest to lowest: `let dice ~ roll(4, d6)`.",
         ),
         B::Bag => doc(
-            "bag(counts) -> bag",
-            "Items to draw without replacement, with `take`: `bag([\"ace\": 4, \"king\": 4])`, or from a list. A literal is a bag wherever a bag is declared: `let deck: bag[str] = [\"ace\": 4, \"king\": 4]`.",
+            "bag(items…) -> bag",
+            "Build a bag from its items: `bag(1, 1, 2)`, or `bag(...xs)` from an iterable. Arguments stay as values, including distribution recipes. For counts, use a typed literal: `let deck: bag = [\"ace\": 4, \"king\": 4]`. `bag[T]` also checks elements. A single collection argument requires an explicit spread during the transition release.",
+        ),
+        B::List => doc(
+            "list(items…) -> list",
+            "Build a list from its items, without drawing or lifting: `list(1, 2)`, `list(...xs)`. Spreading uses iteration order. A single collection argument requires an explicit spread during the transition release; `list(...[[1]])` holds one list.",
+        ),
+        B::Set => doc(
+            "set(items…) -> set",
+            "Build a set of distinct items: `set(1, 1, 2)`, or `set(...xs)` from an iterable. Items compare by value, so 1 and 1.0 are one element; the first representative is kept. Supports size, membership and iteration in value order. `set[T]` checks elements, and a literal in that context builds a set. A single collection argument requires an explicit spread during the transition release.",
         ),
         B::Normal => doc(
             "normal(mean: float, sd: float) -> dist[float]",
@@ -768,6 +780,8 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "The day of the week: `\"Monday\"` to `\"Sunday\"`.",
         ),
         B::BagLiteral
+        | B::SetLiteral
+        | B::SpreadItems
         | B::RunDate
         | B::RunEnv
         | B::IterItems

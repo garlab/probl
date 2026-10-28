@@ -253,7 +253,7 @@ impl KeySize<'_> {
                     self.value(v, depth + 1)?;
                 }
             }
-            Value::Bag(xs) => {
+            Value::Bag(xs) | Value::Set(xs) => {
                 self.add(64)?;
                 self.array::<(Value, u64)>(xs.capacity())?;
                 for (v, _) in xs.iter() {

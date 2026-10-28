@@ -171,6 +171,8 @@ pub enum ExprKind {
     Bool(bool),
     Name(String),
     List(Vec<Expr>),
+    /// A spread, only in a list literal or a positional call argument.
+    Spread(Box<Expr>),
     Map(Vec<(Expr, Expr)>),
     /// `Fighter { hp: 12 }` (named) or `{ won: true }` (anonymous).
     Record {

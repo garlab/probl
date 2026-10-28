@@ -487,12 +487,12 @@ fn json_bags_are_items_or_counts() {
         "let b: bag[str] = read(\"a.json\")",
         &[("a.json", r#"["ace", "king", "ace"]"#)],
     );
-    assert_eq!(format!("{v:?}"), "bag([\"ace\": 2, \"king\": 1])");
+    assert_eq!(format!("{v:?}"), "bag [\"ace\": 2, \"king\": 1]");
     let v = value(
         "let b: bag[str] = read(\"a.json\")",
         &[("a.json", r#"{"ace": 4, "king": 0}"#)],
     );
-    assert_eq!(format!("{v:?}"), "bag([\"ace\": 4])");
+    assert_eq!(format!("{v:?}"), "bag [\"ace\": 4]");
     fails(
         "let b: bag[str] = read(\"a.json\")",
         &[("a.json", r#"{"ace": -1}"#)],
@@ -502,6 +502,17 @@ fn json_bags_are_items_or_counts() {
         "let b: bag[{ n: int }] = read(\"a.json\")",
         &[("a.json", r#"{"ace": 1}"#)],
         &["is written as an array of its items"],
+    );
+}
+
+#[test]
+fn json_sets_convert_elements_and_discard_duplicates() {
+    let v = value("let s: set[float] = read(\"a.json\")", &[("a.json", "[2, 1, 1.0]")]);
+    assert_eq!(v.to_string(), "set(1.0, 2.0)");
+    fails(
+        "let s: set[int] = read(\"a.json\")",
+        &[("a.json", "[1, \"bad\"]")],
+        &["int"],
     );
 }
 

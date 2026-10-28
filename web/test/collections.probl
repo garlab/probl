@@ -1,0 +1,26 @@
+# Constructors, typed kinds, compact displays and spread order.
+let a = bag(1, 1, 2, 3)
+let b: bag = [1, 1, 2, 3]
+let c: bag = [1: 2, 2: 1, 3: 1]
+report a == b and b == c
+report [a, set(3, 1, 1.0, 2), set(...[[1]])]
+report [typeof a, typeof set(), typeof list(), typeof bag()]
+let huge: bag = [1: 10^12]
+report huge
+report list(...set(3, 1, 2))
+report list(...a)
+report list(..."é🦀")
+report list(...[1: "a", 2: "b"])
+report [...1..3, ...0..<2]
+let high = max
+report high(...[d2, 1])
+let make = list
+report make(...[[1]])
+report [typeof bag(d6), typeof list(d6, 0)]
+let nested: list[set[int]] = [[1, 1], [2, 3]]
+report nested
+var xs = [1, 2]
+report list(...xs, { xs.push(3); 0 }, ...xs)
+let varying = if 50% { [1] } else { [1, 2] }
+report [...varying, 3]
+report typeof if 50% { set(1) } else { set(1.0) }

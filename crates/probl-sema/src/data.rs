@@ -141,7 +141,7 @@ impl Checker<'_> {
     fn value(&mut self, ty: &TypeSpec, at: Option<Span>) {
         match ty {
             _ if is_plain(ty) => {}
-            TypeSpec::List(t) | TypeSpec::Bag(t) => self.value(t, at),
+            TypeSpec::List(t) | TypeSpec::Bag(t) | TypeSpec::Set(t) => self.value(t, at),
             TypeSpec::Map(k, v) => {
                 if !is_key(k) {
                     self.problems.push(Problem::new(

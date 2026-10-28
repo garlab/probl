@@ -183,6 +183,7 @@ fn check_expr(e: &Expr) -> Result<(), Fallback> {
         ExprKind::Lit(_) | ExprKind::Slot(_) => Ok(()),
         ExprKind::Unary(UnOp::Typeof, _) => Err(unsupported("`typeof`", e.span)),
         ExprKind::Unary(_, x) => check_expr(x),
+        ExprKind::Spread(_) => Err(unsupported("spreading", e.span)),
         ExprKind::Binary(_, a, b) => {
             check_expr(a)?;
             check_expr(b)

@@ -818,6 +818,7 @@ impl<'a> Interp<'a> {
                 let items: Vec<&Expr> = items.iter().collect();
                 self.map_list(&items, w, |vs| Ok(Value::List(Rc::new(vs))))
             }
+            ExprKind::Spread(_) => unsupported("spreading"),
             ExprKind::Draw(source) => {
                 let outs = self.expr(source, w, true)?;
                 self.each(outs, |_, w, v| {

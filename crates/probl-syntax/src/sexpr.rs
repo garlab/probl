@@ -178,6 +178,7 @@ pub fn expr(e: &Expr) -> String {
             format!("(str {})", parts.join(" "))
         }
         ExprKind::Name(n) => n.clone(),
+        ExprKind::Spread(value) => format!("(... {})", expr(value)),
         ExprKind::List(items) => {
             let items: Vec<String> = items.iter().map(expr).collect();
             format!("[{}]", items.join(" "))

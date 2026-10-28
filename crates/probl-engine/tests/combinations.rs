@@ -50,7 +50,7 @@ fn invalid_inputs_and_counts_are_rejected() {
         "report combinations([1,2],true)",
         "report combinations([1,2],\"1\")",
         "report combinations([1:2],1)",
-        "report combinations(bag([1,2]),1)",
+        "report combinations(bag(1,2),1)",
         "report combinations(42,0)",
     ] {
         error(source);
@@ -120,7 +120,7 @@ fn set_example_rules_match_exact_counts() {
     // among C(9,3)=84 hands. Check the whole pipeline by enumeration.
     close(
         chance(&format!(
-            "{cards}\n{rules}\nvar deck=bag(cards.slice(0,9)); report is_set(deck.take(3))"
+            "{cards}\n{rules}\nvar deck=bag(...cards.slice(0,9)); report is_set(deck.take(3))"
         )),
         1.0 / 7.0,
     );

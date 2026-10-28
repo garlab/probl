@@ -101,6 +101,10 @@ impl Names<'_> {
                 let item = self.common(items.keys(), depth + 1, false)?;
                 return self.parameterized("bag", &[item]);
             }
+            Value::Set(items) => {
+                let item = self.common(items.keys(), depth + 1, false)?;
+                return self.parameterized("set", &[item]);
+            }
             Value::Map(items) => {
                 let key = self.common(items.keys(), depth + 1, false)?;
                 let value = self.common(items.values(), depth + 1, false)?;

@@ -156,7 +156,9 @@ builtins! {
     Poisson = "poisson", 1..=1, Lift, true;
     Geometric = "geometric", 1..=1, Lift, true;
     Roll = "roll", 2..=2, Raw, true;
-    Bag = "bag", 1..=1, Lift, true;
+    Bag = "bag", 0..=ANY, Raw, true;
+    List = "list", 0..=ANY, Raw, true;
+    Set = "set", 0..=ANY, Raw, true;
     Normal = "normal", 2..=2, Lift, true;
     MultivariateNormal = "multivariate_normal", 2..=2, Raw, true;
     Lognormal = "lognormal", 2..=2, Lift, true;
@@ -226,6 +228,9 @@ builtins! {
     /// A collection literal written where a bag is declared: a list of its
     /// items, or a map from each item to its count.
     BagLiteral = "$bag_literal", 1..=1, Raw, false;
+    SetLiteral = "$set_literal", 1..=1, Raw, false;
+    /// Materialize an iterable at a spread's evaluation position.
+    SpreadItems = "$spread_items", 1..=1, Raw, false;
     /// Checks that a `match` subject is a settled value, not a distribution.
     Settled = "$settled", 1..=1, Raw, false;
     /// The last element of a list (for `pop`).
@@ -237,6 +242,17 @@ builtins! {
 }
 
 impl Builtin {
+    pub fn accepts_spread(self) -> bool {
+        matches!(
+            self,
+            Builtin::List | Builtin::Set | Builtin::Bag | Builtin::Min | Builtin::Max
+        )
+    }
+
+    pub fn is_collection_constructor(self) -> bool {
+        matches!(self, Builtin::List | Builtin::Set | Builtin::Bag)
+    }
+
     /// Arguments whose declared domain is `prob`, including method receivers.
     pub fn probability_parameter(self, index: usize) -> bool {
         matches!(

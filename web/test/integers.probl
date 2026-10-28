@@ -51,7 +51,7 @@ report mean(binomial(2,50%))
 report len(roll(2,1))
 let large_converted:int = int(2.0^100)
 report large_converted
-let combined:bag[float] = bag([1,1.0])
+let combined:bag[float] = bag(1,1.0)
 report [len(combined), combined.get(1)]
 # Factoring takes machine words, 128-bit products and bigints.
 report [prime_factors(360), prime_factors(1000003 * 1000033), prime_factors(2^64 + 1), prime_factors((2^61 - 1)^2 * 3)]

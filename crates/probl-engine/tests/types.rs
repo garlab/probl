@@ -95,8 +95,8 @@ fn containers_named_types_and_empty_values() {
         ("[[], [1]]", "list[any]"),
         ("[: ]", "map[unknown, unknown]"),
         ("[\"a\": 1, \"b\": 2]", "map[str, int]"),
-        ("bag([])", "bag[unknown]"),
-        ("bag([1: 2, 2: 1])", "bag[int]"),
+        ("bag()", "bag[unknown]"),
+        ("{ let b: bag = [1: 2, 2: 1]; b }", "bag[int]"),
         ("{ b: d6, a: 3 }", "{a: int, b: dist[int]}"),
     ] {
         assert_eq!(type_of(expr), expected, "{expr}");

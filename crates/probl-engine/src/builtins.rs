@@ -348,7 +348,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         },
         B::Keys => match a(0) {
             Value::Map(m) => Ok(Value::list(m.keys().cloned().collect())),
-            Value::Bag(m) => Ok(Value::list(m.keys().cloned().collect())),
+            Value::Bag(m) | Value::Set(m) => Ok(Value::list(m.keys().cloned().collect())),
             v => Err(expected("a map", v, "keys")),
         },
         B::Values => match a(0) {
@@ -406,6 +406,11 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::Float => ops::to_float(a(0)),
         B::BooleanLaw => ops::boolean_law(a(0)),
         B::BagLiteral => bag(a(0), budget),
+        B::SetLiteral => match a(0) {
+            Value::List(items) => Ok(Value::set(items)),
+            _ => unreachable!("a set literal is built from items"),
+        },
+        B::SpreadItems => spread_items(a(0), budget).map(Value::list),
         B::Bernoulli | B::ScoreLaw => Ok(Dist::bernoulli(to_prob(a(0))?).into_value()),
         B::OneOf => one_of(a(0), budget),
         B::Binomial | B::Poisson | B::Geometric => {
@@ -416,7 +421,21 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             }
             Ok(counts.list(budget)?.into_value())
         }
-        B::Bag => bag(a(0), budget),
+        B::Bag => {
+            budget.collection(args.len() as u128)?;
+            budget.work(args.len() as u64)?;
+            Ok(Value::multiset(crate::value::count_items(args.iter())))
+        }
+        B::Set => {
+            budget.collection(args.len() as u128)?;
+            budget.work(args.len() as u64)?;
+            Ok(Value::set(args))
+        }
+        B::List => {
+            budget.collection(args.len() as u128)?;
+            budget.work(args.len() as u64)?;
+            Ok(Value::list(args.to_vec()))
+        }
         B::Normal => continuous(Family::normal(number(a(0), "normal")?, number(a(1), "normal")?)),
         B::Lognormal => continuous(Family::lognormal(
             number(a(0), "lognormal")?,
@@ -645,6 +664,9 @@ pub fn check_query_input(b: Builtin, args: &[Value]) -> OpResult<()> {
 
 /// Built-ins that receive distributions whole.
 pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Value> {
+    if b.is_collection_constructor() || matches!(b, Builtin::BagLiteral | Builtin::SetLiteral | Builtin::SpreadItems) {
+        return call_plain(b, args, budget);
+    }
     use Builtin as B;
     check_query_input(b, args)?;
     let v = &args[0];
@@ -1369,9 +1391,13 @@ pub(crate) fn midpoint(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Va
 fn iter_items(v: &Value, budget: &mut Budget) -> OpResult<Value> {
     match v {
         Value::List(_) | Value::Range(..) => Ok(v.clone()),
-        Value::Map(m) => Ok(Value::list(
-            m.iter().map(|(k, x)| Value::list(vec![k.clone(), x.clone()])).collect(),
-        )),
+        Value::Map(m) => {
+            budget.collection(m.len() as u128)?;
+            budget.work(m.len() as u64)?;
+            Ok(Value::list(
+                m.iter().map(|(k, x)| Value::list(vec![k.clone(), x.clone()])).collect(),
+            ))
+        }
         Value::Bag(b) => {
             let n: u128 = b.values().map(|n| *n as u128).sum();
             budget.collection(n)?;
@@ -1381,11 +1407,27 @@ fn iter_items(v: &Value, budget: &mut Budget) -> OpResult<Value> {
                     .collect(),
             ))
         }
+        Value::Set(s) => {
+            budget.collection(s.distinct_len() as u128)?;
+            budget.work(s.distinct_len() as u64)?;
+            Ok(Value::list(s.keys().cloned().collect()))
+        }
         Value::Str(s) => crate::text::chars(s, budget).map(Value::list),
         v if v.is_uncertain() => Err(OpError::new(format!("can't loop over a {}", v.kind()))
             .help("draw a value first with `~`, or loop over `support(…)`")),
         other => Err(OpError::new(format!("can't loop over {}", article(&other.kind())))),
     }
+}
+
+/// A spread uses the same iteration order as `for`, materialized once.
+fn spread_items(v: &Value, budget: &mut Budget) -> OpResult<Vec<Value>> {
+    if v.is_uncertain() {
+        return Err(
+            OpError::new("can't spread a distribution").help("draw a value first with `~`, or spread `support(…)`")
+        );
+    }
+    let iter = iter_items(v, budget)?;
+    items(&iter, "spread", budget)
 }
 
 fn date_count(v: &Value, func: &str, budget: &mut Budget) -> OpResult<i64> {
@@ -1988,6 +2030,7 @@ fn len(v: &Value) -> OpResult<Value> {
         Value::Str(s) => s.chars().count() as u128,
         Value::Map(m) => m.len() as u128,
         Value::Bag(b) => b.values().map(|n| *n as u128).sum(),
+        Value::Set(s) => s.distinct_len() as u128,
         Value::Range(lo, hi) => return Ok(Value::Int(range_len(lo, hi)?)),
         other => return Err(expected("a collection", other, "len")),
     };

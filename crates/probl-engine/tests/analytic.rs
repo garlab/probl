@@ -156,7 +156,7 @@ fn unsupported_uses_request_sampling_instead_of_losing_correlations() {
         "report [x]==[x+1]",
         "report x in [x]",
         "report x by x",
-        "report bag([x])",
+        "report bag(x)",
         "report [x: 1]",
         "report str(x)",
         "report prob(x)",

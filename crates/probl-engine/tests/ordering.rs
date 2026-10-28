@@ -135,7 +135,7 @@ both_modes! {
             "{ observe true; a-b }",
             "{ score 100%; a-b }",
             "if 50% {a-b} else {a-b}",
-            "{ var deck=bag([1]); let r=deck.take(); a-b }",
+            "{ var deck=bag(1); let r=deck.take(); a-b }",
             "{ let xs=[1].map(x->{observe true; x}); a-b }",
         ] {
             for name in ["sort", "sort_desc"] {

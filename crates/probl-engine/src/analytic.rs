@@ -2491,9 +2491,13 @@ pub fn logic(and: bool, a: &Value, b: &Value) -> OpResult<Value> {
 pub fn contains(v: &Value) -> bool {
     match v {
         Value::Analytic(_) | Value::Event(_) => true,
-        Value::List(_) | Value::Map(_) | Value::Bag(_) | Value::Record(_) | Value::Dist(_) | Value::Closure(_) => {
-            contains_nested(v)
-        }
+        Value::List(_)
+        | Value::Map(_)
+        | Value::Bag(_)
+        | Value::Set(_)
+        | Value::Record(_)
+        | Value::Dist(_)
+        | Value::Closure(_) => contains_nested(v),
         _ => false,
     }
 }
@@ -2507,7 +2511,7 @@ fn contains_nested(v: &Value) -> bool {
             Value::Analytic(_) | Value::Event(_) => return true,
             Value::List(v) => pending.extend(v.iter()),
             Value::Map(v) => pending.extend(v.iter().flat_map(|(k, v)| [k, v])),
-            Value::Bag(v) => pending.extend(v.keys()),
+            Value::Bag(v) | Value::Set(v) => pending.extend(v.keys()),
             Value::Record(v) => pending.extend(v.fields.iter().map(|(_, v)| v)),
             Value::Dist(d) => pending.extend(d.outcomes.iter().map(|(v, _)| v)),
             Value::Closure(c) => pending.extend(c.captured.iter()),
@@ -2605,7 +2609,7 @@ pub fn collect_ids(v: &Value, ids: &mut std::collections::BTreeSet<u64>) {
             Value::Event(e) => e.draws.iter().for_each(|d| d.collect_ids(ids)),
             Value::List(v) => pending.extend(v.iter()),
             Value::Map(v) => pending.extend(v.iter().flat_map(|(k, v)| [k, v])),
-            Value::Bag(v) => pending.extend(v.keys()),
+            Value::Bag(v) | Value::Set(v) => pending.extend(v.keys()),
             Value::Record(v) => pending.extend(v.fields.iter().map(|(_, v)| v)),
             Value::Dist(d) => pending.extend(d.outcomes.iter().map(|(v, _)| v)),
             Value::Closure(c) => pending.extend(c.captured.iter()),

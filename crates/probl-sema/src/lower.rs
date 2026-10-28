@@ -369,8 +369,11 @@ impl<'a> Lowerer<'a> {
             }
             ast::TypeExpr::Named { name, args } => {
                 let n = name.name.as_str();
+                if n == "bag" && args.is_empty() {
+                    return Some(TypeSpec::BareBag);
+                }
                 let expected = match n {
-                    "list" | "bag" | "dist" => 1,
+                    "list" | "bag" | "set" | "dist" => 1,
                     "map" => 2,
                     _ => 0,
                 };
@@ -397,6 +400,7 @@ impl<'a> Lowerer<'a> {
                     "date" => TypeSpec::Date,
                     "list" => TypeSpec::List(arg(0, self)?),
                     "bag" => TypeSpec::Bag(arg(0, self)?),
+                    "set" => TypeSpec::Set(arg(0, self)?),
                     "dist" => TypeSpec::Dist(arg(0, self)?),
                     "map" => TypeSpec::Map(arg(0, self)?, arg(1, self)?),
                     _ => {
@@ -501,14 +505,35 @@ impl<'a> Lowerer<'a> {
             return;
         }
         match (&mut e.kind, ty) {
-            (ExprKind::List(xs), TypeSpec::List(t) | TypeSpec::Bag(t)) => {
+            (ExprKind::List(xs), TypeSpec::List(t) | TypeSpec::Bag(t) | TypeSpec::Set(t)) => {
                 for x in xs {
                     self.contextualize(x, t);
                 }
                 if let TypeSpec::Bag(_) = ty {
                     let items = std::mem::replace(&mut e.kind, ExprKind::List(Vec::new()));
                     *e = bag_literal(items, e.span);
+                } else if let TypeSpec::Set(_) = ty {
+                    let items = std::mem::replace(&mut e.kind, ExprKind::List(Vec::new()));
+                    *e = builtin(
+                        Builtin::SetLiteral,
+                        vec![Expr {
+                            kind: items,
+                            span: e.span,
+                        }],
+                        e.span,
+                    );
                 }
+            }
+            (ExprKind::List(_), TypeSpec::BareBag) => {
+                let items = std::mem::replace(&mut e.kind, ExprKind::List(Vec::new()));
+                *e = bag_literal(items, e.span);
+            }
+            (ExprKind::Map(xs), TypeSpec::BareBag) => {
+                for (_, count) in xs {
+                    self.contextualize(count, &TypeSpec::Int);
+                }
+                let counts = std::mem::replace(&mut e.kind, ExprKind::List(Vec::new()));
+                *e = bag_literal(counts, e.span);
             }
             (ExprKind::Map(xs), TypeSpec::Map(k, v)) => {
                 for (a, b) in xs {
@@ -2221,6 +2246,11 @@ impl<'a> Lowerer<'a> {
     }
 
     fn expr_expected(&mut self, e: &ast::Expr, ty: Option<&TypeSpec>, out: &mut Vec<Stmt>) -> Expr {
+        // A spread evaluates its source as an ordinary collection. Its
+        // expanded elements are checked by the containing declaration.
+        if matches!(e.kind, ast::ExprKind::Spread(_)) {
+            return self.expr(e, out);
+        }
         let Some(ty) = ty else { return self.expr(e, out) };
         let kind = match (&e.kind, ty) {
             (
@@ -2247,14 +2277,39 @@ impl<'a> Lowerer<'a> {
             // where one is declared, and `[k: v, …]` a map, or a bag whose
             // values are its keys' counts. Its kind's type gives the
             // elements theirs.
-            (ast::ExprKind::List(xs), TypeSpec::List(t) | TypeSpec::Bag(t)) => {
+            (ast::ExprKind::List(xs), TypeSpec::List(t) | TypeSpec::Bag(t) | TypeSpec::Set(t)) => {
                 let refs: Vec<_> = xs.iter().collect();
                 let types = vec![Some((**t).clone()); xs.len()];
                 let items = ExprKind::List(self.operands_expected(Vec::new(), &refs, &types, out));
                 if let TypeSpec::Bag(_) = ty {
                     return bag_literal(items, e.span);
                 }
+                if let TypeSpec::Set(_) = ty {
+                    return builtin(
+                        Builtin::SetLiteral,
+                        vec![Expr {
+                            kind: items,
+                            span: e.span,
+                        }],
+                        e.span,
+                    );
+                }
                 items
+            }
+            (ast::ExprKind::List(xs), TypeSpec::BareBag) => {
+                let refs: Vec<_> = xs.iter().collect();
+                let items = ExprKind::List(self.operands(&refs, out));
+                return bag_literal(items, e.span);
+            }
+            (ast::ExprKind::Map(xs), TypeSpec::BareBag) => {
+                let refs: Vec<_> = xs.iter().flat_map(|(k, v)| [k, v]).collect();
+                let types: Vec<_> = xs.iter().flat_map(|_| [None, Some(TypeSpec::Int)]).collect();
+                let mut values = self.operands_expected(Vec::new(), &refs, &types, out).into_iter();
+                let mut pairs = Vec::with_capacity(xs.len());
+                while let (Some(k), Some(v)) = (values.next(), values.next()) {
+                    pairs.push((k, v));
+                }
+                return bag_literal(ExprKind::Map(pairs), e.span);
             }
             (ast::ExprKind::Map(xs), TypeSpec::Map(..) | TypeSpec::Bag(_)) => {
                 let (k, v) = match ty {
@@ -2334,6 +2389,10 @@ impl<'a> Lowerer<'a> {
     /// there are statements: it can fail, print or run `simulate`, and the
     /// statements can split worlds, rule them out, or fail first.
     fn stabilize(&mut self, e: &mut Expr, later: Later, out: &mut Vec<Stmt>) {
+        if let ExprKind::Spread(value) = &mut e.kind {
+            self.stabilize(value, later, out);
+            return;
+        }
         let stable = match &e.kind {
             ExprKind::Lit(_) => true,
             ExprKind::Slot(s) => !later.assigns || self.funcs[self.cur_func() as usize].slots[*s as usize].name == TEMP,
@@ -2425,6 +2484,10 @@ impl<'a> Lowerer<'a> {
             ast::ExprKind::List(items) => {
                 let items: Vec<&ast::Expr> = items.iter().collect();
                 ExprKind::List(self.operands(&items, out))
+            }
+            ast::ExprKind::Spread(value) => {
+                let value = self.expr(value, out);
+                ExprKind::Spread(Box::new(builtin(Builtin::SpreadItems, vec![value], span)))
             }
             ast::ExprKind::Map(entries) => {
                 let flat: Vec<&ast::Expr> = entries.iter().flat_map(|(k, v)| [k, v]).collect();
@@ -2754,6 +2817,14 @@ impl<'a> Lowerer<'a> {
         span: Span,
         out: &mut Vec<Stmt>,
     ) -> Expr {
+        if let Some(arg) = args.iter().find(|a| matches!(a.value.kind, ast::ExprKind::Spread(_))) {
+            if !Builtin::from_name(&name.name).is_some_and(Builtin::accepts_spread) {
+                self.error(
+                    arg.value.span,
+                    "spreading is only supported by set, list, bag, min and max",
+                );
+            }
+        }
         if let Some(b) = Builtin::from_name(&name.name) {
             if !self.fn_by_name.contains_key(&name.name) {
                 if b == Builtin::Take {
@@ -2950,7 +3021,16 @@ impl<'a> Lowerer<'a> {
                 .map(|i| b.probability_parameter(i).then_some(TypeSpec::Prob))
                 .collect();
             let mut values = self.operands_expected(values, &exprs, &types, out);
-            self.check_arity(b, values.len(), span);
+            if let Some(arg) = args.iter().find(|a| matches!(a.value.kind, ast::ExprKind::Spread(_))) {
+                if !b.accepts_spread() {
+                    self.error(
+                        arg.value.span,
+                        "spreading is only supported by set, list, bag, min and max",
+                    );
+                }
+            } else {
+                self.check_arity(b, values.len(), span);
+            }
             let named_values = values.split_off(positional_count);
             let named = names.into_iter().zip(named_values).collect();
             return Expr {
@@ -3031,6 +3111,9 @@ impl<'a> Lowerer<'a> {
         for arg in args {
             if let Some(n) = &arg.name {
                 self.error(n.span, "only built-in functions take named arguments");
+            }
+            if matches!(arg.value.kind, ast::ExprKind::Spread(_)) {
+                self.error(arg.value.span, "spreading into a user function isn't supported");
             }
         }
         let exprs: Vec<&ast::Expr> = args.iter().map(|a| &a.value).collect();
@@ -3397,7 +3480,7 @@ fn visit_place(place: &mut Place, f: &mut impl FnMut(&mut CallSite)) {
 fn visit_expr(expr: &mut Expr, f: &mut impl FnMut(&mut CallSite)) {
     match &mut expr.kind {
         ExprKind::Lit(_) | ExprKind::Slot(_) | ExprKind::Input(_) => {}
-        ExprKind::Unary(_, e) | ExprKind::Field(e, _) => visit_expr(e, f),
+        ExprKind::Unary(_, e) | ExprKind::Field(e, _) | ExprKind::Spread(e) => visit_expr(e, f),
         ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => {
             visit_expr(a, f);
             visit_expr(b, f);

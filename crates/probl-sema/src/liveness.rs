@@ -337,7 +337,7 @@ fn uses(expr: &Expr, live: &mut SlotSet) {
     match &expr.kind {
         ExprKind::Lit(_) | ExprKind::Input(_) => {}
         ExprKind::Slot(s) => live.insert(*s),
-        ExprKind::Unary(_, e) | ExprKind::Field(e, _) => uses(e, live),
+        ExprKind::Unary(_, e) | ExprKind::Field(e, _) | ExprKind::Spread(e) => uses(e, live),
         ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => {
             uses(a, live);
             uses(b, live);
