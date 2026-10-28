@@ -535,11 +535,11 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Values => doc("values(m: map) -> list", "A map's values, in the order of their keys."),
         B::Get => doc(
             "get(m, key) or get(m, key, default)",
-            "A map's value for key, a list/range/string element at index key (from 0), or the count of an item in a bag. Strings use Unicode scalar positions. Sequence indices accept ints or exactly integral finite floats. Maps and bags use exact typed keys. For maps/sequences, default handles absence; without it, absence is an error. Invalid index types always fail. Bag counts are always defined: absent items return zero, even when a default is supplied.",
+            "A map's value for key, a list/range/string element at index key (from 0), or the count of an item in a bag. Strings use Unicode scalar positions. Sequence indices accept ints or exactly integral finite floats. Map keys and bag items compare numbers by value, as `==` does: 1 and 1.0 are one key. For maps/sequences, default handles absence; without it, absence is an error. Invalid index types always fail. Bag counts are always defined: absent items return zero, even when a default is supplied.",
         ),
         B::Contains => doc(
             "contains(xs, x) -> bool",
-            "Whether a list, range or bag holds `x`, a map has the key `x`, or a string contains the text `x`. `x in xs` is the same. Maps and bags use exact typed identity; list membership uses language equality.",
+            "Whether a list, range or bag holds `x`, a map has the key `x`, or a string contains the text `x`. `x in xs` is the same. All compare as `==` does, numbers by value at any depth: `[1.0: \"a\"]` has the key 1.",
         ),
         B::Highest => doc(
             "highest(xs, n: int, compare?) -> list",
@@ -685,7 +685,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         B::Support => doc(
             "support(d) -> list",
-            "The distinct typed elements of a nonempty list or integer range, or retained outcomes of a finite distribution, in storage order. Ranges are materialized subject to collection limits. Rejects scalars.",
+            "The distinct elements of a nonempty list or integer range, or retained outcomes of a finite distribution, in order, each once as `==` compares them: of 1 and 1.0, the int. Ranges are materialized subject to collection limits. Rejects scalars.",
         ),
         B::Cdf => doc(
             "cdf(d, x) -> prob",
@@ -693,7 +693,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         B::Pmf => doc(
             "pmf(d, x) -> prob",
-            "The mass of the exact typed outcome x in a distribution, nonempty list or integer range, matching support. Int 1 and float 1.0 are distinct outcomes. For a numeric-equality event, use P(d == x). Continuous components contribute zero point mass. Rejects unresolved distributions and scalar populations.",
+            "The mass of the outcomes equal to x, as `==` compares them, in a distribution, nonempty list or integer range: pmf(one_of([1, 1.0]), 1) is 100%. Over support, it adds up to 1. Continuous components contribute zero point mass. Rejects unresolved distributions and scalar populations.",
         ),
         B::Pdf => doc(
             "pdf(d, x) -> float",
