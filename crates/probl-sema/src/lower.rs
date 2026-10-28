@@ -369,8 +369,14 @@ impl<'a> Lowerer<'a> {
             }
             ast::TypeExpr::Named { name, args } => {
                 let n = name.name.as_str();
-                if n == "bag" && args.is_empty() {
-                    return Some(TypeSpec::BareBag);
+                if args.is_empty() {
+                    match n {
+                        "list" => return Some(TypeSpec::BareList),
+                        "map" => return Some(TypeSpec::BareMap),
+                        "bag" => return Some(TypeSpec::BareBag),
+                        "set" => return Some(TypeSpec::BareSet),
+                        _ => {}
+                    }
                 }
                 let expected = match n {
                     "list" | "bag" | "set" | "dist" => 1,
@@ -413,7 +419,8 @@ impl<'a> Lowerer<'a> {
                             TypeSpec::Enum(e)
                         } else {
                             let mut known: Vec<String> = [
-                                "int", "float", "complex", "prob", "bool", "str", "date", "list", "map", "bag", "dist",
+                                "int", "float", "complex", "prob", "bool", "str", "date", "list", "map", "bag", "set",
+                                "dist",
                             ]
                             .iter()
                             .map(|s| s.to_string())
@@ -514,19 +521,16 @@ impl<'a> Lowerer<'a> {
                     *e = bag_literal(items, e.span);
                 } else if let TypeSpec::Set(_) = ty {
                     let items = std::mem::replace(&mut e.kind, ExprKind::List(Vec::new()));
-                    *e = builtin(
-                        Builtin::SetLiteral,
-                        vec![Expr {
-                            kind: items,
-                            span: e.span,
-                        }],
-                        e.span,
-                    );
+                    *e = set_literal(items, e.span);
                 }
             }
             (ExprKind::List(_), TypeSpec::BareBag) => {
                 let items = std::mem::replace(&mut e.kind, ExprKind::List(Vec::new()));
                 *e = bag_literal(items, e.span);
+            }
+            (ExprKind::List(_), TypeSpec::BareSet) => {
+                let items = std::mem::replace(&mut e.kind, ExprKind::List(Vec::new()));
+                *e = set_literal(items, e.span);
             }
             (ExprKind::Map(xs), TypeSpec::BareBag) => {
                 for (_, count) in xs {
@@ -2273,7 +2277,7 @@ impl<'a> Lowerer<'a> {
                 return v;
             }
             // A collection literal takes its kind from the declared type,
-            // before any element is looked at: `[…]` is a list, or a bag
+            // before any element is looked at: `[…]` is a list, set or bag
             // where one is declared, and `[k: v, …]` a map, or a bag whose
             // values are its keys' counts. Its kind's type gives the
             // elements theirs.
@@ -2285,14 +2289,7 @@ impl<'a> Lowerer<'a> {
                     return bag_literal(items, e.span);
                 }
                 if let TypeSpec::Set(_) = ty {
-                    return builtin(
-                        Builtin::SetLiteral,
-                        vec![Expr {
-                            kind: items,
-                            span: e.span,
-                        }],
-                        e.span,
-                    );
+                    return set_literal(items, e.span);
                 }
                 items
             }
@@ -2300,6 +2297,11 @@ impl<'a> Lowerer<'a> {
                 let refs: Vec<_> = xs.iter().collect();
                 let items = ExprKind::List(self.operands(&refs, out));
                 return bag_literal(items, e.span);
+            }
+            (ast::ExprKind::List(xs), TypeSpec::BareSet) => {
+                let refs: Vec<_> = xs.iter().collect();
+                let items = ExprKind::List(self.operands(&refs, out));
+                return set_literal(items, e.span);
             }
             (ast::ExprKind::Map(xs), TypeSpec::BareBag) => {
                 let refs: Vec<_> = xs.iter().flat_map(|(k, v)| [k, v]).collect();
@@ -3552,6 +3554,11 @@ fn binary(op: BinOp, a: Expr, b: Expr, span: Span) -> Expr {
 /// A list or map literal, built as a bag.
 fn bag_literal(literal: ExprKind, span: Span) -> Expr {
     builtin(Builtin::BagLiteral, vec![Expr { kind: literal, span }], span)
+}
+
+/// An item literal, built as a set.
+fn set_literal(literal: ExprKind, span: Span) -> Expr {
+    builtin(Builtin::SetLiteral, vec![Expr { kind: literal, span }], span)
 }
 
 fn builtin(func: Builtin, args: Vec<Expr>, span: Span) -> Expr {

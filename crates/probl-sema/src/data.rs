@@ -182,6 +182,13 @@ impl Checker<'_> {
                 Some("read the values, then make a distribution of them, like `one_of(values)`"),
                 at,
             )),
+            TypeSpec::BareList | TypeSpec::BareMap | TypeSpec::BareBag | TypeSpec::BareSet => {
+                self.problems.push(Problem::new(
+                    format!("`{}` needs type arguments when reading data", self.describe(ty)),
+                    Some("declare the element types, like `set[int]`, `list[int]`, `bag[int]` or `map[str, int]`"),
+                    at,
+                ));
+            }
             _ => self.problems.push(Problem::new(
                 format!("data can't be `{}`", self.describe(ty)),
                 Some("data is numbers, text, dates, enums, and records, lists, maps and bags of those"),

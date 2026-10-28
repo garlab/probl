@@ -624,7 +624,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         B::Set => doc(
             "set(items…) -> set",
-            "Build a set of distinct items: `set(1, 1, 2)`, or `set(...xs)` from an iterable. Items compare by value, so 1 and 1.0 are one element; the first representative is kept. Supports size, membership and iteration in value order. `set[T]` checks elements, and a literal in that context builds a set. A single collection argument requires an explicit spread during the transition release.",
+            "Build a set of distinct items: `set(1, 1, 2)`, or `set(...xs)` from an iterable. Items compare by value, so 1 and 1.0 are one element; the first representative is kept. Supports size, membership and iteration in value order. `let x: set = [1, 2, 1]` infers `set[int]`; `set[T]` also checks elements. A single collection argument requires an explicit spread during the transition release.",
         ),
         B::Normal => doc(
             "normal(mean: float, sd: float) -> dist[float]",

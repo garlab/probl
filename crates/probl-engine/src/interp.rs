@@ -3210,7 +3210,10 @@ impl<'p> Engine<'p> {
             (TypeSpec::List(t), Value::Range(..)) => **t == TypeSpec::Int,
             (TypeSpec::Map(k, t), Value::Map(m)) => m.iter().all(|(a, b)| self.conforms(a, k) && self.conforms(b, t)),
             (TypeSpec::Bag(t), Value::Bag(b)) => b.keys().all(|x| self.conforms(x, t)),
+            (TypeSpec::BareList, Value::List(_) | Value::Range(..)) => true,
+            (TypeSpec::BareMap, Value::Map(_)) => true,
             (TypeSpec::BareBag, Value::Bag(_)) => true,
+            (TypeSpec::BareSet, Value::Set(_)) => true,
             (TypeSpec::Set(t), Value::Set(s)) => s.keys().all(|x| self.conforms(x, t)),
             (TypeSpec::Dist(t), Value::Dist(d) | Value::Joint(d)) => d.outcomes.iter().all(|(x, _)| match x {
                 Value::Continuous(_) => **t == TypeSpec::Float,
@@ -4896,7 +4899,7 @@ fn mismatch_help(v: &Value, ty: &TypeSpec) -> Option<String> {
                 .into(),
         );
     }
-    if let (Value::List(_), TypeSpec::Set(_)) = (v, ty) {
+    if let (Value::List(_), TypeSpec::Set(_) | TypeSpec::BareSet) = (v, ty) {
         return Some(
             "a list never becomes a set: use a set-typed literal, or `set(...xs)` for an existing list".into(),
         );

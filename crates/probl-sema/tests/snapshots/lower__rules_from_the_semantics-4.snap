@@ -16,10 +16,3 @@ Error: unknown type `probability`
    │        ─────┬─────  
    │             ╰─────── here
 ───╯
-Error: `list` takes 1 type argument, like `list[int]`
-   ╭─[ test.probl:3:8 ]
-   │
- 3 │ let r: list = [1]
-   │        ──┬─  
-   │          ╰─── here
-───╯

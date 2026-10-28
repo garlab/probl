@@ -228,3 +228,125 @@ fn printing_keeps_counts_compact_and_set_source_unambiguous() {
         assert!(probl_engine::value::same(&value, &reparsed), "{printed}");
     }
 }
+
+#[test]
+fn bare_collections_infer_types_from_contents() {
+    facts(
+        r#"
+        let x: set = [1, 2, 1]
+        report x == set(1, 2) and typeof x == "set[int]"
+        let xs: list = [1, 2, 1]
+        let m: map = [1: "a", 2: "b"]
+        let b: bag = [1, 2, 1]
+        report typeof xs == "list[int]" and len(xs) == 3
+        report typeof m == "map[int, str]" and m[1] == "a"
+        report typeof b == "bag[int]" and b.get(1) == 2
+        let nested: set = [[1, 2], [1, 2]]
+        report typeof nested == "set[list[int]]" and len(nested) == 1
+        let mixed: list = [1, 2.0]
+        report typeof mixed[0] == "int" and typeof mixed[1] == "float"
+        let first: set = [1.0, 1]
+        report typeof first == "set[float]"
+        let empty_set: set = []
+        let empty_list: list = []
+        let empty_map: map = [:]
+        report typeof empty_set == "set[unknown]" and typeof empty_list == "list[unknown]"
+        report typeof empty_map == "map[unknown, unknown]"
+        let range: list = 1..3
+        report typeof range == "range" and len(range) == 3
+        let recipe: list = [d6]
+        report typeof recipe == "list[dist[int]]"
+    "#,
+    );
+}
+
+#[test]
+fn bare_kinds_reach_branches_functions_records_and_nested_literals() {
+    facts(
+        r#"
+        let chosen: set = if 50% { [1, 1] } else { [1] }
+        let matched: set = match 1 { 1 => [1, 1], _ => [1] }
+        let weighted: set = chance { 50% => [1, 1], else => [1] }
+        let blocked: set = { let xs = [1, 1]; [...xs] }
+        report chosen == set(1) and matched == chosen and weighted == chosen and blocked == chosen
+        fn size(s: set) { len(s) }
+        fn made(): set { if 50% { [1, 1] } else { return [1] } }
+        fn copied(xs: list): list { xs }
+        fn mapping(): map { [1: "a"] }
+        report size([1, 1, 2]) == 2 and typeof made() == "set[int]"
+        report typeof copied([1]) == "list[int]" and typeof mapping() == "map[int, str]"
+        let nested: list[set] = [[1, 1], [2, 2]]
+        let keyed: map[set, list] = [[1, 1]: [2, 3]]
+        report nested == [set(1), set(2)] and typeof nested == "list[set[int]]"
+        report keyed[set(1)] == [2, 3] and typeof keyed == "map[set[int], list[int]]"
+        type Box = { s: set, xs: list, m: map }
+        var box: Box = Box { s: [1, 1], xs: [2], m: [3: "a"] }
+        box.s = [2, 2]
+        let replaced = box with { s: [3, 3] }
+        report box.s == set(2) and replaced.s == set(3)
+        let anonymous: { s: set } = { s: [1, 1] }
+        report anonymous.s == set(1)
+        var changed: list[set] = [[1, 1]]
+        changed[0] = [2, 2]
+        changed.push([3, 3])
+        report changed == [set(2), set(3)]
+    "#,
+    );
+}
+
+#[test]
+fn bare_annotations_keep_the_kind_without_freezing_element_types() {
+    facts(
+        r#"
+        var s: set = [1, 1]
+        s = ["a", "a"]
+        report typeof s == "set[str]"
+        var xs: list = []
+        xs.push(1)
+        report typeof xs == "list[int]"
+        xs[0] = "a"
+        report typeof xs == "list[str]"
+        var m: map = [1: 2]
+        m[1] = "a"
+        report typeof m == "map[int, str]"
+        let existing = set(1, 2)
+        let same: set = existing
+        let converted: set[float] = same
+        report typeof same == "set[int]" and typeof converted == "set[float]"
+        let varying: set = if 50% { [1] } else { ["a"] }
+        report typeof varying == "set[int]" or typeof varying == "set[str]"
+    "#,
+    );
+    for source in [
+        "let xs = [1, 2]; let s: set = xs; report s",
+        "var s: set = [1]; s = list(2); report s",
+        "var xs: list = []; xs = set(1); report xs",
+        "var m: map = [:]; m = [1]; report m",
+        "let s: set = [1: 2]; report s",
+        "let bad = \"a\"; let s: set[int] = [bad]; report s",
+    ] {
+        for mode in modes() {
+            assert!(
+                exec_raw(
+                    source,
+                    &Options {
+                        mode: Some(mode),
+                        ..Options::default()
+                    }
+                )
+                .is_err(),
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn bare_collection_schemas_still_need_explicit_element_types() {
+    for ty in ["list", "map", "set", "bag", "list[set]"] {
+        assert!(compile_error(&format!("let xs: {ty} = read(\"a.json\")")).contains("needs type arguments"));
+    }
+    for ty in ["list[int, str]", "set[int, str]", "bag[int, str]", "map[int]"] {
+        assert!(compile_error(&format!("let xs: {ty} = []")).contains("type argument"));
+    }
+}

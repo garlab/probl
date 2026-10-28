@@ -24,3 +24,19 @@ report list(...xs, { xs.push(3); 0 }, ...xs)
 let varying = if 50% { [1] } else { [1, 2] }
 report [...varying, 3]
 report typeof if 50% { set(1) } else { set(1.0) }
+
+# Bare collection kinds infer their element types from their contents.
+let inferred: set = [1, 2, 1]
+let sequence: list = [1, 2]
+let mapping: map = [1: "a"]
+report [typeof inferred, typeof sequence, typeof mapping]
+report inferred
+let empty: set = []
+report typeof empty
+let nested_bare: list[set] = [[1, 1], [2, 2]]
+report nested_bare
+fn inferred_set(): set { if 50% { [1, 1] } else { [2, 2] } }
+report inferred_set()
+var changing: set = [1]
+changing = ["a"]
+report typeof changing
