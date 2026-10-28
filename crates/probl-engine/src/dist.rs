@@ -655,6 +655,121 @@ impl Counts {
     }
 }
 
+/// The int above which floats start skipping ints: 2^53.
+const EXACT: f64 = 9007199254740992.0;
+
+impl Counts {
+    /// Whether a float holds every outcome but those whose chance together
+    /// is below the tail a listing cuts off: the chance of an outcome past
+    /// 2^53, where floats start skipping ints, is below it. Exact for a
+    /// geometric law, and a Chernoff bound for the others, so where the
+    /// bound is off it's only ever too strict.
+    pub fn floats_hold(&self) -> bool {
+        let tail = libm::log(TAIL);
+        match *self {
+            Counts::Geometric { p } if p >= 1.0 => true,
+            // P(X > 2^53) = (1 − p)^(2^53).
+            Counts::Geometric { p } => EXACT * libm::log1p(-p) < tail,
+            Counts::Poisson { rate } if rate <= 0.0 => true,
+            // P(X ≥ k) ≤ e^(−λ) (eλ/k)^k, for k = 2^53 > λ: its log is
+            // d + k ln(1 − d/k), with d = k − λ.
+            Counts::Poisson { rate } => {
+                let d = EXACT - rate;
+                d > 0.0 && d + EXACT * libm::log1p(-d / EXACT) < tail
+            }
+            Counts::Binomial { p, .. } if p <= 0.0 => true,
+            // One outcome, n: through u128, so that the cast can't saturate.
+            Counts::Binomial { n, p } if p >= 1.0 => (n as f64) as u128 == n as u128,
+            Counts::Binomial { n, .. } if n as f64 <= EXACT => true,
+            // P(X ≥ k) ≤ exp(−n D(k/n ‖ p)), for k = 2^53 above the mean.
+            Counts::Binomial { n, p } => {
+                let a = EXACT / n as f64;
+                let divergence = a * libm::log(a / p) + (1.0 - a) * libm::log((1.0 - a) / (1.0 - p));
+                a > p && -(n as f64) * divergence < tail
+            }
+        }
+    }
+
+    /// Whether every outcome is a probability, from 0 to 1.
+    pub fn probabilities(&self) -> bool {
+        match *self {
+            Counts::Binomial { n, p } => n <= 1 || p <= 0.0,
+            Counts::Poisson { rate } => rate <= 0.0,
+            Counts::Geometric { p } => p >= 1.0,
+        }
+    }
+}
+
+/// A count law too broad to list, and whether a declared `dist[float]` has
+/// made its outcomes floats. It does that only when a float holds every
+/// outcome but those with a chance below 1e-18 together.
+#[derive(Clone, Copy, Debug)]
+pub struct Law {
+    pub counts: Counts,
+    pub floats: bool,
+}
+
+impl From<Counts> for Law {
+    fn from(counts: Counts) -> Law {
+        Law { counts, floats: false }
+    }
+}
+
+impl std::ops::Deref for Law {
+    type Target = Counts;
+
+    fn deref(&self) -> &Counts {
+        &self.counts
+    }
+}
+
+impl Law {
+    pub fn key(&self) -> (u8, u64, u64, bool) {
+        let (kind, a, b) = self.counts.key();
+        (kind, a, b, self.floats)
+    }
+
+    /// An outcome as this law gives it: an int, or the float that holds it.
+    pub fn outcome(&self, k: i64) -> Option<Value> {
+        if !self.floats {
+            return Some(Value::Int(k.into()));
+        }
+        // Through i128, so that the cast back can't saturate.
+        let x = k as f64;
+        (x as i128 == k as i128).then_some(Value::Float(x))
+    }
+
+    /// One draw. When its outcomes are floats, a draw that no float holds,
+    /// which has a chance below 1e-18, is drawn again, as a listing's tail
+    /// is never drawn.
+    pub fn draw(&self, rng: &mut Rng) -> Value {
+        loop {
+            if let Some(v) = self.outcome(self.counts.sample(rng)) {
+                return v;
+            }
+        }
+    }
+
+    /// The distribution with its outcomes listed, and its law.
+    pub fn list(&self, budget: &mut Budget) -> OpResult<Dist> {
+        let mut d = self.counts.list(budget)?;
+        if self.floats {
+            for (v, _) in &mut d.outcomes {
+                if let Value::Int(n) = v {
+                    *v = Value::Float(crate::ops::exact_float(n)?);
+                }
+            }
+        }
+        Ok(d)
+    }
+}
+
+impl std::fmt::Display for Law {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.counts.fmt(f)
+    }
+}
+
 impl std::fmt::Display for Counts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use crate::value::fmt_float;
@@ -858,6 +973,43 @@ pub fn ln_gamma(x: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn floats_hold_a_law_but_a_chance_below_the_tail() {
+        let geometric = |p| Counts::Geometric { p }.floats_hold();
+        // (1 − p)^(2^53) < 1e-18 above p ≈ 4.6e-15.
+        assert!(geometric(1.0) && geometric(0.5) && geometric(1e-12) && geometric(4.7e-15));
+        assert!(!geometric(4.5e-15) && !geometric(1e-16));
+        let poisson = |rate| Counts::Poisson { rate }.floats_hold();
+        // The bound accepts rates more than about 8.6e8 below 2^53.
+        assert!(poisson(0.0) && poisson(3.0) && poisson(1e15) && poisson(EXACT - 1e9));
+        assert!(!poisson(EXACT - 5e8) && !poisson(EXACT));
+        let binomial = |n, p| Counts::Binomial { n, p }.floats_hold();
+        assert!(binomial(1 << 53, 0.5) && binomial(1 << 60, 0.0) && binomial(1 << 60, 1e-6));
+        assert!(binomial(1 << 60, 1.0) && !binomial((1 << 60) + 1, 1.0) && !binomial(u64::MAX, 1.0));
+        assert!(!binomial(1 << 54, 0.5) && !binomial(1 << 55, 0.5));
+        // A bound that's never below the exact chance: for a geometric law,
+        // which has both, it agrees where the exact chance is near the tail.
+        for p in [4.5e-15, 4.6e-15, 4.61e-15, 4.7e-15] {
+            let exact = libm::exp(EXACT * libm::log1p(-p));
+            assert_eq!(geometric(p), exact < TAIL, "{p}");
+        }
+    }
+
+    #[test]
+    fn a_law_of_floats_draws_floats_that_hold_its_outcomes() {
+        let law = Law {
+            counts: Counts::Geometric { p: 0.5 },
+            floats: true,
+        };
+        let mut rng = Rng::new(1);
+        for _ in 0..100 {
+            assert!(matches!(law.draw(&mut rng), Value::Float(x) if x >= 1.0 && x.fract() == 0.0));
+        }
+        assert_eq!(law.outcome((1 << 53) + 1), None);
+        assert_eq!(law.outcome(1 << 60), Some(Value::Float(2f64.powi(60))));
+        assert_eq!(law.outcome(i64::MAX), None);
+    }
 
     fn close(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-12

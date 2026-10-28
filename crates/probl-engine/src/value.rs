@@ -60,7 +60,7 @@ pub enum Value {
     /// drawn from directly when sampling, and asked by `pmf`, `cdf` and the
     /// other queries. Anything that needs its outcomes lists it, which
     /// fails on the outcome limit, as building it once did.
-    Counts(Arc<crate::dist::Counts>),
+    Counts(Arc<crate::dist::Law>),
     /// A distribution whose outcomes own continuous draws, from `simulate`
     /// (docs/semantics.md, section 8): drawing from it gives each outcome's
     /// draws fresh identities (see `crate::joint`).
@@ -480,6 +480,7 @@ impl Value {
             Value::Analytic(a) if a.int => "int".into(),
             Value::Analytic(_) => "float".into(),
             Value::Event(_) => "bool".into(),
+            Value::Counts(c) if c.floats => "distribution over floats".into(),
             Value::Counts(_) => "distribution over ints".into(),
             Value::Joint(d) => match d.outcomes.first() {
                 Some((v, _)) => format!("distribution over {}", plural_kind(&v.kind())),

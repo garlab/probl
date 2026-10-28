@@ -582,7 +582,7 @@ impl<'p> Engine<'p> {
             }
             Value::Continuous(f) => Value::Float(f.sample(rng)),
             Value::MultivariateNormal(n) => n.sample_value(rng, &mut self.budget)?,
-            Value::Counts(c) => Value::Int(c.sample(rng).into()),
+            Value::Counts(c) => c.draw(rng),
             Value::Joint(j) => crate::joint::sample(j, rng, &mut self.budget)?,
             other => other.clone(),
         })
@@ -3024,7 +3024,29 @@ impl<'p> Engine<'p> {
             (Value::Analytic(_), TypeSpec::Int) => {
                 return Err(analytic::unsupported("converting this outcome to int").at(span));
             }
-            (Value::Counts(c), TypeSpec::Dist(t)) if **t == TypeSpec::Int => Value::Counts(c),
+            (Value::Counts(c), TypeSpec::Dist(t)) if **t == TypeSpec::Int && !c.floats => Value::Counts(c),
+            // A law too broad to list keeps its law: its outcomes become
+            // floats when a float holds all but a chance below 1e-18 of
+            // them, decided from its parameters, before anything is drawn.
+            // A law whose outcomes are probabilities has one or two of them.
+            (Value::Counts(c), TypeSpec::Dist(t)) if **t == TypeSpec::Prob => {
+                if !c.probabilities() {
+                    return Err(
+                        OpError::new(format!("{c} has outcomes above 1, so it can't be a dist[prob]")).at(span),
+                    );
+                }
+                let listed = Value::Dist(Arc::new(c.list(&mut self.budget).map_err(|e| e.at(span))?));
+                return self.coerce_at(listed, ty, span, depth + 1);
+            }
+            (Value::Counts(c), TypeSpec::Dist(t)) if **t == TypeSpec::Float => {
+                if !c.floats && !c.floats_hold() {
+                    return Err(no_float_holds(&c.counts).at(span));
+                }
+                Value::Counts(Arc::new(crate::dist::Law {
+                    counts: c.counts,
+                    floats: true,
+                }))
+            }
             (Value::Prob(p), TypeSpec::Float) => Value::Float(p),
             // A declared type is a contract: failing it isn't a fault of the
             // world's values, even in partial mode.
@@ -3060,11 +3082,52 @@ impl<'p> Engine<'p> {
                 Value::multiset(crate::value::Multiset::new(out))
             }
             (Value::Dist(d), TypeSpec::Dist(t)) => {
-                let mut out = Vec::with_capacity(d.outcomes.len());
-                for (x, p) in &d.outcomes {
-                    out.push((self.coerce_at(x.clone(), t, span, depth + 1)?, *p));
+                // A listed count law is decided from its law, which says
+                // what its listing cut off.
+                if let Some(law) = &d.law {
+                    if **t == TypeSpec::Float && !law.floats_hold() {
+                        return Err(no_float_holds(law).at(span));
+                    }
+                    if **t == TypeSpec::Prob && !law.probabilities() {
+                        return Err(
+                            OpError::new(format!("{law} has outcomes above 1, so it can't be a dist[prob]")).at(span),
+                        );
+                    }
                 }
-                ops::combine(out, d.missing, &mut self.budget).map_err(|e| e.at(span))?
+                let mut out = Vec::with_capacity(d.outcomes.len());
+                let mut converted = false;
+                for (x, p) in &d.outcomes {
+                    let v = self.coerce_at(x.clone(), t, span, depth + 1)?;
+                    converted |= v != *x;
+                    out.push((v, *p));
+                }
+                // What's unresolved, without a law to say what it is, can't
+                // be checked: it might not convert.
+                if converted && d.missing > 0.0 && d.law.is_none() {
+                    return Err(OpError::new(format!(
+                        "a distribution with unresolved weight can't become {}: what's unresolved can't be checked",
+                        ty.describe(self.prog)
+                    ))
+                    .help("declare the type its outcomes have")
+                    .at(span));
+                }
+                // Converting keeps the numbers, so the outcomes keep their
+                // order and weights; those that were the same number of
+                // different kinds, like `1` and `1.0`, become one. The law
+                // survives, so queries still know what's missing is its tail.
+                out.sort_by(|a, b| a.0.cmp(&b.0));
+                out.dedup_by(|later, kept| {
+                    let same = later.0 == kept.0;
+                    if same {
+                        kept.1 += later.1;
+                    }
+                    same
+                });
+                Value::Dist(Arc::new(Dist {
+                    outcomes: out,
+                    missing: d.missing,
+                    law: d.law.clone(),
+                }))
             }
             (Value::Joint(d), TypeSpec::Dist(t)) => {
                 let mut out = Vec::with_capacity(d.outcomes.len());
@@ -3141,7 +3204,7 @@ impl<'p> Engine<'p> {
             (TypeSpec::Dist(t), Value::MultivariateNormal(_)) => {
                 matches!(&**t, TypeSpec::List(item) if **item == TypeSpec::Float)
             }
-            (TypeSpec::Dist(t), Value::Counts(_)) => **t == TypeSpec::Int,
+            (TypeSpec::Dist(t), Value::Counts(c)) => **t == if c.floats { TypeSpec::Float } else { TypeSpec::Int },
             (TypeSpec::Record(r), Value::Record(rec)) => {
                 let declared = &self.prog.records[*r as usize];
                 rec.ty.as_deref() == Some(declared.name.as_str())
@@ -4749,6 +4812,14 @@ fn update(target: &mut Value, keys: &[PathKey], v: Value, budget: &mut Budget) -
     }
 }
 
+/// The error for a count law that a declared `dist[float]` can't take.
+fn no_float_holds(law: &crate::dist::Counts) -> OpError {
+    OpError::new(format!(
+        "{law} has outcomes that no float holds, so it can't be a dist[float]"
+    ))
+    .help("`dist[int]` keeps them as ints")
+}
+
 /// Whether a value holds a float where its declared type has an int, which
 /// a declaration never converts.
 fn float_for_int(v: &Value, ty: &TypeSpec) -> bool {
@@ -4938,6 +5009,8 @@ fn likelihood(d: &Value, v: &Value, sampling: bool) -> OpResult<Weighs> {
         // As observing compares values: `2.0` is the outcome 2.
         Value::Counts(law) => {
             let x = match v.as_complex() {
+                // When its outcomes are floats, an int no float holds is none.
+                _ if law.floats && matches!(v, Value::Int(n) if ops::exact_float(n).is_err()) => f64::NAN,
                 Some(z) if z.im() == 0.0 => z.re(),
                 _ => f64::NAN,
             };

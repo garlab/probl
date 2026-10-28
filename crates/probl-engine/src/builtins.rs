@@ -3,7 +3,7 @@
 use crate::complex::Complex;
 use crate::continuous::{Family, Mixture, Part};
 use crate::dates;
-use crate::dist::{Budget, Counts, Dist};
+use crate::dist::{Budget, Counts, Dist, Law};
 use crate::error::{Fault, OpError, OpResult};
 use crate::ops::{self, article, as_index, integer, range_count, range_len, to_prob};
 use crate::value::{Value, fmt_float};
@@ -411,7 +411,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             let counts = counts(b, args, budget)?.expect("called with plain arguments");
             // Too broad to list: the law, until something needs the list.
             if counts.listed_size() > budget.max_outcomes as f64 {
-                return Ok(Value::Counts(Arc::new(counts)));
+                return Ok(Value::Counts(Arc::new(counts.into())));
             }
             Ok(counts.list(budget)?.into_value())
         }
@@ -806,14 +806,20 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
 
 /// A query about a count law too broad to list, from its formulas. What
 /// needs its outcomes lists them, which fails on the outcome limit.
-fn law_stat(b: Builtin, law: &Counts, args: &[Value], budget: &mut Budget) -> OpResult<Value> {
+fn law_stat(b: Builtin, law: &Law, args: &[Value], budget: &mut Budget) -> OpResult<Value> {
     use Builtin as B;
+    // An outcome, as the law gives it: a float, when a declared
+    // `dist[float]` has made its outcomes floats. A quantile short of 100%
+    // is at most 2^53, so a float holds it.
     let int = |k: f64| {
+        if law.floats {
+            return Ok(Value::Float(k));
+        }
         Integer::from_f64(k)
             .map(Value::Int)
             .ok_or_else(|| OpError::limit("the outcome is too large for an int"))
     };
-    let exact = matches!(law, Counts::Geometric { .. });
+    let exact = matches!(law.counts, Counts::Geometric { .. });
     match b {
         B::Pmf | B::Cdf if exact => law_query(b, law, &args[1]),
         B::Mean => finite_float(law.mean(), "mean"),
@@ -853,7 +859,7 @@ fn law_stat(b: Builtin, law: &Counts, args: &[Value], budget: &mut Budget) -> Op
                 _ => midpoint(&int(lo)?, &int(hi)?, budget),
             }
         }
-        B::Minimum => int(match law {
+        B::Minimum => int(match law.counts {
             Counts::Geometric { .. } => 1.0,
             _ => 0.0,
         }),
@@ -884,11 +890,13 @@ fn listed_law_query(b: Builtin, d: &Dist, x: &Value) -> OpResult<Value> {
     ops::computed_prob(p.value(), b.name())
 }
 
-/// `pmf` or `cdf` of a count law from its formulas. Its outcomes are ints,
-/// so `pmf` is of a whole number, of any kind: `2.0` is the outcome `2`.
-fn law_query(b: Builtin, law: &Counts, x: &Value) -> OpResult<Value> {
+/// `pmf` or `cdf` of a count law from its formulas. Its outcomes are whole
+/// numbers, so `pmf` is of a whole number, of any kind: `2.0` is the outcome
+/// `2`. When they're floats, an int no float holds is none of them.
+fn law_query(b: Builtin, law: &Law, x: &Value) -> OpResult<Value> {
     if b == Builtin::Pmf {
         let p = match x {
+            Value::Int(n) if law.floats && ops::exact_float(n).is_err() => 0.0,
             Value::Int(_) => law.pmf(x.as_f64().unwrap_or(f64::INFINITY)),
             _ => match ops::whole_number(x) {
                 Some(k) => law.pmf(k),

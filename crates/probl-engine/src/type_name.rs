@@ -81,6 +81,7 @@ impl Names<'_> {
             Value::Int(_) => "int",
             Value::Analytic(a) if a.int => "int",
             Value::Float(_) | Value::Delayed(_) | Value::Analytic(_) => "float",
+            Value::Counts(c) if c.floats => "dist[float]",
             Value::Counts(_) => "dist[int]",
             Value::Prob(_) => "prob",
             Value::Complex(_) => "complex",
