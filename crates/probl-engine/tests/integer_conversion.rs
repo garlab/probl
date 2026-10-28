@@ -179,8 +179,8 @@ both_modes! {
         facts(
             MODE,
             r#"
-            let m: map[int,str] = [1: "a", 1.0: "b"]
-            report m == [1: "b"] and typeof m == "map[int, str]"
+            let m: map[float,str] = [1: "a", 1.0: "b"]
+            report m == [1: "b"] and typeof m == "map[float, str]"
             let raw = [1: "a", 1.0: "b"]
             let n: map[float,str] = raw
             report typeof raw == "map[int, str]" and n == [1: "b"] and typeof n == "map[float, str]"

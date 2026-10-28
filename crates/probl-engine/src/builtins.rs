@@ -405,6 +405,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::Int => Ok(Value::Int(ops::whole(a(0), budget)?)),
         B::Float => ops::to_float(a(0)),
         B::BooleanLaw => ops::boolean_law(a(0)),
+        B::BagLiteral => bag(a(0), budget),
         B::Bernoulli | B::ScoreLaw => Ok(Dist::bernoulli(to_prob(a(0))?).into_value()),
         B::OneOf => one_of(a(0), budget),
         B::Binomial | B::Poisson | B::Geometric => {

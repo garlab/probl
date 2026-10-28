@@ -461,7 +461,7 @@ fn declared_types_are_checked() {
     // A value that fails is described as `typeof` would describe it.
     for (src, message) in [
         (
-            "let b: bag[int] = [1, 1, 2]",
+            "let xs = [1, 1, 2]\nlet b: bag[int] = xs",
             "`b` should be a bag[int], but it's a list[int]",
         ),
         (

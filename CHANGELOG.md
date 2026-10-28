@@ -6,6 +6,7 @@ All notable changes to the published crates are recorded here. The format follow
 
 ### Added
 
+- A collection literal takes its kind from the declared type: where a bag is declared, `[1, 1, 2]` is a bag of its items and `["A": 4, "K": 4]` a bag of counts, through bindings, assignments, returns, parameters, record fields, nested literals and the results of `if`, `match`, `chance` and blocks. Through a function value, or a `with` on a record of unknown type, a literal is a list, and an existing list never becomes a bag. Map keys now take their declared type too, so `let m: map[int, str] = [1.0: "a"]` is an error before the program runs.
 - `int(x)` and `float(x)` convert explicitly. `int(x)` takes an int or a float that's exactly a whole number and never rounds: `int(4 / 2)` is 2, and `int(2.5)` is an error. `float(x)` takes an int, a float or a probability, rounding an int to the nearest float: `float(2^53 + 1)` is `2^53`. Both lift over a finite distribution's outcomes, and neither parses text.
 
 ### Changed

@@ -182,6 +182,7 @@ pub fn category(b: Builtin) -> &'static str {
         | B::IsTrue
         | B::IsListOfLen
         | B::Settled
+        | B::BagLiteral
         | B::Last
         | B::DropLast
         | B::BooleanLaw
@@ -611,7 +612,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         B::Bag => doc(
             "bag(counts) -> bag",
-            "Items to draw without replacement, with `take`: `bag([\"ace\": 4, \"king\": 4])`, or from a list.",
+            "Items to draw without replacement, with `take`: `bag([\"ace\": 4, \"king\": 4])`, or from a list. A literal is a bag wherever a bag is declared: `let deck: bag[str] = [\"ace\": 4, \"king\": 4]`.",
         ),
         B::Normal => doc(
             "normal(mean: float, sd: float) -> dist[float]",
@@ -766,7 +767,8 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "weekday(d: date) -> str",
             "The day of the week: `\"Monday\"` to `\"Sunday\"`.",
         ),
-        B::RunDate
+        B::BagLiteral
+        | B::RunDate
         | B::RunEnv
         | B::IterItems
         | B::RepeatCount

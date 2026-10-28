@@ -3759,9 +3759,7 @@ impl<'p> Engine<'p> {
                 ops::article(&found)
             ),
         );
-        if float_for_int(&w.slots[slot as usize], ty) {
-            e.help = Some("`div` divides to an int; `round(…)`, `floor(…)` and `int(…)` convert a float".into());
-        }
+        e.help = mismatch_help(&w.slots[slot as usize], ty);
         Err(e)
     }
 
@@ -4164,10 +4162,12 @@ impl<'p> Engine<'p> {
                             let value = self.coerce(value, &t, v.span)?;
                             if !self.conforms(&value, &t) {
                                 let found = self.described(&value);
-                                return Err(RuntimeError::new(
+                                let mut e = RuntimeError::new(
                                     v.span,
                                     format!("field `{name}` should be {}, found {found}", t.describe(self.prog)),
-                                ));
+                                );
+                                e.help = mismatch_help(&value, &t);
+                                return Err(e);
                             }
                             value
                         }
@@ -4199,10 +4199,12 @@ impl<'p> Engine<'p> {
                             let value = self.eval_expected(f, v, w, &ty)?;
                             if !self.conforms(&value, &ty) {
                                 let found = self.described(&value);
-                                return Err(RuntimeError::new(
+                                let mut e = RuntimeError::new(
                                     v.span,
                                     format!("field `{name}` should be {}, found {found}", ty.describe(self.prog)),
-                                ));
+                                );
+                                e.help = mismatch_help(&value, &ty);
+                                return Err(e);
                             }
                             value
                         }
@@ -4818,6 +4820,21 @@ fn no_float_holds(law: &crate::dist::Counts) -> OpError {
         "{law} has outcomes that no float holds, so it can't be a dist[float]"
     ))
     .help("`dist[int]` keeps them as ints")
+}
+
+/// Help for a value that doesn't have its declared type, when it's one of
+/// the kinds a declaration never converts.
+fn mismatch_help(v: &Value, ty: &TypeSpec) -> Option<String> {
+    if float_for_int(v, ty) {
+        return Some("`div` divides to an int; `round(…)`, `floor(…)` and `int(…)` convert a float".into());
+    }
+    if let (Value::List(_), TypeSpec::Bag(_)) = (v, ty) {
+        return Some(
+            "a list never becomes a bag: a literal is a bag where a bag is declared, and `bag(xs)` makes one of a list's items"
+                .into(),
+        );
+    }
+    None
 }
 
 /// Whether a value holds a float where its declared type has an int, which

@@ -501,17 +501,28 @@ impl<'a> Lowerer<'a> {
             return;
         }
         match (&mut e.kind, ty) {
-            (ExprKind::List(xs), TypeSpec::List(t)) => {
+            (ExprKind::List(xs), TypeSpec::List(t) | TypeSpec::Bag(t)) => {
                 for x in xs {
                     self.contextualize(x, t);
                 }
+                if let TypeSpec::Bag(_) = ty {
+                    let items = std::mem::replace(&mut e.kind, ExprKind::List(Vec::new()));
+                    *e = bag_literal(items, e.span);
+                }
             }
-            (ExprKind::Map(xs), TypeSpec::Map(_, v)) => {
-                // Convert keys only at the map boundary, where collisions can
-                // be detected before an entry is overwritten.
-                for (_, b) in xs {
+            (ExprKind::Map(xs), TypeSpec::Map(k, v)) => {
+                for (a, b) in xs {
+                    self.contextualize(a, k);
                     self.contextualize(b, v);
                 }
+            }
+            (ExprKind::Map(xs), TypeSpec::Bag(k)) => {
+                for (a, b) in xs {
+                    self.contextualize(a, k);
+                    self.contextualize(b, &TypeSpec::Int);
+                }
+                let counts = std::mem::replace(&mut e.kind, ExprKind::List(Vec::new()));
+                *e = bag_literal(counts, e.span);
             }
             // A named record's fields have its own types.
             (ExprKind::Record { ty: None, fields }, TypeSpec::AnonRecord(ts)) => {
@@ -2231,18 +2242,35 @@ impl<'a> Lowerer<'a> {
                 self.pop_scope(block.span.hi);
                 return v;
             }
-            (ast::ExprKind::List(xs), TypeSpec::List(t)) => {
+            // A collection literal takes its kind from the declared type,
+            // before any element is looked at: `[…]` is a list, or a bag
+            // where one is declared, and `[k: v, …]` a map, or a bag whose
+            // values are its keys' counts. Its kind's type gives the
+            // elements theirs.
+            (ast::ExprKind::List(xs), TypeSpec::List(t) | TypeSpec::Bag(t)) => {
                 let refs: Vec<_> = xs.iter().collect();
                 let types = vec![Some((**t).clone()); xs.len()];
-                ExprKind::List(self.operands_expected(Vec::new(), &refs, &types, out))
+                let items = ExprKind::List(self.operands_expected(Vec::new(), &refs, &types, out));
+                if let TypeSpec::Bag(_) = ty {
+                    return bag_literal(items, e.span);
+                }
+                items
             }
-            (ast::ExprKind::Map(xs), TypeSpec::Map(_, v)) => {
+            (ast::ExprKind::Map(xs), TypeSpec::Map(..) | TypeSpec::Bag(_)) => {
+                let (k, v) = match ty {
+                    TypeSpec::Map(k, v) => (&**k, &**v),
+                    TypeSpec::Bag(k) => (&**k, &TypeSpec::Int),
+                    _ => unreachable!(),
+                };
                 let refs: Vec<_> = xs.iter().flat_map(|(k, v)| [k, v]).collect();
-                let types: Vec<_> = xs.iter().flat_map(|_| [None, Some((**v).clone())]).collect();
+                let types: Vec<_> = xs.iter().flat_map(|_| [Some(k.clone()), Some(v.clone())]).collect();
                 let mut values = self.operands_expected(Vec::new(), &refs, &types, out).into_iter();
                 let mut pairs = Vec::with_capacity(xs.len());
                 while let (Some(k), Some(v)) = (values.next(), values.next()) {
                     pairs.push((k, v));
+                }
+                if let TypeSpec::Bag(_) = ty {
+                    return bag_literal(ExprKind::Map(pairs), e.span);
                 }
                 ExprKind::Map(pairs)
             }
@@ -3436,6 +3464,11 @@ fn binary(op: BinOp, a: Expr, b: Expr, span: Span) -> Expr {
         kind: ExprKind::Binary(op, Box::new(a), Box::new(b)),
         span,
     }
+}
+
+/// A list or map literal, built as a bag.
+fn bag_literal(literal: ExprKind, span: Span) -> Expr {
+    builtin(Builtin::BagLiteral, vec![Expr { kind: literal, span }], span)
 }
 
 fn builtin(func: Builtin, args: Vec<Expr>, span: Span) -> Expr {

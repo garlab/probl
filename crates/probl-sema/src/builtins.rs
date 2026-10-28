@@ -223,6 +223,9 @@ builtins! {
     IsTrue = "$is_true", 1..=1, Raw, false;
     /// 100% if the value is a list of the given length (list patterns).
     IsListOfLen = "$is_list_of_len", 2..=2, Raw, false;
+    /// A collection literal written where a bag is declared: a list of its
+    /// items, or a map from each item to its count.
+    BagLiteral = "$bag_literal", 1..=1, Raw, false;
     /// Checks that a `match` subject is a settled value, not a distribution.
     Settled = "$settled", 1..=1, Raw, false;
     /// The last element of a list (for `pop`).
