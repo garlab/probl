@@ -298,6 +298,30 @@ fn group(
                 || g.numeric.as_ref().is_some_and(|n| n.approximation().is_some()
                     && n.inverse_quantile(0.0).and_then(|q| q.point) == n.inverse_quantile(1.0).and_then(|q| q.point)),
         });
+        if probl_engine::time_stats::kind(&g.distribution).is_some() {
+            let selected = selection.is_none()
+                || columns.contains(&ReportStatistic::Mean)
+                || columns.contains(&ReportStatistic::StandardDeviation);
+            let moments = if selected {
+                let work = probl_engine::time_stats::work_bound(&g.distribution);
+                budget.work(usize::try_from(work).unwrap_or(usize::MAX))?;
+                probl_engine::time_stats::moments(&g.distribution, None).ok().flatten()
+            } else {
+                None
+            };
+            let mean = moments
+                .as_ref()
+                .filter(|_| selection.is_none() || columns.contains(&ReportStatistic::Mean));
+            let sd = moments
+                .as_ref()
+                .filter(|_| selection.is_none() || columns.contains(&ReportStatistic::StandardDeviation))
+                .and_then(|m| m.sd.as_ref());
+            summary["mean_value"] = mean
+                .map(|m| typed(&m.mean, None, budget))
+                .transpose()?
+                .unwrap_or(Json::Null);
+            summary["sd_value"] = sd.map(|v| typed(v, None, budget)).transpose()?.unwrap_or(Json::Null);
+        }
         if let Some(a) = g.numeric.as_ref().and_then(|n| n.approximation()) {
             summary["approximation"] = json!({
                 "method": a.method(), "capacity": a.capacity, "samples": a.samples.to_string(), "zeros": a.zeros.to_string(),
@@ -331,6 +355,11 @@ fn typed(value: &Value, label: Option<&str>, budget: &mut Budget) -> Result<Json
         Value::Prob(x) => ("prob", json!(x)),
         Value::Date(d) => ("date", json!(Date::from_days(*d).to_string())),
         Value::DateTime(d) => ("datetime", json!(d.format())),
+        Value::Duration(d) => {
+            let text = d.format();
+            budget.text(&text)?;
+            (d.kind(), json!(text))
+        }
         Value::Bool(b) => ("bool", json!(b)),
         Value::Str(s) => {
             budget.text(s)?;

@@ -240,3 +240,65 @@ fn datetime_keys_and_quantiles_keep_all_nanoseconds() {
     assert_eq!(middle["kind"], "datetime");
     assert_eq!(middle["value"], "2027-01-01T00:00:00.000000002");
 }
+
+#[test]
+fn datetime_moments_export_typed_values_without_implicit_units() {
+    let p = probl::compile(
+        "time",
+        "let a='2027-01-01T00:00:00'; report one_of([a,a+'1ns']); report variance([a,a+'1ns'])",
+    )
+    .unwrap();
+    for options in [Options::new(), Options::new().runs(40).seed(7)] {
+        let out = p
+            .run(&options.report_summary(0, probl::ReportSummary::moments()))
+            .unwrap();
+        let doc = document(&out);
+        let summary = &doc["reports"][0]["groups"][0]["summary"];
+        assert_eq!(summary["mean_value"]["kind"], "datetime");
+        assert_eq!(summary["mean_value"]["value"], "2027-01-01T00:00:00");
+        assert_eq!(summary["sd_value"]["kind"], "duration");
+        assert_eq!(summary["sd_value"]["value"], "0.5ns");
+        assert!(summary["mean"].is_null() && summary["sd"].is_null());
+        assert_eq!(doc["reports"][1]["groups"][0]["kind"], "squared_duration");
+        assert_eq!(
+            doc["reports"][1]["groups"][0]["summary"]["mean_value"]["value"],
+            "0.25ns^2"
+        );
+    }
+}
+
+#[test]
+fn time_summaries_keep_sampled_populations_and_selection_metadata() {
+    let p = probl::compile("time", "let x ~ one_of(['0ns','2ns']); report x").unwrap();
+    let out = p
+        .run(
+            &Options::new()
+                .runs(400)
+                .seed(7)
+                .report_summary(0, probl::ReportSummary::moments()),
+        )
+        .unwrap();
+    let doc = document(&out);
+    let group = &doc["reports"][0]["groups"][0];
+    assert_eq!(group["summary"]["mean_value"]["kind"], "duration");
+    assert_eq!(group["summary"]["sd_value"]["kind"], "duration");
+    assert!(group["summary"]["mean"].is_null());
+    assert!(group["summary"]["sd_value"].get("sampling").is_none());
+    let out = p
+        .run(&Options::new().report_summary(0, probl::ReportSummary::forecast()))
+        .unwrap();
+    let doc = document(&out);
+    assert!(doc["reports"][0]["groups"][0]["summary"]["mean_value"].is_null());
+    assert!(doc["reports"][0]["groups"][0]["summary"]["sd_value"].is_null());
+
+    // Retaining only numeric moments is a different feature from selecting
+    // typed time summary columns; the unsupported policy must fail explicitly.
+    assert!(
+        p.run(
+            &Options::new()
+                .runs(40)
+                .report_collection(0, probl::ReportCollection::Moments)
+        )
+        .is_err()
+    );
+}

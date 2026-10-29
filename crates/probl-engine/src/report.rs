@@ -271,7 +271,7 @@ impl RunStat {
                 self.numbers += share;
                 self.sum += share * value.as_f64().unwrap();
             }
-            Value::Date(_) | Value::DateTime(_) => {}
+            Value::Date(_) | Value::DateTime(_) | Value::Duration(_) => {}
             other => match self.others.iter_mut().find(|(v, _)| v == other) {
                 Some((_, s)) => *s += share,
                 None => self.others.push((other.clone(), share)),
@@ -1012,17 +1012,13 @@ pub fn validate_summary_values(
                         .distribution
                         .iter()
                         .all(|(v, _)| matches!(v, Value::Int(_) | Value::Float(_) | Value::Prob(_))));
-            let message = if dates
+            let message = if temporal_kind(&group.distribution) == Some("date")
                 && selection
                     .statistics()
                     .iter()
                     .any(|s| matches!(s, ReportStatistic::Mean | ReportStatistic::StandardDeviation))
             {
-                Some(if temporal_kind(&group.distribution) == Some("datetime") {
-                    selection::DATETIME_MOMENTS
-                } else {
-                    selection::DATE_MOMENTS
-                })
+                Some(selection::DATE_MOMENTS)
             } else if !dates && !numeric {
                 Some(selection::NOT_NUMERIC)
             } else {
@@ -1182,7 +1178,13 @@ fn selected_value_text(group: &GroupResult, format: Format, selection: Option<&R
     } else if temporal_kind(dist).is_some() {
         let [a, b, c] =
             [0.05, 0.5, 0.95].map(|q| summary_quantile(dist, q).map_or_else(|| "out of range".into(), |v| display(&v)));
-        format!("5% {a} · median {b} · 95% {c}")
+        let quantiles = format!("5% {a} · median {b} · 95% {c}");
+        if let Some(m) = crate::time_stats::moments(dist, None).ok().flatten() {
+            let sd = m.sd.as_ref().map_or_else(|| "unavailable".into(), display);
+            format!("mean {} · sd {sd} · {quantiles}", display(&m.mean))
+        } else {
+            quantiles
+        }
     } else if group.support.is_some() {
         categorical_sampled(group)
     } else {
@@ -1456,8 +1458,11 @@ fn sparkline(dist: &[(Value, f64)]) -> Option<String> {
     Some(format!("{lo} {bars} {hi}"))
 }
 
-/// A homogeneous date or datetime population, kept separate from numbers.
+/// A homogeneous calendar or duration population, kept separate from numbers.
 pub fn temporal_kind(dist: &[(Value, f64)]) -> Option<&'static str> {
+    if let Some(kind) = crate::time_stats::kind(dist) {
+        return Some(kind);
+    }
     let first = &dist.first()?.0;
     let kind = match first {
         Value::Date(_) => "date",
@@ -1517,7 +1522,7 @@ fn summary_cell(group: &GroupResult, statistic: ReportStatistic) -> String {
     let show = |x| if percent { fmt_percent(x, 2) } else { fixed(x, decimals) };
     if let Some(value) = statistic_value(group, statistic) {
         return match &value {
-            Value::Date(_) | Value::DateTime(_) => display(&value),
+            Value::Date(_) | Value::DateTime(_) | Value::Duration(_) => display(&value),
             _ if percent => show(value.as_f64().unwrap_or(f64::NAN)),
             _ => number(&value, decimals),
         };

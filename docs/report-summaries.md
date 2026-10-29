@@ -1,6 +1,6 @@
 # Choosing report summaries
 
-Report summaries can select ordered columns for individual numeric, date or datetime
+Report summaries can select ordered columns for individual numeric, date, datetime or duration
 reports. The same selection controls CLI text, the Rust JSON export and playground
 charts and tables. Reports without an override keep their existing output.
 These options are available from 0.3.3.
@@ -53,9 +53,15 @@ allowed; a continuous distribution's endpoint may be infinite.
 
 Dates and datetimes support median and quantiles, including midpoint values.
 Datetimes retain nanosecond precision; midpoint ties round to the earlier nanosecond.
-Exact integer, date and datetime values are preserved in text and typed JSON values. Means and SDs are
-unavailable when a numeric summary cannot represent the population; unavailable
-values are never replaced with zero. Categorical, structured and mixed
+Datetime and duration reports also support mean and SD columns, and include
+them by default in an ungrouped nondeterministic report. A datetime mean
+is a datetime; its SD is a duration, including fractional nanoseconds. Means
+round once, with ties earlier, while spread uses the unrounded mean. These
+values summarize the retained population; no Monte Carlo error estimate is
+currently attached to the typed time moments.
+Exact integer and temporal values are preserved in text and typed JSON values.
+Date report moments remain unavailable. A moment outside the finite supported
+range is unavailable and is never replaced with zero. Categorical, structured and mixed
 Boolean/other reports keep their default display and reject explicit summary
 overrides. Boolean reports accept an override but retain probability output.
 
@@ -118,7 +124,7 @@ overrides. The playground exposes controls for its first 256 reports.
 Invalid specifications and unknown report IDs fail before model execution or
 input-file loading. Report values have dynamic types, so compatibility is
 checked as they're reported: the run stops at the first text, list, record or
-other categorical value, at a date or datetime when mean or SD is selected, and when Boolean
+other categorical value, at a date when mean or SD is selected, and when Boolean
 and other values meet in one report, even across sampling batches. Values known
 only by their outcomes, such as an unsampled distribution, are checked once
 execution finishes. Either way, an incompatible selection returns a diagnostic

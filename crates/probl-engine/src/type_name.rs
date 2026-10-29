@@ -93,6 +93,7 @@ impl Names<'_> {
             Value::Str(_) => atom("str"),
             Value::Date(_) => atom("date"),
             Value::DateTime(_) => atom("datetime"),
+            Value::Duration(d) => atom(d.kind()),
             Value::Range(..) => atom("range"),
             Value::Closure(_) | Value::Builtin(_) => atom("fn"),
             Value::Continuous(_) => dist("float"),
@@ -246,8 +247,25 @@ fn sort_key(t: &Description) -> (usize, String) {
         _ => unreachable!("unions are flattened before sorting"),
     };
     let rank = [
-        "unknown", "()", "bool", "int", "float", "prob", "complex", "str", "date", "datetime", "range", "fn", "list",
-        "set", "bag", "map", "dist",
+        "unknown",
+        "()",
+        "bool",
+        "int",
+        "float",
+        "prob",
+        "complex",
+        "str",
+        "date",
+        "datetime",
+        "duration",
+        "squared_duration",
+        "range",
+        "fn",
+        "list",
+        "set",
+        "bag",
+        "map",
+        "dist",
     ]
     .iter()
     .position(|n| *n == name)

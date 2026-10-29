@@ -708,3 +708,35 @@ fn datetime_schemas_and_canonical_key_collisions() {
         &["isn't a datetime"],
     );
 }
+
+#[test]
+fn durations_read_with_units_and_reject_dimension_mismatches() {
+    let v = value(
+        "let xs: list[duration] = read(\"times.txt\")",
+        &[("times.txt", "1h 30m\n0.5ns\n")],
+    );
+    assert_eq!(v.to_string(), "['1.5h', '0.5ns']");
+    let v = value(
+        "let m: map[duration, squared_duration] = read(\"times.json\")",
+        &[("times.json", r#"{"60s":"0.25s^2"}"#)],
+    );
+    assert_eq!(v.to_string(), "['1m': '0.25s^2']");
+    fails(
+        "let xs: list[duration] = read(\"times.txt\")",
+        &[("times.txt", "1s^2\n")],
+        &["isn't a duration"],
+    );
+    fails(
+        "let m: map[duration,int] = read(\"times.json\")",
+        &[("times.json", r#"{"1m":1,"60s":2}"#)],
+        &["are the same duration"],
+    );
+    let schema = suggest(
+        b"duration\n1s\n0.5ns\n",
+        DataFormat::Csv,
+        "times.csv",
+        &InputLimits::default(),
+    )
+    .unwrap();
+    assert!(schema.contains("duration: duration"), "{schema}");
+}

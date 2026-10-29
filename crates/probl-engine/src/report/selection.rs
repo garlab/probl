@@ -154,13 +154,23 @@ impl Numeric {
     }
 }
 
-/// Exact discrete values for quantile and median columns (including dates and
-/// integers which cannot be represented by an f64 summary).
+/// Typed time moments and discrete values for quantile and median columns
+/// (including dates and integers which cannot be represented by an f64 summary).
 pub fn statistic_value(group: &GroupResult, statistic: ReportStatistic) -> Option<Value> {
     if group.numeric.as_ref().is_some_and(|n| n.mixture().is_some()) {
         return None;
     }
     match statistic {
+        ReportStatistic::Mean | ReportStatistic::StandardDeviation
+            if crate::time_stats::kind(&group.distribution).is_some() =>
+        {
+            let moments = crate::time_stats::moments(&group.distribution, None).ok()??;
+            if statistic == ReportStatistic::Mean {
+                Some(moments.mean)
+            } else {
+                moments.sd
+            }
+        }
         ReportStatistic::Median => summary_quantile(&group.distribution, 0.5),
         ReportStatistic::Quantile(q) => crate::stats::quantile(&group.distribution, q).cloned(),
         _ => None,
@@ -170,8 +180,7 @@ pub fn statistic_value(group: &GroupResult, statistic: ReportStatistic) -> Optio
 /// Why a selection can't summarize a report's values.
 pub(super) const MIXED: &str = "mixed Boolean and other values keep their default display";
 pub(super) const DATE_MOMENTS: &str = "date reports support median and quantiles, not mean or sd";
-pub(super) const DATETIME_MOMENTS: &str = "datetime reports support median and quantiles, not mean or sd";
-pub(super) const NOT_NUMERIC: &str = "summary columns require numeric, date or datetime values; categorical and structured reports keep their default display";
+pub(super) const NOT_NUMERIC: &str = "summary columns require numbers, dates, datetimes or durations; categorical and structured reports keep their default display";
 
 /// What an explicit selection needs of a report's values, checked as each
 /// one is reported, so that a run stops at the first value the selection
@@ -220,9 +229,9 @@ impl SummaryCheck {
                 self.others = true;
                 self.moments.then_some(DATE_MOMENTS)
             }
-            Value::DateTime(_) => {
+            Value::DateTime(_) | Value::Duration(_) => {
                 self.others = true;
-                self.moments.then_some(DATETIME_MOMENTS)
+                None
             }
             Value::Unit
             | Value::Str(_)

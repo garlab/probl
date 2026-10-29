@@ -13,7 +13,7 @@ const keywords = new Set([
   'as', 'by', 'from', 'to',
 ]);
 const atoms = new Set(['true', 'false']);
-const types = new Set(['int', 'float', 'complex', 'prob', 'bool', 'str', 'date', 'datetime', 'list', 'map', 'bag', 'set', 'dist']);
+const types = new Set(['int', 'float', 'complex', 'prob', 'bool', 'str', 'date', 'datetime', 'duration', 'squared_duration', 'list', 'map', 'bag', 'set', 'dist']);
 
 /** The rest of a string, up to its closing quote or the end of the line. */
 function string(stream, state) {

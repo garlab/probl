@@ -51,6 +51,7 @@ pub enum Value {
     /// Days since 1970-01-01.
     Date(i32),
     DateTime(crate::dates::DateTime),
+    Duration(probl_syntax::duration::Duration),
     /// A variable's value that isn't drawn yet, internal to the engine
     /// (docs/semantics.md, section 14). The engine draws it before any
     /// value read; a direct `typeof` inspection only needs its outcome type.
@@ -495,6 +496,7 @@ impl Value {
             Value::Closure(_) | Value::Builtin(_) => "function".into(),
             Value::Date(_) => "date".into(),
             Value::DateTime(_) => "datetime".into(),
+            Value::Duration(d) => d.kind().into(),
             Value::Delayed(_) => "value not drawn yet".into(),
             Value::Analytic(a) if a.int => "int".into(),
             Value::Analytic(_) => "float".into(),
@@ -549,6 +551,7 @@ impl Value {
             Value::Str(_) => 4,
             Value::Date(_) => 5,
             Value::DateTime(_) => 24,
+            Value::Duration(_) => 25,
             Value::Enum(_) => 6,
             Value::List(_) => 7,
             Value::Range(..) => 8,
@@ -757,6 +760,7 @@ fn eq_other(x: &Value, y: &Value) -> bool {
         (Value::Builtin(a), Value::Builtin(b)) => a == b,
         (Value::Date(a), Value::Date(b)) => a == b,
         (Value::DateTime(a), Value::DateTime(b)) => a == b,
+        (Value::Duration(a), Value::Duration(b)) => a == b,
         (Value::Continuous(a), Value::Continuous(b)) => family_key(a) == family_key(b),
         (Value::MultivariateNormal(a), Value::MultivariateNormal(b)) => {
             Arc::ptr_eq(a, b) || a.identity().eq(b.identity())
@@ -925,6 +929,7 @@ fn hash_other<H: Hasher>(value: &Value, state: &mut H) {
         Value::Builtin(b) => b.hash(state),
         Value::Date(d) => d.hash(state),
         Value::DateTime(d) => d.hash(state),
+        Value::Duration(d) => d.hash(state),
         Value::Continuous(f) => family_key(f).hash(state),
         Value::MultivariateNormal(n) => n.identity().for_each(|x| x.hash(state)),
         Value::Analytic(a) => a.key().hash(state),
@@ -948,6 +953,7 @@ impl Ord for Value {
             (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
             (Value::Date(a), Value::Date(b)) => a.cmp(b),
             (Value::DateTime(a), Value::DateTime(b)) => a.cmp(b),
+            (Value::Duration(a), Value::Duration(b)) => a.cmp(b),
             _ => self.cmp_other(other),
         }
     }
@@ -979,6 +985,7 @@ impl Value {
             (Value::Bool(a), Value::Bool(b)) => return (a.cmp(b), Ordering::Equal),
             (Value::Date(a), Value::Date(b)) => return (a.cmp(b), Ordering::Equal),
             (Value::DateTime(a), Value::DateTime(b)) => return (a.cmp(b), Ordering::Equal),
+            (Value::Duration(a), Value::Duration(b)) => return (a.cmp(b), Ordering::Equal),
             _ => {}
         }
         let (ra, rb) = (self.rank(), other.rank());
@@ -1035,6 +1042,7 @@ impl Value {
             (Value::Str(a), Value::Str(b)) => by_value(a.cmp(b)),
             (Value::Date(a), Value::Date(b)) => by_value(a.cmp(b)),
             (Value::DateTime(a), Value::DateTime(b)) => by_value(a.cmp(b)),
+            (Value::Duration(a), Value::Duration(b)) => by_value(a.cmp(b)),
             (Value::Enum(a), Value::Enum(b)) => by_value((a.ty, a.variant).cmp(&(b.ty, b.variant))),
             (Value::Range(a, b), Value::Range(c, d)) => by_value((a, b).cmp(&(c, d))),
             (Value::Dist(a), Value::Dist(b)) => by_value(a.cmp(b)),
@@ -1246,6 +1254,10 @@ fn write_value(v: &Value, f: &mut fmt::Formatter<'_>, nested: bool) -> fmt::Resu
             write!(f, "{quote}{}{quote}", crate::dates::format(*d))
         }
         Value::DateTime(d) => {
+            let quote = if nested { "'" } else { "" };
+            write!(f, "{quote}{}{quote}", d.format())
+        }
+        Value::Duration(d) => {
             let quote = if nested { "'" } else { "" };
             write!(f, "{quote}{}{quote}", d.format())
         }

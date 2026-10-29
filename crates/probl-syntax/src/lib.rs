@@ -4,6 +4,7 @@
 pub mod ast;
 pub mod calendar;
 pub mod diagnostic;
+pub mod duration;
 pub mod lexer;
 pub mod parser;
 pub mod sexpr;

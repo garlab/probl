@@ -159,6 +159,7 @@ cases.push({ name: 'math', path: 'web/test/math.probl', source: await readFile(`
 cases.push({ name: 'text', path: 'web/test/text.probl', source: await readFile(`${root}/web/test/text.probl`, 'utf8') });
 cases.push({ name: 'dates', path: 'web/test/dates.probl', source: await readFile(`${root}/web/test/dates.probl`, 'utf8') });
 cases.push({ name: 'datetimes', path: 'web/test/datetimes.probl', source: await readFile(`${root}/web/test/datetimes.probl`, 'utf8') });
+cases.push({ name: 'durations', path: 'web/test/durations.probl', source: await readFile(`${root}/web/test/durations.probl`, 'utf8') });
 cases.push({ name: 'reporting', path: 'web/test/reporting.probl', source: await readFile(`${root}/web/test/reporting.probl`, 'utf8') });
 cases.push({ name: 'types', path: 'web/test/types.probl', source: await readFile(`${root}/web/test/types.probl`, 'utf8') });
 cases.push({ name: 'collections', path: 'web/test/collections.probl', source: await readFile(`${root}/web/test/collections.probl`, 'utf8') });

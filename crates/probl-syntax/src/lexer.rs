@@ -253,7 +253,7 @@ impl Lexer<'_> {
             self.pos += 1;
         }
         if self.peek(0) != b'\'' {
-            self.error(lo, self.pos, "unterminated date or datetime literal")
+            self.error(lo, self.pos, "unterminated temporal literal")
                 .help("close the single quote on the same line; text uses double quotes");
             return;
         }

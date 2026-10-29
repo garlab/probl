@@ -1,0 +1,145 @@
+//! Typed elapsed time and dimensional arithmetic.
+use crate::{
+    dist::Budget,
+    error::{Fault, OpError, OpResult},
+    ops,
+    value::Value,
+};
+use probl_number::Integer;
+use probl_syntax::{
+    ast::BinOp,
+    duration::{Amount, Duration},
+};
+
+pub fn literal(d: &Duration, budget: &mut Budget) -> OpResult<Value> {
+    if let Some(n) = d.amount.as_integer() {
+        budget.integer_bits(n.bits())?;
+    }
+    Ok(Value::Duration(d.clone()))
+}
+pub fn number(d: &Duration) -> Value {
+    d.amount
+        .as_integer()
+        .map_or_else(|| Value::Float(d.amount.as_float().unwrap()), |n| Value::Int(n.clone()))
+}
+pub fn from_number(v: Value, squared: bool) -> OpResult<Value> {
+    let amount = match v {
+        Value::Int(n) => Amount::integer(n),
+        Value::Float(f) | Value::Prob(f) => {
+            Amount::fractional(f).ok_or_else(|| OpError::fault(Fault::NumericOverflow, "duration must be finite"))?
+        }
+        _ => return Err(OpError::new("a duration needs a real number")),
+    };
+    Ok(Value::Duration(Duration { squared, amount }))
+}
+pub fn construct(n: &Value, scale: u64, budget: &mut Budget) -> OpResult<Value> {
+    if !matches!(n, Value::Int(_) | Value::Float(_) | Value::Prob(_)) {
+        return Err(OpError::new("a duration's count must be a real number"));
+    }
+    from_number(ops::binary(BinOp::Mul, n, &Value::Int(scale.into()), budget)?, false)
+}
+
+/// Some result when at least one operand is a duration, or both are datetimes.
+pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> Option<OpResult<Value>> {
+    use BinOp::*;
+    if let (Value::DateTime(a), Value::DateTime(b)) = (a, b) {
+        if op == Sub {
+            let n = Integer::from(a.total_nanos() - b.total_nanos());
+            if let Err(error) = budget.integer_allocation(n.bits(), 1) {
+                return Some(Err(error));
+            }
+            return Some(from_number(Value::Int(n), false));
+        }
+    }
+    if !matches!(a, Value::Duration(_)) && !matches!(b, Value::Duration(_)) {
+        return None;
+    }
+    Some((|| {
+        let value = match (a, b) {
+            (Value::DateTime(t), Value::Duration(d)) if matches!(op, Add | Sub) && !d.squared => {
+                let n = whole_nanos(d, budget)?;
+                let n = if op == Sub { n.negated() } else { n };
+                n.to_i128()
+                    .and_then(|n| t.add_nanos(n))
+                    .map(Value::DateTime)
+                    .ok_or_else(|| OpError::fault(Fault::NumericOverflow, "datetime out of range (years 1..9999)"))
+            }
+            (Value::Date(day), Value::Duration(d)) if matches!(op, Add | Sub) && !d.squared => {
+                let n = whole_nanos(d, budget)?;
+                let (days, remainder) = n.div_mod(&Integer::from(crate::dates::NANOS_PER_DAY))?;
+                if !remainder.is_zero() {
+                    return Err(OpError::new(
+                        "adding a duration to a date requires a whole number of 24-hour days",
+                    ));
+                }
+                let days = if op == Sub { days.negated() } else { days };
+                days.to_i64()
+                    .and_then(|n| crate::dates::add_days(*day, n))
+                    .map(Value::Date)
+                    .ok_or_else(|| OpError::fault(Fault::NumericOverflow, "date out of range"))
+            }
+            (Value::Duration(_), Value::DateTime(_) | Value::Date(_)) if op == Add => binary(op, b, a, budget).unwrap(),
+            (Value::Duration(a), Value::Duration(b)) => {
+                let (x, y) = (number(a), number(b));
+                match op {
+                    Add | Sub if a.squared == b.squared => from_number(ops::binary(op, &x, &y, budget)?, a.squared),
+                    Mul if !a.squared && !b.squared => from_number(ops::binary(op, &x, &y, budget)?, true),
+                    Div if a.squared == b.squared => ops::binary(op, &x, &y, budget),
+                    Div if a.squared && !b.squared => from_number(divide(&x, &y, budget)?, false),
+                    _ => Err(OpError::new("incompatible time dimensions for this operation")),
+                }
+            }
+            (Value::Duration(d), Value::Int(n)) if op == Pow => match n.to_i64() {
+                Some(0) => Ok(Value::Int(1.into())),
+                Some(1) => Ok(a.clone()),
+                Some(2) if !d.squared => from_number(ops::binary(Mul, &number(d), &number(d), budget)?, true),
+                _ => Err(OpError::new("only duration powers 0, 1 and 2 are supported")),
+            },
+            (Value::Duration(d), n @ (Value::Int(_) | Value::Float(_) | Value::Prob(_))) if matches!(op, Mul | Div) => {
+                let value = if op == Div {
+                    divide(&number(d), n, budget)?
+                } else {
+                    ops::binary(op, &number(d), n, budget)?
+                };
+                from_number(value, d.squared)
+            }
+            (n @ (Value::Int(_) | Value::Float(_) | Value::Prob(_)), Value::Duration(d)) if op == Mul => {
+                from_number(ops::binary(op, n, &number(d), budget)?, d.squared)
+            }
+            _ => Err(OpError::new(
+                "duration arithmetic requires compatible units; divide by a duration such as '1s' to obtain a number",
+            )),
+        }?;
+        if let Value::Duration(d) = &value {
+            if let Some(n) = d.amount.as_integer() {
+                budget.integer_allocation(n.bits(), 1)?;
+            }
+        }
+        Ok(value)
+    })())
+}
+
+fn divide(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
+    if let (Value::Int(a), Value::Int(b)) = (a, b) {
+        if !b.is_zero() {
+            budget.integer_work(a, b, true)?;
+            let (whole, remainder) = a.div_mod(b)?;
+            if remainder.is_zero() {
+                budget.integer_allocation(whole.bits(), 1)?;
+                return Ok(Value::Int(whole));
+            }
+        }
+    }
+    ops::binary(BinOp::Div, a, b, budget)
+}
+fn whole_nanos(d: &Duration, budget: &mut Budget) -> OpResult<Integer> {
+    match d.amount.as_integer() {
+        Some(n) => {
+            budget.integer_work(n, &Integer::ONE, false)?;
+            Ok(n.clone())
+        }
+        None => Err(OpError::new(
+            "datetime arithmetic requires a whole number of nanoseconds",
+        )),
+    }
+}

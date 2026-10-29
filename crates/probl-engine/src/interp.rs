@@ -3274,6 +3274,8 @@ impl<'p> Engine<'p> {
             (TypeSpec::Str, Value::Str(_)) => true,
             (TypeSpec::Date, Value::Date(_)) => true,
             (TypeSpec::DateTime, Value::DateTime(_)) => true,
+            (TypeSpec::Duration, Value::Duration(d)) => !d.squared,
+            (TypeSpec::SquaredDuration, Value::Duration(d)) => d.squared,
             (TypeSpec::Unit, Value::Unit) => true,
             (TypeSpec::Function, Value::Closure(_) | Value::Builtin(_)) => true,
             (TypeSpec::List(t), Value::List(items)) => items.iter().all(|x| self.conforms(x, t)),
@@ -4414,6 +4416,9 @@ impl<'p> Engine<'p> {
             Lit::Str(s) => crate::text::value(s, &mut self.budget)?,
             Lit::Temporal(probl_syntax::calendar::Literal::Date(d)) => Value::Date(*d),
             Lit::Temporal(probl_syntax::calendar::Literal::DateTime(d)) => Value::DateTime(*d),
+            Lit::Temporal(probl_syntax::calendar::Literal::Duration(d)) => {
+                crate::duration::literal(d, &mut self.budget)?
+            }
             Lit::Dice { count, sides } => {
                 if let Some(d) = self.dice.get(&(*count, *sides)) {
                     return Ok(d.clone());

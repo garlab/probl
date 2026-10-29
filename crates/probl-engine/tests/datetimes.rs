@@ -137,7 +137,7 @@ fn invalid_literals_fail_during_compilation_and_parsing_fails_at_runtime() {
         "🙂",
     ] {
         assert!(
-            compile_error(&format!("if false {{ report '{text}' }}")).contains("valid date or datetime"),
+            compile_error(&format!("if false {{ report '{text}' }}")).contains("valid date, datetime or duration"),
             "{text}"
         );
         assert!(

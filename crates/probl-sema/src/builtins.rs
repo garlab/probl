@@ -209,6 +209,13 @@ builtins! {
     RunDate = "$run_date", 0..=0, Raw, false;
     Days = "days", 1..=1, Lift, true;
     Weeks = "weeks", 1..=1, Lift, true;
+    Hours = "hours", 1..=1, Lift, true;
+    Minutes = "minutes", 1..=1, Lift, true;
+    Seconds = "seconds", 1..=1, Lift, true;
+    Milliseconds = "milliseconds", 1..=1, Lift, true;
+    Microseconds = "microseconds", 1..=1, Lift, true;
+    Nanoseconds = "nanoseconds", 1..=1, Lift, true;
+    ParseDuration = "parse_duration", 1..=1, Lift, true;
     AddWorkdays = "add_workdays", 2..=3, Lift, true;
     IsWorkday = "is_workday", 1..=2, Lift, true;
     AddMonths = "add_months", 2..=2, Lift, true;

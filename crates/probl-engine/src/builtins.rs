@@ -32,6 +32,10 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
     let value = call_plain_inner(b, args, budget)?;
     if let Value::Int(n) = &value {
         budget.integer_allocation(n.bits(), 1)?;
+    } else if let Value::Duration(d) = &value {
+        if let Some(n) = d.amount.as_integer() {
+            budget.integer_allocation(n.bits(), 1)?;
+        }
     }
     Ok(value)
 }
@@ -47,6 +51,10 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             })
         }
         B::Min | B::Max => min_max(args, b == B::Max, budget),
+        B::Abs if matches!(a(0), Value::Duration(_)) => {
+            let Value::Duration(d) = a(0) else { unreachable!() };
+            crate::duration::from_number(call_plain(B::Abs,&[crate::duration::number(d)],budget)?,d.squared)
+        }
         B::Abs => match a(0) {
             Value::Analytic(x) => crate::analytic::abs(x, budget),
             Value::Complex(z) => finite_float(z.abs(), "abs"),
@@ -77,6 +85,12 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::Ceil => to_int(a(0), f64::ceil),
         B::Trunc => to_int(a(0), libm::trunc),
         B::Round => round(a(0), args.get(1), budget),
+        B::Sqrt if matches!(a(0), Value::Duration(d) if d.squared) => {
+            let Value::Duration(d) = a(0) else { unreachable!() };
+            let n = d.amount.as_float().ok_or_else(|| OpError::fault(Fault::NumericOverflow,"squared duration is too large for sqrt"))?;
+            if n < 0.0 { return Err(OpError::fault(Fault::DomainError,"sqrt needs a nonnegative squared duration")); }
+            crate::duration::from_number(Value::Float(libm::sqrt(n)),false)
+        }
         B::Sqrt => elementary1(a(0), "sqrt", Complex::sqrt, |x| (x >= 0.0).then(|| x.sqrt())),
         B::Cbrt => elementary1(a(0), "cbrt", Complex::cbrt, |x| Some(libm::cbrt(x))),
         B::Exp => elementary1(a(0), "exp", Complex::exp, |x| {
@@ -235,6 +249,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::Real => Ok(Value::Float(complex_number(a(0), "real")?.re())),
         B::Imag => Ok(Value::Float(complex_number(a(0), "imag")?.im())),
         B::Conj => Ok(Value::Complex(complex_number(a(0), "conj")?.conjugate())),
+        B::Abs2 if matches!(a(0), Value::Duration(d) if !d.squared) => ops::binary(probl_syntax::ast::BinOp::Mul,a(0),a(0),budget),
         B::Abs2 => finite_float(complex_number(a(0), "abs2")?.abs2(), "abs2"),
         B::Arg => Ok(Value::Float(complex_number(a(0), "arg")?.arg())),
         B::Cis => {
@@ -519,13 +534,16 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             n.and_then(|n| n.checked_mul(unit)).and_then(|n| d.add_nanos(n)).map(Value::DateTime)
                 .ok_or_else(|| OpError::fault(Fault::NumericOverflow, "datetime out of range (years 1..9999)"))
         }
-        B::Days => to_int(a(0), f64::round),
-        B::Weeks if matches!(a(0), Value::Int(_)) => {
-            ops::binary(probl_syntax::ast::BinOp::Mul, a(0), &Value::Int(7.into()), budget)
+        B::Days | B::Weeks | B::Hours | B::Minutes | B::Seconds | B::Milliseconds | B::Microseconds | B::Nanoseconds => {
+            let scale = match b { B::Weeks => 604_800_000_000_000, B::Days => 86_400_000_000_000, B::Hours => 3_600_000_000_000,
+                B::Minutes => 60_000_000_000, B::Seconds => 1_000_000_000, B::Milliseconds => 1_000_000, B::Microseconds => 1_000, _ => 1 };
+            crate::duration::construct(a(0),scale,budget)
         }
-        B::Weeks => {
-            let n = number(a(0), "weeks")?;
-            to_int(&Value::Float(n * 7.0), f64::round)
+        B::ParseDuration => {
+            let d = probl_syntax::duration::Duration::parse(&text(a(0),b.name())?)
+                .ok_or_else(|| OpError::fault(Fault::ConversionError,"invalid duration; use units such as 1h 30m, 0.5ns or 0.25s^2"))?;
+            if let Some(n) = d.amount.as_integer() { budget.integer_allocation(n.bits(),1)?; }
+            crate::duration::literal(&d,budget)
         }
         B::AddWorkdays => {
             let d = calendar_day(a(0), b.name())?;
@@ -743,6 +761,42 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
             budget.work((n as u64).saturating_mul(n.max(1).ilog2() as u64 + 1))?;
         }
         return continuous_query(b, args);
+    }
+    if matches!(b, B::Mean | B::Variance | B::Sd) {
+        let has_time = match v {
+            Value::List(xs) => xs
+                .first()
+                .is_some_and(|x| matches!(x, Value::DateTime(_) | Value::Duration(_))),
+            Value::Dist(d) => d
+                .outcomes
+                .iter()
+                .any(|(x, _)| matches!(x, Value::DateTime(_) | Value::Duration(_))),
+            _ => false,
+        };
+        if has_time {
+            let m = match v {
+                Value::List(xs) => crate::time_stats::list_moments(xs, Some(budget))?,
+                _ => {
+                    let d = stat_dist(v, b.name(), budget)?;
+                    crate::time_stats::moments(&d.outcomes, Some(budget))?
+                }
+            }
+            .ok_or_else(|| {
+                OpError::new("time statistics require a nonempty population of one time type with finite moments")
+            })?;
+            let value = match b {
+                B::Mean => Some(m.mean),
+                B::Sd => m.sd,
+                _ => m.variance,
+            }
+            .ok_or_else(|| OpError::new("this statistic is outside the supported time dimensions or finite range"))?;
+            if let Value::Duration(d) = &value {
+                if let Some(n) = d.amount.as_integer() {
+                    budget.integer_allocation(n.bits(), 1)?;
+                }
+            }
+            return Ok(value);
+        }
     }
     match b {
         B::Minimum | B::Maximum => population_extreme(v, b == B::Maximum, None, budget),
@@ -1331,7 +1385,12 @@ fn median(v: &Value, b: Builtin, budget: &mut Budget) -> OpResult<Value> {
         if b == Builtin::Median
             && !matches!(
                 x,
-                Value::Int(_) | Value::Float(_) | Value::Prob(_) | Value::Date(_) | Value::DateTime(_)
+                Value::Int(_)
+                    | Value::Float(_)
+                    | Value::Prob(_)
+                    | Value::Date(_)
+                    | Value::DateTime(_)
+                    | Value::Duration(_)
             )
         {
             return Err(OpError::new(format!(
@@ -1391,6 +1450,15 @@ pub(crate) fn midpoint(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Va
         return Ok(Value::DateTime(
             dates::DateTime::from_total_nanos(nanos).expect("midpoint stays within endpoints"),
         ));
+    }
+    if let (Value::Duration(x), Value::Duration(y)) = (a, b) {
+        if x.squared != y.squared {
+            return Err(OpError::new("median needs matching time dimensions"));
+        }
+        return crate::duration::from_number(
+            midpoint(&crate::duration::number(x), &crate::duration::number(y), budget)?,
+            x.squared,
+        );
     }
     if let (Value::Int(a), Value::Int(b)) = (a, b) {
         budget.integer_work(a, b, false)?;
@@ -2091,7 +2159,15 @@ fn len(v: &Value) -> OpResult<Value> {
 
 fn sum(v: &Value, budget: &mut Budget) -> OpResult<Value> {
     let items = items(v, "sum", budget)?;
-    let mut acc = Value::Int(0.into());
+    let first = items.first().map(|v| match v {
+        Value::Dist(d) => d.outcomes.first().map_or(v, |(v, _)| v),
+        _ => v,
+    });
+    let mut acc = if let Some(Value::Duration(d)) = first {
+        crate::duration::from_number(Value::Int(0.into()), d.squared)?
+    } else {
+        Value::Int(0.into())
+    };
     for x in &items {
         acc = ops::binary(probl_syntax::ast::BinOp::Add, &acc, x, budget)?;
     }

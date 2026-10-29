@@ -142,7 +142,7 @@ report delivery <= today + weeks(1)
 report delivery.is_workday(holidays)
 ```
 
-Adding or subtracting an integer shifts by calendar days; subtracting two dates gives an integer day count. `days(n)` rounds to a whole day and `weeks(n)` rounds `7*n`. `add_workdays(d, n, holidays?)` counts Monday–Friday, excluding any dates in the optional holiday list. It does not count the starting date; a negative count goes backwards and zero leaves the date unchanged. No national holidays are assumed. `weekday(d)` returns an English name such as `"Monday"`.
+Adding or subtracting an integer shifts by calendar days; subtracting two dates gives an integer day count. `days(n)` and `weeks(n)` construct fixed durations without rounding; adding one to a date requires whole 24-hour days. `add_workdays(d, n, holidays?)` counts Monday–Friday, excluding any dates in the optional holiday list. It does not count the starting date; a negative count goes backwards and zero leaves the date unchanged. No national holidays are assumed. `weekday(d)` returns an English name such as `"Monday"`.
 
 ```probl
 let anchor = date(2027, 1, 31)
@@ -172,7 +172,26 @@ report '2027-01-01T00:00:00.000000001'   # preserves all nine fractional digits
 
 `datetime(year, month, day, hour, minute, second, nanosecond?)` builds from integer parts; the final part defaults to zero. `parse_datetime(s)` parses runtime text with the same validation as literals. Seconds are required; fractions have one to nine digits. Years are 1–9999, hours 0–23 and minutes/seconds 0–59, with no leap seconds. An offset that moves the result outside the year range is an error.
 
-Use `add_days`, `add_hours`, `add_minutes`, `add_seconds` or `add_nanoseconds` for explicit units. The calendar and workday helpers also accept datetimes and preserve their clock fields. Values compare chronologically after normalization and work as map keys, distribution outcomes and match patterns. Quantiles and medians preserve nanosecond precision; a midpoint tie chooses the earlier nanosecond. Means and standard deviations of datetimes are not supported. Nested dates and datetimes print in single quotes; scalar reports and `str` omit the quotes.
+Use `add_days`, `add_hours`, `add_minutes`, `add_seconds` or `add_nanoseconds` for explicit units. The calendar and workday helpers also accept datetimes and preserve their clock fields. Values compare chronologically after normalization and work as map keys, distribution outcomes and match patterns. Quantiles and medians preserve nanosecond precision; a midpoint tie chooses the earlier nanosecond. Datetime means preserve nanosecond precision; standard deviations and variances carry duration units. Nested dates and datetimes print in single quotes; scalar reports and `str` omit the quotes.
+
+### Durations and datetime statistics
+
+Durations carry their units: `'1h 30m'`, `'250ms'` and `'-0.5ns'` are values, not text. Use `hours(n)`, `minutes(n)`, `seconds(n)`, `milliseconds(n)`, `microseconds(n)` or `nanoseconds(n)` for computed counts. `days(n)` and `weeks(n)` now also return durations, without rounding. `parse_duration(text)` handles runtime text. A day is exactly 24 hours; months and years still use calendar helpers.
+
+```probl
+let arrivals = ['2027-01-31T09:30:00', '2027-01-31T09:30:02']
+report mean(arrivals)                    # 2027-01-31T09:30:01
+report sd(arrivals)                      # 1s, a duration
+report variance(arrivals)                # 1s^2, a squared_duration
+report sd(arrivals) / '1ms'               # 1000, explicitly milliseconds
+report variance(arrivals) / '1s^2'       # 1, explicitly seconds squared
+report arrivals[1] - arrivals[0]         # 2s
+report arrivals[0] + '1h 30m'            # 2027-01-31T11:00:00
+```
+
+A `duration` and a `squared_duration` are distinct types. Matching dimensions add, subtract and compare; multiplying two durations gives squared time, and `sqrt` takes squared time back to a duration. Divide by an explicit unit to get a number. Duration literals use `w`, `d`, `h`, `m`, `s`, `ms`, `us` and `ns`; squared units append `^2`. Equivalent units are identical as map keys and set elements.
+
+Whole nanoseconds are exact integers; fractional durations have floating-point precision. This allows a standard deviation of `'0.5ns'`. Adding a duration to a datetime requires whole nanoseconds, and adding one to a date requires whole 24-hour days. To round explicitly to a whole nanosecond, use `round(d / '1ns') * '1ns'`. Datetime means round once to the nearest nanosecond, ties earlier; spread uses the unrounded mean. Reports can select `mean` and `sd` columns, with units retained in the output.
 
 ### Sorting with a comparator
 
@@ -678,11 +697,11 @@ report quantile([1, 2, 3, 4], 50%)         # 2
 report mean([complex(1, 2), complex(3, 4)]) # complex(2, 3)
 ```
 
-`median` accepts real numbers or dates, and averages the lower and upper medians when they differ. Lists and distributions follow the same rule: weights count, so a distribution's bounds differ only when exactly half its resolved probability lies on either side of a gap. An integral midpoint of two ints stays an exact int; fractional and floating-point midpoints return floats and must fit the finite float range.
+`median` accepts real numbers, dates, datetimes or durations, and averages the lower and upper medians when they differ. Lists and distributions follow the same rule: weights count, so a distribution's bounds differ only when exactly half its resolved probability lies on either side of a gap. An integral midpoint of two ints stays an exact int; fractional and floating-point midpoints return floats and must fit the finite float range.
 
-`median_low` and `median_high` select the lower or upper middle element of an even-length list, or the endpoints of a distribution's median interval. They accept strings, dates, bools (`false` before `true`) and enums as well as numbers. `median` rejects strings, bools and enums even for singleton or odd-length populations: use the explicit low/high functions. Complex numbers have no ordering, so all three medians reject them. `quantile` keeps its existing lower-quantile rule and never interpolates finite outcomes; `quantile([1, 4], 50%)` is 1.
+`median_low` and `median_high` select the lower or upper middle element of an even-length list, or the endpoints of a distribution's median interval. They accept strings, dates, datetimes, durations, bools (`false` before `true`) and enums as well as numbers. `median` rejects strings, bools and enums even for singleton or odd-length populations: use the explicit low/high functions. Complex numbers have no ordering, so all three medians reject them. `quantile` keeps its existing lower-quantile rule and never interpolates finite outcomes; `quantile([1, 4], 50%)` is 1.
 
-`mean` accepts numeric lists (real or complex) and date lists, or distributions of those values. Date means average calendar-day positions; date midpoint medians average their two endpoints. Both round to the nearest calendar day, with exact half-day ties choosing the earlier day, independently of the 1970 epoch. For example, October 1 and October 9 give October 5, while October 1 and October 2 give October 1. `median_low` and `median_high` always preserve the selected date. Strings cannot be averaged.
+`mean` accepts numeric lists (real or complex), dates, datetimes and durations, or distributions of those values. Datetime means round to the nearest nanosecond, with ties earlier; duration means preserve their dimension. Date means average calendar-day positions; date midpoint medians average their two endpoints. Both round to the nearest calendar day, with exact half-day ties choosing the earlier day, independently of the 1970 epoch. For example, October 1 and October 9 give October 5, while October 1 and October 2 give October 1. `median_low` and `median_high` always preserve the selected date. Strings cannot be averaged.
 
 `cdf`, `pmf` and `support` also accept lists; `pdf` requires a continuous distribution. Empty lists are errors, and list elements that are distributions must be drawn first or explicitly combined with `one_of`.
 

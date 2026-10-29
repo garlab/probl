@@ -229,6 +229,11 @@ impl KeySize<'_> {
             | Value::Date(_)
             | Value::DateTime(_) => {}
             Value::Int(n) => self.integer(n)?,
+            Value::Duration(d) => {
+                if let Some(n) = d.amount.as_integer() {
+                    self.integer(n)?;
+                }
+            }
             Value::Range(a, b) => {
                 self.integer(a)?;
                 self.integer(b)?;

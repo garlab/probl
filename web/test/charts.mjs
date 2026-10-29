@@ -45,6 +45,9 @@ for (const source of [
   'report date(2026,1,1) by 1',
   "report '2027-01-01T00:00:00.000000001' by 1",
   "report 1 by '2027-01-01T00:00:00.000000001'",
+  "report '1s' by 1",
+  "report 1 by '1s'",
+  "report '1s^2' by 1",
   'if false {report 1 by 1}',
 ]) assert.deepEqual(chartSeries(run(source)), [], source);
 const tooMany = structuredClone(all[0].report);

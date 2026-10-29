@@ -104,6 +104,7 @@ The same rules apply to a CSV cell, a line, and a JSON string read as a date or 
 | `bool` | `true`, `false`, in any case | `true`, `false` |
 | `date` | `2027-01-31` | the same, as a string |
 | `datetime` | `2027-01-31T09:30:00.123456789`, optionally with `Z` or `±HH:MM` | the same, as a string; explicit offsets normalize to UTC |
+| `duration`, `squared_duration` | `1h 30m`, `0.5ns`, `0.25s^2` | the same, as a string; units normalize |
 | `str` | the text, exactly | a string |
 | an enum | a variant's name, like `Small` | the same, as a string |
 
@@ -120,7 +121,7 @@ The same rules apply to a CSV cell, a line, and a JSON string read as a date or 
 
 **JSON** follows RFC 8259:
 - **Arrays** read as lists.
-- **Objects** read as records, by the name rule above. They can also read as `map[K, V]`, where `K` is `str`, `int`, `bool`, `date`, `datetime` or an enum, and each key is read as a `K`: `map[date, float]` reads `{"2027-01-01": 1.5}`.
+- **Objects** read as records, by the name rule above. They can also read as `map[K, V]`, where `K` is `str`, `int`, `bool`, `date`, `datetime`, `duration`, `squared_duration` or an enum, and each key is read as a `K`: `map[date, float]` reads `{"2027-01-01": 1.5}`.
 - **Duplicate keys:** an object may not have the same key twice. Nor may a map have two keys that read as the same `K`: `{"1": …, "01": …}` as a `map[int, str]` is an error.
 - **Bags:** a `bag[T]` reads an array of items, or, when `T` can be a key, an object of counts like `{"ace": 4}`.
 - **Sets:** a `set[T]` reads an array of items, checking each item as `T` and discarding equal elements.
@@ -140,9 +141,9 @@ type Pilot = { day: date, visitors: int, signups: int }
 # let pilot: list[Pilot] = read("pilot.csv")
 ```
 
-- **CSV and lines:** for each column, it takes the first of `int`, `float`, `prob`, `bool`, `date`, `datetime` and `str` that fits every non-empty value.
+- **CSV and lines:** for each column, it takes the first of `int`, `float`, `prob`, `bool`, `date`, `datetime`, `duration`, `squared_duration` and `str` that fits every non-empty value.
 - **JSON:** it follows the document:
-  - objects become records, or maps when their keys are all dates, all datetimes or all integers;
+  - objects become records, or maps when their keys are all dates, all datetimes, one duration dimension or all integers;
   - arrays become lists of the type that fits all their elements.
 - **Names:** column names become field names in snake case: `Daily sign-ups` becomes `daily_sign_ups`. A keyword gets an underscore, like `type_`. A name that can't become a field name at all, like `2026 total`, is left out with a comment.
 

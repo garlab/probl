@@ -54,22 +54,22 @@ group's `key` is `null`. A key is a typed object:
 
 The label is for display, not parsing or identity. Supported key kinds are `int`
 (decimal string), `float` (JSON number), `prob` (JSON number in [0,1]), `date`
-(ISO calendar string), `datetime` (normalized calendar/clock string with up to nine fractional digits and no offset), `bool`, `str` and `unit` (`null`). Integers are always
+(ISO calendar string), `datetime` (normalized calendar/clock string with up to nine fractional digits and no offset), `duration` and `squared_duration` (canonical unit-bearing strings), `bool`, `str` and `unit` (`null`). Integers are always
 strings, even when small, so JavaScript cannot round them silently. Other kinds
 use `opaque`, with a `null` value and the engine's display label; group IDs still
 distinguish them. Do not sort keys lexically or merge keys by their labels.
 
 ## Summaries and availability
 
-Group `kind` is `probability`, `number`, `date`, `datetime`, `categorical`, or `structured`.
+Group `kind` is `probability`, `number`, `date`, `datetime`, `duration`, `squared_duration`, `categorical`, or `structured`.
 Categorical groups have no exported population: keep the text/table view or use
 the Rust distribution API. Structured groups contain `{path, group}` entries in
 `fields`. These are marginal summaries of related fields, not independent joint
 samples. Other groups have an empty `fields` array.
 
-Numeric, date and datetime summaries contain:
+Numeric, date, datetime and duration summaries contain:
 
-- `mean` and `sd`: estimates, or `null` when unavailable (including dates and datetimes) or
+- `mean` and `sd`: estimates, or `null` when unavailable (including dates, datetimes and durations) or
   omitted from an explicit selection.
 - `quantiles`: by default, five entries with `level` 0.05, 0.25, 0.5, 0.75 and 0.95, an
   `estimate` where available, and a typed `value` where the quantile is a retained
@@ -86,7 +86,15 @@ Numeric, date and datetime summaries contain:
   quantiles, including the median, have `convention: "inverse_cdf"`, a numeric
   estimate and no exact typed `value`. This metadata is separate from sampling
   uncertainty; see [the sketch contract](report-summaries.md#approximate-quantile-collection).
-- `deterministic`: the resolved population consists of one concrete number/date/datetime.
+- `deterministic`: the resolved population consists of one concrete number, date, datetime or duration.
+
+Datetime and duration summaries additionally expose `mean_value` and `sd_value`,
+using the same typed value shape as keys and quantiles. For a datetime population,
+these have kinds `datetime` and `duration`, respectively; `"0.5ns"` is a valid SD.
+Duration means and SD preserve their dimension. An explicit selection omits a
+statistic by setting its typed field to null. The existing numeric `mean` and
+`sd` estimate fields remain null for time populations. Typed moments describe
+the retained population and carry no Monte Carlo standard-error estimate.
 
 A true `deterministic` flag does not override incompleteness or partial-failure
 metadata. With exact collection, by default the 50% entry uses the midpoint median; other levels use the

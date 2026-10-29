@@ -132,8 +132,16 @@ fn a_value_the_summary_cant_describe_stops_the_run_where_it_is_reported() {
     // The `print` after each report would run if the values were only
     // checked once the run had finished.
     for (source, summary, problem) in [
-        ("report \"cat\"", "forecast", "require numeric, date or datetime values"),
-        ("report [1, 2]", "median", "require numeric, date or datetime values"),
+        (
+            "report \"cat\"",
+            "forecast",
+            "require numbers, dates, datetimes or durations",
+        ),
+        (
+            "report [1, 2]",
+            "median",
+            "require numbers, dates, datetimes or durations",
+        ),
         ("report date(2026, 1, 1)", "mean", "date reports"),
         (
             "for k in 0..1 { report if k == 0 { true } else { 1 } by k }",
@@ -166,7 +174,9 @@ fn a_value_the_summary_cant_describe_stops_the_run_where_it_is_reported() {
         .err()
         .unwrap();
     assert!(
-        error.to_string().contains("require numeric, date or datetime values"),
+        error
+            .to_string()
+            .contains("require numbers, dates, datetimes or durations"),
         "{error}"
     );
 }
@@ -234,9 +244,15 @@ fn analytic_and_atomic_quantiles_keep_their_conventions_and_uncertainty() {
 }
 
 #[test]
-fn datetime_summaries_preserve_precision_and_reject_moments() {
+fn datetime_summaries_preserve_precision_and_duration_units() {
     let source = "let a = '1969-12-31T23:59:59.999999997'; report one_of([a, a.add_nanoseconds(2)])";
     let p = probl::compile("datetime", source).unwrap();
+    assert!(
+        p.run(&Options::new())
+            .unwrap()
+            .text()
+            .contains("mean 1969-12-31T23:59:59.999999998 · sd 1ns")
+    );
     for options in [Options::new(), Options::new().runs(40).seed(7)] {
         let out = p
             .run(&options.clone().report_summary(0, "median,q:0.5".parse().unwrap()))
@@ -247,20 +263,20 @@ fn datetime_summaries_preserve_precision_and_reject_moments() {
             "{}",
             out.text()
         );
-        let error = p
-            .run(&options.report_summary(0, ReportSummary::moments()))
-            .err()
-            .unwrap();
+        let out = p.run(&options.report_summary(0, ReportSummary::moments())).unwrap();
         assert!(
-            error
-                .to_string()
-                .contains("datetime reports support median and quantiles"),
-            "{error}"
+            out.text().contains("mean 1969-12-31T23:59:59.999999998 · sd 1ns"),
+            "{}",
+            out.text()
         );
     }
     let p = probl::compile("datetime", "report '2027-01-01T00:00:00'").unwrap();
+    let out = p
+        .run(&Options::new().report_summary(0, ReportSummary::moments()))
+        .unwrap();
     assert!(
-        p.run(&Options::new().report_summary(0, ReportSummary::moments()))
-            .is_err()
+        out.text().contains("mean 2027-01-01T00:00:00 · sd 0s"),
+        "{}",
+        out.text()
     );
 }

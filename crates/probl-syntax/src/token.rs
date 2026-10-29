@@ -175,7 +175,7 @@ impl Tok {
             Tok::Percent(v) => format!("percentage `{}%`", v * 100.0),
             Tok::Dice { count, sides } => format!("dice `{count}d{sides}`"),
             Tok::Str(_) => "a string".to_string(),
-            Tok::Quoted(_) => "a date or datetime literal".to_string(),
+            Tok::Quoted(_) => "a date, datetime or duration literal".to_string(),
             Tok::Ident(name) => format!("`{name}`"),
             Tok::Newline => "the end of the line".to_string(),
             Tok::Eof => "the end of the file".to_string(),

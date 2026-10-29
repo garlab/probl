@@ -1085,8 +1085,8 @@ impl Parser {
                 match crate::calendar::Literal::parse(&text) {
                     Some(value) => ExprKind::Temporal(value),
                     None => {
-                        self.error(span, format!("'{text}' isn't a valid date or datetime"))
-                            .help("use 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:MM:SS[.fraction]' with optional Z or ±HH:MM; check the calendar, time and range; text uses double quotes");
+                        self.error(span, format!("'{text}' isn't a valid date, datetime or duration"))
+                            .help("use 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:MM:SS[.fraction]' with optional Z or ±HH:MM; or durations such as '1h 30m' and '0.25s^2'; check the values and range; text uses double quotes");
                         return Err(Failed);
                     }
                 }

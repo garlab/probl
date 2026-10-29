@@ -177,6 +177,13 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Second
         | B::Nanosecond
         | B::Days
+        | B::Hours
+        | B::Minutes
+        | B::Seconds
+        | B::Milliseconds
+        | B::Microseconds
+        | B::Nanoseconds
+        | B::ParseDuration
         | B::Weeks
         | B::AddWorkdays
         | B::IsWorkday
@@ -252,8 +259,8 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "`x` as a float: an int, a float or a probability. Unlike a declared `float`, which converts an int only if a float holds it, it rounds an int to the nearest float: `float(2^53 + 1)` is 2^53. It doesn't parse text.",
         ),
         B::Sqrt => doc(
-            "sqrt(x) -> float or complex",
-            "The square root. Real inputs must be nonnegative. Complex inputs give the principal root with nonnegative real part: `sqrt(complex(-1))` is `complex(0, 1)`.",
+            "sqrt(x) -> float, complex or duration",
+            "The square root. A nonnegative squared_duration gives a duration. Real inputs must be nonnegative. Complex inputs give the principal root with nonnegative real part: `sqrt(complex(-1))` is `complex(0, 1)`.",
         ),
         B::Cbrt => doc(
             "cbrt(x) -> float or complex",
@@ -691,20 +698,20 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "The probability of true in a boolean distribution: `P(d6 > 4)`. Rejects unresolved distributions and scalar bools, probabilities and numbers. Use `report event` to measure a fact across worlds, or `prob(event)` to convert a bool to 0 or 1.",
         ),
         B::Mean => doc(
-            "mean(d) -> float, complex or date",
-            "The arithmetic mean of a nonempty numeric list or integer range, or the weighted mean of a distribution. Complex elements give a complex mean. Dates average calendar-day positions and round to the nearest day, with ties choosing the earlier day. Strings cannot be averaged. Rejects scalars and never aggregates across worlds; use `report x` or put the model inside `simulate { ... }`.",
+            "mean(d) -> float, complex, date, datetime, duration or squared_duration",
+            "The arithmetic mean of a nonempty numeric list or integer range, or the weighted mean of a distribution. Complex elements give a complex mean. Dates average calendar-day positions and round to the nearest day, with ties choosing the earlier day. Datetime means use exact nanosecond positions and retained binary64 weights, then round once to the nearest nanosecond, ties earlier; list elements have exact equal weights. Duration means keep their time dimension. Strings cannot be averaged. Rejects scalars and never aggregates across worlds; use `report x` or put the model inside `simulate { ... }`.",
         ),
         B::Sd => doc(
-            "sd(d) -> float",
-            "The population standard deviation of a nonempty real numeric list, integer range or distribution. Rejects scalars.",
+            "sd(d) -> float or duration or squared_duration",
+            "The population standard deviation of a nonempty numeric or time population. Datetimes and durations return a duration, including fractional nanoseconds; squared durations return a squared duration. Divide by a unit such as '1s' for an explicit numeric conversion. Rejects scalars.",
         ),
         B::Variance => doc(
-            "variance(d) -> float",
-            "The population variance of a nonempty real numeric list, integer range or distribution (divides by n, not n - 1). Rejects scalars.",
+            "variance(d) -> float or squared_duration",
+            "The population variance (divides by n, not n - 1). Datetimes and durations return squared_duration, calculated around the unrounded mean. Divide by '1s^2' for seconds squared. Variance of squared durations would need fourth-power units and is unsupported. Rejects scalars.",
         ),
         B::Median => doc(
             "median(d)",
-            "The midpoint of the lower and upper medians of a nonempty numeric, date or datetime list, integer range or distribution. Distribution weights count: the bounds differ only when half the mass lies on each side of a gap. Integral int midpoints stay exact; fractional midpoints are floats. Dates round to the nearest day and datetimes to the nearest nanosecond, ties earlier. Strings, bools and enums require `median_low` or `median_high`; complex elements and scalars are errors.",
+            "The midpoint of the lower and upper medians of a nonempty numeric, date, datetime or duration list, integer range or distribution. Distribution weights count: the bounds differ only when half the mass lies on each side of a gap. Integral int midpoints stay exact; fractional midpoints are floats. Dates round to the nearest day and datetimes to the nearest nanosecond, ties earlier. Strings, bools and enums require `median_low` or `median_high`; complex elements and scalars are errors.",
         ),
         B::MedianLow => doc(
             "median_low(d)",
@@ -801,10 +808,35 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "The fractional second as an integer from 0 through 999999999.",
         ),
         B::Days => doc(
-            "days(n) -> int",
-            "`n` days, rounded to a whole number, to add to or subtract from a date: `start + days(3)`.",
+            "days(n: int or float) -> duration",
+            "Exactly n 24-hour days. Fractional days are allowed; adding to a date requires whole days.",
         ),
-        B::Weeks => doc("weeks(n) -> int", "`n` weeks, as a whole number of days."),
+        B::Weeks => doc(
+            "weeks(n: int or float) -> duration",
+            "Exactly n seven-day weeks, with no calendar or daylight-saving adjustment.",
+        ),
+        B::Hours => doc("hours(n: int or float) -> duration", "A duration of n hours."),
+        B::Minutes => doc("minutes(n: int or float) -> duration", "A duration of n minutes."),
+        B::Seconds => doc(
+            "seconds(n: int or float) -> duration",
+            "A duration of n seconds. Divide a duration by '1s' to explicitly obtain seconds as a number.",
+        ),
+        B::Milliseconds => doc(
+            "milliseconds(n: int or float) -> duration",
+            "A duration of n milliseconds.",
+        ),
+        B::Microseconds => doc(
+            "microseconds(n: int or float) -> duration",
+            "A duration of n microseconds, written us in literals.",
+        ),
+        B::Nanoseconds => doc(
+            "nanoseconds(n: int or float) -> duration",
+            "A duration of n nanoseconds. Fractions are allowed, but datetime arithmetic needs whole nanoseconds.",
+        ),
+        B::ParseDuration => doc(
+            "parse_duration(s: str) -> duration or squared_duration",
+            "Parse runtime unit-bearing text such as 1h 30m, -0.5ns or 0.25s^2. A leading minus applies to the entire duration; all components must have the same dimension.",
+        ),
         B::AddWorkdays => doc(
             "add_workdays(d: date or datetime, n: int, holidays: list[date]?) -> date or datetime",
             "Move by n Monday–Friday days, excluding any listed holidays. The starting date isn't counted; zero leaves it unchanged even on a closed day. Negative n goes back. Holiday order and duplicates do not matter; no regional holidays are assumed. Datetimes keep their clock fields.",

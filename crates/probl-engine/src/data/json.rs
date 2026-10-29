@@ -198,7 +198,12 @@ impl<'de> Visitor<'de> for Visit<'_, '_, '_> {
                 self.cx.budget.max_string_bytes_seen = self.cx.budget.max_string_bytes_seen.max(s.len());
                 Ok(Value::str(s))
             }
-            TypeSpec::Date | TypeSpec::DateTime | TypeSpec::Enum(_) | TypeSpec::Prob => {
+            TypeSpec::Date
+            | TypeSpec::DateTime
+            | TypeSpec::Duration
+            | TypeSpec::SquaredDuration
+            | TypeSpec::Enum(_)
+            | TypeSpec::Prob => {
                 text::plain(s, self.ty, self.cx.program, &mut self.cx.budget).map_err(|p| self.cx.fail(p))
             }
             TypeSpec::Int | TypeSpec::Float => Err(self.cx.fail(

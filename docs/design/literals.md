@@ -1,4 +1,4 @@
-# Date and datetime literals
+# Date, datetime and duration literals
 
 > Implemented 29 October 2026. The [reference semantics](../semantics.md#1-values-and-types) is authoritative. This extends the original date-literal proposal with UTC offset normalization for `datetime`.
 
@@ -55,8 +55,8 @@ The parsers share literal validation and offset normalization. Invalid text prod
 - `add_days`, `add_months`, `add_years`, `add_workdays`, `start_of_month` and `end_of_month` preserve the input kind and any clock fields. Month/year shifts clamp the day as for dates. Holidays remain a list of dates.
 - `hour`, `minute`, `second` and `nanosecond` extract clock components.
 - `add_hours`, `add_minutes`, `add_seconds` and `add_nanoseconds` shift a datetime by an integer count, carrying across calendar boundaries. Each day is exactly 24 hours; no daylight-saving transitions apply.
-- Datetime arithmetic uses these explicit helpers. It does not overload `datetime + int` or introduce a duration type. Out-of-range results fail.
-- Ordering, extrema, CDFs, quantiles and low/high medians work on homogeneous datetime populations. Midpoint medians round half a nanosecond toward the earlier value. Datetime means, variances and standard deviations are not provided.
+- Datetime arithmetic also accepts typed durations; subtraction of datetimes produces an exact duration. Bare numeric offsets are rejected, and out-of-range or fractional-nanosecond results fail.
+- Ordering, extrema, CDFs, quantiles and low/high medians work on homogeneous datetime populations. Midpoint medians round half a nanosecond toward the earlier value. Datetime means round once to the nearest nanosecond, ties earlier. Standard deviation and variance use the unrounded mean and return duration and squared_duration.
 - Reports retain exact datetime quantiles and medians, including typed canonical strings in JSON. The playground keeps datetime charts in the text view rather than converting nanoseconds through JavaScript numbers.
 
 The constructors, parsers and transformations lift over finite distributions, as the date APIs do.
@@ -69,4 +69,12 @@ Tests cover leap years and year endpoints; malformed literals in unreachable bra
 
 ## Deferred literals
 
-Times of day, durations and timezone-preserving instants remain separate designs. They may use distinct single-quoted shapes, or a prefix if a new shape would conflict. Date and datetime literals never depend on the receiving annotation to select their type.
+Times of day and timezone-preserving instants remain separate designs. They may use distinct single-quoted shapes, or a prefix if a new shape would conflict. Date, datetime and duration literals never depend on the receiving annotation to select their type.
+
+## Duration literals and statistics
+
+Durations use compact unit-bearing literals such as `'1h 30m'`, `'-0.5ns'` and `'0.25s^2'`. The last has type `squared_duration`, used for variances. Supported units are `w`, `d`, `h`, `m`, `s`, `ms`, `us`, `ns`; days and weeks have fixed lengths. A leading minus applies to all components. Equivalent units normalize to the same value. Whole base units remain exact integers; fractional base units use finite binary64. Printing chooses a compact unit that round-trips, with single quotes inside containers.
+
+`days` and `weeks` now build durations without rounding, alongside the hour-through-nanosecond constructors. `parse_duration` handles runtime text. Adding to a datetime requires whole nanoseconds; adding to a date requires whole 24-hour days. Multiplication, division and square roots check dimensions. Explicit ratios such as `sd(times) / '1ms'` and `variance(times) / '1s^2'` produce numbers whose unit the expression states.
+
+Datetime moment calculations retain exact integer coordinates and exact stored binary64 weights until final rounding. Lists use unit weights before any duplicate merging. SD and variance are population spread, not sampling error, and preserve time dimensions. JSON exposes typed `mean_value` and `sd_value`; existing numeric estimate fields remain null for time populations. Exact report retention supports these statistics; the numeric-only moments and sketch collection policies remain separate.

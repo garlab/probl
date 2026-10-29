@@ -130,10 +130,11 @@ impl DateTime {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Literal {
     Date(i32),
     DateTime(DateTime),
+    Duration(crate::duration::Duration),
 }
 
 impl Literal {
@@ -141,11 +142,13 @@ impl Literal {
         parse(text)
             .map(Self::Date)
             .or_else(|| DateTime::parse(text).map(Self::DateTime))
+            .or_else(|| crate::duration::Duration::parse(text).map(Self::Duration))
     }
-    pub fn format(self) -> String {
+    pub fn format(&self) -> String {
         match self {
-            Self::Date(d) => format(d),
+            Self::Date(d) => format(*d),
             Self::DateTime(d) => d.format(),
+            Self::Duration(d) => d.format(),
         }
     }
 }

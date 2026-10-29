@@ -36,6 +36,16 @@ pub(crate) fn plain(
             Some(d) => Ok(Value::Date(d)),
             None => Err(Problem::new(format!("{} isn't a date", quoted(t))).help("write dates like 2027-01-31")),
         },
+        TypeSpec::Duration | TypeSpec::SquaredDuration => match probl_syntax::duration::Duration::parse(t) {
+            Some(d) if d.squared == (*ty == TypeSpec::SquaredDuration) => {
+                if let Some(n) = d.amount.as_integer() {
+                    budget.integer(n.bits())?;
+                }
+                Ok(Value::Duration(d))
+            }
+            _ => Err(Problem::new(format!("{} isn't a {}", quoted(t), ty.describe(program)))
+                .help("write units such as 1h 30m, 0.5ns or 0.25s^2")),
+        },
         TypeSpec::DateTime => match crate::dates::DateTime::parse(t) {
             Some(d) => Ok(Value::DateTime(d)),
             None => Err(Problem::new(format!("{} isn't a datetime", quoted(t)))

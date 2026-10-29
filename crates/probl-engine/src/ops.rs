@@ -486,6 +486,9 @@ pub fn unary(op: UnOp, v: &Value, budget: &mut Budget) -> OpResult<Value> {
             }
             Value::Float(f) | Value::Prob(f) => Ok(Value::Float(-f)),
             Value::Complex(z) => Ok(Value::Complex(z.negated())),
+            Value::Duration(d) => {
+                crate::duration::from_number(unary(UnOp::Neg, &crate::duration::number(d), budget)?, d.squared)
+            }
             Value::Analytic(a) => crate::analytic::negate(a),
             Value::MultivariateNormal(_) => Err(crate::multivariate::unsupported("negation")),
             other => Err(OpError::new(format!("can't negate {}", article(&other.kind())))),
@@ -536,6 +539,21 @@ fn binary_plain(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResul
             if let Value::Str(s) = v {
                 budget.string_work(s)?;
             }
+            if let Value::Duration(d) = v {
+                if let Some(n) = d.amount.as_integer() {
+                    budget.integer_work(n, &Integer::ONE, false)?;
+                }
+            }
+        }
+    }
+    if !is_comparison(op)
+        && matches!(
+            (a, b),
+            (Value::Duration(_), _) | (_, Value::Duration(_)) | (Value::DateTime(_), Value::DateTime(_))
+        )
+    {
+        if let Some(result) = crate::duration::binary(op, a, b, budget) {
+            return result;
         }
     }
     match op {
@@ -954,6 +972,16 @@ pub fn compare_counted(a: &Value, b: &Value, mut budget: Option<&mut Budget>) ->
         (Value::Str(x), Value::Str(y)) => Ok(x.cmp(y)),
         (Value::Date(x), Value::Date(y)) => Ok(x.cmp(y)),
         (Value::DateTime(x), Value::DateTime(y)) => Ok(x.cmp(y)),
+        (Value::Duration(x), Value::Duration(y)) if x.squared == y.squared => {
+            if let Some(budget) = budget.as_deref_mut() {
+                for d in [x, y] {
+                    if let Some(n) = d.amount.as_integer() {
+                        budget.integer_work(n, &Integer::ONE, false)?;
+                    }
+                }
+            }
+            Ok(x.amount.cmp(&y.amount))
+        }
         (Value::Enum(x), Value::Enum(y)) if x.ty == y.ty => Ok(x.variant.cmp(&y.variant)),
         (Value::List(x), Value::List(y)) => {
             // Elements are counted as they're compared, then charged

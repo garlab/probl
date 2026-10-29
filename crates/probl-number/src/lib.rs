@@ -2,6 +2,7 @@
 //! The hard size ceiling bounds parsing and individual allocations even before
 //! the runtime has a work budget. Hosts can impose a smaller runtime ceiling.
 
+pub mod moments;
 pub mod primes;
 
 use num_bigint::BigInt;

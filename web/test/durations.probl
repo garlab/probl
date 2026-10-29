@@ -1,0 +1,25 @@
+# Time units and nanosecond statistics agree in native and WebAssembly builds.
+let a: datetime = '2027-01-01T00:00:00.000000001'
+let b = a + '1ns'
+let elapsed: duration = '1h 30m'
+let spread: squared_duration = '0.25ns^2'
+report [typeof elapsed, str(elapsed)]
+report mean([a,b])
+report sd([a,b])
+report variance([a,b])
+report sqrt(spread)
+report sd([a,a+'2s']) / '1ms'
+report variance([a,a+'2s']) / '1s^2'
+report [elapsed, elapsed/'1m', elapsed^2]
+report mean(['0ns','1ns'])
+report median(['0ns','1ns'])
+report one_of([a,b]) as "arrival"
+report one_of(['0ns','1ns']) as "elapsed"
+report days(1.5) == hours(36)
+report parse_duration("1h 30m") == elapsed
+report set('1m','60s',seconds(60))
+report ['1m':3]['60s']
+report (b-a) == '1ns'
+report a+'1ns' == b
+report mean([nanoseconds(10^100),nanoseconds(10^100+2)]) == nanoseconds(10^100+1)
+report sd([nanoseconds(10^100),nanoseconds(10^100+2)]) == '1ns'

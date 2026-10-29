@@ -436,7 +436,23 @@ try {
   expect(await page.$$eval('.cm-content .tok-number', (els) => els.some((e) => e.textContent.startsWith("'2027-01-01T"))), 'the editor highlights a temporal literal as one token');
   await page.evaluate(() => window.playground.setSource("report '2027-02-29'"));
   const badDate = await run(page);
-  expect(badDate.error && badDate.result.includes('valid date or datetime'), 'invalid calendar literals fail during compilation', badDate.result);
+  expect(badDate.error && badDate.result.includes('valid date, datetime or duration'), 'invalid calendar literals fail during compilation', badDate.result);
+
+  const durationSource = readFileSync(`${root}web/test/durations.probl`, 'utf8');
+  await page.evaluate((source) => window.playground.setSource(source), durationSource);
+  const durations = await run(page);
+  const durationsExpected = execFileSync(`${root}target/release/probl`, ['run', 'web/test/durations.probl'], {
+    cwd: root, encoding: 'utf8',
+  });
+  expect(!durations.error && `${durations.result}\n` === durationsExpected, 'duration units and time statistics match native results', durations.result);
+  const timeSource = "report one_of(['2027-01-01T00:00:00','2027-01-01T00:00:00.000000001'])";
+  await page.evaluate((source) => window.playground.setSource(source), timeSource);
+  await page.waitForSelector('#summary-0');
+  await page.select('#summary-0', 'moments');
+  const timeMoments = await applySummaries();
+  const timeExpected = api.run({source:timeSource,report_summaries:{0:'moments'}});
+  expect(!timeMoments.error && timeMoments.result === timeExpected.output && timeMoments.result.includes('0.5ns'), 'datetime summary controls preserve fractional duration units', timeMoments.result);
+  expect(timeExpected.reports.reports[0].groups[0].summary.sd_value.value === '0.5ns', 'typed JSON carries the SD unit');
 
   // Stopping a long run, and running again after.
   await page.evaluate(() => window.playground.setSource('@mode sample(runs: 100_000_000, seed: 1)\nreport d6 > 3'));
