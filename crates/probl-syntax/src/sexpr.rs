@@ -43,6 +43,7 @@ pub fn item(item: &Item) -> String {
 
 pub fn ty(t: &TypeExpr) -> String {
     match t {
+        TypeExpr::Union { members, .. } => members.iter().map(ty).collect::<Vec<_>>().join(" or "),
         TypeExpr::Named { name, args } if args.is_empty() => name.name.clone(),
         TypeExpr::Named { name, args } => {
             let args: Vec<String> = args.iter().map(ty).collect();

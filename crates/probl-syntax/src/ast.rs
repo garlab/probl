@@ -68,10 +68,20 @@ pub struct Import {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TypeExpr {
+    Union {
+        members: Vec<TypeExpr>,
+        span: Span,
+    },
     /// `int`, `list[int]`, `dist[int]`, `Fighter`.
-    Named { name: Ident, args: Vec<TypeExpr> },
+    Named {
+        name: Ident,
+        args: Vec<TypeExpr>,
+    },
     /// `{ hp: int, ac: int }`.
-    Record { fields: Vec<(Ident, TypeExpr)>, span: Span },
+    Record {
+        fields: Vec<(Ident, TypeExpr)>,
+        span: Span,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]

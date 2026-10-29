@@ -111,7 +111,7 @@ fn typed_literals_and_bare_bags_keep_their_contracts() {
 fn constructors_preserve_recipes_and_spreads_use_iteration() {
     facts(
         r#"
-        report typeof list(d6, 0) == "list[any]"
+        report typeof list(d6, 0) == "list[int or dist[int]]"
         report typeof bag(d6) == "bag[dist[int]]"
         report typeof set(d6, d6) == "set[dist[int]]" and len(set(d6, d6)) == 1
         report typeof bag(geometric(1e-12)) == "bag[dist[int]]"

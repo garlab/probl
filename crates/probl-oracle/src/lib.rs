@@ -1483,31 +1483,47 @@ fn unary(op: UnOp, v: &Value) -> R<Value> {
 }
 
 fn runtime_type(v: &Value, depth: usize) -> R<String> {
-    if depth > 64 {
-        return too_big("typeof nesting");
-    }
     fn common<'a>(values: impl Iterator<Item = &'a Value>, depth: usize) -> R<String> {
-        let mut name = None;
+        // Group values by kind before inspecting their contents. This is
+        // independent of the engine's pairwise structural type merging.
+        let mut kinds: BTreeMap<u8, (&str, Vec<&Value>)> = BTreeMap::new();
         for value in values {
-            let ty = runtime_type(value, depth)?;
-            if name.as_ref().is_some_and(|n| n != &ty) {
-                return Ok("any".into());
+            if depth > 64 {
+                return too_big("typeof nesting");
             }
-            name = Some(ty);
+            let (rank, name) = match value {
+                Value::Unit => (0, "()"),
+                Value::Bool(_) => (1, "bool"),
+                Value::Int(_) => (2, "int"),
+                Value::Float(_) => (3, "float"),
+                Value::Prob(_) => (4, "prob"),
+                Value::Str(_) => (5, "str"),
+                Value::Range(..) => (6, "range"),
+                Value::List(_) => (7, "list"),
+                Value::Dist(_) => (8, "dist"),
+            };
+            let (_, contents) = kinds.entry(rank).or_insert_with(|| (name, Vec::new()));
+            match value {
+                Value::List(xs) => contents.extend(xs.iter()),
+                Value::Dist(d) => contents.extend(d.iter().map(|(v, _)| v)),
+                _ => {}
+            }
         }
-        Ok(name.unwrap_or_else(|| "unknown".into()))
+        let mut names = Vec::new();
+        for (kind, contents) in kinds.into_values() {
+            names.push(if matches!(kind, "list" | "dist") {
+                format!("{kind}[{}]", common(contents.into_iter(), depth + 1)?)
+            } else {
+                kind.to_owned()
+            });
+        }
+        Ok(if names.is_empty() {
+            "unknown".into()
+        } else {
+            names.join(" or ")
+        })
     }
-    Ok(match v {
-        Value::Unit => "()".into(),
-        Value::Bool(_) => "bool".into(),
-        Value::Int(_) => "int".into(),
-        Value::Float(_) => "float".into(),
-        Value::Prob(_) => "prob".into(),
-        Value::Str(_) => "str".into(),
-        Value::Range(..) => "range".into(),
-        Value::List(xs) => format!("list[{}]", common(xs.iter(), depth + 1)?),
-        Value::Dist(d) => format!("dist[{}]", common(d.iter().map(|(v, _)| v), depth + 1)?),
-    })
+    common(std::iter::once(v), depth)
 }
 
 fn overflow() -> Stop {

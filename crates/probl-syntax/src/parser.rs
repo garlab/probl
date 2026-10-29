@@ -419,6 +419,31 @@ impl Parser {
     }
 
     fn type_expr_inner(&mut self) -> PResult<TypeExpr> {
+        let lo = self.span();
+        let first = self.type_atom()?;
+        if !self.eat(&Tok::Or) {
+            return Ok(first);
+        }
+        let mut members = vec![first];
+        loop {
+            self.skip_newlines();
+            members.push(self.type_atom()?);
+            if !self.eat(&Tok::Or) {
+                break;
+            }
+        }
+        Ok(TypeExpr::Union {
+            members,
+            span: lo.to(self.tokens[self.pos - 1].span),
+        })
+    }
+
+    fn type_atom(&mut self) -> PResult<TypeExpr> {
+        if self.eat(&Tok::LParen) {
+            let ty = self.type_expr()?;
+            self.expect(&Tok::RParen, "to close the type")?;
+            return Ok(ty);
+        }
         if self.at(&Tok::LBrace) {
             let lo = self.bump().span;
             let mut fields = Vec::new();

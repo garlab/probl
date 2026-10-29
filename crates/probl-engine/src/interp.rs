@@ -2255,7 +2255,7 @@ impl<'p> Engine<'p> {
                     // A delayed variable is drawn only if some of its values
                     // could fail the check.
                     if let Value::Delayed(_) = &w.slots[*slot as usize] {
-                        let always = *ty == TypeSpec::Float;
+                        let always = ty.includes(&TypeSpec::Float);
                         if always {
                             continue;
                         }
@@ -3012,6 +3012,66 @@ impl<'p> Engine<'p> {
                 "type conversion nesting exceeds the limit of 64",
             ));
         }
+        if let TypeSpec::Union(members) = ty {
+            // Containers have one candidate of their kind; descend through
+            // coerce_at so its depth/work limits also cover an exact match.
+            if !matches!(
+                v,
+                Value::List(_)
+                    | Value::Map(_)
+                    | Value::Set(_)
+                    | Value::Bag(_)
+                    | Value::Record(_)
+                    | Value::Dist(_)
+                    | Value::Joint(_)
+            ) && self.conforms(&v, ty)
+            {
+                return Ok(v);
+            }
+            let target = match &v {
+                Value::Int(_) | Value::Prob(_) if ty.includes(&TypeSpec::Float) => Some(&TypeSpec::Float),
+                Value::Analytic(a) if a.int && ty.includes(&TypeSpec::Float) => Some(&TypeSpec::Float),
+                Value::Int(_) | Value::Float(_) if ty.includes(&TypeSpec::Prob) => Some(&TypeSpec::Prob),
+                Value::List(_) | Value::Range(..) => ty.member_kind("list"),
+                Value::Set(_) => ty.member_kind("set"),
+                Value::Bag(_) => ty.member_kind("bag"),
+                Value::Map(_) => ty.member_kind("map"),
+                Value::Dist(_)
+                | Value::Joint(_)
+                | Value::Counts(_)
+                | Value::Continuous(_)
+                | Value::MultivariateNormal(_) => ty.member_kind("dist"),
+                Value::Record(r) => members.iter().find(|t| match t {
+                    TypeSpec::Record(id) => r.ty.as_deref() == Some(self.prog.records[*id as usize].name.as_str()),
+                    TypeSpec::AnonRecord(fs) => {
+                        fs.len() == r.fields.len() && fs.iter().all(|(n, _)| r.get(n).is_some())
+                    }
+                    _ => false,
+                }),
+                _ => None,
+            };
+            return match target {
+                Some(t) => self.coerce_at(v, t, span, depth + 1),
+                None => Ok(v),
+            };
+        }
+        // A lazy count law has one numeric outcome kind. Choose its union
+        // member from that kind, never from a finite listing of its support.
+        if let (Value::Counts(c), TypeSpec::Dist(t)) = (&v, ty) {
+            if matches!(**t, TypeSpec::Union(_)) {
+                let source = if c.floats { TypeSpec::Float } else { TypeSpec::Int };
+                let target = if t.includes(&source) {
+                    source
+                } else if !c.floats && t.includes(&TypeSpec::Float) {
+                    TypeSpec::Float
+                } else if t.includes(&TypeSpec::Prob) {
+                    TypeSpec::Prob
+                } else {
+                    return Ok(v);
+                };
+                return self.coerce_at(v, &TypeSpec::Dist(Box::new(target)), span, depth + 1);
+            }
+        }
         Ok(match (v, ty) {
             (Value::Analytic(_) | Value::Event(_), TypeSpec::Prob) => {
                 return Err(analytic::unsupported("converting this outcome to prob").at(span));
@@ -3100,10 +3160,17 @@ impl<'p> Engine<'p> {
                 // A listed count law is decided from its law, which says
                 // what its listing cut off.
                 if let Some(law) = &d.law {
-                    if **t == TypeSpec::Float && !law.floats_hold() {
+                    let source = match d.outcomes.first().map(|(v, _)| v) {
+                        Some(Value::Float(_)) => TypeSpec::Float,
+                        Some(Value::Prob(_)) => TypeSpec::Prob,
+                        _ => TypeSpec::Int,
+                    };
+                    let converts = !t.includes(&source);
+                    if converts && t.includes(&TypeSpec::Float) && !law.floats_hold() {
                         return Err(no_float_holds(law).at(span));
                     }
-                    if **t == TypeSpec::Prob && !law.probabilities() {
+                    if converts && !t.includes(&TypeSpec::Float) && t.includes(&TypeSpec::Prob) && !law.probabilities()
+                    {
                         return Err(
                             OpError::new(format!("{law} has outcomes above 1, so it can't be a dist[prob]")).at(span),
                         );
@@ -3196,7 +3263,9 @@ impl<'p> Engine<'p> {
     /// Does `v` have the declared type?
     fn conforms(&self, v: &Value, ty: &TypeSpec) -> bool {
         match (ty, v) {
+            (TypeSpec::Union(ts), v) => ts.iter().any(|t| self.conforms(v, t)),
             (TypeSpec::Int, Value::Int(_)) => true,
+            (TypeSpec::Int, Value::Analytic(a)) => a.int,
             (TypeSpec::Float, Value::Float(_)) => true,
             (TypeSpec::Float, Value::Analytic(a)) => !a.int,
             (TypeSpec::Complex, Value::Complex(_)) => true,
@@ -3207,7 +3276,7 @@ impl<'p> Engine<'p> {
             (TypeSpec::Unit, Value::Unit) => true,
             (TypeSpec::Function, Value::Closure(_) | Value::Builtin(_)) => true,
             (TypeSpec::List(t), Value::List(items)) => items.iter().all(|x| self.conforms(x, t)),
-            (TypeSpec::List(t), Value::Range(..)) => **t == TypeSpec::Int,
+            (TypeSpec::List(t), Value::Range(..)) => t.includes(&TypeSpec::Int),
             (TypeSpec::Map(k, t), Value::Map(m)) => m.iter().all(|(a, b)| self.conforms(a, k) && self.conforms(b, t)),
             (TypeSpec::Bag(t), Value::Bag(b)) => b.keys().all(|x| self.conforms(x, t)),
             (TypeSpec::BareList, Value::List(_) | Value::Range(..)) => true,
@@ -3216,15 +3285,15 @@ impl<'p> Engine<'p> {
             (TypeSpec::BareSet, Value::Set(_)) => true,
             (TypeSpec::Set(t), Value::Set(s)) => s.keys().all(|x| self.conforms(x, t)),
             (TypeSpec::Dist(t), Value::Dist(d) | Value::Joint(d)) => d.outcomes.iter().all(|(x, _)| match x {
-                Value::Continuous(_) => **t == TypeSpec::Float,
-                Value::MultivariateNormal(_) => matches!(&**t, TypeSpec::List(item) if **item == TypeSpec::Float),
+                Value::Continuous(_) => t.includes(&TypeSpec::Float),
+                Value::MultivariateNormal(_) => vector_outcome_type(t),
                 _ => self.conforms(x, t),
             }),
-            (TypeSpec::Dist(t), Value::Continuous(_)) => **t == TypeSpec::Float,
-            (TypeSpec::Dist(t), Value::MultivariateNormal(_)) => {
-                matches!(&**t, TypeSpec::List(item) if **item == TypeSpec::Float)
+            (TypeSpec::Dist(t), Value::Continuous(_)) => t.includes(&TypeSpec::Float),
+            (TypeSpec::Dist(t), Value::MultivariateNormal(_)) => vector_outcome_type(t),
+            (TypeSpec::Dist(t), Value::Counts(c)) => {
+                t.includes(&if c.floats { TypeSpec::Float } else { TypeSpec::Int })
             }
-            (TypeSpec::Dist(t), Value::Counts(c)) => **t == if c.floats { TypeSpec::Float } else { TypeSpec::Int },
             (TypeSpec::Record(r), Value::Record(rec)) => {
                 let declared = &self.prog.records[*r as usize];
                 rec.ty.as_deref() == Some(declared.name.as_str())
@@ -3704,17 +3773,18 @@ impl<'p> Engine<'p> {
             .position(|t| Some(t.name.as_str()) == r.ty.as_deref())?;
         let mut ty = TypeSpec::Record(id as u32);
         for element in &place.path {
-            ty = match (element, ty) {
-                (PathElem::Field(name), TypeSpec::Record(id)) => self.prog.records[id as usize]
+            ty = ty.project(|t| match (element, t) {
+                (PathElem::Field(name), TypeSpec::Record(id)) => self.prog.records[*id as usize]
                     .fields
                     .iter()
-                    .find(|f| f.name == *name)?
-                    .ty
-                    .clone(),
-                (PathElem::Field(name), TypeSpec::AnonRecord(fields)) => fields.into_iter().find(|(n, _)| n == name)?.1,
-                (PathElem::Index(_), TypeSpec::List(t) | TypeSpec::Map(_, t)) => *t,
-                _ => return None,
-            };
+                    .find(|f| f.name == *name)
+                    .map(|f| f.ty.clone()),
+                (PathElem::Field(name), TypeSpec::AnonRecord(fields)) => {
+                    fields.iter().find(|(n, _)| n == name).map(|(_, t)| t.clone())
+                }
+                (PathElem::Index(_), TypeSpec::List(t) | TypeSpec::Map(_, t)) => Some((**t).clone()),
+                _ => None,
+            })?;
         }
         Some(ty)
     }
@@ -3724,7 +3794,14 @@ impl<'p> Engine<'p> {
             w.slots[place.slot as usize] = v;
             return Ok(());
         }
-        let v = match self.record_place_type(place, w) {
+        let field_type = self.record_place_type(place, w);
+        // If union members project to different field/element types, check
+        // the enclosing named record after updating, using its actual kind.
+        let root_check = field_type
+            .is_none()
+            .then(|| self.named_slot_type(place.slot, w))
+            .flatten();
+        let v = match field_type {
             Some(ty) => {
                 let v = self.coerce(v, &ty, span)?;
                 if !self.conforms(&v, &ty) {
@@ -3755,7 +3832,22 @@ impl<'p> Engine<'p> {
         if matches!(target, Value::Dead) {
             return Err(self.no_value(f, place.slot, span));
         }
-        update(target, &keys, v, &mut self.budget).map_err(|e| e.at(span))
+        update(target, &keys, v, &mut self.budget).map_err(|e| e.at(span))?;
+        if let Some(ty) = root_check {
+            self.check_slot(f, place.slot, &ty, w, span)?;
+        }
+        Ok(())
+    }
+
+    fn named_slot_type(&self, slot: SlotId, w: &World) -> Option<TypeSpec> {
+        let Value::Record(r) = &w.slots[slot as usize] else {
+            return None;
+        };
+        self.prog
+            .records
+            .iter()
+            .position(|t| Some(t.name.as_str()) == r.ty.as_deref())
+            .map(|id| TypeSpec::Record(id as u32))
     }
 
     /// Convert a variable to its declared type, or fail.
@@ -3818,7 +3910,9 @@ impl<'p> Engine<'p> {
             None => Some(None),
         };
         if let (None, Some(types), true) = (&field, types, named.is_empty()) {
-            if self.in_place(f, place, *func, &mut values, types, w, span)? {
+            if self.named_slot_type(place.slot, w).is_none()
+                && self.in_place(f, place, *func, &mut values, types, w, span)?
+            {
                 return Ok(());
             }
         }
@@ -4885,6 +4979,14 @@ fn no_float_holds(law: &crate::dist::Counts) -> OpError {
         "{law} has outcomes that no float holds, so it can't be a dist[float]"
     ))
     .help("`dist[int]` keeps them as ints")
+}
+
+fn vector_outcome_type(ty: &TypeSpec) -> bool {
+    match ty.member_kind("list") {
+        Some(TypeSpec::BareList) => true,
+        Some(TypeSpec::List(t)) => t.includes(&TypeSpec::Float),
+        _ => false,
+    }
 }
 
 /// Help for a value that doesn't have its declared type, when it's one of

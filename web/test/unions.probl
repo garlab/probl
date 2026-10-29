@@ -1,0 +1,27 @@
+# Union choices preserve exact types, and descriptions merge structurally.
+let kept: int or float = 1
+let widened: prob or float = 1
+let probability: str or prob = 50%
+report [typeof kept, typeof widened, typeof probability]
+fn outcome(): str or int { if 50% { "a" } else { 1 } }
+report typeof outcome()
+let default_kind: list[float] or set[int] = [1, 1, 2]
+let chosen_kind: set[int] or str = [1, 1, 2]
+report [default_kind, chosen_kind]
+var nested: list[set[int]] or str = [[1, 1]]
+nested.push([2, 2])
+report nested
+report typeof [[], [1], ["a"]]
+report typeof [{x: 1}, {x: "a"}]
+type Point = { x: int }
+type Vector = { x: str }
+report typeof [Point {x:1}, Vector {x:"a"}]
+report typeof [Point {x:1}, Vector {x:"a"}, {x:2}]
+type Flexible = {x: int or str}
+report typeof [Flexible {x:1}, Flexible {x:"a"}, {x:2}]
+let broad: dist[int or float] = geometric(1e-16)
+report typeof broad
+let converted: dist[str or float] = geometric(1e-12)
+report typeof converted
+let count: dist[int or str] or bool = poisson(3)
+report [typeof count, pmf(count, 2)]

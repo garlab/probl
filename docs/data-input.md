@@ -77,7 +77,7 @@ tail -n +2 pilot.csv | cut -d, -f3 | probl run counts.probl   # with: let counts
 | `json` | `.json` | any type data can have |
 | `lines` | `.txt`, and stdin by default | `list[T]`, for a plain type `T`: one value per non-blank line |
 
-**Data has these types:** the plain types `int`, `float`, `prob`, `bool`, `date`, `str` and enums, and records, `list`, `map`, `set` and `bag` of those. Collections need declared element types; bare `list`, `map`, `set` and `bag` are not data schemas. The compiler checks the whole declared type, through every named record it refers to:
+**Data has these types:** the plain types `int`, `float`, `prob`, `bool`, `date`, `str` and enums, and records, `list`, `map`, `set` and `bag` of those. Collections need declared element types; bare `list`, `map`, `set` and `bag` are not data schemas. Union annotations are not input schemas either: read concrete types, then assign the loaded values to union-typed variables. The compiler checks the whole declared type, through every named record it refers to:
 - A distribution or a function anywhere in it is an error at the field that has it.
 - So is a CSV field that isn't plain, or a map from JSON whose keys can't be text (below).
 

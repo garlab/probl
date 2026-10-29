@@ -422,7 +422,7 @@ impl Fault {
 }
 
 /// A declared type, checked when a value is stored.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TypeSpec {
     Int,
     Float,
@@ -446,6 +446,7 @@ pub enum TypeSpec {
     Record(u32),
     Enum(u32),
     AnonRecord(Vec<(String, TypeSpec)>),
+    Union(Vec<TypeSpec>),
 }
 
 impl TypeSpec {
@@ -458,6 +459,7 @@ impl TypeSpec {
     pub fn describe_in(&self, records: &[RecordType], enums: &[EnumType]) -> String {
         let describe = |t: &TypeSpec| t.describe_in(records, enums);
         match self {
+            TypeSpec::Union(types) => types.iter().map(describe).collect::<Vec<_>>().join(" or "),
             TypeSpec::Int => "int".into(),
             TypeSpec::Float => "float".into(),
             TypeSpec::Complex => "complex".into(),

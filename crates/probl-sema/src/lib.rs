@@ -14,6 +14,7 @@ pub mod lower;
 pub mod pretty;
 pub mod rewards;
 pub mod symbols;
+pub mod types;
 
 pub use builtins::{Builtin, Constant};
 pub use liveness::{Liveness, SlotSet, analyze};

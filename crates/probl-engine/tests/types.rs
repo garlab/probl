@@ -62,9 +62,9 @@ fn distribution_inspection_does_not_lift_or_draw() {
         ("beta(2, 3)", "dist[float]"),
         ("binomial(5, 33%)", "dist[int]"),
         ("roll(2, d6)", "dist[list[int]]"),
-        ("one_of([1, \"x\"])", "dist[any]"),
+        ("one_of([1, \"x\"])", "dist[int or str]"),
         ("one_of([normal(0, 1), 1.0])", "dist[float]"),
-        ("one_of([normal(0, 1), 1])", "dist[any]"),
+        ("one_of([normal(0, 1), 1])", "dist[int or float]"),
     ] {
         assert_eq!(type_of(expr), expected, "{expr}");
     }
@@ -89,10 +89,10 @@ fn containers_named_types_and_empty_values() {
     for (expr, expected) in [
         ("[]", "list[unknown]"),
         ("[1, 2]", "list[int]"),
-        ("[1, 2.0]", "list[any]"),
+        ("[1, 2.0]", "list[int or float]"),
         ("[d6, d8]", "list[dist[int]]"),
         ("[[1], [2, 3]]", "list[list[int]]"),
-        ("[[], [1]]", "list[any]"),
+        ("[[], [1]]", "list[list[int]]"),
         ("[: ]", "map[unknown, unknown]"),
         ("[\"a\": 1, \"b\": 2]", "map[str, int]"),
         ("bag()", "bag[unknown]"),
@@ -126,7 +126,7 @@ fn operands_evaluate_once_and_keep_errors_and_world_effects() {
     }
     assert_eq!(
         type_of("simulate { if (chance { 50% => true, else => false }) { 1 } else { \"x\" } }"),
-        "dist[any]"
+        "dist[int or str]"
     );
     assert_eq!(
         distribution("report [d6, d8].map(d -> typeof d)")[0].0,

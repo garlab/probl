@@ -875,7 +875,7 @@ pub fn keyword(word: &str) -> Option<Doc> {
     match word {
         "typeof" => doc(
             "typeof expression -> str",
-            "The runtime type of a value, such as \"prob\", \"float\", \"dist[int]\" or \"list[int]\". Evaluates the operand once, without drawing from distribution values. Use parentheses around compound expressions: `typeof (d6 > 3)`. Empty containers use `unknown`; mixed element types use `any`. This describes runtime values, not inferred static types.",
+            "The runtime type of a value, such as \"prob\", \"float\", \"dist[int]\" or \"list[int]\". Evaluates the operand once, without drawing from distribution values. Use parentheses around compound expressions: `typeof (d6 > 3)`. Empty containers use `unknown`; mixed element types use unions such as `int or str`. Nested collections merge their element types recursively. This describes runtime values, not inferred static types.",
         ),
         "let" => doc(
             "let x = e or let x ~ D",

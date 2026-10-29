@@ -353,6 +353,10 @@ const CORPUS: &[(&str, &str)] = &[
         "report [typeof [], typeof [d6, d8], typeof one_of([1, \"x\"]), typeof [[1], [2]]]",
     ),
     (
+        "typeof nested unions",
+        r#"report [typeof [[], [1], ["a"]], typeof [[d6], ["a", 1]], typeof [1, 2.0, true], typeof [true, 2.0, 1]]"#,
+    ),
+    (
         "typeof evaluates its operand once",
         "var n = 0\nlet t = typeof { n += 1; d6 }\nreport t\nreport n",
     ),

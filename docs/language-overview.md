@@ -490,7 +490,18 @@ report typeof x == "int"       # true
 
 `33%` is shorthand for `0.33`, a float. `prob(x)` checks that a number is finite and within `[0, 1]` and returns a probability; it also explicitly converts booleans to 0 or 1. It never clamps or draws. Numbers convert implicitly, with the same range check, when a declared type, parameter, condition or `score` expects `prob`. This expectation flows into the result branches of `if`, `chance`, `match` and blocks: `let p: prob = 33%` creates an actual probability, as does the argument in `bernoulli(33%)`. Variables and arithmetic also work: `let rate = 33%; binomial(100, rate)` and `binomial(100, 1 - rate)`. This leaves `rate` a float; `let p: prob = rate` creates a probability. Typed containers convert their contents recursively without changing the source collection. Ordinary probability arithmetic returns numbers, and probabilities widen to floats in numeric contexts. Boolean, numeric, probability and distribution values remain distinct.
 
-Parenthesize compound operands: `typeof (x + 1)`. `typeof` evaluates its operand once, so calls and errors still occur. It describes current contents, not an inferred static type: empty lists give `"list[unknown]"`, mixed element types give `"list[any]"`, and named records/enums give their type name. `unknown` and `any` here are descriptive markers, not annotation types. Directly inspecting a delayed sampled parameter with `typeof p` preserves exact Bayesian updates; calculating an expression involving `p` still needs its value. See [the type inspection contract](semantics.md#1-values-and-types).
+Use `or` in a declared type to allow alternatives:
+
+```probl
+let values: list[int or str] = [1, "A"]
+fn outcome(): int or str { if 50% { 1 } else { "A" } }
+report typeof values   # list[int or str]
+report outcome()
+```
+
+A matching value keeps its type; otherwise numeric conversion prefers `float`, then `prob`. A union may contain only one type of each collection kind, so write `list[int or str]` for mixed elements; `list[int] or list[str]` is rejected. An item literal prefers a list if the union includes one. If its alternatives are a set and a bag, choose explicitly with `set(…)` or `bag(…)`.
+
+Parenthesize compound operands: `typeof (x + 1)`. `typeof` evaluates its operand once, so calls and errors still occur. It describes current contents, not an inferred static type: empty lists give `"list[unknown]"`, mixed element types give unions such as `"list[int or str]"`, and named records/enums give their type name. Nested containers merge recursively, so `[[], [1]]` has type `"list[list[int]]"`. `unknown` is a descriptive marker, not an annotation type. Directly inspecting a delayed sampled parameter with `typeof p` preserves exact Bayesian updates; calculating an expression involving `p` still needs its value. See [the type inspection contract](semantics.md#1-values-and-types).
 
 Type annotations are optional for program values and required for file input. Impossible literal annotations are rejected during compilation; general type checks currently happen at runtime when the expression is reached. Full static type inference is still planned. Annotations also supply context for checked numeric conversions, so `typeof` reflects the converted value.
 

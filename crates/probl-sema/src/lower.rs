@@ -156,6 +156,7 @@ struct Lowerer<'a> {
     anonymous_fields: FxHashSet<String>,
     /// Fields used by name, whose record isn't known until the program runs.
     field_uses: Vec<(Span, String)>,
+    declared_types: Vec<(TypeSpec, Span)>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -186,6 +187,7 @@ impl<'a> Lowerer<'a> {
             field_defs: FxHashMap::default(),
             anonymous_fields: FxHashSet::default(),
             field_uses: Vec::new(),
+            declared_types: Vec::new(),
         }
     }
 
@@ -357,12 +359,22 @@ impl<'a> Lowerer<'a> {
 
     /// The type named by a type annotation.
     fn type_spec(&mut self, t: &ast::TypeExpr) -> Option<TypeSpec> {
+        let ty = self.type_spec_inner(t)?;
+        self.declared_types.push((ty.clone(), type_span(t)));
+        Some(ty)
+    }
+
+    fn type_spec_inner(&mut self, t: &ast::TypeExpr) -> Option<TypeSpec> {
         match t {
+            ast::TypeExpr::Union { members, .. } => {
+                let types: Option<Vec<_>> = members.iter().map(|t| self.type_spec_inner(t)).collect();
+                Some(TypeSpec::union(types?))
+            }
             ast::TypeExpr::Record { fields, .. } => {
                 let mut specs = Vec::new();
                 for (name, ty) in fields {
                     self.anonymous_fields.insert(name.name.clone());
-                    specs.push((name.name.clone(), self.type_spec(ty)?));
+                    specs.push((name.name.clone(), self.type_spec_inner(ty)?));
                 }
                 specs.sort_by(|a, b| a.0.cmp(&b.0));
                 Some(TypeSpec::AnonRecord(specs))
@@ -395,7 +407,7 @@ impl<'a> Lowerer<'a> {
                     self.error(name.span, msg);
                     return None;
                 }
-                let arg = |i: usize, this: &mut Self| this.type_spec(&args[i]).map(Box::new);
+                let arg = |i: usize, this: &mut Self| this.type_spec_inner(&args[i]).map(Box::new);
                 Some(match n {
                     "int" => TypeSpec::Int,
                     "float" => TypeSpec::Float,
@@ -442,6 +454,10 @@ impl<'a> Lowerer<'a> {
 
     /// Reject a literal that can never have the declared type.
     fn check_literal(&mut self, value: &ast::Expr, ty: &TypeSpec) {
+        // A union's literal choice is made by contextualize, after lowering.
+        if matches!(ty, TypeSpec::Union(_)) {
+            return;
+        }
         let found = match (&value.kind, ty) {
             (ast::ExprKind::Int(v), TypeSpec::Prob) if *v == 0 || *v == 1 => return,
             (ast::ExprKind::Int(_), TypeSpec::Int | TypeSpec::Float) => return,
@@ -476,6 +492,55 @@ impl<'a> Lowerer<'a> {
     /// Convert known numeric literals early, diagnosing invalid ranges.
     /// Other numbers are checked at the receiving runtime type boundary.
     fn contextualize(&mut self, e: &mut Expr, ty: &TypeSpec) {
+        if let TypeSpec::Union(_) = ty {
+            let scalar = if crate::coercions::int_literal(e).is_some() {
+                Some(TypeSpec::Int)
+            } else if crate::coercions::float_literal(e).is_some() {
+                Some(TypeSpec::Float)
+            } else {
+                match &e.kind {
+                    ExprKind::Lit(Lit::Str(_)) => Some(TypeSpec::Str),
+                    ExprKind::Lit(Lit::Bool(_)) => Some(TypeSpec::Bool),
+                    ExprKind::Lit(Lit::Prob(_)) => Some(TypeSpec::Prob),
+                    _ => None,
+                }
+            };
+            if let Some(source) = scalar {
+                let target = if ty.includes(&source) {
+                    Some(source.clone())
+                } else if matches!(source, TypeSpec::Int | TypeSpec::Prob) && ty.includes(&TypeSpec::Float) {
+                    Some(TypeSpec::Float)
+                } else if matches!(source, TypeSpec::Int | TypeSpec::Float) && ty.includes(&TypeSpec::Prob) {
+                    Some(TypeSpec::Prob)
+                } else {
+                    None
+                };
+                if let Some(t) = target {
+                    self.contextualize(e, &t);
+                } else {
+                    let name = ty.describe_in(&self.records, &self.enums);
+                    self.error(
+                        e.span,
+                        format!(
+                            "expected {name}, found {}",
+                            source.describe_in(&self.records, &self.enums)
+                        ),
+                    );
+                }
+            } else {
+                let kind = match &e.kind {
+                    ExprKind::List(_) => Some("list"),
+                    ExprKind::Map(_) => Some("map"),
+                    _ => None,
+                };
+                if let Some(kind) = kind {
+                    if let Some(t) = self.literal_union_kind(ty, kind, e.span) {
+                        self.contextualize(e, &t);
+                    }
+                }
+            }
+            return;
+        }
         if *ty == TypeSpec::Int {
             // A float never becomes an int, even a whole one.
             if let Some(n) = crate::coercions::float_literal(e) {
@@ -743,6 +808,26 @@ impl<'a> Lowerer<'a> {
         for (id, decl) in fn_decls {
             self.fn_body(id, decl);
         }
+        let mut reported = BTreeSet::new();
+        for (ty, span) in std::mem::take(&mut self.declared_types) {
+            for (path, a, b) in crate::types::validate(&ty, &self.records) {
+                let a_name = a.describe_in(&self.records, &self.enums);
+                let b_name = b.describe_in(&self.records, &self.enums);
+                let what = a
+                    .container_kind()
+                    .map(|k| format!("two {k} types"))
+                    .unwrap_or_else(|| "record types with the same fields".into());
+                let prefix = if path.is_empty() {
+                    String::new()
+                } else {
+                    format!("{path}: ")
+                };
+                let message = format!("{prefix}{what} in a union: `{a_name}` and `{b_name}`");
+                if reported.insert((span.lo, message.clone())) {
+                    self.error(span, message).help("put the union inside the element or field types (which also permits mixed contents), or use distinct named records to preserve the alternatives");
+                }
+            }
+        }
     }
 
     fn pragma(&mut self, pragma: &ast::Pragma) {
@@ -905,38 +990,31 @@ impl<'a> Lowerer<'a> {
     /// A record type that contains itself, other than inside a list, map or
     /// bag, has no values: each would contain another one forever.
     fn check_record_cycles(&mut self) {
-        fn needs(ty: &TypeSpec, out: &mut Vec<u32>) {
-            match ty {
-                TypeSpec::Record(r) => out.push(*r),
-                TypeSpec::Dist(t) => needs(t, out),
-                TypeSpec::AnonRecord(fields) => fields.iter().for_each(|(_, t)| needs(t, out)),
-                _ => {}
+        fn inhabited(t: &TypeSpec, known: &[bool]) -> bool {
+            match t {
+                TypeSpec::Record(r) => known[*r as usize],
+                TypeSpec::Dist(t) => inhabited(t, known),
+                TypeSpec::AnonRecord(fs) => fs.iter().all(|(_, t)| inhabited(t, known)),
+                TypeSpec::Union(ts) => ts.iter().any(|t| inhabited(t, known)),
+                _ => true,
             }
         }
-        let edges: Vec<Vec<u32>> = self
-            .records
-            .iter()
-            .map(|r| {
-                let mut out = Vec::new();
-                r.fields.iter().for_each(|f| needs(&f.ty, &mut out));
-                out
-            })
-            .collect();
-        for start in 0..self.records.len() {
-            let mut seen = vec![false; self.records.len()];
-            let mut stack = edges[start].clone();
-            let mut cyclic = false;
-            while let Some(r) = stack.pop() {
-                if r as usize == start {
-                    cyclic = true;
-                    break;
-                }
-                if !std::mem::replace(&mut seen[r as usize], true) {
-                    stack.extend(&edges[r as usize]);
+        let mut known = vec![false; self.records.len()];
+        loop {
+            let mut changed = false;
+            for (i, record) in self.records.iter().enumerate() {
+                if !known[i] && record.fields.iter().all(|f| inhabited(&f.ty, &known)) {
+                    known[i] = true;
+                    changed = true;
                 }
             }
-            if cyclic {
-                let (name, span) = (self.records[start].name.clone(), self.records[start].span);
+            if !changed {
+                break;
+            }
+        }
+        for (i, finite) in known.into_iter().enumerate() {
+            if !finite {
+                let (name, span) = (self.records[i].name.clone(), self.records[i].span);
                 self.error(span, format!("every `{name}` would contain another `{name}`, forever"))
                     .help(format!(
                         "hold the inner ones in a list, which can be empty, like `parts: list[{name}]`"
@@ -1604,19 +1682,19 @@ impl<'a> Lowerer<'a> {
                 self.record_by_name.get(&n.name).copied().map(TypeSpec::Record)
             }
             ast::ExprKind::With { expr, .. } => self.declared_type(expr),
-            ast::ExprKind::Field { expr, name } => match self.declared_type(expr)? {
-                TypeSpec::Record(r) => self.records[r as usize]
+            ast::ExprKind::Field { expr, name } => self.declared_type(expr)?.project(|t| match t {
+                TypeSpec::Record(r) => self.records[*r as usize]
                     .fields
                     .iter()
                     .find(|f| f.name == name.name)
                     .map(|f| f.ty.clone()),
-                TypeSpec::AnonRecord(fields) => fields.into_iter().find(|(n, _)| n == &name.name).map(|(_, t)| t),
+                TypeSpec::AnonRecord(fields) => fields.iter().find(|(n, _)| n == &name.name).map(|(_, t)| t.clone()),
                 _ => None,
-            },
-            ast::ExprKind::Index { expr, .. } => match self.declared_type(expr)? {
-                TypeSpec::List(t) | TypeSpec::Map(_, t) => Some(*t),
+            }),
+            ast::ExprKind::Index { expr, .. } => self.declared_type(expr)?.project(|t| match t {
+                TypeSpec::List(t) | TypeSpec::Map(_, t) => Some((**t).clone()),
                 _ => None,
-            },
+            }),
             _ => None,
         }
     }
@@ -2256,6 +2334,19 @@ impl<'a> Lowerer<'a> {
             return self.expr(e, out);
         }
         let Some(ty) = ty else { return self.expr(e, out) };
+        if let TypeSpec::Union(members) = ty {
+            let target = match &e.kind {
+                ast::ExprKind::List(_) => self.literal_union_kind(ty, "list", e.span),
+                ast::ExprKind::Map(_) => self.literal_union_kind(ty, "map", e.span),
+                ast::ExprKind::Record { name: None, fields } => members.iter().find(|t| {
+                    matches!(t, TypeSpec::AnonRecord(fs) if fs.len() == fields.len() && fs.iter().all(|(n, _)| fields.iter().any(|f| f.name.name == *n)))
+                }).cloned(),
+                _ => None,
+            };
+            if let Some(target) = target {
+                return self.expr_expected(e, Some(&target), out);
+            }
+        }
         let kind = match (&e.kind, ty) {
             (
                 ast::ExprKind::If { .. }
@@ -2351,6 +2442,24 @@ impl<'a> Lowerer<'a> {
             }
         };
         Expr { kind, span: e.span }
+    }
+
+    /// Literal kind selection never probes or converts its elements.
+    fn literal_union_kind(&mut self, ty: &TypeSpec, default: &str, span: Span) -> Option<TypeSpec> {
+        if let Some(t) = ty.member_kind(default) {
+            return Some(t.clone());
+        }
+        let kinds: &[&str] = if default == "list" { &["set", "bag"] } else { &["bag"] };
+        let choices: Vec<_> = kinds.iter().filter_map(|k| ty.member_kind(k)).cloned().collect();
+        match choices.as_slice() {
+            [one] => Some(one.clone()),
+            [] => None,
+            _ => {
+                self.error(span, "collection literal could be a set or a bag")
+                    .help("choose the kind explicitly with `set(…)` or `bag(…)`");
+                None
+            }
+        }
     }
 
     fn later(&self, stmts: &[Stmt]) -> Later {
@@ -2886,6 +2995,8 @@ impl<'a> Lowerer<'a> {
             return lit(Lit::Unit, span);
         };
         let receiver_type = self.declared_type(receiver);
+        let receiver_type = receiver_type
+            .and_then(|t| t.project(|t| matches!(t, TypeSpec::List(_) | TypeSpec::Map(..)).then(|| t.clone())));
         let types = match (&receiver_type, b) {
             (Some(TypeSpec::List(t)), Builtin::Push) => vec![None, Some((**t).clone())],
             (Some(TypeSpec::List(t)), Builtin::Insert) => vec![None, None, Some((**t).clone())],
@@ -3527,6 +3638,7 @@ fn type_span(t: &ast::TypeExpr) -> Span {
             None => name.span,
         },
         ast::TypeExpr::Record { span, .. } => *span,
+        ast::TypeExpr::Union { span, .. } => *span,
     }
 }
 

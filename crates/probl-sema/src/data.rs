@@ -182,6 +182,11 @@ impl Checker<'_> {
                 Some("read the values, then make a distribution of them, like `one_of(values)`"),
                 at,
             )),
+            TypeSpec::Union(_) => self.problems.push(Problem::new(
+                "input data schemas don't support unions",
+                Some("read a concrete schema, then assign the loaded values to a union-typed variable"),
+                at,
+            )),
             TypeSpec::BareList | TypeSpec::BareMap | TypeSpec::BareBag | TypeSpec::BareSet => {
                 self.problems.push(Problem::new(
                     format!("`{}` needs type arguments when reading data", self.describe(ty)),

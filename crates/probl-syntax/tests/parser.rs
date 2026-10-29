@@ -206,3 +206,20 @@ fn a_failed_arm_is_skipped_whole() {
     assert_eq!(diags.len(), 1, "{diags:?}");
     assert_eq!(sexpr::program(&program), "(match x ([a b] => (+ a b)))\n");
 }
+
+#[test]
+fn union_types_nest_without_changing_expression_or() {
+    assert_eq!(
+        parse_ok(
+            "fn f(x: list[int or str]): int or str { x[0] }\nlet x: set[int] or bag[int] = set(1)\nreport true or false"
+        ),
+        "(fn f (x: list[int or str]) -> int or str (block (index x 0)))\n(let x: set[int] or bag[int] = (call set 1))\n(report (or true false))\n"
+    );
+    for source in [
+        "let x: int or = 1",
+        "let x: list[int or] = []",
+        "let x: (int or str = 1",
+    ] {
+        assert!(!parse_errors(source).is_empty());
+    }
+}

@@ -1,6 +1,6 @@
 # Type annotations: conversions, literals and unions
 
-> Draft proposal, revised 28 October 2026. Steps 1 to 6 and 8 of the [plan](#implementation-order-and-validation) are implemented. Today's behavior is in the [reference semantics](../semantics.md#1-values-and-types). The examples marked as proposed don't run yet. The first draft proposed annotations that only check; [why that changed](#annotations-that-only-check).
+> Design implemented 29 October 2026: steps 1 to 8 of the [plan](#implementation-order-and-validation). The [reference semantics](../semantics.md#1-values-and-types) is the current contract. Examples include deliberate errors and future behavior after the constructor transition release. The first draft proposed annotations that only check; [why that changed](#annotations-that-only-check).
 
 ## Recommendation
 
@@ -49,7 +49,6 @@ report typeof b        # float
 So what should this return?
 
 ```probl
-# Proposed syntax.
 fn fifty(): prob or float {
   return 50%
 }
@@ -70,7 +69,7 @@ Annotations that convert values are unusual, but each part of this proposal has 
 - **Julia** converts on declared variables and return types with `convert`: `x::Float64 = 1` makes `x` a `Float64`. Its `convert` also turns `2.0` into an `Int`, which this proposal doesn't.
 - **Validation libraries** like Pydantic convert data into declared types, which is what probl's data schemas do.
 
-## What probl does today
+## Behavior before this proposal
 
 Wherever a type is declared (bindings, parameters, return types, record fields, and recursively in lists, maps, bags and distributions), the value is converted:
 
@@ -270,7 +269,6 @@ Otherwise, it's an error. Step 2 can only give a `float` and step 3 only a `prob
 | `int or str` | `1.5` | an error |
 
 ```probl
-# Proposed syntax.
 fn foo(): str or int {
   if 50% { return "A" } else { return 1 }    # each world's result is checked
 }
@@ -306,14 +304,13 @@ The error names the two types and where they are, as in "list element: two map t
 
 It also rules out some unions that would be unambiguous, like `list[int] or list[str]`, a list of all ints or all strings. `list[int or str]` takes both, and mixed lists. And since no union has two list types, an empty list never has to choose between them. A later version could allow two types of one kind when no value could fit both ([alternatives](#types-of-one-kind-in-a-union)).
 
-`typeof` describes a value, not its declaration, so it never names a union: `typeof fifty()` is `"float"`.
+`typeof` describes a value, not its declaration, so a scalar doesn't name a union: `typeof fifty()` is `"float"`.
 
 ### Collections and their element types
 
 A collection has no element type of its own. `typeof` describes the elements it holds, and a declaration limits the variable. Every change to a declared variable is checked, including a `push`, and a change inside one of its fields or elements. That's today's rule, and it stays:
 
 ```probl
-# Proposed: today, `a` and `c` end as "list[any]".
 var a = []                # list[unknown]
 a.push(1)                 # list[int]
 a.push("foo")             # list[int or str]
@@ -337,7 +334,7 @@ A declaration also stops a variable from changing kind. Pushing to a list alread
 
 With unions, `typeof` describes mixed contents exactly, in place of `any`:
 
-| Value | `typeof` today | Proposed |
+| Value | Before unions | Now |
 |---|---|---|
 | `[1, "a"]` | `"list[any]"` | `"list[int or str]"` |
 | `[1, 2.0]` | `"list[any]"` | `"list[int or float]"` |
@@ -348,7 +345,7 @@ With unions, `typeof` describes mixed contents exactly, in place of `any`:
 | `one_of([1, "x"])` | `"dist[any]"` | `"dist[int or str]"` |
 | `[]` | `"list[unknown]"` | Unchanged |
 
-`unknown` merges into the type beside it: an empty list is also a `list[int]`, so `[[], [1]]` is a `list[list[int]]`. Types of one kind merge too, with a union inside, so `typeof` always gives a type that could be declared, and that the value fits: `[[1], ["a"]]` is a `list[list[int or str]]`. A union's types are listed in a fixed order, so the same contents always give the same string. Five lines of the engine's type tests compare against `any`, and the reference semantics and the language overview describe it.
+`unknown` merges into the type beside it: an empty list is also a `list[int]`, so `[[], [1]]` is a `list[list[int]]`. Types of one kind merge too, with a union inside, so mixed contents have a description that fits the union rules and the value: `[[1], ["a"]]` is a `list[list[int or str]]`. The existing descriptive markers, including `unknown`, remain unavailable as annotations. A union's types are listed in a fixed order, so the same contents always give the same string. The engine's type tests, reference semantics, language overview and built-in help use these descriptions.
 
 Records merge as far as a union allows them to. Anonymous records with the same field names merge into one, with a union inside each field: `[{x: 1}, {x: "a"}]` is a `list[{x: int or str}]`. A named record with those field names merges into it too, since it fits it without converting: `[Point {x: 1}, {x: 2}]` is a `list[{x: int}]`. Named records stay apart from each other, even with the same fields, so a value declared `list[Point or Vector]` is still described by name.
 
@@ -572,14 +569,14 @@ In a statically checked language, a trait or an interface also says which operat
 4. **Built-in integer arguments.** Done, as a separate breaking change: `ops::integer` takes only ints, and `int(x)` keeps its own check for a whole float.
 5. **Collection literals as bags.** Done. The compiler flows a declared type into collection literals, through branches and nested literals, including map keys, and chooses the kind before converting any element ([collection literals](#collection-literals)). A union's kinds come with step 7. The engine's field types for a `with` on a record of unknown type still convert values, but don't choose a kind, so a literal written in place and one in a branch agree. Test literals in branches and in other literals, by name and through a function value.
 6. **Sets, constructors and spreading.** Done. `set[T]`, the constructors `set(…)`, `list(…)` and `bag(…)`, and `...` in collection literals and in calls to `set`, `list`, `bag`, `min` and `max` ([building collections](#building-collections)). Accept bare `bag` wherever a type is allowed: choose the bag literal kind, check counts, leave element types unchanged, and require assignments to remain bags. `bag[T]` keeps its existing element checks. The lexer reads `...` before `..` and `..<`. `bag` accepts only positional items and stops lifting over a distribution; constructors build from their arguments as they are, and spreading a distribution is an error. A single collection written as the only argument to `set`, `list` or `bag` is an error for one release, but not one that comes from a spread. Sets print as they're built; bags print compact counts as `bag [item: count, …]`, display text rather than source code. Move the 16 `bag(…)` calls to enumeration, spreading or bag-typed mapping literals, and update the language overview's table.
-7. **Unions:** the grammar (`type { "or" type }`), a union in the compiler's types, flattened and without repeats, the conversion steps, and the check that a union has at most one type of each kind, at any depth ([unions](#unions)). The check follows named record types into their fields, stopping at a record type it has already seen. A collection literal chooses its kind from a union's types. `typeof` merges types of one kind to describe mixed contents, and records as far as a union allows ([collections and their element types](#collections-and-their-element-types)). The compiler never merges a declared union's types: `list[int] or list[str]` stays an error.
-8. **Errors that describe the value.** Done: a failed declaration describes the value as `typeof` does, as in "but it's a list[any]" until unions exist. A declared record type is written as `typeof` writes one, `{a: int}`.
+7. **Unions.** Done. The grammar (`type { "or" type }`), a union in the compiler's types, flattened and without repeats, the conversion steps, and the check that a union has at most one type of each kind, at any depth ([unions](#unions)). The check follows named record types into their fields, stopping at a record type it has already seen. A collection literal chooses its kind from a union's types. `typeof` merges types of one kind to describe mixed contents, and records as far as a union allows ([collections and their element types](#collections-and-their-element-types)). The compiler never merges a declared union's types: `list[int] or list[str]` stays an error.
+8. **Errors that describe the value.** Done: a failed declaration describes the value as `typeof` does, as in "but it's a list[int or str]". A declared record type is written as `typeof` writes one, `{a: int}`.
 
 Steps 1 to 4 and 6 break programs, and step 7 changes how `typeof` describes mixed contents. The rest only add.
 
 ### Acceptance cases for these rules
 
-The rules above need at least these tests. Union syntax belongs to step 7 and doesn't run yet. Step 6 is covered in `sets_and_spreads.rs`, along with the migrated bag tests and the native/WASM collection fixture.
+The rules above are covered by `unions.rs`, `sets_and_spreads.rs`, the conversion and type tests, and the native/WASM fixtures. Union data schemas remain outside this change; loaders still require concrete schemas.
 
 | Area | Tests |
 |---|---|
