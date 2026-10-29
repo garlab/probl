@@ -953,6 +953,7 @@ pub fn compare_counted(a: &Value, b: &Value, mut budget: Option<&mut Budget>) ->
     match (a, b) {
         (Value::Str(x), Value::Str(y)) => Ok(x.cmp(y)),
         (Value::Date(x), Value::Date(y)) => Ok(x.cmp(y)),
+        (Value::DateTime(x), Value::DateTime(y)) => Ok(x.cmp(y)),
         (Value::Enum(x), Value::Enum(y)) if x.ty == y.ty => Ok(x.variant.cmp(&y.variant)),
         (Value::List(x), Value::List(y)) => {
             // Elements are counted as they're compared, then charged

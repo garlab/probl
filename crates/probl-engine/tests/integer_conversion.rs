@@ -289,9 +289,9 @@ both_modes! {
             repeat 3 { count += 1 }
             report count == 3
             let d = date(2026,10,4)
-            report d + 1 == date("2026-10-05") and 1 + d == d + 1 and d - 1 == date("2026-10-03")
-            report d.add_months(1) == date("2026-11-04") and d.add_years(1) == date("2027-10-04")
-            report d.add_workdays(1) == date("2026-10-05")
+            report d + 1 == '2026-10-05' and 1 + d == d + 1 and d - 1 == '2026-10-03'
+            report d.add_months(1) == '2026-11-04' and d.add_years(1) == '2027-10-04'
+            report d.add_workdays(1) == '2026-10-05'
         "#,
         );
     }

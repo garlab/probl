@@ -132,8 +132,8 @@ fn a_value_the_summary_cant_describe_stops_the_run_where_it_is_reported() {
     // The `print` after each report would run if the values were only
     // checked once the run had finished.
     for (source, summary, problem) in [
-        ("report \"cat\"", "forecast", "require numeric or date values"),
-        ("report [1, 2]", "median", "require numeric or date values"),
+        ("report \"cat\"", "forecast", "require numeric, date or datetime values"),
+        ("report [1, 2]", "median", "require numeric, date or datetime values"),
         ("report date(2026, 1, 1)", "mean", "date reports"),
         (
             "for k in 0..1 { report if k == 0 { true } else { 1 } by k }",
@@ -165,7 +165,10 @@ fn a_value_the_summary_cant_describe_stops_the_run_where_it_is_reported() {
         .run(&Options::new().report_summary(0, ReportSummary::forecast()))
         .err()
         .unwrap();
-    assert!(error.to_string().contains("require numeric or date values"), "{error}");
+    assert!(
+        error.to_string().contains("require numeric, date or datetime values"),
+        "{error}"
+    );
 }
 
 #[cfg(feature = "json")]
@@ -228,4 +231,36 @@ fn analytic_and_atomic_quantiles_keep_their_conventions_and_uncertainty() {
         assert_eq!(q[1]["convention"], "midpoint");
         assert!(q[0]["estimate"]["point"].as_f64().unwrap() < q[1]["estimate"]["point"].as_f64().unwrap());
     }
+}
+
+#[test]
+fn datetime_summaries_preserve_precision_and_reject_moments() {
+    let source = "let a = '1969-12-31T23:59:59.999999997'; report one_of([a, a.add_nanoseconds(2)])";
+    let p = probl::compile("datetime", source).unwrap();
+    for options in [Options::new(), Options::new().runs(40).seed(7)] {
+        let out = p
+            .run(&options.clone().report_summary(0, "median,q:0.5".parse().unwrap()))
+            .unwrap();
+        assert!(
+            out.text()
+                .contains("median 1969-12-31T23:59:59.999999998 · 50% 1969-12-31T23:59:59.999999997"),
+            "{}",
+            out.text()
+        );
+        let error = p
+            .run(&options.report_summary(0, ReportSummary::moments()))
+            .err()
+            .unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("datetime reports support median and quantiles"),
+            "{error}"
+        );
+    }
+    let p = probl::compile("datetime", "report '2027-01-01T00:00:00'").unwrap();
+    assert!(
+        p.run(&Options::new().report_summary(0, ReportSummary::moments()))
+            .is_err()
+    );
 }

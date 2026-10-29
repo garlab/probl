@@ -107,3 +107,26 @@ fn a_program_that_reads_data_needs_it_loaded() {
     let e = probl_engine::run(&probl_sema::compile(PILOT).0.unwrap(), &options, &mut print).unwrap_err();
     assert!(e.notes.iter().any(|n| n.contains("a different program")), "{:?}", e);
 }
+
+#[test]
+fn datetime_data_and_keys_share_literal_normalization() {
+    let source = r#"
+        let csv: list[{at: datetime}] = read("times.csv")
+        let lines: list[datetime] = read("times.txt")
+        let mapping: map[datetime, str] = read("times.json")
+        report csv[0].at == '2027-01-01T00:00:00.000000001'
+        report lines[0] == csv[0].at
+        report mapping[csv[0].at] == "same"
+        report typeof csv[0].at == "datetime"
+    "#;
+    let out = run(
+        source,
+        vec![
+            ("times.csv", "at\n2027-01-01T01:00:00.000000001+01:00\n".into()),
+            ("times.txt", "2026-12-31T19:00:00.000000001-05:00\n".into()),
+            ("times.json", r#"{"2027-01-01T00:00:00.000000001Z":"same"}"#.into()),
+        ],
+        1,
+    );
+    assert_eq!(out.matches("100.00%").count(), 4, "{out}");
+}

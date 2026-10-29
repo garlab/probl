@@ -14,42 +14,42 @@ fn facts(expressions: &[&str]) {
 #[test]
 fn constructors_components_and_immutable_arithmetic() {
     facts(&[
-        r#"date(2024, 2, 29) == date("2024-02-29")"#,
-        r#"date("0001-01-01").year() == 1"#,
-        r#"date("9999-12-31").year() == 9999"#,
-        r#"date("2024-02-29").month() == 2 and date("2024-02-29").day() == 29"#,
-        r#"date("2024-02-29") + days(1) == date("2024-03-01")"#,
-        r#"date("2024-03-01") - date("2024-02-28") == 2"#,
-        r#"date("1969-12-31") + weeks(1) == date("1970-01-07")"#,
-        r#"date("2024-02-15").start_of_month() == date("2024-02-01")"#,
-        r#"date("2024-02-15").end_of_month() == date("2024-02-29")"#,
-        r#"date("1900-02-01").end_of_month() == date("1900-02-28")"#,
-        r#"date("2024-01-31").add_months(1) == date("2024-02-29")"#,
-        r#"date("2024-01-31").add_months(2) == date("2024-03-31")"#,
-        r#"date("2024-03-31").add_months(-1) == date("2024-02-29")"#,
-        r#"date("2024-02-29").add_years(1) == date("2025-02-28")"#,
-        r#"date("2024-02-29").add_years(4) == date("2028-02-29")"#,
-        r#"date("9999-12-01").end_of_month() == date("9999-12-31")"#,
-        r#"[date(2024, 2, 29): 7][date("2024-02-29")] == 7"#,
-        r#"{ var d = date("2024-01-31"); let next = d.add_months(1); d == date("2024-01-31") and next == date("2024-02-29") }"#,
+        r#"date(2024, 2, 29) == '2024-02-29'"#,
+        r#"'0001-01-01'.year() == 1"#,
+        r#"'9999-12-31'.year() == 9999"#,
+        r#"'2024-02-29'.month() == 2 and '2024-02-29'.day() == 29"#,
+        r#"'2024-02-29' + days(1) == '2024-03-01'"#,
+        r#"'2024-03-01' - '2024-02-28' == 2"#,
+        r#"'1969-12-31' + weeks(1) == '1970-01-07'"#,
+        r#"'2024-02-15'.start_of_month() == '2024-02-01'"#,
+        r#"'2024-02-15'.end_of_month() == '2024-02-29'"#,
+        r#"'1900-02-01'.end_of_month() == '1900-02-28'"#,
+        r#"'2024-01-31'.add_months(1) == '2024-02-29'"#,
+        r#"'2024-01-31'.add_months(2) == '2024-03-31'"#,
+        r#"'2024-03-31'.add_months(-1) == '2024-02-29'"#,
+        r#"'2024-02-29'.add_years(1) == '2025-02-28'"#,
+        r#"'2024-02-29'.add_years(4) == '2028-02-29'"#,
+        r#"'9999-12-01'.end_of_month() == '9999-12-31'"#,
+        r#"[date(2024, 2, 29): 7]['2024-02-29'] == 7"#,
+        r#"{ var d = '2024-01-31'; let next = d.add_months(1); d == '2024-01-31' and next == '2024-02-29' }"#,
     ]);
 }
 
 #[test]
 fn working_calendars_are_explicit_and_exclude_the_start() {
     facts(&[
-        r#"date("2026-09-28").weekday() == "Monday""#,
-        r#"date("2026-09-28").is_workday()"#,
-        r#"not date("2026-10-03").is_workday()"#,
-        r#"not date("2026-10-02").is_workday([date("2026-10-02")])"#,
-        r#"date("2026-10-01").add_workdays(1, [date("2026-10-02")]) == date("2026-10-05")"#,
-        r#"date("2026-10-05").add_workdays(-1, [date("2026-10-02")]) == date("2026-10-01")"#,
-        r#"date("2026-10-03").add_workdays(1) == date("2026-10-05")"#,
-        r#"date("2026-10-04").add_workdays(-1) == date("2026-10-02")"#,
-        r#"date("2026-10-03").add_workdays(0) == date("2026-10-03")"#,
-        r#"date("2026-10-02").add_workdays(0, [date("2026-10-02")]) == date("2026-10-02")"#,
-        r#"date("2026-10-01").add_workdays(1, [date("2026-10-05"), date("2026-10-02"), date("2026-10-02"), date("2026-10-03")]) == date("2026-10-06")"#,
-        r#"date("2026-10-02").add_workdays(1, [date("2026-10-02")]) == date("2026-10-05")"#,
+        r#"'2026-09-28'.weekday() == "Monday""#,
+        r#"'2026-09-28'.is_workday()"#,
+        r#"not '2026-10-03'.is_workday()"#,
+        r#"not '2026-10-02'.is_workday(['2026-10-02'])"#,
+        r#"'2026-10-01'.add_workdays(1, ['2026-10-02']) == '2026-10-05'"#,
+        r#"'2026-10-05'.add_workdays(-1, ['2026-10-02']) == '2026-10-01'"#,
+        r#"'2026-10-03'.add_workdays(1) == '2026-10-05'"#,
+        r#"'2026-10-04'.add_workdays(-1) == '2026-10-02'"#,
+        r#"'2026-10-03'.add_workdays(0) == '2026-10-03'"#,
+        r#"'2026-10-02'.add_workdays(0, ['2026-10-02']) == '2026-10-02'"#,
+        r#"'2026-10-01'.add_workdays(1, ['2026-10-05', '2026-10-02', '2026-10-02', '2026-10-03']) == '2026-10-06'"#,
+        r#"'2026-10-02'.add_workdays(1, ['2026-10-02']) == '2026-10-05'"#,
     ]);
     let options = Options {
         limits: Limits {
@@ -58,7 +58,7 @@ fn working_calendars_are_explicit_and_exclude_the_start() {
         },
         ..Options::default()
     };
-    assert!(exec_raw(r#"report date("2000-01-03").add_workdays(1_000_000)"#, &options).is_ok());
+    assert!(exec_raw(r#"report '2000-01-03'.add_workdays(1_000_000)"#, &options).is_ok());
 }
 
 #[test]
@@ -100,30 +100,30 @@ fn holiday_calendars_and_weekday_text_obey_resource_limits() {
 
 #[test]
 fn invalid_dates_offsets_and_calendars_are_language_errors() {
-    assert!(compile_error("report date(2026, 1)").contains("one ISO string or three integers"));
+    assert!(compile_error("report date(2026, 1)").contains("three integers"));
     for expression in [
-        r#"date("0000-01-01")"#,
-        r#"date("10000-01-01")"#,
-        r#"date("9223372036854775807-01-01")"#,
-        r#"date("2026-1-01")"#,
-        r#"date("2026-02-29")"#,
-        r#"date("2026-01-01T12:00:00Z")"#,
+        r#"parse_date("0000-01-01")"#,
+        r#"parse_date("10000-01-01")"#,
+        r#"parse_date("9223372036854775807-01-01")"#,
+        r#"parse_date("2026-1-01")"#,
+        r#"parse_date("2026-02-29")"#,
+        r#"parse_date("2026-01-01T12:00:00Z")"#,
         "date(2026, 13, 1)",
         "date(2026, 2, 30)",
         "date(2026.4, 1, 1)",
         "date(2026, true, 1)",
         "date(10^100, 1, 1)",
-        r#"date("0001-01-01") - 1"#,
-        r#"date("9999-12-31") + 1"#,
-        r#"date("9999-12-31").add_months(1)"#,
-        r#"date("0001-01-01").add_years(-1)"#,
-        r#"date("2026-01-01").add_years(10^100)"#,
-        r#"date("2026-01-01").add_workdays(-9223372036854775808)"#,
-        r#"date("2026-01-01").add_months(1.4)"#,
-        r#"date("2026-01-01").add_workdays(1.4)"#,
-        r#"date("2026-01-01").add_workdays(0, [1])"#,
-        r#"date("2026-01-01").is_workday(["2026-01-01"])"#,
-        r#"date("2026-01-01").is_workday("2026-01-01")"#,
+        r#"'0001-01-01' - 1"#,
+        r#"'9999-12-31' + 1"#,
+        r#"'9999-12-31'.add_months(1)"#,
+        r#"'0001-01-01'.add_years(-1)"#,
+        r#"'2026-01-01'.add_years(10^100)"#,
+        r#"'2026-01-01'.add_workdays(-9223372036854775808)"#,
+        r#"'2026-01-01'.add_months(1.4)"#,
+        r#"'2026-01-01'.add_workdays(1.4)"#,
+        r#"'2026-01-01'.add_workdays(0, [1])"#,
+        r#"'2026-01-01'.is_workday(["2026-01-01"])"#,
+        r#"'2026-01-01'.is_workday("2026-01-01")"#,
         "year(2026)",
         "month(1)",
         "day(1)",
@@ -139,13 +139,13 @@ fn invalid_dates_offsets_and_calendars_are_language_errors() {
 fn calendar_functions_lift_including_components_and_holidays() {
     facts(&[
         r#"date(2024, 2, one_of([28, 29])).month() == 2"#,
-        r#"one_of([date("2026-01-01"), date("2026-01-31")]).end_of_month() == date("2026-01-31")"#,
-        r#"one_of([date("2026-01-01"), date("2026-01-31")]).start_of_month() == date("2026-01-01")"#,
-        r#"date("2026-09-28").add_workdays(d6).is_workday()"#,
-        r#"date("2024-02-29").add_years(one_of([1, 2, 3])).day() == 28"#,
-        r#"date("2026-10-02").add_workdays(1, one_of([[], [date("2026-10-03")]])) == date("2026-10-05")"#,
+        r#"one_of(['2026-01-01', '2026-01-31']).end_of_month() == '2026-01-31'"#,
+        r#"one_of(['2026-01-01', '2026-01-31']).start_of_month() == '2026-01-01'"#,
+        r#"'2026-09-28'.add_workdays(d6).is_workday()"#,
+        r#"'2024-02-29'.add_years(one_of([1, 2, 3])).day() == 28"#,
+        r#"'2026-10-02'.add_workdays(1, one_of([[], ['2026-10-03']])) == '2026-10-05'"#,
     ]);
-    let outcomes = distribution(r#"report date("2026-01-31").add_months(one_of([1, 2]))"#);
+    let outcomes = distribution(r#"report '2026-01-31'.add_months(one_of([1, 2]))"#);
     assert_eq!(
         outcomes,
         vec![
@@ -191,7 +191,7 @@ fn today_is_one_snapshot_across_worlds_samples_calls_and_simulate() {
 #[test]
 fn today_is_a_shadowable_constant_and_requires_host_context() {
     facts(&[
-        r#"{ let today = date("2020-01-01"); today.year() == 2020 }"#,
+        r#"{ let today = '2020-01-01'; today.year() == 2020 }"#,
         r#"{ var today = 1; today += 1; today == 2 }"#,
     ]);
     assert_eq!(chance("enum S { today, other }\nreport today == S.today"), 1.0);

@@ -217,7 +217,7 @@ fn invalid_populations_fail_instead_of_becoming_point_masses() {
     }
     assert!(error("report mean([2^10000])").contains("finite floats"));
     assert!(error("let n=2^10000\nreport median([n,n+1])").contains("fractional midpoint is too large"));
-    assert!(error("report median([\"aa\",1])").contains("needs real numeric or date elements"));
+    assert!(error("report median([\"aa\",1])").contains("needs real numeric or date/datetime elements"));
     assert!(error("report median([d6,d8])").contains("list elements that are values"));
     assert!(error("let q=150%\nreport quantile([1,2],q)").contains("between 0 and 1"));
 }

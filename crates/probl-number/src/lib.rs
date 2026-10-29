@@ -123,6 +123,12 @@ impl Integer {
             Repr::Large(n) => n.value.to_u128(),
         }
     }
+    pub fn to_i128(&self) -> Option<i128> {
+        match &self.0 {
+            Repr::Small(n) => Some(*n as i128),
+            Repr::Large(n) => n.value.to_i128(),
+        }
+    }
     pub fn to_f64(&self) -> Option<f64> {
         match &self.0 {
             Repr::Small(n) => Some(*n as f64),

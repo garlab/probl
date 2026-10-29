@@ -246,7 +246,8 @@ fn group(
             .map_or(0, |m| m.parts.len()),
     );
     budget.work(population.saturating_add(1).saturating_mul(6 + 2 * count))?;
-    let dates = !g.distribution.is_empty() && g.distribution.iter().all(|(v, _)| matches!(v, Value::Date(_)));
+    let temporal = probl_engine::report::temporal_kind(&g.distribution);
+    let dates = temporal.is_some();
     let numbers = !g.distribution.is_empty()
         && g.distribution
             .iter()
@@ -255,8 +256,8 @@ fn group(
         "structured"
     } else if g.fact.is_some() {
         "probability"
-    } else if dates {
-        "date"
+    } else if let Some(kind) = temporal {
+        kind
     } else if g.numeric.is_some() || numbers {
         "number"
     } else {
@@ -329,6 +330,7 @@ fn typed(value: &Value, label: Option<&str>, budget: &mut Budget) -> Result<Json
         Value::Float(x) => ("float", json!(x)),
         Value::Prob(x) => ("prob", json!(x)),
         Value::Date(d) => ("date", json!(Date::from_days(*d).to_string())),
+        Value::DateTime(d) => ("datetime", json!(d.format())),
         Value::Bool(b) => ("bool", json!(b)),
         Value::Str(s) => {
             budget.text(s)?;

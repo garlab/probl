@@ -303,8 +303,8 @@ fn collections_and_records() {
 
 #[test]
 fn dates() {
-    close(chance("report date(\"2026-09-28\") + 7 == date(\"2026-10-05\")"), 1.0);
-    close(chance("report weekday(date(\"2026-09-28\")) == \"Monday\""), 1.0);
+    close(chance("report '2026-09-28' + 7 == '2026-10-05'"), 1.0);
+    close(chance("report weekday('2026-09-28') == \"Monday\""), 1.0);
 }
 
 #[test]

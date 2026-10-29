@@ -223,3 +223,22 @@ fn union_types_nest_without_changing_expression_or() {
         assert!(!parse_errors(source).is_empty());
     }
 }
+
+#[test]
+fn temporal_literals_are_canonical_constants_and_patterns() {
+    assert_eq!(
+        parse_ok("report ['2024-02-29', '2027-01-01T01:00:00.10+01:00']"),
+        "(report ['2024-02-29' '2027-01-01T00:00:00.1'])\n"
+    );
+    assert!(parse_ok("match '2024-02-29' { '2024-02-29' => true, _ => false }").contains("'2024-02-29'"));
+    for source in [
+        "report '2024-02-30'",
+        "report 'hello'",
+        "report '2024-01-01\n'",
+        "report '\\n'",
+        "report '{x}'",
+        "report '2024-01-01",
+    ] {
+        assert!(!parse_errors(source).is_empty(), "{source}");
+    }
+}

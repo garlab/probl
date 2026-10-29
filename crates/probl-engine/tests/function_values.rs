@@ -116,7 +116,12 @@ fn builtin_values_support_optional_and_variadic_arities_and_higher_order_calls()
             let r=round
             report r(1.5)==2 and r(1.234,2)==1.23
             let dt=date
-            report dt("2026-01-02")==dt(2026,1,2)
+            let parse=parse_date
+            report parse("2026-01-02")==dt(2026,1,2)
+            let stamp=datetime
+            let parse_stamp=parse_datetime
+            report stamp(2026,1,2,3,4,5)==parse_stamp("2026-01-02T03:04:05Z")
+            report stamp(2026,1,2,3,4,5,6)=='2026-01-02T03:04:05.000000006'
             let b=bernoulli
             report pmf(b(30%),true)==30%
             let m=maximum

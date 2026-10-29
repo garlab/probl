@@ -193,7 +193,19 @@ builtins! {
     Logit = "logit", 1..=1, Lift, true;
     InvLogit = "inv_logit", 1..=1, Lift, true;
     // Dates
-    Date = "date", 1..=3, Lift, true;
+    Date = "date", 3..=3, Lift, true;
+    ParseDate = "parse_date", 1..=1, Lift, true;
+    DateTime = "datetime", 6..=7, Lift, true;
+    ParseDateTime = "parse_datetime", 1..=1, Lift, true;
+    AddDays = "add_days", 2..=2, Lift, true;
+    AddHours = "add_hours", 2..=2, Lift, true;
+    AddMinutes = "add_minutes", 2..=2, Lift, true;
+    AddSeconds = "add_seconds", 2..=2, Lift, true;
+    AddNanoseconds = "add_nanoseconds", 2..=2, Lift, true;
+    Hour = "hour", 1..=1, Lift, true;
+    Minute = "minute", 1..=1, Lift, true;
+    Second = "second", 1..=1, Lift, true;
+    Nanosecond = "nanosecond", 1..=1, Lift, true;
     RunDate = "$run_date", 0..=0, Raw, false;
     Days = "days", 1..=1, Lift, true;
     Weeks = "weeks", 1..=1, Lift, true;

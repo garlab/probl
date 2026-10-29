@@ -170,8 +170,8 @@ pub fn statistic_value(group: &GroupResult, statistic: ReportStatistic) -> Optio
 /// Why a selection can't summarize a report's values.
 pub(super) const MIXED: &str = "mixed Boolean and other values keep their default display";
 pub(super) const DATE_MOMENTS: &str = "date reports support median and quantiles, not mean or sd";
-pub(super) const NOT_NUMERIC: &str =
-    "summary columns require numeric or date values; categorical and structured reports keep their default display";
+pub(super) const DATETIME_MOMENTS: &str = "datetime reports support median and quantiles, not mean or sd";
+pub(super) const NOT_NUMERIC: &str = "summary columns require numeric, date or datetime values; categorical and structured reports keep their default display";
 
 /// What an explicit selection needs of a report's values, checked as each
 /// one is reported, so that a run stops at the first value the selection
@@ -219,6 +219,10 @@ impl SummaryCheck {
             Value::Date(_) => {
                 self.others = true;
                 self.moments.then_some(DATE_MOMENTS)
+            }
+            Value::DateTime(_) => {
+                self.others = true;
+                self.moments.then_some(DATETIME_MOMENTS)
             }
             Value::Unit
             | Value::Str(_)

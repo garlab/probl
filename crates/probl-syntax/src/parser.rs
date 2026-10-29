@@ -715,7 +715,7 @@ impl Parser {
                 self.bump();
                 PatternKind::Name(name)
             }
-            Tok::Int(_) | Tok::Float(_) | Tok::Percent(_) | Tok::Str(_) | Tok::True | Tok::False => {
+            Tok::Int(_) | Tok::Float(_) | Tok::Percent(_) | Tok::Str(_) | Tok::Quoted(_) | Tok::True | Tok::False => {
                 PatternKind::Literal(self.primary()?)
             }
             Tok::Minus if matches!(self.peek_at(1), Tok::Int(_) | Tok::Float(_) | Tok::Percent(_)) => {
@@ -1079,6 +1079,17 @@ impl Parser {
             Tok::Str(parts) => {
                 self.bump();
                 ExprKind::Str(self.string_segments(parts))
+            }
+            Tok::Quoted(text) => {
+                let span = self.bump().span;
+                match crate::calendar::Literal::parse(&text) {
+                    Some(value) => ExprKind::Temporal(value),
+                    None => {
+                        self.error(span, format!("'{text}' isn't a valid date or datetime"))
+                            .help("use 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:MM:SS[.fraction]' with optional Z or ±HH:MM; check the calendar, time and range; text uses double quotes");
+                        return Err(Failed);
+                    }
+                }
             }
             Tok::Ident(name) => {
                 // A typed record literal: `Fighter { hp: 12 }`.

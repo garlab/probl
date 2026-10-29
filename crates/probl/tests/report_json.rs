@@ -225,3 +225,18 @@ fn empty_failed_runs_and_unicode_labels_remain_valid_documents() {
         Err(ReportJsonError::Bytes)
     );
 }
+
+#[test]
+fn datetime_keys_and_quantiles_keep_all_nanoseconds() {
+    let doc = document(&run(r#"
+        let a = '2027-01-01T01:00:00.000000001+01:00'
+        report one_of([a, a.add_nanoseconds(2)]) by a
+    "#));
+    let group = &doc["reports"][0]["groups"][0];
+    assert_eq!(group["kind"], "datetime");
+    assert_eq!(group["key"]["kind"], "datetime");
+    assert_eq!(group["key"]["value"], "2027-01-01T00:00:00.000000001");
+    let middle = &group["summary"]["quantiles"][2]["value"];
+    assert_eq!(middle["kind"], "datetime");
+    assert_eq!(middle["value"], "2027-01-01T00:00:00.000000002");
+}

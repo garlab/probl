@@ -36,6 +36,11 @@ pub(crate) fn plain(
             Some(d) => Ok(Value::Date(d)),
             None => Err(Problem::new(format!("{} isn't a date", quoted(t))).help("write dates like 2027-01-31")),
         },
+        TypeSpec::DateTime => match crate::dates::DateTime::parse(t) {
+            Some(d) => Ok(Value::DateTime(d)),
+            None => Err(Problem::new(format!("{} isn't a datetime", quoted(t)))
+                .help("write YYYY-MM-DDTHH:MM:SS with optional fractional seconds and Z or ±HH:MM")),
+        },
         TypeSpec::Enum(e) => {
             let decl = &program.enums[*e as usize];
             match decl.variants.iter().position(|v| v == t) {

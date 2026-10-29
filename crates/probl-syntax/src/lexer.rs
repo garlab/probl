@@ -68,6 +68,7 @@ impl Lexer<'_> {
                 }
                 b'0'..=b'9' => self.number(),
                 b'"' => self.string(),
+                b'\'' => self.quoted(),
                 c if c.is_ascii_alphabetic() || c == b'_' => self.word(),
                 _ => self.punct(),
             }
@@ -242,6 +243,23 @@ impl Lexer<'_> {
         } else {
             self.push(Tok::Ident(text.to_string()), lo);
         }
+    }
+
+    fn quoted(&mut self) {
+        let lo = self.pos;
+        self.pos += 1;
+        let start = self.pos;
+        while self.pos < self.bytes.len() && !matches!(self.bytes[self.pos], b'\'' | b'\n' | b'\r') {
+            self.pos += 1;
+        }
+        if self.peek(0) != b'\'' {
+            self.error(lo, self.pos, "unterminated date or datetime literal")
+                .help("close the single quote on the same line; text uses double quotes");
+            return;
+        }
+        let text = self.src[start..self.pos].to_owned();
+        self.pos += 1;
+        self.push(Tok::Quoted(text), lo);
     }
 
     fn string(&mut self) {

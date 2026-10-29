@@ -271,7 +271,7 @@ impl RunStat {
                 self.numbers += share;
                 self.sum += share * value.as_f64().unwrap();
             }
-            Value::Date(_) => {}
+            Value::Date(_) | Value::DateTime(_) => {}
             other => match self.others.iter_mut().find(|(v, _)| v == other) {
                 Some((_, s)) => *s += share,
                 None => self.others.push((other.clone(), share)),
@@ -1005,8 +1005,7 @@ pub fn validate_summary_values(
             if group.fact.is_some() {
                 continue;
             }
-            let dates =
-                !group.distribution.is_empty() && group.distribution.iter().all(|(v, _)| matches!(v, Value::Date(_)));
+            let dates = temporal_kind(&group.distribution).is_some();
             let numeric = group.numeric.is_some()
                 || (!group.distribution.is_empty()
                     && group
@@ -1019,7 +1018,11 @@ pub fn validate_summary_values(
                     .iter()
                     .any(|s| matches!(s, ReportStatistic::Mean | ReportStatistic::StandardDeviation))
             {
-                Some(selection::DATE_MOMENTS)
+                Some(if temporal_kind(&group.distribution) == Some("datetime") {
+                    selection::DATETIME_MOMENTS
+                } else {
+                    selection::DATE_MOMENTS
+                })
             } else if !dates && !numeric {
                 Some(selection::NOT_NUMERIC)
             } else {
@@ -1176,7 +1179,7 @@ fn selected_value_text(group: &GroupResult, format: Format, selection: Option<&R
         display(&dist[0].0)
     } else if let Some(numeric) = &group.numeric {
         numeric_stats(numeric, dist)
-    } else if dist.iter().all(|(v, _)| matches!(v, Value::Date(_))) {
+    } else if temporal_kind(dist).is_some() {
         let [a, b, c] =
             [0.05, 0.5, 0.95].map(|q| summary_quantile(dist, q).map_or_else(|| "out of range".into(), |v| display(&v)));
         format!("5% {a} · median {b} · 95% {c}")
@@ -1453,6 +1456,24 @@ fn sparkline(dist: &[(Value, f64)]) -> Option<String> {
     Some(format!("{lo} {bars} {hi}"))
 }
 
+/// A homogeneous date or datetime population, kept separate from numbers.
+pub fn temporal_kind(dist: &[(Value, f64)]) -> Option<&'static str> {
+    let first = &dist.first()?.0;
+    let kind = match first {
+        Value::Date(_) => "date",
+        Value::DateTime(_) => "datetime",
+        _ => return None,
+    };
+    dist.iter()
+        .all(|(v, _)| {
+            matches!(
+                (first, v),
+                (Value::Date(_), Value::Date(_)) | (Value::DateTime(_), Value::DateTime(_))
+            )
+        })
+        .then_some(kind)
+}
+
 /// The `q` quantile of a report's values, for its summary. The median uses
 /// the same midpoint rule as `median()`; the other columns select outcomes.
 /// An unrepresentable fractional bigint midpoint is labelled rather than
@@ -1496,7 +1517,7 @@ fn summary_cell(group: &GroupResult, statistic: ReportStatistic) -> String {
     let show = |x| if percent { fmt_percent(x, 2) } else { fixed(x, decimals) };
     if let Some(value) = statistic_value(group, statistic) {
         return match &value {
-            Value::Date(_) => display(&value),
+            Value::Date(_) | Value::DateTime(_) => display(&value),
             _ if percent => show(value.as_f64().unwrap_or(f64::NAN)),
             _ => number(&value, decimals),
         };

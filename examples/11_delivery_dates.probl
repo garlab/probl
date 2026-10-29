@@ -4,12 +4,12 @@
 
 let ordered = today
 # This warehouse has a planned closure; calendars are explicit model inputs.
-let holidays = [date("2026-10-02")]
+let holidays = ['2026-10-02']
 let preparation ~ one_of([1: 50%, 2: 30%, 3: 20%])
 let transit ~ one_of([2: 75%, 4: 25%])
 let dispatched = ordered.add_workdays(preparation, holidays)
 let delivered = dispatched.add_workdays(transit, holidays)
-let promised = date("2026-10-07")
+let promised = '2026-10-07'
 
 report ordered as "forecast date"
 report delivered as "delivery date"

@@ -165,6 +165,7 @@ pub fn expr(e: &Expr) -> String {
         ExprKind::Percent(v) => percent(*v),
         ExprKind::Dice { count, sides } => format!("{count}d{sides}"),
         ExprKind::Bool(b) => b.to_string(),
+        ExprKind::Temporal(value) => format!("'{}'", value.format()),
         ExprKind::Str(segments) => {
             if let [StrSegment::Lit(text)] = segments.as_slice() {
                 return format!("{text:?}");

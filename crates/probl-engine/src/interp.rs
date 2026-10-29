@@ -3273,6 +3273,7 @@ impl<'p> Engine<'p> {
             (TypeSpec::Bool, Value::Bool(_) | Value::Event(_)) => true,
             (TypeSpec::Str, Value::Str(_)) => true,
             (TypeSpec::Date, Value::Date(_)) => true,
+            (TypeSpec::DateTime, Value::DateTime(_)) => true,
             (TypeSpec::Unit, Value::Unit) => true,
             (TypeSpec::Function, Value::Closure(_) | Value::Builtin(_)) => true,
             (TypeSpec::List(t), Value::List(items)) => items.iter().all(|x| self.conforms(x, t)),
@@ -4411,6 +4412,8 @@ impl<'p> Engine<'p> {
             Lit::Float(x) | Lit::FloatConstant(x) => Value::Float(*x),
             Lit::Prob(p) => Value::Prob(*p),
             Lit::Str(s) => crate::text::value(s, &mut self.budget)?,
+            Lit::Temporal(probl_syntax::calendar::Literal::Date(d)) => Value::Date(*d),
+            Lit::Temporal(probl_syntax::calendar::Literal::DateTime(d)) => Value::DateTime(*d),
             Lit::Dice { count, sides } => {
                 if let Some(d) = self.dice.get(&(*count, *sides)) {
                     return Ok(d.clone());
@@ -4485,14 +4488,14 @@ impl<'p> Engine<'p> {
             Value::Closure(c) => self.check_arity(c, given, span),
             Value::Builtin(b) => {
                 let (min, max) = b.arity();
-                if given < min || given > max || (*b == Builtin::Date && given == 2) {
+                if given < min || given > max {
                     return Err(RuntimeError::new(
                         span,
                         format!(
                             "`{}` takes {}, but {given} were given",
                             b.name(),
                             if *b == Builtin::Date {
-                                "one ISO string or three integers".into()
+                                "three integers (year, month, day); use a 'YYYY-MM-DD' literal or parse_date(text) for text".into()
                             } else if min == max {
                                 format!("{min} argument(s)")
                             } else if max == usize::MAX {

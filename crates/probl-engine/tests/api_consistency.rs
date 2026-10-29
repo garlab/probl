@@ -549,13 +549,13 @@ both_modes! {
             values(
                 MODE,
                 r#"
-    let ds = [date("2026-01-01"),date("2026-01-02")]
+    let ds = ['2026-01-01','2026-01-02']
     report mean(ds)
     report median(ds)
     report median_low(ds)
     report median_high(ds)
-    report date("2026-01-31").add_months(1)
-    report date("2026-10-02").add_workdays(1)
+    report '2026-01-31'.add_months(1)
+    report '2026-10-02'.add_workdays(1)
     report today
     "#
             ),

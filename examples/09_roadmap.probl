@@ -4,7 +4,7 @@
 
 @mode sample(runs: 100_000, seed: 2026)
 
-let start = date("2026-09-28")
+let start = '2026-09-28'
 
 # Phases
 let groundwork ~ 1 to 2    # P0  workspace, CI, test harness
@@ -33,8 +33,8 @@ let v03 = v02 + inspection + tooling
 report ship_date(v01) as "v0.1  games (enumeration)"
 report ship_date(v02) as "v0.2  forecasting (sampling)"
 report ship_date(v03) as "v0.3  types and tooling"
-report ship_date(v01) <= date("2027-02-28") as "v0.1 by the end of February 2027"
-report ship_date(v03) <= date("2027-06-30") as "v0.3 by the end of June 2027"
+report ship_date(v01) <= '2027-02-28' as "v0.1 by the end of February 2027"
+report ship_date(v03) <= '2027-06-30' as "v0.3 by the end of June 2027"
 
 # ── Output (sampled: expect small differences in the last digits) ───────
 # sample · 100,000 runs · seed 2026

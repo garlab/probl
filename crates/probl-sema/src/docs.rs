@@ -164,6 +164,18 @@ pub fn category(b: Builtin) -> &'static str {
         | B::InvLogit
         | B::Prob => "Statistics and probabilities",
         B::Date
+        | B::ParseDate
+        | B::DateTime
+        | B::ParseDateTime
+        | B::AddDays
+        | B::AddHours
+        | B::AddMinutes
+        | B::AddSeconds
+        | B::AddNanoseconds
+        | B::Hour
+        | B::Minute
+        | B::Second
+        | B::Nanosecond
         | B::Days
         | B::Weeks
         | B::AddWorkdays
@@ -692,7 +704,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         B::Median => doc(
             "median(d)",
-            "The midpoint of the lower and upper medians of a nonempty numeric or date list, integer range or distribution. Distribution weights count: the bounds differ only when half the mass lies on each side of a gap. Integral int midpoints stay exact; fractional midpoints are floats. Dates round to the nearest day, ties earlier. Strings, bools and enums require `median_low` or `median_high`; complex elements and scalars are errors.",
+            "The midpoint of the lower and upper medians of a nonempty numeric, date or datetime list, integer range or distribution. Distribution weights count: the bounds differ only when half the mass lies on each side of a gap. Integral int midpoints stay exact; fractional midpoints are floats. Dates round to the nearest day and datetimes to the nearest nanosecond, ties earlier. Strings, bools and enums require `median_low` or `median_high`; complex elements and scalars are errors.",
         ),
         B::MedianLow => doc(
             "median_low(d)",
@@ -737,8 +749,56 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         // Dates
         B::Date => doc(
-            "date(s: str) -> date or date(year: int, month: int, day: int) -> date",
-            "An immutable Gregorian calendar date. Parse exactly YYYY-MM-DD or supply three integer components. Years are 1 through 9999; impossible dates are errors. Dates have no time of day or time zone.",
+            "date(year: int, month: int, day: int) -> date",
+            "Build an immutable Gregorian date from three integer components. Years are 1 through 9999; impossible dates are errors. Write a constant as '2027-01-31', or parse runtime text with parse_date(s). Dates have no time of day or time zone.",
+        ),
+        B::ParseDate => doc(
+            "parse_date(s: str) -> date",
+            "Parse exactly YYYY-MM-DD within years 1 through 9999. Invalid runtime text is a ConversionError. Constant dates can use checked single-quoted literals.",
+        ),
+        B::DateTime => doc(
+            "datetime(year: int, month: int, day: int, hour: int, minute: int, second: int, nanosecond: int?) -> datetime",
+            "Build a calendar date and time without timezone metadata. Nanoseconds default to zero. Use hours 0–23, minutes and seconds 0–59, and nanoseconds 0–999999999; leap seconds are unsupported. A literal such as '2027-01-31T09:30:00+02:00' normalizes to '2027-01-31T07:30:00'.",
+        ),
+        B::ParseDateTime => doc(
+            "parse_datetime(s: str) -> datetime",
+            "Parse YYYY-MM-DDTHH:MM:SS with an optional 1–9 digit fraction and Z or ±HH:MM. Explicit offsets normalize to UTC and are discarded; unsuffixed fields are kept as written. The normalized result must remain within years 1 through 9999. No machine timezone or daylight-saving rules are used.",
+        ),
+        B::AddDays => doc(
+            "add_days(d: date or datetime, n: int) -> date or datetime",
+            "Move by n calendar days, preserving the value's type and any clock fields. Each datetime day is exactly 24 hours.",
+        ),
+        B::AddHours => doc(
+            "add_hours(d: datetime, n: int) -> datetime",
+            "Move by n hours without timezone or daylight-saving adjustments. Negative counts move backwards.",
+        ),
+        B::AddMinutes => doc(
+            "add_minutes(d: datetime, n: int) -> datetime",
+            "Move by n minutes, carrying across calendar boundaries.",
+        ),
+        B::AddSeconds => doc(
+            "add_seconds(d: datetime, n: int) -> datetime",
+            "Move by n seconds, preserving fractional seconds.",
+        ),
+        B::AddNanoseconds => doc(
+            "add_nanoseconds(d: datetime, n: int) -> datetime",
+            "Move by an exact integer number of nanoseconds, carrying across calendar boundaries. Results outside years 1–9999 are errors.",
+        ),
+        B::Hour => doc(
+            "hour(d: datetime) -> int",
+            "The clock hour, 0 through 23, after any input offset normalization.",
+        ),
+        B::Minute => doc(
+            "minute(d: datetime) -> int",
+            "The minute within the hour, 0 through 59.",
+        ),
+        B::Second => doc(
+            "second(d: datetime) -> int",
+            "The second within the minute, 0 through 59.",
+        ),
+        B::Nanosecond => doc(
+            "nanosecond(d: datetime) -> int",
+            "The fractional second as an integer from 0 through 999999999.",
         ),
         B::Days => doc(
             "days(n) -> int",
@@ -746,37 +806,40 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         B::Weeks => doc("weeks(n) -> int", "`n` weeks, as a whole number of days."),
         B::AddWorkdays => doc(
-            "add_workdays(d: date, n: int, holidays: list[date]?) -> date",
-            "Move by n Monday–Friday days, excluding any listed holidays. The starting date isn't counted; zero leaves it unchanged even on a closed day. Negative n goes back. Holiday order and duplicates do not matter; no regional holidays are assumed.",
+            "add_workdays(d: date or datetime, n: int, holidays: list[date]?) -> date or datetime",
+            "Move by n Monday–Friday days, excluding any listed holidays. The starting date isn't counted; zero leaves it unchanged even on a closed day. Negative n goes back. Holiday order and duplicates do not matter; no regional holidays are assumed. Datetimes keep their clock fields.",
         ),
         B::IsWorkday => doc(
-            "is_workday(d: date, holidays: list[date]?) -> bool",
+            "is_workday(d: date or datetime, holidays: list[date]?) -> bool",
             "Whether d is Monday–Friday and absent from the optional holiday list. Calendars are explicit data; no regional holidays are assumed.",
         ),
         B::AddMonths => doc(
-            "add_months(d: date, n: int) -> date",
-            "Move by n calendar months, clamping the day to the last valid day of the target month. January 31 plus one month is February 28 or 29. Derive recurring dates from the original anchor to avoid drift after clamping.",
+            "add_months(d: date or datetime, n: int) -> date or datetime",
+            "Move by n calendar months, clamping the day to the last valid day of the target month. January 31 plus one month is February 28 or 29. Derive recurring dates from the original anchor to avoid drift after clamping. Datetimes keep their clock fields.",
         ),
         B::AddYears => doc(
-            "add_years(d: date, n: int) -> date",
-            "Move by n calendar years, clamping February 29 to February 28 in a non-leap year. Negative n goes back. The original date is unchanged.",
+            "add_years(d: date or datetime, n: int) -> date or datetime",
+            "Move by n calendar years, clamping February 29 to February 28 in a non-leap year. Negative n goes back. Returns a new value of the same type, preserving any clock fields.",
         ),
         B::StartOfMonth => doc(
-            "start_of_month(d: date) -> date",
-            "The first day of d's month, as a new date.",
+            "start_of_month(d: date or datetime) -> date or datetime",
+            "The first day of d's month, preserving its type and any clock fields.",
         ),
         B::EndOfMonth => doc(
-            "end_of_month(d: date) -> date",
-            "The last day of d's month, including leap-year February.",
+            "end_of_month(d: date or datetime) -> date or datetime",
+            "The last day of d's month, including leap-year February, preserving its type and any clock fields.",
         ),
-        B::Year => doc("year(d: date) -> int", "The Gregorian year, from 1 to 9999."),
+        B::Year => doc(
+            "year(d: date or datetime) -> int",
+            "The Gregorian year, from 1 to 9999.",
+        ),
         B::Month => doc(
-            "month(d: date) -> int",
+            "month(d: date or datetime) -> int",
             "The month number, January = 1 through December = 12.",
         ),
-        B::Day => doc("day(d: date) -> int", "The day of the month, from 1 to 31."),
+        B::Day => doc("day(d: date or datetime) -> int", "The day of the month, from 1 to 31."),
         B::Weekday => doc(
-            "weekday(d: date) -> str",
+            "weekday(d: date or datetime) -> str",
             "The day of the week: `\"Monday\"` to `\"Sunday\"`.",
         ),
         B::BagLiteral
@@ -847,7 +910,7 @@ pub fn fault(f: Fault) -> Doc {
         ),
         Fault::ConversionError => (
             "catch ConversionError { … }",
-            "An explicit conversion that can't represent its value: `prob(1.5)`, `date(\"2026-02-30\")`.",
+            "An explicit conversion that can't represent its value: `prob(1.5)`, `parse_date(\"2026-02-30\")`.",
         ),
         Fault::NumericOverflow => (
             "catch NumericOverflow { … }",

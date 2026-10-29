@@ -3,7 +3,7 @@ source: crates/probl-sema/tests/lower.rs
 expression: ir(&src)
 ---
 fn#0 the top level ()
-  start_0 = date("2026-09-28")    [live: start_0]
+  start_0 = '2026-09-28'    [live: start_0]
   groundwork_1 ~ to(1, 2)    [live: start_0 groundwork_1]
   front_end_2 ~ to(3, 5)    [live: start_0 groundwork_1 front_end_2]
   worlds_3 ~ to(4, 7)    [live: start_0 groundwork_1 front_end_2 worlds_3]
@@ -50,9 +50,9 @@ fn#0 the top level ()
   $21 = call fn#1 ship_date with [start_0, overhead_14, holidays_15](v03_18)    [live: start_0 overhead_14 holidays_15 v01_16 v03_18 $21]
   report $21 as "v0.3  types and tooling"    [live: start_0 overhead_14 holidays_15 v01_16 v03_18]
   $22 = call fn#1 ship_date with [start_0, overhead_14, holidays_15](v01_16)    [live: start_0 overhead_14 holidays_15 v03_18 $22]
-  report (<= $22 date("2027-02-28")) as "v0.1 by the end of February 2027"    [live: start_0 overhead_14 holidays_15 v03_18]
+  report (<= $22 '2027-02-28') as "v0.1 by the end of February 2027"    [live: start_0 overhead_14 holidays_15 v03_18]
   $23 = call fn#1 ship_date with [start_0, overhead_14, holidays_15](v03_18)    [live: $23]
-  report (<= $23 date("2027-06-30")) as "v0.3 by the end of June 2027"    [live: ]
+  report (<= $23 '2027-06-30') as "v0.3 by the end of June 2027"    [live: ]
 fn#1 ship_date (weeks_0) captures [start_1 <- global start, overhead_2 <- global overhead, holidays_3 <- global holidays]
   check weeks_0: float    [live: weeks_0 start_1 overhead_2 holidays_3]
   $4 = (+ start_1 days(round((* 7 (+ (* weeks_0 (+ 1 overhead_2)) holidays_3)))))    [live: $4]

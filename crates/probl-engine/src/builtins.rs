@@ -485,25 +485,39 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         }
         B::InvLogit => ops::computed_prob(1.0 / (1.0 + crate::math::exp(-number(a(0), "inv_logit")?)), "inv_logit"),
         B::Date => {
-            let date = match args.len() {
-                1 => dates::parse(&text(a(0), "date")?),
-                3 => dates::from_parts(
+            let date = dates::from_parts(
                     date_count(a(0), "date", budget)?,
                     date_count(a(1), "date", budget)?,
                     date_count(a(2), "date", budget)?,
-                ),
-                _ => {
-                    return Err(OpError::new(
-                        "`date` takes one ISO string or three integers (year, month, day)",
-                    ));
-                }
-            };
+                );
             date.map(Value::Date).ok_or_else(|| {
                 OpError::fault(
                     Fault::ConversionError,
                     "invalid date; use YYYY-MM-DD within 0001-01-01..9999-12-31",
                 )
             })
+        }
+        B::ParseDate => dates::parse(&text(a(0), b.name())?).map(Value::Date).ok_or_else(||
+            OpError::fault(Fault::ConversionError, "invalid date; use YYYY-MM-DD within 0001-01-01..9999-12-31")),
+        B::DateTime => {
+            let parts: Vec<i64> = args.iter().map(|v| date_count(v, b.name(), budget)).collect::<OpResult<_>>()?;
+            let d = dates::from_parts(parts[0], parts[1], parts[2])
+                .and_then(|day| dates::DateTime::new(day, parts[3], parts[4], parts[5], parts.get(6).copied().unwrap_or(0)));
+            d.map(Value::DateTime).ok_or_else(|| OpError::fault(Fault::ConversionError,
+                "invalid datetime; use a date in years 1..9999, hour 0..23, minute/second 0..59 and nanosecond 0..999999999"))
+        }
+        B::ParseDateTime => dates::DateTime::parse(&text(a(0), b.name())?).map(Value::DateTime).ok_or_else(||
+            OpError::fault(Fault::ConversionError, "invalid datetime; use YYYY-MM-DDTHH:MM:SS with an optional 1–9 digit fraction and Z or ±HH:MM offset, within years 1..9999 after normalization")),
+        B::Hour | B::Minute | B::Second | B::Nanosecond => {
+            let d = datetime_value(a(0), b.name())?;
+            Ok(Value::Int(match b { B::Hour => d.hour(), B::Minute => d.minute(), B::Second => d.second(), _ => d.nanosecond() }.into()))
+        }
+        B::AddHours | B::AddMinutes | B::AddSeconds | B::AddNanoseconds => {
+            let d = datetime_value(a(0), b.name())?;
+            let n = integer(a(1), b.name(), budget)?.to_i128();
+            let unit = match b { B::AddHours => 3600 * dates::NANOS_PER_SECOND, B::AddMinutes => 60 * dates::NANOS_PER_SECOND, B::AddSeconds => dates::NANOS_PER_SECOND, _ => 1 };
+            n.and_then(|n| n.checked_mul(unit)).and_then(|n| d.add_nanos(n)).map(Value::DateTime)
+                .ok_or_else(|| OpError::fault(Fault::NumericOverflow, "datetime out of range (years 1..9999)"))
         }
         B::Days => to_int(a(0), f64::round),
         B::Weeks if matches!(a(0), Value::Int(_)) => {
@@ -514,37 +528,39 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             to_int(&Value::Float(n * 7.0), f64::round)
         }
         B::AddWorkdays => {
-            let d = date_value(a(0), b.name())?;
+            let d = calendar_day(a(0), b.name())?;
             let n = date_count(a(1), b.name(), budget)?;
             let holidays = holiday_calendar(args.get(2), b.name(), budget)?;
-            date_result(dates::add_workdays_with_holidays(d, n, &holidays))
+            calendar_result(a(0), dates::add_workdays_with_holidays(d, n, &holidays))
         }
         B::IsWorkday => {
-            let d = date_value(a(0), b.name())?;
+            let d = calendar_day(a(0), b.name())?;
             let holidays = holiday_calendar(args.get(1), b.name(), budget)?;
             Ok(Value::Bool(
                 dates::weekday(d) < 5 && holidays.binary_search(&d).is_err(),
             ))
         }
-        B::AddMonths | B::AddYears => {
-            let d = date_value(a(0), b.name())?;
+        B::AddDays | B::AddMonths | B::AddYears => {
+            let d = calendar_day(a(0), b.name())?;
             let n = date_count(a(1), b.name(), budget)?;
-            date_result(if b == B::AddMonths {
+            calendar_result(a(0), if b == B::AddDays {
+                dates::add_days(d, n)
+            } else if b == B::AddMonths {
                 dates::add_months(d, n)
             } else {
                 dates::add_years(d, n)
             })
         }
         B::StartOfMonth | B::EndOfMonth => {
-            let d = date_value(a(0), b.name())?;
-            date_result(if b == B::StartOfMonth {
+            let d = calendar_day(a(0), b.name())?;
+            calendar_result(a(0), if b == B::StartOfMonth {
                 dates::start_of_month(d)
             } else {
                 dates::end_of_month(d)
             })
         }
         B::Year | B::Month | B::Day => {
-            let (y, m, d) = dates::to_civil(date_value(a(0), b.name())? as i64);
+            let (y, m, d) = dates::to_civil(calendar_day(a(0), b.name())? as i64);
             Ok(Value::Int(match b {
                 B::Year => y.into(),
                 B::Month => m.into(),
@@ -552,7 +568,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             }))
         }
         B::Weekday => crate::text::value(
-            dates::WEEKDAYS[dates::weekday(date_value(a(0), b.name())?) as usize],
+            dates::WEEKDAYS[dates::weekday(calendar_day(a(0), b.name())?) as usize],
             budget,
         ),
         B::IsFalse => Ok(Value::Bool(ops::is_certain(a(0), false))),
@@ -1312,9 +1328,14 @@ fn median(v: &Value, b: Builtin, budget: &mut Budget) -> OpResult<Value> {
         // Validate even singletons. Being sortable internally does not give a
         // record, complex number or recipe a mathematical ordering.
         statistical_compare(x, x)?;
-        if b == Builtin::Median && !matches!(x, Value::Int(_) | Value::Float(_) | Value::Prob(_) | Value::Date(_)) {
+        if b == Builtin::Median
+            && !matches!(
+                x,
+                Value::Int(_) | Value::Float(_) | Value::Prob(_) | Value::Date(_) | Value::DateTime(_)
+            )
+        {
             return Err(OpError::new(format!(
-                "`median` needs real numeric or date elements, found {}",
+                "`median` needs real numeric or date/datetime elements, found {}",
                 article(&x.kind())
             ))
             .help("use `median_low` or `median_high` for ordered values such as strings"));
@@ -1364,6 +1385,12 @@ fn date_mean(v: &Value, d: &Dist) -> OpResult<Value> {
 pub(crate) fn midpoint(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
     if let (Value::Date(a), Value::Date(b)) = (a, b) {
         return Ok(Value::Date(((*a as i64 + *b as i64).div_euclid(2)) as i32));
+    }
+    if let (Value::DateTime(a), Value::DateTime(b)) = (a, b) {
+        let nanos = (a.total_nanos() + b.total_nanos()).div_euclid(2);
+        return Ok(Value::DateTime(
+            dates::DateTime::from_total_nanos(nanos).expect("midpoint stays within endpoints"),
+        ));
     }
     if let (Value::Int(a), Value::Int(b)) = (a, b) {
         budget.integer_work(a, b, false)?;
@@ -1447,6 +1474,31 @@ fn date_value(v: &Value, func: &str) -> OpResult<i32> {
 fn date_result(date: Option<i32>) -> OpResult<Value> {
     date.map(Value::Date)
         .ok_or_else(|| OpError::fault(Fault::NumericOverflow, "date out of range (0001-01-01..9999-12-31)"))
+}
+
+fn datetime_value(v: &Value, func: &str) -> OpResult<dates::DateTime> {
+    match v {
+        Value::DateTime(d) => Ok(*d),
+        _ => Err(expected("a datetime", v, func)),
+    }
+}
+
+fn calendar_day(v: &Value, func: &str) -> OpResult<i32> {
+    match v {
+        Value::DateTime(d) => Ok(d.day()),
+        Value::Date(_) => date_value(v, func),
+        _ => Err(expected("a date or datetime", v, func)),
+    }
+}
+
+fn calendar_result(original: &Value, day: Option<i32>) -> OpResult<Value> {
+    match original {
+        Value::DateTime(d) => day
+            .and_then(|day| d.with_day(day))
+            .map(Value::DateTime)
+            .ok_or_else(|| OpError::fault(Fault::NumericOverflow, "datetime out of range (years 1..9999)")),
+        _ => date_result(day),
+    }
 }
 
 fn holiday_calendar(v: Option<&Value>, func: &str, budget: &mut Budget) -> OpResult<Vec<i32>> {

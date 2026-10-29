@@ -715,6 +715,8 @@ fn literal(l: &Lit, budget: &mut Budget) -> OpResult<Value> {
         Lit::Float(x) | Lit::FloatConstant(x) => Value::Float(*x),
         Lit::Prob(p) => Value::Prob(*p),
         Lit::Str(s) => crate::text::value(s, budget)?,
+        Lit::Temporal(probl_syntax::calendar::Literal::Date(d)) => Value::Date(*d),
+        Lit::Temporal(probl_syntax::calendar::Literal::DateTime(d)) => Value::DateTime(*d),
         Lit::Dice { .. } | Lit::Enum { .. } => unreachable!("checked before running"),
     })
 }

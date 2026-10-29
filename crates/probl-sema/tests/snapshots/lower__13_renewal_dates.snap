@@ -3,7 +3,7 @@ source: crates/probl-sema/tests/lower.rs
 expression: ir(&src)
 ---
 fn#0 the top level ()
-  signed_0 = date("2024-02-29")    [live: signed_0]
+  signed_0 = '2024-02-29'    [live: signed_0]
   renewal_1 = add_years(signed_0, 3)    [live: signed_0 renewal_1]
   notice_deadline_2 = (- renewal_1 days(30))    [live: signed_0 renewal_1 notice_deadline_2]
   response_delay_3 ~ one_of([20: 0.5, 30: 0.35, 45: 0.15])    [live: signed_0 renewal_1 notice_deadline_2 response_delay_3]

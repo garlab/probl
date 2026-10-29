@@ -50,6 +50,7 @@ pub enum Value {
     Builtin(probl_sema::Builtin),
     /// Days since 1970-01-01.
     Date(i32),
+    DateTime(crate::dates::DateTime),
     /// A variable's value that isn't drawn yet, internal to the engine
     /// (docs/semantics.md, section 14). The engine draws it before any
     /// value read; a direct `typeof` inspection only needs its outcome type.
@@ -493,6 +494,7 @@ impl Value {
             Value::MultivariateNormal(_) => "multivariate_normal distribution".into(),
             Value::Closure(_) | Value::Builtin(_) => "function".into(),
             Value::Date(_) => "date".into(),
+            Value::DateTime(_) => "datetime".into(),
             Value::Delayed(_) => "value not drawn yet".into(),
             Value::Analytic(a) if a.int => "int".into(),
             Value::Analytic(_) => "float".into(),
@@ -546,6 +548,7 @@ impl Value {
             Value::Int(_) | Value::Float(_) | Value::Prob(_) | Value::Complex(_) => 3,
             Value::Str(_) => 4,
             Value::Date(_) => 5,
+            Value::DateTime(_) => 24,
             Value::Enum(_) => 6,
             Value::List(_) => 7,
             Value::Range(..) => 8,
@@ -753,6 +756,7 @@ fn eq_other(x: &Value, y: &Value) -> bool {
         (Value::Closure(a), Value::Closure(b)) => Arc::ptr_eq(a, b) || a == b,
         (Value::Builtin(a), Value::Builtin(b)) => a == b,
         (Value::Date(a), Value::Date(b)) => a == b,
+        (Value::DateTime(a), Value::DateTime(b)) => a == b,
         (Value::Continuous(a), Value::Continuous(b)) => family_key(a) == family_key(b),
         (Value::MultivariateNormal(a), Value::MultivariateNormal(b)) => {
             Arc::ptr_eq(a, b) || a.identity().eq(b.identity())
@@ -920,6 +924,7 @@ fn hash_other<H: Hasher>(value: &Value, state: &mut H) {
         Value::Closure(c) => c.hash(state),
         Value::Builtin(b) => b.hash(state),
         Value::Date(d) => d.hash(state),
+        Value::DateTime(d) => d.hash(state),
         Value::Continuous(f) => family_key(f).hash(state),
         Value::MultivariateNormal(n) => n.identity().for_each(|x| x.hash(state)),
         Value::Analytic(a) => a.key().hash(state),
@@ -942,6 +947,7 @@ impl Ord for Value {
             }
             (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
             (Value::Date(a), Value::Date(b)) => a.cmp(b),
+            (Value::DateTime(a), Value::DateTime(b)) => a.cmp(b),
             _ => self.cmp_other(other),
         }
     }
@@ -972,6 +978,7 @@ impl Value {
             (Value::Str(a), Value::Str(b)) => return (a.cmp(b), Ordering::Equal),
             (Value::Bool(a), Value::Bool(b)) => return (a.cmp(b), Ordering::Equal),
             (Value::Date(a), Value::Date(b)) => return (a.cmp(b), Ordering::Equal),
+            (Value::DateTime(a), Value::DateTime(b)) => return (a.cmp(b), Ordering::Equal),
             _ => {}
         }
         let (ra, rb) = (self.rank(), other.rank());
@@ -1027,6 +1034,7 @@ impl Value {
             (Value::Bool(a), Value::Bool(b)) => by_value(a.cmp(b)),
             (Value::Str(a), Value::Str(b)) => by_value(a.cmp(b)),
             (Value::Date(a), Value::Date(b)) => by_value(a.cmp(b)),
+            (Value::DateTime(a), Value::DateTime(b)) => by_value(a.cmp(b)),
             (Value::Enum(a), Value::Enum(b)) => by_value((a.ty, a.variant).cmp(&(b.ty, b.variant))),
             (Value::Range(a, b), Value::Range(c, d)) => by_value((a, b).cmp(&(c, d))),
             (Value::Dist(a), Value::Dist(b)) => by_value(a.cmp(b)),
@@ -1233,7 +1241,14 @@ fn write_value(v: &Value, f: &mut fmt::Formatter<'_>, nested: bool) -> fmt::Resu
             write!(f, ")")
         }
         Value::Closure(_) | Value::Builtin(_) => write!(f, "<function>"),
-        Value::Date(d) => write!(f, "{}", crate::dates::format(*d)),
+        Value::Date(d) => {
+            let quote = if nested { "'" } else { "" };
+            write!(f, "{quote}{}{quote}", crate::dates::format(*d))
+        }
+        Value::DateTime(d) => {
+            let quote = if nested { "'" } else { "" };
+            write!(f, "{quote}{}{quote}", d.format())
+        }
         Value::Continuous(family) => write!(f, "{family}"),
         Value::MultivariateNormal(normal) => {
             fn row(values: &[f64], f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1282,6 +1297,8 @@ mod tests {
             Value::Int(u64::MAX.into()),
             Value::Date(-1),
             Value::Date(0),
+            Value::DateTime(crate::dates::DateTime::parse("1969-12-31T23:59:59.999999999").unwrap()),
+            Value::DateTime(crate::dates::DateTime::parse("1970-01-01T00:00:00").unwrap()),
             Value::str("0"),
             Value::list(vec![]),
         ];

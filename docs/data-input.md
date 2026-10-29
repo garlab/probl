@@ -94,7 +94,7 @@ A record field matches the CSV column, or JSON key, with the same *key*: its let
 
 ### Plain values
 
-The same rules apply to a CSV cell, a line, and a JSON string read as a date, an enum, a percentage or a map key:
+The same rules apply to a CSV cell, a line, and a JSON string read as a date or datetime, an enum, a percentage or a map key:
 
 | Type | Text | JSON |
 |---|---|---|
@@ -103,6 +103,7 @@ The same rules apply to a CSV cell, a line, and a JSON string read as a date, an
 | `prob` | `30%`, `12.5%`, or a number from 0 to 1 | a number from 0 to 1, or a string like `"30%"` |
 | `bool` | `true`, `false`, in any case | `true`, `false` |
 | `date` | `2027-01-31` | the same, as a string |
+| `datetime` | `2027-01-31T09:30:00.123456789`, optionally with `Z` or `±HH:MM` | the same, as a string; explicit offsets normalize to UTC |
 | `str` | the text, exactly | a string |
 | an enum | a variant's name, like `Small` | the same, as a string |
 
@@ -119,7 +120,7 @@ The same rules apply to a CSV cell, a line, and a JSON string read as a date, an
 
 **JSON** follows RFC 8259:
 - **Arrays** read as lists.
-- **Objects** read as records, by the name rule above. They can also read as `map[K, V]`, where `K` is `str`, `int`, `bool`, `date` or an enum, and each key is read as a `K`: `map[date, float]` reads `{"2027-01-01": 1.5}`.
+- **Objects** read as records, by the name rule above. They can also read as `map[K, V]`, where `K` is `str`, `int`, `bool`, `date`, `datetime` or an enum, and each key is read as a `K`: `map[date, float]` reads `{"2027-01-01": 1.5}`.
 - **Duplicate keys:** an object may not have the same key twice. Nor may a map have two keys that read as the same `K`: `{"1": …, "01": …}` as a `map[int, str]` is an error.
 - **Bags:** a `bag[T]` reads an array of items, or, when `T` can be a key, an object of counts like `{"ace": 4}`.
 - **Sets:** a `set[T]` reads an array of items, checking each item as `T` and discarding equal elements.
@@ -139,9 +140,9 @@ type Pilot = { day: date, visitors: int, signups: int }
 # let pilot: list[Pilot] = read("pilot.csv")
 ```
 
-- **CSV and lines:** for each column, it takes the first of `int`, `float`, `prob`, `bool`, `date` and `str` that fits every non-empty value.
+- **CSV and lines:** for each column, it takes the first of `int`, `float`, `prob`, `bool`, `date`, `datetime` and `str` that fits every non-empty value.
 - **JSON:** it follows the document:
-  - objects become records, or maps when their keys are all dates or all integers;
+  - objects become records, or maps when their keys are all dates, all datetimes or all integers;
   - arrays become lists of the type that fits all their elements.
 - **Names:** column names become field names in snake case: `Daily sign-ups` becomes `daily_sign_ups`. A keyword gets an underscore, like `type_`. A name that can't become a field name at all, like `2026 total`, is left out with a comment.
 

@@ -142,6 +142,7 @@ struct Column {
     prob: bool,
     bool_: bool,
     date: bool,
+    datetime: bool,
     values: bool,
     empty: bool,
 }
@@ -154,6 +155,7 @@ impl Default for Column {
             prob: true,
             bool_: true,
             date: true,
+            datetime: true,
             values: false,
             empty: false,
         }
@@ -178,6 +180,7 @@ impl Column {
             .is_some_and(|x| (0.0..=100.0).contains(&x));
         self.bool_ &= t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("false");
         self.date &= dates::parse(t).is_some();
+        self.datetime &= dates::DateTime::parse(t).is_some();
     }
 
     fn guess(&self) -> &'static str {
@@ -188,6 +191,7 @@ impl Column {
             Column { prob: true, .. } => "prob",
             Column { bool_: true, .. } => "bool",
             Column { date: true, .. } => "date",
+            Column { datetime: true, .. } => "datetime",
             _ => "str",
         }
     }
@@ -254,6 +258,7 @@ enum Shape {
     Prob,
     Bool,
     Date,
+    DateTime,
     Str,
     List(Box<Shape>),
     Map(&'static str, Box<Shape>),
@@ -291,6 +296,7 @@ fn shape(value: &serde_json::Value, at: &str, out: &mut Output) -> Result<Shape,
             column.add(s, out.limits.max_integer_bits);
             match column.guess() {
                 "date" => Shape::Date,
+                "datetime" => Shape::DateTime,
                 "prob" => Shape::Prob,
                 _ => Shape::Str,
             }
@@ -308,6 +314,8 @@ fn shape(value: &serde_json::Value, at: &str, out: &mut Output) -> Result<Shape,
                 None
             } else if entries.keys().all(|k| dates::parse(k).is_some()) {
                 Some("date")
+            } else if entries.keys().all(|k| dates::DateTime::parse(k).is_some()) {
+                Some("datetime")
             } else if entries.keys().all(|k| {
                 k.parse::<probl_number::Integer>()
                     .is_ok_and(|n| n.bits() <= out.limits.max_integer_bits)
@@ -355,7 +363,7 @@ fn unify(a: Shape, b: Shape) -> Shape {
         (Unknown, x) | (x, Unknown) => x,
         (a, b) if a == b => a,
         (Int, Float) | (Float, Int) => Float,
-        (Date | Prob | Str, Date | Prob | Str) => Str,
+        (Date | DateTime | Prob | Str, Date | DateTime | Prob | Str) => Str,
         (List(a), List(b)) => List(Box::new(unify(*a, *b))),
         (Map(k, a), Map(l, b)) if k == l => Map(k, Box::new(unify(*a, *b))),
         (Record(a), Record(b)) => {
@@ -384,6 +392,7 @@ fn render(shape: &Shape, out: &mut Output, at: &str) -> String {
         Shape::Prob => "prob".into(),
         Shape::Bool => "bool".into(),
         Shape::Date => "date".into(),
+        Shape::DateTime => "datetime".into(),
         Shape::Str => "str".into(),
         Shape::Mixed => {
             out.notes.push(format!(

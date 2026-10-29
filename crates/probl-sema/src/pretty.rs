@@ -217,6 +217,7 @@ impl Printer<'_> {
                 Lit::Float(v) | Lit::FloatConstant(v) => format!("{v:?}"),
                 Lit::Prob(v) => percent(*v),
                 Lit::Str(s) => format!("{s:?}"),
+                Lit::Temporal(value) => format!("'{}'", value.format()),
                 Lit::Dice { count, sides } => format!("{count}d{sides}"),
                 Lit::Enum { ty, variant } => {
                     let t = &self.p.enums[*ty as usize];

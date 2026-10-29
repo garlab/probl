@@ -788,6 +788,7 @@ impl<'a> Interp<'a> {
         self.tick()?;
         let one = |w: World, v: Value| -> R<Outs> { Ok(vec![(w, Ok(v))]) };
         let outs = match &e.kind {
+            ExprKind::Temporal(_) => unsupported("date and datetime literals"),
             ExprKind::Int(i) => one(
                 w,
                 Value::Int(

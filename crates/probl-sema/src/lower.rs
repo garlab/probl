@@ -416,6 +416,7 @@ impl<'a> Lowerer<'a> {
                     "bool" => TypeSpec::Bool,
                     "str" => TypeSpec::Str,
                     "date" => TypeSpec::Date,
+                    "datetime" => TypeSpec::DateTime,
                     "list" => TypeSpec::List(arg(0, self)?),
                     "bag" => TypeSpec::Bag(arg(0, self)?),
                     "set" => TypeSpec::Set(arg(0, self)?),
@@ -431,8 +432,8 @@ impl<'a> Lowerer<'a> {
                             TypeSpec::Enum(e)
                         } else {
                             let mut known: Vec<String> = [
-                                "int", "float", "complex", "prob", "bool", "str", "date", "list", "map", "bag", "set",
-                                "dist",
+                                "int", "float", "complex", "prob", "bool", "str", "date", "datetime", "list", "map",
+                                "bag", "set", "dist",
                             ]
                             .iter()
                             .map(|s| s.to_string())
@@ -468,11 +469,15 @@ impl<'a> Lowerer<'a> {
             (ast::ExprKind::Percent(v), TypeSpec::Prob) if (0.0..=1.0).contains(v) => return,
             (ast::ExprKind::Percent(_), TypeSpec::Float) => return,
             (ast::ExprKind::Str(_), TypeSpec::Str) => return,
+            (ast::ExprKind::Temporal(probl_syntax::calendar::Literal::Date(_)), TypeSpec::Date) => return,
+            (ast::ExprKind::Temporal(probl_syntax::calendar::Literal::DateTime(_)), TypeSpec::DateTime) => return,
             (ast::ExprKind::Bool(_), TypeSpec::Bool) => return,
             (ast::ExprKind::Int(_), _) => "an int",
             (ast::ExprKind::Float(_), _) => "a float",
             (ast::ExprKind::Percent(_), _) => "a percentage",
             (ast::ExprKind::Str(_), _) => "a string",
+            (ast::ExprKind::Temporal(probl_syntax::calendar::Literal::Date(_)), _) => "a date",
+            (ast::ExprKind::Temporal(probl_syntax::calendar::Literal::DateTime(_)), _) => "a datetime",
             (ast::ExprKind::Bool(_), _) => "a bool",
             _ => return,
         };
@@ -484,6 +489,7 @@ impl<'a> Lowerer<'a> {
             TypeSpec::Bool => "a bool",
             TypeSpec::Str => "a string",
             TypeSpec::Date => "a date",
+            TypeSpec::DateTime => "a datetime",
             _ => "a value of the declared type",
         };
         self.error(value.span, format!("expected {expected}, found {found}"));
@@ -500,6 +506,10 @@ impl<'a> Lowerer<'a> {
             } else {
                 match &e.kind {
                     ExprKind::Lit(Lit::Str(_)) => Some(TypeSpec::Str),
+                    ExprKind::Lit(Lit::Temporal(probl_syntax::calendar::Literal::Date(_))) => Some(TypeSpec::Date),
+                    ExprKind::Lit(Lit::Temporal(probl_syntax::calendar::Literal::DateTime(_))) => {
+                        Some(TypeSpec::DateTime)
+                    }
                     ExprKind::Lit(Lit::Bool(_)) => Some(TypeSpec::Bool),
                     ExprKind::Lit(Lit::Prob(_)) => Some(TypeSpec::Prob),
                     _ => None,
@@ -2559,6 +2569,7 @@ impl<'a> Lowerer<'a> {
                 sides: *sides,
             }),
             ast::ExprKind::Bool(b) => ExprKind::Lit(Lit::Bool(*b)),
+            ast::ExprKind::Temporal(value) => ExprKind::Lit(Lit::Temporal(*value)),
             ast::ExprKind::Str(segments) => {
                 let inner: Vec<&ast::Expr> = segments
                     .iter()
@@ -3177,9 +3188,9 @@ impl<'a> Lowerer<'a> {
 
     fn check_arity(&mut self, b: Builtin, n: usize, span: Span) {
         let (min, max) = b.arity();
-        if n < min || n > max || (b == Builtin::Date && n == 2) {
+        if n < min || n > max {
             let expected = if b == Builtin::Date {
-                "one ISO string or three integers (year, month, day)".to_string()
+                "three integers (year, month, day)".to_string()
             } else if min == max {
                 format!("{min} argument{}", plural(min))
             } else if max == usize::MAX {
@@ -3195,6 +3206,12 @@ impl<'a> Lowerer<'a> {
                     if n == 1 { "was" } else { "were" }
                 ),
             );
+            if b == Builtin::Date && n == 1 {
+                self.diags
+                    .last_mut()
+                    .unwrap()
+                    .help("write a constant date as 'YYYY-MM-DD'; use `parse_date(text)` for runtime text");
+            }
         }
     }
 

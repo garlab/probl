@@ -3,7 +3,7 @@ source: crates/probl-syntax/tests/parser.rs
 expression: tree
 ---
 (@mode (call sample runs: 100000 seed: 2026))
-(let start = (call date "2026-09-28"))
+(let start = '2026-09-28')
 (let groundwork ~ (to 1 2))
 (let front_end ~ (to 3 5))
 (let worlds ~ (to 4 7))
@@ -23,5 +23,5 @@ expression: tree
 (report (call ship_date v01) as "v0.1  games (enumeration)")
 (report (call ship_date v02) as "v0.2  forecasting (sampling)")
 (report (call ship_date v03) as "v0.3  types and tooling")
-(report (<= (call ship_date v01) (call date "2027-02-28")) as "v0.1 by the end of February 2027")
-(report (<= (call ship_date v03) (call date "2027-06-30")) as "v0.3 by the end of June 2027")
+(report (<= (call ship_date v01) '2027-02-28') as "v0.1 by the end of February 2027")
+(report (<= (call ship_date v03) '2027-06-30') as "v0.3 by the end of June 2027")

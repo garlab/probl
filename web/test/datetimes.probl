@@ -1,0 +1,20 @@
+# Canonical literals and exact, timezone-free datetime values in native/WASM.
+let a: datetime = '2027-01-01T01:00:00.000000001+01:00'
+let b = '2026-12-31T19:00:00.000000001-05:00'
+report a == b
+report [typeof a, str(a)]
+report [a, '2024-02-29']
+report a.add_nanoseconds(-2)
+report a.add_months(1)
+report '2024-02-29T12:00:00'.add_years(1)
+report a.hour()
+report a.nanosecond()
+report datetime(2027,1,1,0,0,0,1) == a
+report parse_datetime("2027-01-01T00:00:00.000000001Z") == a
+report parse_date("2024-02-29") == '2024-02-29'
+report match a { '2027-01-01T00:00:00.000000001Z' => true, _ => false }
+report set(a,b)
+report [a: 1, b: 2]
+report one_of([a,a.add_nanoseconds(2)]) by a
+report median([a,a.add_nanoseconds(1)])
+report quantile([a,a.add_nanoseconds(1)],75%)

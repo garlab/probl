@@ -226,7 +226,8 @@ impl KeySize<'_> {
             | Value::Float(_)
             | Value::Complex(_)
             | Value::Prob(_)
-            | Value::Date(_) => {}
+            | Value::Date(_)
+            | Value::DateTime(_) => {}
             Value::Int(n) => self.integer(n)?,
             Value::Range(a, b) => {
                 self.integer(a)?;

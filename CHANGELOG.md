@@ -4,6 +4,15 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+### Added
+
+- Single-quoted date and datetime literals, validated during compilation and usable in match patterns. `datetime` retains nanosecond precision, accepts `Z` and numeric offsets by normalizing to UTC, and stores no timezone metadata. It supports typed containers, input schemas, ordering, medians and exact report quantiles. Calendar and clock helpers preserve precision and check bounds.
+- `parse_date(text)` and `parse_datetime(text)` for explicit runtime parsing, plus `datetime(year, month, day, hour, minute, second, nanosecond?)` for construction from integer parts.
+
+### Changed
+
+- `date(text)` is removed: write constant dates as `'YYYY-MM-DD'` and use `parse_date` for runtime text. The three-integer constructor remains. Dates and datetimes inside collections print as single-quoted literals; scalar display stays unquoted. Bundled examples and fixtures use the new syntax.
+
 ## [0.4.0] - 2026-10-29
 
 ### Added

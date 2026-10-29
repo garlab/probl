@@ -57,6 +57,7 @@ pub fn is_plain(ty: &TypeSpec) -> bool {
             | TypeSpec::Bool
             | TypeSpec::Str
             | TypeSpec::Date
+            | TypeSpec::DateTime
             | TypeSpec::Enum(_)
     )
 }
@@ -65,7 +66,7 @@ pub fn is_plain(ty: &TypeSpec) -> bool {
 pub fn is_key(ty: &TypeSpec) -> bool {
     matches!(
         ty,
-        TypeSpec::Int | TypeSpec::Bool | TypeSpec::Str | TypeSpec::Date | TypeSpec::Enum(_)
+        TypeSpec::Int | TypeSpec::Bool | TypeSpec::Str | TypeSpec::Date | TypeSpec::DateTime | TypeSpec::Enum(_)
     )
 }
 
@@ -149,7 +150,7 @@ impl Checker<'_> {
                             "a map read from JSON has text keys, so they can't be `{}`",
                             self.describe(k)
                         ),
-                        Some("a map's keys can be `str`, `int`, `bool`, `date` or an enum"),
+                        Some("a map's keys can be `str`, `int`, `bool`, `date`, `datetime` or an enum"),
                         at,
                     ));
                 }
@@ -196,7 +197,9 @@ impl Checker<'_> {
             }
             _ => self.problems.push(Problem::new(
                 format!("data can't be `{}`", self.describe(ty)),
-                Some("data is numbers, text, dates, enums, and records, lists, maps and bags of those"),
+                Some(
+                    "data is numbers, text, dates, datetimes, enums, and records, lists, maps, sets and bags of those",
+                ),
                 at,
             )),
         }

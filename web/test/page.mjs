@@ -425,6 +425,19 @@ try {
       && scalar.result.includes('report x'), `${source} explains how to summarize worlds`, scalar.result);
   }
 
+  // Temporal literals retain nanoseconds through the editor, worker and text fallback.
+  const datetimeSource = readFileSync(`${root}web/test/datetimes.probl`, 'utf8');
+  await page.evaluate((source) => window.playground.setSource(source), datetimeSource);
+  const datetime = await run(page);
+  const datetimeExpected = execFileSync(`${root}target/release/probl`, ['run', 'web/test/datetimes.probl'], {
+    cwd: root, encoding: 'utf8',
+  });
+  expect(!datetime.error && `${datetime.result}\n` === datetimeExpected, 'datetime literals match native results with exact nanoseconds', datetime.result);
+  expect(await page.$$eval('.cm-content .tok-number', (els) => els.some((e) => e.textContent.startsWith("'2027-01-01T"))), 'the editor highlights a temporal literal as one token');
+  await page.evaluate(() => window.playground.setSource("report '2027-02-29'"));
+  const badDate = await run(page);
+  expect(badDate.error && badDate.result.includes('valid date or datetime'), 'invalid calendar literals fail during compilation', badDate.result);
+
   // Stopping a long run, and running again after.
   await page.evaluate(() => window.playground.setSource('@mode sample(runs: 100_000_000, seed: 1)\nreport d6 > 3'));
   await press(page, 'run');

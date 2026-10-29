@@ -178,6 +178,7 @@ pub enum ExprKind {
         sides: u32,
     },
     Str(Vec<StrSegment>),
+    Temporal(crate::calendar::Literal),
     Bool(bool),
     Name(String),
     List(Vec<Expr>),

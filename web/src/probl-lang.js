@@ -13,7 +13,7 @@ const keywords = new Set([
   'as', 'by', 'from', 'to',
 ]);
 const atoms = new Set(['true', 'false']);
-const types = new Set(['int', 'float', 'complex', 'prob', 'bool', 'str', 'date', 'list', 'map', 'bag', 'set', 'dist']);
+const types = new Set(['int', 'float', 'complex', 'prob', 'bool', 'str', 'date', 'datetime', 'list', 'map', 'bag', 'set', 'dist']);
 
 /** The rest of a string, up to its closing quote or the end of the line. */
 function string(stream, state) {
@@ -48,6 +48,7 @@ export const probl = StreamLanguage.define({
     if (stream.match(/^0(?:[bB][01](?:_?[01])*|[xX][\da-fA-F](?:_?[\da-fA-F])*)\b/)) return 'number';
     if (stream.match(/^\d*d\d+\b/)) return 'number';
     if (stream.match(/^\d[\d_]*(\.[\d_]+)?([eE][+-]?\d[\d_]*)?%?/)) return 'number';
+    if (stream.match(/^'[^'\r\n]*'?/)) return 'atom';
     if (stream.peek() === '"') {
       stream.next();
       state.string = true;
@@ -77,8 +78,7 @@ export const probl = StreamLanguage.define({
     commentTokens: { line: '#' },
     // Typing a closing bracket at the start of a line indents it again.
     indentOnInput: /^\s*[)\]}]$/,
-    // `'` isn't a quote in Probl.
-    closeBrackets: { brackets: ['(', '[', '{', '"'] },
+    closeBrackets: { brackets: ['(', '[', '{', '"', "'"] },
   },
 });
 

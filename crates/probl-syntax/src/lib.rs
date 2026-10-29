@@ -2,6 +2,7 @@
 //! and diagnostics.
 
 pub mod ast;
+pub mod calendar;
 pub mod diagnostic;
 pub mod lexer;
 pub mod parser;

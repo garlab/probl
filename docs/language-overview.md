@@ -130,12 +130,12 @@ The input is still built eagerly; `any` saves predicate calls, not construction 
 
 ### Dates
 
-Dates are immutable Gregorian calendar dates, without a time of day or timezone. Construct one with `date("2027-01-31")` or `date(2027, 1, 31)`. Years run from 1 through 9999; strings require exactly `YYYY-MM-DD`. Invalid dates are errors.
+Dates are immutable Gregorian calendar dates, without a time of day or timezone. Construct one with `'2027-01-31'` or `date(2027, 1, 31)`. Years run from 1 through 9999. Single-quoted literals are checked during compilation; parse runtime text explicitly with `parse_date(s)`, which requires exactly `YYYY-MM-DD`. Single quotes never hold strings.
 
 `today` is a value captured once at the start of execution, shared by every world, function and nested `simulate`. It never advances while a model runs. The command line and playground use the UTC date by default. Pin it with `probl run model.probl --today 2026-09-29` to reproduce a forecast; `--stats` records the date used. A REPL session keeps its initial date throughout the session. Like the math constants, `today` can be hidden by a program's own name.
 
 ```probl
-let holidays = [date("2026-10-02")]
+let holidays = ['2026-10-02']
 let delivery = today.add_workdays(3, holidays)
 report delivery
 report delivery <= today + weeks(1)
@@ -155,7 +155,24 @@ report anchor.year()           # 2027; also month() and day()
 report anchor                  # still 2027-01-31
 ```
 
-`add_months` and `add_years` clamp to the last valid day of the target month. Consequently, adding one month twice may differ from adding two months once. For recurring schedules, compute each date from the original anchor, as in the [invoice example](../examples/12_invoice_calendar.probl). These functions, component extraction and workday helpers also lift over finite distributions. Month/year/workday counts and constructor components use checked integer conversion: `1.0` is accepted, `1.4` is rejected. All transformations return new dates and reject results outside the supported range.
+`add_months` and `add_years` clamp to the last valid day of the target month. Consequently, adding one month twice may differ from adding two months once. For recurring schedules, compute each date from the original anchor, as in the [invoice example](../examples/12_invoice_calendar.probl). These functions, component extraction and workday helpers also lift over finite distributions. Month/year/workday counts and constructor components require ints; even `1.0` needs an explicit `int(…)` conversion. All transformations return new dates and reject results outside the supported range.
+
+### Dates with a clock time
+
+A `datetime` has a date and a clock time with nanosecond precision. An explicit `Z` or `±HH:MM` offset normalizes to UTC, then disappears; without a suffix, the written fields are kept. No machine timezone or daylight-saving rules are involved.
+
+```probl
+let meeting: datetime = '2027-01-31T09:30:00+02:00'
+report meeting                         # 2027-01-31T07:30:00
+report meeting.add_minutes(45)          # 2027-01-31T08:15:00
+report meeting.add_months(1)            # 2027-02-28T07:30:00
+report meeting.hour()                   # 7
+report '2027-01-01T00:00:00.000000001'   # preserves all nine fractional digits
+```
+
+`datetime(year, month, day, hour, minute, second, nanosecond?)` builds from integer parts; the final part defaults to zero. `parse_datetime(s)` parses runtime text with the same validation as literals. Seconds are required; fractions have one to nine digits. Years are 1–9999, hours 0–23 and minutes/seconds 0–59, with no leap seconds. An offset that moves the result outside the year range is an error.
+
+Use `add_days`, `add_hours`, `add_minutes`, `add_seconds` or `add_nanoseconds` for explicit units. The calendar and workday helpers also accept datetimes and preserve their clock fields. Values compare chronologically after normalization and work as map keys, distribution outcomes and match patterns. Quantiles and medians preserve nanosecond precision; a midpoint tie chooses the earlier nanosecond. Means and standard deviations of datetimes are not supported. Nested dates and datetimes print in single quotes; scalar reports and `str` omit the quotes.
 
 ### Sorting with a comparator
 
@@ -519,7 +536,7 @@ let counts: list[int] = read("-")                  # standard input, one value p
 
 ```probl
 let region = env.get("REGION", "eu")                  # "eu" when REGION isn't set
-let start = date(env.get("START", "2026-01-01"))
+let start = parse_date(env.get("START", "2026-01-01"))
 report region
 report "CI" in env as "in CI"
 ```
@@ -1041,7 +1058,8 @@ From loosest to tightest binding:
 | Constants | `pi` `e` `euler_gamma` `today` `env`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
 | Collections | `list` `set` `bag` `len` `slice(xs, start, end?)` `combinations(xs, n)` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `any(xs, test)` `minimum` `maximum` `highest(n, compare?)` `lowest(n, compare?)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
 | Text | `str` `upper` `lower` `trim(s, chars?)` `trim_start(s, chars?)` `trim_end(s, chars?)` `starts_with` `ends_with` `chars` `split` `join` |
-| Dates | `date("2027-01-31")` or `date(year, month, day)`; `days(n)` `weeks(n)` `add_workdays(d, n, holidays?)` `is_workday(d, holidays?)` `weekday(d)` `add_months(d, n)` `add_years(d, n)` `start_of_month(d)` `end_of_month(d)` `year(d)` `month(d)` `day(d)` |
+| Datetimes | `'2027-01-31T09:30:00Z'`, `datetime(year, month, day, hour, minute, second, nanosecond?)`, `parse_datetime(text)`; `add_days` `add_hours` `add_minutes` `add_seconds` `add_nanoseconds` `hour` `minute` `second` `nanosecond`; calendar helpers also apply |
+| Dates | `'2027-01-31'`, `date(year, month, day)` or `parse_date(text)`; `days(n)` `weeks(n)` `add_workdays(d, n, holidays?)` `is_workday(d, holidays?)` `weekday(d)` `add_months(d, n)` `add_years(d, n)` `start_of_month(d)` `end_of_month(d)` `year(d)` `month(d)` `day(d)` |
 | Debugging | `print` |
 
 \* Planned, not built yet.

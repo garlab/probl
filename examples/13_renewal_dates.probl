@@ -1,7 +1,7 @@
 # Contract renewal: what is the chance of notice reaching us before renewal?
 # A leap-day anniversary clamps to February's last day in a non-leap year.
 
-let signed = date("2024-02-29")
+let signed = '2024-02-29'
 let renewal = signed.add_years(3)
 let notice_deadline = renewal - days(30)
 let response_delay ~ one_of([20: 50%, 30: 35%, 45: 15%])

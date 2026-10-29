@@ -48,7 +48,7 @@ Future known defects can use `#[ignore = "FIXME(API-XX): reason"]` while awaitin
 | API-07: relative-weight overflow | Support and mass under large common scaling; active ordinary/tiny weights and all-zero rejection |
 | API-08: quantile validation and tiny tails | Separate heterogeneous and record-distribution validation checks; q=1 tail check; active positive-tail magnitude and ordinary endpoint controls |
 | API-09: inconsistent `get` indices | Index/get agreement and invalid-key rejection; active present/absent integer indices |
-| Other manual controls and design questions | Unicode text, date arithmetic/statistics, integer/complex functions, enum/bool ordering, multi-argument min/max lifting and scalar rejection, sequence capabilities, container equality, singleton ordering validation, rounding types, bag defaults, and PMF argument types |
+| Other manual controls and design questions | Unicode text, date/datetime literals, offset normalization, nanosecond arithmetic/statistics, integer/complex functions, enum/bool ordering, multi-argument min/max lifting and scalar rejection, sequence capabilities, container equality, singleton ordering validation, rounding types, bag defaults, and PMF argument types |
 
 The agreed contracts are now explicit: incomplete scalar probability queries reject unresolved input, PMF, keys and container equality compare numbers by value, and indexing/get require integer positions. A whole float needs an explicit conversion such as `int(1.0)`. The min/max, sequence and singleton tests reflect the selected design rather than characterizing the former overloads.
 

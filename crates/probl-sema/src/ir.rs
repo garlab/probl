@@ -431,6 +431,7 @@ pub enum TypeSpec {
     Bool,
     Str,
     Date,
+    DateTime,
     Unit,
     Function,
     List(Box<TypeSpec>),
@@ -467,6 +468,7 @@ impl TypeSpec {
             TypeSpec::Bool => "bool".into(),
             TypeSpec::Str => "str".into(),
             TypeSpec::Date => "date".into(),
+            TypeSpec::DateTime => "datetime".into(),
             TypeSpec::Unit => "()".into(),
             TypeSpec::Function => "fn".into(),
             TypeSpec::List(t) => format!("list[{}]", describe(t)),
@@ -590,6 +592,7 @@ pub enum Lit {
     FloatConstant(f64),
     Prob(f64),
     Str(String),
+    Temporal(probl_syntax::calendar::Literal),
     Dice {
         count: u32,
         sides: u32,

@@ -1,6 +1,6 @@
 # Choosing report summaries
 
-Report summaries can select ordered columns for individual numeric or date
+Report summaries can select ordered columns for individual numeric, date or datetime
 reports. The same selection controls CLI text, the Rust JSON export and playground
 charts and tables. Reports without an override keep their existing output.
 These options are available from 0.3.3.
@@ -51,8 +51,9 @@ inverse CDF, including at `q:0.5`. With half the mass at 0 and half at 10, `medi
 is 5 and `q:0.5` is 0. Both columns may be requested together. Levels 0 and 1 are
 allowed; a continuous distribution's endpoint may be infinite.
 
-Dates support median and quantiles, including midpoint dates. Exact integer and
-date values are preserved in text and typed JSON values. Means and SDs are
+Dates and datetimes support median and quantiles, including midpoint values.
+Datetimes retain nanosecond precision; midpoint ties round to the earlier nanosecond.
+Exact integer, date and datetime values are preserved in text and typed JSON values. Means and SDs are
 unavailable when a numeric summary cannot represent the population; unavailable
 values are never replaced with zero. Categorical, structured and mixed
 Boolean/other reports keep their default display and reject explicit summary
@@ -117,7 +118,7 @@ overrides. The playground exposes controls for its first 256 reports.
 Invalid specifications and unknown report IDs fail before model execution or
 input-file loading. Report values have dynamic types, so compatibility is
 checked as they're reported: the run stops at the first text, list, record or
-other categorical value, at a date when mean or SD is selected, and when Boolean
+other categorical value, at a date or datetime when mean or SD is selected, and when Boolean
 and other values meet in one report, even across sampling batches. Values known
 only by their outcomes, such as an unsampled distribution, are checked once
 execution finishes. Either way, an incompatible selection returns a diagnostic

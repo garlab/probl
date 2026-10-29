@@ -2,7 +2,7 @@
 source: crates/probl-syntax/tests/parser.rs
 expression: tree
 ---
-(let signed = (call date "2024-02-29"))
+(let signed = '2024-02-29')
 (let renewal = (.add_years signed 3))
 (let notice_deadline = (- renewal (call days 30)))
 (let response_delay ~ (call one_of [20: 50%, 30: 35%, 45: 15%]))

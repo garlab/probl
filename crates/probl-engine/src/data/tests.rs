@@ -134,7 +134,7 @@ fn csv_rows_become_records() {
     );
     assert_eq!(
         v.to_string(),
-        "[Day { day: 2026-09-01, signups: 9, visitors: 250 }, Day { day: 2026-09-02, signups: 6, visitors: 250 }]"
+        "[Day { day: '2026-09-01', signups: 9, visitors: 250 }, Day { day: '2026-09-02', signups: 6, visitors: 250 }]"
     );
 }
 
@@ -462,7 +462,7 @@ fn json_maps_keep_their_keys() {
         "let m: map[date, float] = read(\"a.json\")",
         &[("a.json", r#"{"2027-01-02": 1.5, "2027-01-01": 2}"#)],
     );
-    assert_eq!(v.to_string(), "[2027-01-01: 2.0, 2027-01-02: 1.5]");
+    assert_eq!(v.to_string(), "['2027-01-01': 2.0, '2027-01-02': 1.5]");
     // Map keys aren't field names: they're kept as they are.
     let v = value(
         "let m: map[str, int] = read(\"a.json\")",
@@ -682,4 +682,29 @@ fn schemas_are_suggested() {
         ..InputLimits::default()
     };
     assert!(suggest(b"1\n2\n3\n4\n", DataFormat::Lines, "a.txt", &small).is_err());
+}
+
+#[test]
+fn datetime_schemas_and_canonical_key_collisions() {
+    let schema = suggest(
+        b"at\n2027-01-01T00:00:00Z\n2027-01-02T01:00:00+01:00\n",
+        DataFormat::Csv,
+        "times.csv",
+        &InputLimits::default(),
+    )
+    .unwrap();
+    assert!(schema.contains("datetime"), "{schema:?}");
+    fails(
+        "let m: map[datetime, int] = read(\"times.json\")",
+        &[(
+            "times.json",
+            r#"{"2027-01-01T00:00:00Z":1,"2027-01-01T01:00:00+01:00":2}"#,
+        )],
+        &["are the same datetime"],
+    );
+    fails(
+        "let xs: list[datetime] = read(\"times.txt\")",
+        &[("times.txt", "0001-01-01T00:00:00+01:00\n")],
+        &["isn't a datetime"],
+    );
 }
