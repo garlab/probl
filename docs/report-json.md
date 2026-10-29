@@ -4,7 +4,7 @@ Probl can export report summaries without parsing its printed output. Enable the
 `json` feature of the `probl` crate, available from 0.3.3:
 
 ```toml
-probl = { version = "0.3.3", features = ["json"] }
+probl = { version = "0.4.0", features = ["json"] }
 ```
 
 ```rust

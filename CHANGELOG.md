@@ -4,6 +4,8 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-29
+
 ### Added
 
 - Union annotations such as `int or str` and `list[int or str]`, with order-independent numeric conversion and contextual collection literals. The compiler flattens unions, removes duplicates and rejects ambiguous container kinds or record shapes recursively. Input data schemas still require concrete types.
@@ -141,7 +143,8 @@ The first release.
 
 The [language overview](docs/language-overview.md) and the [reference semantics](docs/semantics.md) describe the language, and [status and limits](README.md#status-and-limits) lists what isn't implemented yet.
 
-[Unreleased]: https://github.com/garlab/probl/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/garlab/probl/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/garlab/probl/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/garlab/probl/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/garlab/probl/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/garlab/probl/compare/v0.3.0...v0.3.1
