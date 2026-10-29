@@ -4,7 +4,7 @@ Current test workflow and coverage gaps, October 2026.
 
 Probl has a substantial test suite, including an independent oracle. It does not yet provide enough assurance about how the expanding APIs compose. The recent bugs are evidence of that gap: individual functions can be exercised while their shared contracts remain untested. A larger test count or a high line-coverage percentage alone would not establish that the answers are correct.
 
-The repository does not publish an instrumented coverage baseline. The current CI workflow has no coverage, browser or mutation-testing job. The tooling additions below are proposals, not existing quality gates.
+The repository does not publish an instrumented coverage baseline. CI runs native/WASM comparisons and browser tests, but has no coverage or mutation-testing job. The remaining tooling additions below are proposals, not existing quality gates.
 
 ## Run the checks
 
@@ -48,9 +48,9 @@ Future known defects can use `#[ignore = "FIXME(API-XX): reason"]` while awaitin
 | API-07: relative-weight overflow | Support and mass under large common scaling; active ordinary/tiny weights and all-zero rejection |
 | API-08: quantile validation and tiny tails | Separate heterogeneous and record-distribution validation checks; q=1 tail check; active positive-tail magnitude and ordinary endpoint controls |
 | API-09: inconsistent `get` indices | Index/get agreement and invalid-key rejection; active present/absent integer indices |
-| Other manual controls and design questions | Unicode text, date arithmetic/statistics, integer/complex functions, enum/bool ordering, multi-argument min/max lifting and scalar rejection, sequence capabilities, typed container equality, singleton ordering validation, rounding types, bag defaults, and PMF argument types |
+| Other manual controls and design questions | Unicode text, date arithmetic/statistics, integer/complex functions, enum/bool ordering, multi-argument min/max lifting and scalar rejection, sequence capabilities, container equality, singleton ordering validation, rounding types, bag defaults, and PMF argument types |
 
-The agreed contracts are now explicit: incomplete scalar probability queries reject unresolved input, PMF, keys and container equality compare numbers by value, and indexing/get share checked integral-float conversion. The min/max, sequence and singleton tests reflect the selected design rather than characterizing the former overloads.
+The agreed contracts are now explicit: incomplete scalar probability queries reject unresolved input, PMF, keys and container equality compare numbers by value, and indexing/get require integer positions. A whole float needs an explicit conversion such as `int(1.0)`. The min/max, sequence and singleton tests reflect the selected design rather than characterizing the former overloads.
 
 Both modes use deterministic queries, a pinned date, and a fixed sampling seed. The sampling cases test API behavior, not statistical convergence. Assertions inspect returned values and raw bounds. Tiny-tail tests use relative error and require positive mass; probability range checks have no tolerance. Ordinary approximate arithmetic uses a scale-aware tolerance, so it does not require accidental bit-for-bit agreement after distribution normalization.
 
@@ -91,15 +91,15 @@ unresolved bounds.
 | Robustness | [Program mutation/noise tests](../crates/probl-oracle/tests/fuzz.rs), 300 cases by default; [data round-trip and malformed-input tests](../crates/probl-engine/tests/data_fuzz.rs), a 2,000-case default budget | Seeded generators run in CI, but these are not coverage-guided fuzzers; no automatic shrinking framework is configured |
 | CLI and host API | Golden examples, input/CLI tests, native tests of the WASM-facing API | Native API tests do not execute a `.wasm` binary |
 | Library API | [The `probl` crate's tests](../crates/probl/tests/library.rs), through its public API only: known answers, unresolved bounds, sampling statuses, evidence scale, data reuse and misuse, and agreement of every example's numbers with its printed text; the golden examples also run through the library | Agreement with the text is checked at printed precision; `cargo semver-checks` against the last published version is not run yet |
-| Actual WASM and browser | [Native/WASM parity](../web/test/examples.mjs) and [headless browser tests](../web/test/page.mjs) | Present in the repo but absent from the current GitHub Actions workflow |
+| Actual WASM and browser | [Native/WASM parity](../web/test/examples.mjs) and [headless browser tests](../web/test/page.mjs), run in CI | CI covers Chrome on Ubuntu; Firefox runs locally |
 
 The [current CI workflow](../.github/workflows/ci.yml) runs formatting, Clippy, and `cargo test --all` on Ubuntu, which include the native oracle and fuzz-style tests. It also builds the playground, compares the WebAssembly build's output with the native command's on every example, and runs the page in headless Chrome ([playground tests](playground.md#tests)). A [nightly workflow](../.github/workflows/bench.yml) runs the benchmarks on `main` and the commit its last run measured, and fails if a model's output or world-steps changed ([nightly benchmarks](benchmarks.md#nightly)). CI doesn't run Firefox, a coverage report, or mutation testing. Native/WASM agreement is useful portability evidence, but both builds can share the same algorithmic bug—as every audit reproduction did.
 
 ## Recommended additions, in order
 
-### 1. Put existing WASM and browser tests in CI
+### 1. Put existing WASM and browser tests in CI — completed
 
-This closes a concrete automation gap before adding another test framework. Build the release CLI and actual WASM module, run `web/test/examples.mjs`, then build the playground and run `web/test/page.mjs` with an explicitly installed Linux browser and `PROBL_CHROME` pointing to it. Keep failures visible rather than allowing this job to fail silently. When fixing an API defect, move a small representative case into the WASM fixtures as well as enabling its Rust regression.
+The `playground` job builds the release CLI and actual WASM module, runs `web/test/examples.mjs`, then runs `web/test/page.mjs` with Chrome on Ubuntu. When fixing an API defect, add a representative case to the WASM fixtures as well as its Rust regression.
 
 ### 2. Measure coverage with cargo-llvm-cov
 

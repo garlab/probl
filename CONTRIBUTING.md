@@ -34,7 +34,7 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --all --locked
 ```
 
-Commit any change to `Cargo.lock` together with the change that caused it. If you change the playground or `probl-wasm`, also run the [playground tests](docs/playground.md#tests), because CI doesn't run them yet.
+Commit any change to `Cargo.lock` together with the change that caused it. If you change the playground or `probl-wasm`, also run the [playground tests](docs/playground.md#tests). CI runs them separately from the Rust suite, including native/WASM comparisons and headless Chrome.
 
 ## Tests
 

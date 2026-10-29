@@ -369,7 +369,7 @@ Probl is in the first group, with a `typeof` that reads the elements.
 | Conversion | Accepts | Notes |
 |---|---|---|
 | `prob(x)` | a number in [0, 1], a bool, a prob | As today |
-| `int(x)` | an int, an exactly integral float | New. It never rounds, as an `int` annotation doesn't today; `round`, `floor`, `ceil` and `trunc` round |
+| `int(x)` | an int, an exactly integral float | It never rounds; `round`, `floor`, `ceil` and `trunc` round. An `int` annotation rejects floats instead of converting them. |
 | `float(x)` | an int, a float, a prob | New. Unlike the automatic conversion, it rounds an int that no float holds to the nearest float. Like other built-ins, it lifts over a distribution's outcomes, which for a law too broad to list fails on the outcome limit |
 
 A number is built from a number, so a number's type name can convert one: `int(x)` can't mean anything else. These are ordinary built-ins, and values like other built-ins: `[0.3, 0.5].map(prob)`. None of them parses text: `int("42")` is an error. Reading data into a declared type still parses, as today.
