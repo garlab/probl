@@ -454,6 +454,70 @@ try {
   expect(!timeMoments.error && timeMoments.result === timeExpected.output && timeMoments.result.includes('0.5ns'), 'datetime summary controls preserve fractional duration units', timeMoments.result);
   expect(timeExpected.reports.reports[0].groups[0].summary.sd_value.value === '0.5ns', 'typed JSON carries the SD unit');
 
+  const timeChartsSource = `let t='2027-01-01T00:00:00.000000001'
+for k in 0..2 {
+  report one_of([t+nanoseconds(k),t+nanoseconds(k+1)]) by t+nanoseconds(k) as "Arrival"
+  report t+nanoseconds(k-1) by t+nanoseconds(k) as "Target arrival"
+  report one_of(['1s','3s']) by t+nanoseconds(k) as "Elapsed"
+  report '1s^2' by t+nanoseconds(k) as "Variance"
+  report one_of(['2024-02-28','2024-03-01']) by '2024-02-28'+k as "Calendar"
+}`;
+  await page.emulateTimezone('America/Los_Angeles');
+  await page.evaluate((source) => window.playground.setSource(source), timeChartsSource);
+  await run(page);
+  expect(await page.$$eval('.report-chart', (cards) => cards.length) === 5, 'calendar and duration reports draw typed charts');
+  expect(await page.$$eval('.chart-currency', (controls) => controls.length) === 0, 'temporal axes never offer currency formatting');
+  expect(await page.$$eval(`${balance} .chart-band`, (bands) => bands.length) === 2, 'datetime forecasts draw both percentile bands');
+  const timeBaselines = await page.$$eval(`${balance} .chart-baseline option`, (options) => options.map((o) => o.value));
+  expect(JSON.stringify(timeBaselines) === '["","1"]', 'time overlays require matching dimensions and exact keys');
+  await page.select(`${balance} .chart-baseline`, '1');
+  await page.focus(`${balance} .chart-position`);
+  await page.keyboard.press('End');
+  const timeReadout = await page.$eval(`${balance} .chart-readout`, (el) => ({value:el.dataset.value,kind:el.dataset.valueKind,text:el.textContent}));
+  expect(timeReadout.kind === 'datetime' && timeReadout.value === '2027-01-01T00:00:00.000000003'
+    && timeReadout.text.includes('Target arrival: 2027-01-01T00:00:00.000000002'), 'inspection retains nanoseconds and ignores the host timezone', JSON.stringify(timeReadout));
+  await page.$eval(`${balance} details`, (el) => { el.open = true; });
+  await page.waitForSelector(`${balance} tbody tr`);
+  expect(await page.$eval(`${balance} tbody tr[data-group-id="2"]`, (row) => row.cells[3].textContent === '2027-01-01T00:00:00.000000003'), 'time tables preserve the exact midpoint value');
+  await page.select('#summary-0', 'moments');
+  await applySummaries();
+  expect(await page.$eval(`${balance} .chart-readout`, (el) => el.textContent.includes('Mean: 2027-01-01T00:00:00.000000001') && el.textContent.includes('SD: 0.5ns')), 'datetime mean and duration SD retain separate units');
+  await page.select('#summary-0', 'custom');
+  await setCustom('sd');
+  await applySummaries();
+  expect(await page.$eval(`${balance} .chart-readout`, (el) => el.dataset.valueKind === 'duration' && el.textContent.includes('SD: 0.5ns'))
+    && await page.$$eval(`${balance} .chart-baseline`, (controls) => controls.length) === 0, 'SD-only datetime charts use a duration axis without value overlays');
+  await page.select('#summary-0', 'forecast');
+  await applySummaries();
+  for (const scheme of ['light','dark']) {
+    await page.emulateMediaFeatures([{name:'prefers-color-scheme',value:scheme}]);
+    await page.$eval(balance, (el) => el.scrollIntoView());
+    if (process.argv.includes('--screenshots')) await page.screenshot({path:`/tmp/probl-time-chart-${scheme}.png`});
+  }
+  await page.setViewport({width:390,height:844});
+  await page.waitForFunction(() => Number(document.querySelector('.chart-plot').getAttribute('viewBox').split(' ')[2]) < 400);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth
+    && [...document.querySelectorAll('.chart-plot path')].every((p) => !/NaN|Infinity/.test(p.getAttribute('d')))), 'temporal charts fit a phone with finite coordinates');
+  if (process.argv.includes('--screenshots')) {
+    await page.$eval(balance, (el) => el.scrollIntoView());
+    await page.screenshot({path:'/tmp/probl-time-chart-phone.png'});
+  }
+  await page.setViewport({width:800,height:600});
+  await page.emulateTimezone('UTC');
+  await page.evaluate(() => window.playground.setSource("report one_of(['2024-02-28','2024-03-01']) by 1"));
+  await run(page);
+  expect(await page.$$eval('.chart-band-whisker', (lines) => lines.length) === 2, 'one-point temporal forecasts still show their spread');
+  expect(await page.$$eval('.chart-plot .chart-grid', (lines) => lines.length) === 3, 'date axes use distinct whole-day ticks');
+  await page.evaluate(() => window.playground.setSource("let t='2027-01-01T09:00:00'; for k in 0..3 { report one_of([t+hours(k),t+hours(k+2)]) by t+hours(k) }"));
+  await run(page);
+  expect(await page.$$eval('.chart-plot text', (nodes) => nodes.some((n) => n.textContent.includes('2027-01-01') && n.querySelectorAll('tspan').length === 2)), 'longer datetime spans show calendar and clock ticks');
+  if (process.argv.includes('--screenshots')) {
+    await page.setViewport({width:390,height:844});
+    await page.$eval('.report-chart', (el) => el.scrollIntoView());
+    await page.screenshot({path:'/tmp/probl-time-calendar-phone.png'});
+    await page.setViewport({width:800,height:600});
+  }
+
   // Stopping a long run, and running again after.
   await page.evaluate(() => window.playground.setSource('@mode sample(runs: 100_000_000, seed: 1)\nreport d6 > 3'));
   await press(page, 'run');

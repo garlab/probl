@@ -1,5 +1,6 @@
 // Interpret versioned report summaries without parsing display labels. This is
 // deliberately independent of the DOM, so chart eligibility and gaps are tested.
+import { isTime, timeAxis } from './chart-time.js';
 export const MAX_POINTS = 1000;
 export const MAX_CHARTS = 20;
 export const currencies = ['', 'USD', 'EUR', 'GBP'];
@@ -41,10 +42,6 @@ function keyCoordinate(key) {
     return /^-?\d+$/.test(key.value) && Number.isSafeInteger(n) ? n : null;
   }
   if (key.kind === 'float' || key.kind === 'prob') return finite(key.value) ? key.value : null;
-  if (key.kind === 'date' && /^\d{4}-\d{2}-\d{2}$/.test(key.value)) {
-    const n = Date.parse(`${key.value}T00:00:00Z`);
-    return finite(n) ? n / 86400000 : null;
-  }
   return null;
 }
 
@@ -79,6 +76,12 @@ function columnValue(group, column) {
   return finite(value) ? value : null;
 }
 
+export function columnTyped(group, column) {
+  if (column.kind === 'mean' || column.kind === 'sd') return group.summary?.[`${column.kind}_value`] ?? null;
+  return group.summary?.quantiles.find((q) => q.level === column.level
+    && (q.convention ?? (q.level === 0.5 ? 'midpoint' : 'inverse_cdf')) === column.convention)?.value ?? null;
+}
+
 function columnsFor(report) {
   if (report.groups[0].kind === 'probability') return [{ kind: 'probability', label: 'Probability' }];
   const approximate = !!report.groups[0].summary?.approximation;
@@ -96,10 +99,12 @@ export function seriesFor(report) {
   const groups = report.groups;
   if (!groups?.length || groups.length > MAX_POINTS) return null;
   const first = groups[0];
-  if (!['number', 'probability'].includes(first.kind)) return null;
+  if (!['number', 'probability'].includes(first.kind) && !isTime(first.kind)) return null;
   const keyKind = first.key?.kind;
   const percent = first.kind === 'probability' || first.summary?.percent === true;
-  const columns = columnsFor(report);
+  const columns = columnsFor(report).map((c) => ({ ...c,
+    valueKind: c.kind === 'sd' && first.kind === 'datetime' ? 'duration' : first.kind,
+  }));
   // Prefer a requested median, then a mean, then the requested quantile closest
   // to half the mass. An SD-only request is explicitly labelled as SD.
   let primary = columns.findIndex((c) => c.median);
@@ -108,6 +113,11 @@ export function seriesFor(report) {
     primary = 0;
     columns.forEach((c, i) => { if (c.kind === 'quantile' && Math.abs(c.level - 0.5) < Math.abs((columns[primary].level ?? Infinity) - 0.5)) primary = i; });
   }
+  const valueKind = columns[primary].valueKind;
+  const keyAxis = isTime(keyKind) ? timeAxis(keyKind, groups.map((g) => g.key)) : null;
+  const axisValues = groups.flatMap((g) => columns.filter((c) => c.valueKind === valueKind).map((c) => columnTyped(g, c)));
+  const valueAxis = isTime(valueKind) ? timeAxis(valueKind, axisValues) : null;
+  if ((isTime(keyKind) && !keyAxis) || (isTime(valueKind) && !valueAxis)) return null;
   const quantiles = columns.map((c, i) => ({ ...c, index: i })).filter((c) => c.kind === 'quantile' && c.level !== 0.5).sort((a, b) => a.level - b.level);
   const bands = [];
   for (let lo = 0, hi = quantiles.length - 1; lo < hi; lo++, hi--) {
@@ -118,33 +128,44 @@ export function seriesFor(report) {
   for (const g of groups) {
     if (g.kind !== first.kind || g.key?.kind !== keyKind
       || (g.kind === 'number' && (g.summary?.percent === true) !== percent)) return null;
-    const x = keyCoordinate(g.key);
+    const x = keyAxis ? keyAxis.coordinate(g.key) : keyCoordinate(g.key);
     if (x === null) return null;
-    const values = columns.map((c) => columnValue(g, c));
-    points.push({ x, key: g.key, group: g, values, y: values[primary] });
+    const typedValues = columns.map((c) => columnTyped(g, c));
+    const values = columns.map((c, i) => valueAxis ? valueAxis.coordinate(typedValues[i]) : columnValue(g, c));
+    points.push({ x, key: g.key, group: g, values, typedValues, y: values[primary] });
   }
   points.sort((a, b) => a.x - b.x);
   // Even distinct typed keys must not collapse onto the same coordinate.
   if (points.some((p, i) => i > 0 && p.x <= points[i - 1].x)) return null;
   if (!points.some((p) => finite(p.y))) return null;
   return {
-    report, points, keyKind, percent, columns, primary, bands, kind: first.kind,
-    deterministic: first.kind === 'number' && columns[primary].kind !== 'sd' && groups.every((g) => g.summary?.deterministic === true),
+    report, points, keyKind, keyAxis, valueKind, valueAxis, percent, columns, primary, bands, kind: first.kind,
+    deterministic: first.kind !== 'probability' && columns[primary].kind !== 'sd' && groups.every((g) => g.summary?.deterministic === true),
   };
 }
 
 export function compatibleBaselines(series, all) {
-  if (series.kind !== 'number' || series.columns[series.primary].kind === 'sd') return [];
+  if (series.kind === 'probability' || series.columns[series.primary].kind === 'sd') return [];
   const keys = new Set(series.points.filter((p) => finite(p.y)).map((p) => keyId(p.key)));
   return all.filter((candidate) => candidate.report.id !== series.report.id
     && candidate.deterministic && candidate.keyKind === series.keyKind && candidate.percent === series.percent
+    && candidate.valueKind === series.valueKind
+    && (!series.valueAxis || series.valueAxis.canPlot([
+      ...series.points.flatMap((p) => p.typedValues.filter((v) => series.valueAxis.coordinate(v) !== null)),
+      ...candidate.points.filter((p) => finite(p.y) && keys.has(keyId(p.key))).map((p) => p.typedValues[candidate.primary]),
+    ]))
     && candidate.points.some((p) => finite(p.y) && keys.has(keyId(p.key))));
 }
 
 /** Align only exact typed keys. An absent baseline point breaks the line. */
 export function alignedBaseline(series, baseline) {
   const byKey = new Map(baseline?.points.map((p) => [keyId(p.key), p]) ?? []);
-  return series.points.map((p) => ({ ...p, y: finite(p.y) ? byKey.get(keyId(p.key))?.y ?? null : null }));
+  return series.points.map((p) => {
+    const b = byKey.get(keyId(p.key));
+    const typedValue = b?.typedValues[baseline.primary] ?? null;
+    const y = series.valueAxis ? series.valueAxis.coordinate(typedValue) : b?.y ?? null;
+    return { ...p, typedValue, y: finite(p.y) ? y : null };
+  });
 }
 
 /** Split paths at unavailable values; no interpolation across these gaps. */

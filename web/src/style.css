@@ -273,6 +273,8 @@ pre {
 .chart-band { fill: var(--accent); }
 .chart-band.outer { fill-opacity: 0.12; }
 .chart-band.inner { fill-opacity: 0.24; }
+.chart-band-whisker { stroke: var(--accent); stroke-width: 12; stroke-opacity: 0.2; }
+.chart-band-whisker.inner { stroke-width: 6; stroke-opacity: 0.4; }
 .chart-line, .chart-baseline-line { fill: none; stroke: var(--accent); stroke-width: 2; }
 .chart-baseline-line { stroke: var(--string); stroke-dasharray: 6 4; }
 .chart-line.point { fill: var(--accent); }

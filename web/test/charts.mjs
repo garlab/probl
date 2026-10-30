@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { load } from '../src/probl.js';
 import { alignedBaseline, chartSeries, chartSettings, compatibleBaselines, MAX_POINTS, readChartSettings, segments, seriesFor } from '../src/chart-data.js';
+import { timeAxis, timeValue } from '../src/chart-time.js';
 
 const engine = await load(await readFile(new URL('../dist/probl.wasm', import.meta.url)));
 const run = (source) => engine.run({ source, today: '2026-10-19' }).reports;
@@ -42,12 +43,6 @@ for (const source of [
   'report d6 by "January"',
   'report "red" by 1',
   'report {a: d6} by 1',
-  'report date(2026,1,1) by 1',
-  "report '2027-01-01T00:00:00.000000001' by 1",
-  "report 1 by '2027-01-01T00:00:00.000000001'",
-  "report '1s' by 1",
-  "report 1 by '1s'",
-  "report '1s^2' by 1",
   'if false {report 1 by 1}',
 ]) assert.deepEqual(chartSeries(run(source)), [], source);
 const tooMany = structuredClone(all[0].report);
@@ -147,3 +142,73 @@ const sketchGap = structuredClone(sketch[0].report);
 sketchGap.groups[1].summary.quantiles.forEach((q) => { q.estimate = null; });
 assert.deepEqual(segments(seriesFor(sketchGap).points).map((part) => part.map((p) => p.x)), [[0], [2]]);
 console.log('all passed: approximate median conventions, labels, metadata, capacity persistence, risk and baseline compatibility');
+
+const timeSource = `let t='2027-01-01T00:00:00.000000001'
+for k in 0..2 {
+  report one_of([t+nanoseconds(k),t+nanoseconds(k+1)]) by t+nanoseconds(k) as "arrival"
+  report t+nanoseconds(k-1) by t+nanoseconds(k) as "target"
+  report one_of(['1s','3s']) by t+nanoseconds(k) as "elapsed"
+  report '1s^2' by t+nanoseconds(k) as "variance"
+}`;
+const timeDocument = run(timeSource);
+const timeOriginal = JSON.stringify(timeDocument);
+const times = chartSeries(timeDocument);
+assert.equal(times.length, 4);
+assert.deepEqual(times[0].points.map((p) => p.x), [0,1,2], 'datetime keys retain consecutive nanoseconds');
+assert.deepEqual(times[0].points.map((p) => p.y), [0,1,2], 'datetime outcomes retain consecutive nanoseconds');
+assert.equal(times[0].points[0].typedValues[times[0].primary].value, '2027-01-01T00:00:00.000000001');
+assert.deepEqual(times[0].bands.map((b) => b.label), ['5–95%', '25–75%']);
+assert.deepEqual(compatibleBaselines(times[0], times).map((s) => s.report.id), [1]);
+assert.deepEqual(alignedBaseline(times[0], times[1]).map((p) => p.y), [-1,0,1], 'baseline values use the plotted series origin');
+assert.deepEqual(compatibleBaselines(times[2], times), [], 'durations and squared durations cannot overlay');
+assert.equal(JSON.stringify(timeDocument), timeOriginal, 'chart interpretation leaves the report document intact');
+
+const timeMoments = chartSeries(configure('moments', timeSource))[0];
+assert.equal(timeMoments.valueKind, 'datetime');
+assert.deepEqual(timeMoments.columns.map((c) => c.valueKind), ['datetime','duration']);
+assert.equal(timeMoments.points[0].typedValues[1].value, '0.5ns');
+assert.equal(timeMoments.points[0].values[1], null, 'SD is not plotted on a calendar axis');
+const timeSD = chartSeries(configure('sd', timeSource))[0];
+assert.equal(timeSD.valueKind, 'duration');
+assert.deepEqual(timeSD.points.map((p) => p.y), [0.5,0.5,0.5]);
+assert.deepEqual(compatibleBaselines(timeSD, times), []);
+
+const timeGap = structuredClone(times[0].report);
+timeGap.groups[1].summary.quantiles.forEach((q) => { q.value = null; q.estimate = null; });
+assert.deepEqual(segments(seriesFor(timeGap).points).map((ps) => ps.map((p) => p.x)), [[0],[2]]);
+const baselineGap = structuredClone(times[1].report);
+baselineGap.groups[1].summary.quantiles.forEach((q) => { q.value = null; q.estimate = null; });
+const sparseTimeBaseline = seriesFor(baselineGap);
+assert.equal(compatibleBaselines(times[0], [sparseTimeBaseline]).length, 1);
+assert.deepEqual(alignedBaseline(times[0], sparseTimeBaseline).map((p) => p.y), [-1,null,1], 'unavailable baseline values stay gaps');
+const calendar = chartSeries(run("for k in 0..2 { report one_of(['2024-02-28','2024-03-01']) by '2024-02-28'+k }"))[0];
+assert.equal(calendar.valueKind, 'date');
+assert.deepEqual(calendar.points.map((p) => p.x), [0,1,2]);
+assert.equal(calendar.points[0].typedValues[calendar.primary].value, '2024-02-29');
+assert.deepEqual(calendar.valueAxis.ticks(1), ['2024-02-29']);
+
+const units = chartSeries(run("for d in ['0.5ns','1ns','2ns'] { report d^2 by d }"))[0];
+assert.equal(units.keyKind, 'duration');
+assert.equal(units.valueKind, 'squared_duration');
+assert.deepEqual(units.points.map((p) => p.x), [0.5,1,2]);
+assert.deepEqual(units.points.map((p) => p.y), [0.25,1,4]);
+assert.deepEqual(units.valueAxis.ticks(4), ['4ns²']);
+
+const huge = chartSeries(run("for k in 0..2 { report nanoseconds(10^100+k) by nanoseconds(10^100+k) }"))[0];
+assert.deepEqual(huge.points.map((p) => p.x), [0,1,2]);
+assert.deepEqual(huge.points.map((p) => p.y), [0,1,2]);
+assert.ok(huge.valueAxis.context.includes('offsets from'));
+for (const source of [
+  "for t in ['0001-01-01T00:00:00','9999-12-31T23:59:59.999999998','9999-12-31T23:59:59.999999999'] { report 1 by t }",
+  "report one_of(['0001-01-01T00:00:00','9999-12-31T23:59:59.999999998','9999-12-31T23:59:59.999999999']) by 1",
+]) assert.deepEqual(chartSeries(run(source)), [], 'a full-calendar span must not collapse distinct nanoseconds');
+for (const value of [
+  {kind:'date',value:'2027-02-29'}, {kind:'datetime',value:'2027-01-01T00:00:00Z'},
+  {kind:'duration',value:'1s^2'}, {kind:'squared_duration',value:'1s'},
+]) assert.equal(timeValue(value), null);
+const preEpoch = timeAxis('datetime', [{kind:'datetime',value:'1969-12-31T23:59:00'}, {kind:'datetime',value:'1970-01-01T00:01:00'}]);
+assert.deepEqual(preEpoch.ticks(60000000000), ['1970-01-01','00:00:00']);
+const remoteOrigin = timeAxis('datetime', [{kind:'datetime',value:'9999-12-30T00:00:00'}, {kind:'datetime',value:'9999-12-31T23:59:59.999999999'}]);
+const remoteBaseline = {kind:'datetime',value:'0001-01-01T00:00:00'};
+assert.deepEqual(remoteOrigin.ticks(remoteOrigin.coordinate(remoteBaseline), undefined, remoteBaseline), ['0001-01-01','00:00:00'], 'overlay endpoints keep exact calendar labels even across the full date range');
+console.log('all passed: calendar and duration axes, nanosecond precision, typed moments, gaps, units and overlay origins');
