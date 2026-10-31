@@ -2115,10 +2115,10 @@ pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<
     if op == Pow {
         return power(a, b, budget);
     }
-    if let (Value::Analytic(p), Value::Analytic(q)) = (a, b) {
-        if !p.same_axis(q) {
-            return combined(op, p, q, budget);
-        }
+    if let (Value::Analytic(p), Value::Analytic(q)) = (a, b)
+        && !p.same_axis(q)
+    {
+        return combined(op, p, q, budget);
     }
     let (p, q) = (operand(a, x)?, operand(b, x)?);
     let plain = matches!(q, Operand::Constant(_));

@@ -62,6 +62,12 @@ cargo test --all --locked
 cargo publish --workspace --dry-run --locked
 ```
 
+Use the latest stable Rust release. Before publishing, compile all targets with
+the declared minimum as described in the [toolchain policy](testing.md#rust-toolchain).
+If the release raises the Rust minimum, update the workspace `rust-version`,
+installation instructions and changelog. Keep the digest-pinned Docker build
+toolchain at or above that minimum.
+
 The workflow supports validation-only runs on existing version tags. Changes to
 the release helpers also have focused tests:
 

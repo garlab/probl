@@ -362,9 +362,9 @@ impl<'a, E> Factorizer<'a, E> {
                 break;
             }
             (self.work)(1)?;
-            if n % p == 0 {
+            if n.is_multiple_of(p) {
                 let mut k = 0;
-                while n % p == 0 {
+                while n.is_multiple_of(p) {
                     n /= p;
                     k += 1;
                 }

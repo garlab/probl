@@ -1451,10 +1451,10 @@ impl<'p> Engine<'p> {
 
     fn spend(&mut self, n: u64, span: Span) -> Result<()> {
         self.budget.work(n).map_err(|e| e.at(span))?;
-        if let Some(cancel) = &self.config.cancel {
-            if cancel.load(Ordering::Relaxed) {
-                return Err(RuntimeError::limit(span, "the run was cancelled"));
-            }
+        if let Some(cancel) = &self.config.cancel
+            && cancel.load(Ordering::Relaxed)
+        {
+            return Err(RuntimeError::limit(span, "the run was cancelled"));
         }
         Ok(())
     }
@@ -1717,14 +1717,14 @@ impl<'p> Engine<'p> {
                 for w in worlds {
                     let at = At::new(f, stmt, &w);
                     let mut saved = self.snapshot(&w);
-                    if self.sampler.is_some() {
-                        if let Some(counts) = each!(self, at, saved saved, self.direct_counts(f, dist, &w)) {
-                            let k = counts.sample(self.sampler.as_mut().expect("sampling"));
-                            let mut w = w;
-                            each!(self, at, saved saved, self.assign(f, place, Value::Int(k.into()), &mut w, dist.span));
-                            out.push(w);
-                            continue;
-                        }
+                    if self.sampler.is_some()
+                        && let Some(counts) = each!(self, at, saved saved, self.direct_counts(f, dist, &w))
+                    {
+                        let k = counts.sample(self.sampler.as_mut().expect("sampling"));
+                        let mut w = w;
+                        each!(self, at, saved saved, self.assign(f, place, Value::Int(k.into()), &mut w, dist.span));
+                        out.push(w);
+                        continue;
                     }
                     if self.sampler.is_none()
                         && each!(self, at, saved saved, self.draw_dependent(f, place, dist, &w, &mut out))
@@ -1733,17 +1733,17 @@ impl<'p> Engine<'p> {
                         continue;
                     }
                     let d = each!(self, at, saved saved, self.eval(f, dist, &w));
-                    if let (Some(variable), Value::Continuous(family)) = (delay, &d) {
-                        if conjugate::is_prior(family) {
-                            let mut w = w;
-                            w.slots[place.slot as usize] = Value::Delayed(Arc::new(Delayed {
-                                family: **family,
-                                variable,
-                            }));
-                            self.updates(variable).delayed += 1;
-                            out.push(w);
-                            continue;
-                        }
+                    if let (Some(variable), Value::Continuous(family)) = (delay, &d)
+                        && conjugate::is_prior(family)
+                    {
+                        let mut w = w;
+                        w.slots[place.slot as usize] = Value::Delayed(Arc::new(Delayed {
+                            family: **family,
+                            variable,
+                        }));
+                        self.updates(variable).delayed += 1;
+                        out.push(w);
+                        continue;
                     }
                     let mark = out.len();
                     each!(self, at, saved saved, self.split_by(f, place, d, w, dist.span, &mut out), {
@@ -1902,10 +1902,10 @@ impl<'p> Engine<'p> {
                         self.branch_on_event(&event, w, &mut yes, &mut no, cond.span)?;
                         continue;
                     }
-                    if let Value::Analytic(x) = &condition {
-                        if self.branch_on_draw(x, &w, &mut yes, &mut no, cond.span)? {
-                            continue;
-                        }
+                    if let Value::Analytic(x) = &condition
+                        && self.branch_on_draw(x, &w, &mut yes, &mut no, cond.span)?
+                    {
+                        continue;
                     }
                     let c = ops::condition(&condition).map_err(|e| e.at(cond.span))?;
                     if (c.yes > 0.0 && c.no > 0.0) || c.missing > 0.0 {
@@ -3057,20 +3057,20 @@ impl<'p> Engine<'p> {
         }
         // A lazy count law has one numeric outcome kind. Choose its union
         // member from that kind, never from a finite listing of its support.
-        if let (Value::Counts(c), TypeSpec::Dist(t)) = (&v, ty) {
-            if matches!(**t, TypeSpec::Union(_)) {
-                let source = if c.floats { TypeSpec::Float } else { TypeSpec::Int };
-                let target = if t.includes(&source) {
-                    source
-                } else if !c.floats && t.includes(&TypeSpec::Float) {
-                    TypeSpec::Float
-                } else if t.includes(&TypeSpec::Prob) {
-                    TypeSpec::Prob
-                } else {
-                    return Ok(v);
-                };
-                return self.coerce_at(v, &TypeSpec::Dist(Box::new(target)), span, depth + 1);
-            }
+        if let (Value::Counts(c), TypeSpec::Dist(t)) = (&v, ty)
+            && matches!(**t, TypeSpec::Union(_))
+        {
+            let source = if c.floats { TypeSpec::Float } else { TypeSpec::Int };
+            let target = if t.includes(&source) {
+                source
+            } else if !c.floats && t.includes(&TypeSpec::Float) {
+                TypeSpec::Float
+            } else if t.includes(&TypeSpec::Prob) {
+                TypeSpec::Prob
+            } else {
+                return Ok(v);
+            };
+            return self.coerce_at(v, &TypeSpec::Dist(Box::new(target)), span, depth + 1);
         }
         Ok(match (v, ty) {
             (Value::Analytic(_) | Value::Event(_), TypeSpec::Prob) => {
@@ -3342,12 +3342,10 @@ impl<'p> Engine<'p> {
         // a draw or observation can collapse to one outcome of weight one.
         let memoizable = self.config.memoizing && !sampling && !fun.effects.prints && self.callback.is_none();
         let call_key = (func, key);
-        if memoizable {
-            if let Some(r) = self.memo.get(&call_key) {
-                self.stats.memo_hits += 1;
-                self.observed |= r.observed;
-                return Ok(r.clone());
-            }
+        if memoizable && let Some(r) = self.memo.get(&call_key) {
+            self.stats.memo_hits += 1;
+            self.observed |= r.observed;
+            return Ok(r.clone());
         }
         if !sampling {
             if let Some(&depth) = self.active.get(&call_key) {
@@ -3376,11 +3374,12 @@ impl<'p> Engine<'p> {
                 return Ok(so_far);
             }
             // Worked out already, in this round of the call it waits on.
-            if let Some(a) = self.approx.get(&call_key) {
-                if self.frames_at.get(a.head) == Some(&a.frame) && self.rounds_at.get(a.head) == Some(&a.round) {
-                    self.stats.memo_hits += 1;
-                    return Ok(a.result.clone());
-                }
+            if let Some(a) = self.approx.get(&call_key)
+                && self.frames_at.get(a.head) == Some(&a.frame)
+                && self.rounds_at.get(a.head) == Some(&a.round)
+            {
+                self.stats.memo_hits += 1;
+                return Ok(a.result.clone());
             }
         }
         if self.depth >= self.config.max_call_depth {
@@ -3634,11 +3633,11 @@ impl<'p> Engine<'p> {
         if key.iter().any(analytic::contains) {
             return Err(analytic::unsupported("capturing an analytic draw inside `simulate`").at(span));
         }
-        if !self.simulated.is_empty() {
-            if let Some(v) = self.simulated.get(&(func, key.clone())) {
-                self.stats.memo_hits += 1;
-                return Ok(v.clone());
-            }
+        if !self.simulated.is_empty()
+            && let Some(v) = self.simulated.get(&(func, key.clone()))
+        {
+            self.stats.memo_hits += 1;
+            return Ok(v.clone());
         }
         let call_key = self.config.memoizing.then(|| (func, key.clone()));
         let saved_observed = self.observed;
@@ -3912,12 +3911,11 @@ impl<'p> Engine<'p> {
             Some(c) => c.args.as_deref().map(Some),
             None => Some(None),
         };
-        if let (None, Some(types), true) = (&field, types, named.is_empty()) {
-            if self.named_slot_type(place.slot, w).is_none()
-                && self.in_place(f, place, *func, &mut values, types, w, span)?
-            {
-                return Ok(());
-            }
+        if let (None, Some(types), true) = (&field, types, named.is_empty())
+            && self.named_slot_type(place.slot, w).is_none()
+            && self.in_place(f, place, *func, &mut values, types, w, span)?
+        {
+            return Ok(());
         }
         let names: Vec<String> = named.iter().map(|(n, _)| n.clone()).collect();
         let mut v = self.builtin_values(*func, &values, &names, w.weight, (f, span), false)?;
@@ -4229,11 +4227,11 @@ impl<'p> Engine<'p> {
                 let word = if and { "and" } else { "or" };
                 let va = self.eval(f, a, w)?;
                 let ta = ops::truth(&va, word).map_err(|err| err.at(a.span))?;
-                if let Truth::Fact(x) = ta {
-                    if x != and {
-                        // `false and …` is false; `true or …` is true.
-                        return Ok(Value::Bool(x));
-                    }
+                if let Truth::Fact(x) = ta
+                    && x != and
+                {
+                    // `false and …` is false; `true or …` is true.
+                    return Ok(Value::Bool(x));
                 }
                 let vb = self.eval(f, b, w)?;
                 let tb = ops::truth(&vb, word).map_err(|err| err.at(b.span))?;
@@ -4772,16 +4770,16 @@ impl<'p> Engine<'p> {
             }
             return ops::combine(results, d.missing, &mut self.budget).map_err(|e| e.at(span));
         }
-        if matches!(b, Builtin::Highest | Builtin::Lowest) {
-            if let Value::Dist(d) = &values[1] {
-                let mut results = Vec::with_capacity(d.outcomes.len());
-                for (count, p) in &d.outcomes {
-                    let mut args = values.to_vec();
-                    args[1] = count.clone();
-                    results.push((self.higher_order(b, &args, span)?, *p));
-                }
-                return ops::combine(results, d.missing, &mut self.budget).map_err(|e| e.at(span));
+        if matches!(b, Builtin::Highest | Builtin::Lowest)
+            && let Value::Dist(d) = &values[1]
+        {
+            let mut results = Vec::with_capacity(d.outcomes.len());
+            for (count, p) in &d.outcomes {
+                let mut args = values.to_vec();
+                args[1] = count.clone();
+                results.push((self.higher_order(b, &args, span)?, *p));
             }
+            return ops::combine(results, d.missing, &mut self.budget).map_err(|e| e.at(span));
         }
         let items = builtins::items(&values[0], b.name(), &mut self.budget).map_err(|e| e.at(span))?;
         match b {
@@ -5175,13 +5173,14 @@ fn likelihood(d: &Value, v: &Value, sampling: bool) -> OpResult<Weighs> {
         _ => None,
     };
     if let Some(parts) = continuous {
-        if let Value::Dist(dist) = d {
-            if dist.missing > 0.0 && !sampling {
-                return Err(OpError::unsupported(
+        if let Value::Dist(dist) = d
+            && dist.missing > 0.0
+            && !sampling
+        {
+            return Err(OpError::unsupported(
                     "observing a value from a mixture with unresolved probability isn't supported when enumerating",
                 )
                 .help("the unresolved part could have any density at the value; sample the model with `@mode sample(runs: 10_000)`"));
-            }
         }
         let x = match v {
             Value::Bool(_) => None,

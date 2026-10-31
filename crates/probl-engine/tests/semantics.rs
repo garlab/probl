@@ -419,7 +419,7 @@ fn atan2_respects_equality_when_merging_and_memoizing() {
 fn constants() {
     close(mean("report pi"), std::f64::consts::PI);
     close(mean("report e"), std::f64::consts::E);
-    close(mean("report euler_gamma"), 0.577_215_664_901_532_9);
+    close(mean("report euler_gamma"), std::f64::consts::EULER_GAMMA);
     close(mean("report sin(pi / 2) + ln(e)"), 2.0);
     // The harmonic numbers approach ln(n) + γ.
     close(
@@ -433,7 +433,7 @@ fn constants() {
     close(mean("fn f() { e + 1 }\nlet e = 5\nreport f()"), 6.0);
     close(mean("fn f() { pi }\nreport f()"), std::f64::consts::PI);
     close(mean("let f = x -> x + e\nreport f(0)"), std::f64::consts::E);
-    close(mean("report simulate { euler_gamma }"), 0.577_215_664_901_532_9);
+    close(mean("report simulate { euler_gamma }"), std::f64::consts::EULER_GAMMA);
     close(mean("var pi = 2\npi += 1\nreport pi"), 3.0);
     close(mean("fn pi() { 3 }\nreport pi()"), 3.0);
     close(mean("var total = 0\nfor e in [1, 2] { total += e }\nreport total"), 3.0);

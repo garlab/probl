@@ -344,8 +344,7 @@ impl Constant {
         Some(match self {
             Constant::Pi => std::f64::consts::PI,
             Constant::E => std::f64::consts::E,
-            // The Euler–Mascheroni constant: `std::f64::consts::EGAMMA` isn't stable yet.
-            Constant::EulerGamma => 0.577_215_664_901_532_9,
+            Constant::EulerGamma => std::f64::consts::EULER_GAMMA,
             Constant::Today | Constant::Env => return None,
         })
     }

@@ -420,10 +420,8 @@ impl Checker<'_> {
                     ),
                     Callee::Value(..) => (self.lambda_observes, None),
                 };
-                if observes {
-                    if let Some(r) = reported {
-                        self.error(s.span, r, Some(name.unwrap_or_else(|| "this function".to_string())));
-                    }
+                if observes && let Some(r) = reported {
+                    self.error(s.span, r, Some(name.unwrap_or_else(|| "this function".to_string())));
                 }
                 reported
             }

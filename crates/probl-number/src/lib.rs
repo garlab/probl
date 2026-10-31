@@ -217,26 +217,26 @@ impl Integer {
     }
 
     pub fn add(&self, rhs: &Self) -> Result<Self, IntError> {
-        if let (Some(a), Some(b)) = (self.to_i64(), rhs.to_i64()) {
-            if let Some(n) = a.checked_add(b) {
-                return Ok(n.into());
-            }
+        if let (Some(a), Some(b)) = (self.to_i64(), rhs.to_i64())
+            && let Some(n) = a.checked_add(b)
+        {
+            return Ok(n.into());
         }
         Self::from_big(self.big().as_ref() + rhs.big().as_ref())
     }
     pub fn sub(&self, rhs: &Self) -> Result<Self, IntError> {
-        if let (Some(a), Some(b)) = (self.to_i64(), rhs.to_i64()) {
-            if let Some(n) = a.checked_sub(b) {
-                return Ok(n.into());
-            }
+        if let (Some(a), Some(b)) = (self.to_i64(), rhs.to_i64())
+            && let Some(n) = a.checked_sub(b)
+        {
+            return Ok(n.into());
         }
         Self::from_big(self.big().as_ref() - rhs.big().as_ref())
     }
     pub fn mul(&self, rhs: &Self) -> Result<Self, IntError> {
-        if let (Some(a), Some(b)) = (self.to_i64(), rhs.to_i64()) {
-            if let Some(n) = a.checked_mul(b) {
-                return Ok(n.into());
-            }
+        if let (Some(a), Some(b)) = (self.to_i64(), rhs.to_i64())
+            && let Some(n) = a.checked_mul(b)
+        {
+            return Ok(n.into());
         }
         if !self.is_zero() && !rhs.is_zero() && self.bits() + rhs.bits() - 1 > MAX_INTEGER_BITS {
             return Err(IntError::TooLarge);
@@ -247,15 +247,15 @@ impl Integer {
         if rhs.is_zero() {
             return Err(IntError::DivisionByZero);
         }
-        if let (Some(a), Some(b)) = (self.to_i64(), rhs.to_i64()) {
-            if let Some(mut q) = a.checked_div(b) {
-                let mut r = a % b;
-                if r != 0 && (r < 0) != (b < 0) {
-                    q -= 1;
-                    r += b;
-                }
-                return Ok((q.into(), r.into()));
+        if let (Some(a), Some(b)) = (self.to_i64(), rhs.to_i64())
+            && let Some(mut q) = a.checked_div(b)
+        {
+            let mut r = a % b;
+            if r != 0 && (r < 0) != (b < 0) {
+                q -= 1;
+                r += b;
             }
+            return Ok((q.into(), r.into()));
         }
         let (a, b) = (self.big(), rhs.big());
         let mut q = a.as_ref() / b.as_ref();
@@ -330,10 +330,11 @@ impl Integer {
         if denominator.is_zero() {
             return None;
         }
-        if let (Some(a), Some(b)) = (self.to_i64(), denominator.to_i64()) {
-            if a.unsigned_abs() <= 1 << 53 && b.unsigned_abs() <= 1 << 53 {
-                return Some(a as f64 / b as f64);
-            }
+        if let (Some(a), Some(b)) = (self.to_i64(), denominator.to_i64())
+            && a.unsigned_abs() <= 1 << 53
+            && b.unsigned_abs() <= 1 << 53
+        {
+            return Some(a as f64 / b as f64);
         }
         BigRational::new_raw(self.big().into_owned(), denominator.big().into_owned())
             .to_f64()

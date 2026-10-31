@@ -199,7 +199,9 @@ impl Manager {
             self.stopped = Some(Stop::TooLarge);
             return Bdd::FALSE;
         }
-        if self.nodes.len() % CANCEL_CHECK == 0 && self.cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed)) {
+        if self.nodes.len().is_multiple_of(CANCEL_CHECK)
+            && self.cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed))
+        {
             self.stopped = Some(Stop::Cancelled);
             return Bdd::FALSE;
         }

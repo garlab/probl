@@ -6,14 +6,32 @@ Probl has a substantial test suite, including an independent oracle. It does not
 
 The repository does not publish an instrumented coverage baseline. CI runs native/WASM comparisons and browser tests, but has no coverage or mutation-testing job. The remaining tooling additions below are proposals, not existing quality gates.
 
+## Rust toolchain
+
+Development and CI use the latest stable Rust release. The checkout selects
+`stable` in `rust-toolchain.toml`; run `rustup update stable` to update an already
+installed toolchain. Nightly is not required.
+
+The workspace's numeric `rust-version` is currently **1.99**, inherited by every
+crate. Cargo uses it to reject unsupported compilers before building. We do not
+maintain compatibility with Rust 1.85. Future releases may raise the minimum;
+record the change in Cargo metadata, installation instructions and the changelog.
+Published releases retain their own declared minimum.
+
+Before each release, check every target with the declared minimum, including
+integration tests and examples: `cargo +1.99.0 check --workspace --all-targets --locked`. A plain
+`cargo check --workspace` does not compile integration tests, including the
+oracle's mutation test. CI's Clippy and test jobs already cover those targets
+on stable. Container builds keep their reviewed, digest-pinned toolchain.
+
 ## Run the checks
 
 From the repository root:
 
 ```sh
 cargo fmt --all --check
-cargo clippy --all-targets -- -D warnings
-cargo test --all
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --all --locked
 ```
 
 For the actual WASM module and browser, install Bun, the Rust WASM target and a browser, then follow the [playground test commands](playground.md#tests). These checks are separate from `cargo test`.

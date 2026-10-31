@@ -60,23 +60,17 @@ unsafe impl GlobalAlloc for Counting {
         p
     }
 
-    // `fetch_update`'s new name, `try_update`, needs a newer Rust than the
-    // crates support (1.85).
-    #[allow(deprecated)]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { System.dealloc(ptr, layout) };
         if COUNTING.load(Ordering::Relaxed) {
             // Memory allocated before counting started can be freed while
             // counting: never go below zero.
-            let _ = IN_USE.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+            let _ = IN_USE.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
                 Some(n.saturating_sub(layout.size()))
             });
         }
     }
 
-    // `fetch_update`'s new name, `try_update`, needs a newer Rust than the
-    // crates support (1.85).
-    #[allow(deprecated)]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         let p = unsafe { System.realloc(ptr, layout, new_size) };
         if !p.is_null() && COUNTING.load(Ordering::Relaxed) {
@@ -84,7 +78,7 @@ unsafe impl GlobalAlloc for Counting {
                 grew(new_size - layout.size());
             } else {
                 let less = layout.size() - new_size;
-                let _ = IN_USE.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| Some(n.saturating_sub(less)));
+                let _ = IN_USE.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| Some(n.saturating_sub(less)));
             }
         }
         p
@@ -270,7 +264,7 @@ fn count(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);

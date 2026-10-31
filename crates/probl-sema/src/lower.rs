@@ -315,10 +315,10 @@ impl<'a> Lowerer<'a> {
         self.symbols.definitions[def].mutable = mutable;
         if top {
             self.symbols.definitions[def].global = true;
-        } else if kind == DefKind::Variable {
-            if let Some(open) = self.open.last_mut() {
-                open.push(def);
-            }
+        } else if kind == DefKind::Variable
+            && let Some(open) = self.open.last_mut()
+        {
+            open.push(def);
         }
         if top && self.globals.contains_key(name) {
             self.error(span, format!("`{name}` is already defined at the top level"))
@@ -582,10 +582,10 @@ impl<'a> Lowerer<'a> {
                     ExprKind::Map(_) => Some("map"),
                     _ => None,
                 };
-                if let Some(kind) = kind {
-                    if let Some(t) = self.literal_union_kind(ty, kind, e.span) {
-                        self.contextualize(e, &t);
-                    }
+                if let Some(kind) = kind
+                    && let Some(t) = self.literal_union_kind(ty, kind, e.span)
+                {
+                    self.contextualize(e, &t);
                 }
             }
             return;
@@ -724,10 +724,10 @@ impl<'a> Lowerer<'a> {
 
     /// Record a use of an enum's variant.
     fn refer_variant(&mut self, variant: &Lit, span: Span) {
-        if let Lit::Enum { ty, variant } = variant {
-            if let Some(&def) = self.variant_defs.get(&(*ty, *variant)) {
-                self.refer(span, def);
-            }
+        if let Lit::Enum { ty, variant } = variant
+            && let Some(&def) = self.variant_defs.get(&(*ty, *variant))
+        {
+            self.refer(span, def);
         }
     }
 
@@ -1156,10 +1156,10 @@ impl<'a> Lowerer<'a> {
                     return;
                 }
                 let spec = ty.as_ref().and_then(|t| self.type_spec(t));
-                if let Some(spec) = &spec {
-                    if *op == ast::BindOp::Assign {
-                        self.check_literal(value, spec);
-                    }
+                if let Some(spec) = &spec
+                    && *op == ast::BindOp::Assign
+                {
+                    self.check_literal(value, spec);
                 }
                 self.let_stmt(*mutable, pattern, *op, value, spec.as_ref(), s.span, out);
                 if let (Some(spec), Some(_)) = (spec, ty) {
@@ -1293,22 +1293,22 @@ impl<'a> Lowerer<'a> {
             ast::StmtKind::Observe { value, from } => {
                 // An immediately observed anonymous draw can be integrated
                 // out. Preserve missing mass and reject non-boolean laws.
-                if from.is_none() {
-                    if let ast::ExprKind::Draw(source) = &value.kind {
-                        // Operand effects, including bag extraction, still
-                        // execute before the anonymous trial is integrated.
-                        let d = self.expr(source, out);
-                        let d = builtin(Builtin::BooleanLaw, vec![d], source.span);
-                        let st = self.stmt(
-                            s.span,
-                            StmtKind::Observe {
-                                value: lit(Lit::Bool(true), value.span),
-                                from: Some(d),
-                            },
-                        );
-                        out.push(st);
-                        return;
-                    }
+                if from.is_none()
+                    && let ast::ExprKind::Draw(source) = &value.kind
+                {
+                    // Operand effects, including bag extraction, still
+                    // execute before the anonymous trial is integrated.
+                    let d = self.expr(source, out);
+                    let d = builtin(Builtin::BooleanLaw, vec![d], source.span);
+                    let st = self.stmt(
+                        s.span,
+                        StmtKind::Observe {
+                            value: lit(Lit::Bool(true), value.span),
+                            from: Some(d),
+                        },
+                    );
+                    out.push(st);
+                    return;
                 }
                 let mut exprs = vec![value];
                 exprs.extend(from.as_ref());
@@ -1398,10 +1398,10 @@ impl<'a> Lowerer<'a> {
         span: Span,
         out: &mut Vec<Stmt>,
     ) {
-        if op == ast::BindOp::Assign {
-            if let ast::ExprKind::Draw(source) = &value.kind {
-                return self.let_stmt(mutable, pattern, ast::BindOp::Draw, source, ty, span, out);
-            }
+        if op == ast::BindOp::Assign
+            && let ast::ExprKind::Draw(source) = &value.kind
+        {
+            return self.let_stmt(mutable, pattern, ast::BindOp::Draw, source, ty, span, out);
         }
         let v = self.expr_expected(value, if op == ast::BindOp::Assign { ty } else { None }, out);
         let kind = |place| match op {
@@ -1651,10 +1651,10 @@ impl<'a> Lowerer<'a> {
     }
 
     fn assign(&mut self, target: &ast::Expr, op: ast::AssignOp, value: &ast::Expr, span: Span, out: &mut Vec<Stmt>) {
-        if op == ast::AssignOp::Set {
-            if let ast::ExprKind::Draw(source) = &value.kind {
-                return self.assign(target, ast::AssignOp::Draw, source, span, out);
-            }
+        if op == ast::AssignOp::Set
+            && let ast::ExprKind::Draw(source) = &value.kind
+        {
+            return self.assign(target, ast::AssignOp::Draw, source, span, out);
         }
         let kind = match op {
             ast::AssignOp::Set | ast::AssignOp::Draw => {
@@ -2671,27 +2671,26 @@ impl<'a> Lowerer<'a> {
             ast::ExprKind::Call { callee, args } => return self.call(callee, args, span, out),
             ast::ExprKind::Method { receiver, name, args } => return self.method(receiver, name, args, span, out),
             ast::ExprKind::Field { expr, name } => {
-                if let ast::ExprKind::Name(base) = &expr.kind {
-                    if let Some(&ty) = self.enum_by_name.get(base) {
-                        if self.lookup(base).is_none() {
-                            if let Some(&def) = self.type_defs.get(base) {
-                                self.refer(expr.span, def);
-                            }
-                            let enum_type = &self.enums[ty as usize];
-                            return match enum_type.variants.iter().position(|v| *v == name.name) {
-                                Some(i) => {
-                                    let variant = Lit::Enum { ty, variant: i as u32 };
-                                    self.refer_variant(&variant, name.span);
-                                    lit(variant, span)
-                                }
-                                None => {
-                                    let enum_name = enum_type.name.clone();
-                                    self.error(name.span, format!("`{enum_name}` has no variant `{}`", name.name));
-                                    lit(Lit::Unit, span)
-                                }
-                            };
-                        }
+                if let ast::ExprKind::Name(base) = &expr.kind
+                    && let Some(&ty) = self.enum_by_name.get(base)
+                    && self.lookup(base).is_none()
+                {
+                    if let Some(&def) = self.type_defs.get(base) {
+                        self.refer(expr.span, def);
                     }
+                    let enum_type = &self.enums[ty as usize];
+                    return match enum_type.variants.iter().position(|v| *v == name.name) {
+                        Some(i) => {
+                            let variant = Lit::Enum { ty, variant: i as u32 };
+                            self.refer_variant(&variant, name.span);
+                            lit(variant, span)
+                        }
+                        None => {
+                            let enum_name = enum_type.name.clone();
+                            self.error(name.span, format!("`{enum_name}` has no variant `{}`", name.name));
+                            lit(Lit::Unit, span)
+                        }
+                    };
                 }
                 self.field_uses.push((name.span, name.name.clone()));
                 ExprKind::Field(Box::new(self.expr(expr, out)), name.name.clone())
@@ -2952,14 +2951,14 @@ impl<'a> Lowerer<'a> {
     }
 
     fn call(&mut self, callee: &ast::Expr, args: &[ast::Arg], span: Span, out: &mut Vec<Stmt>) -> Expr {
-        if let ast::ExprKind::Name(name) = &callee.kind {
-            if self.lookup(name).is_none() {
-                let ident = ast::Ident {
-                    name: name.clone(),
-                    span: callee.span,
-                };
-                return self.call_named(&ident, None, args, span, out);
-            }
+        if let ast::ExprKind::Name(name) = &callee.kind
+            && self.lookup(name).is_none()
+        {
+            let ident = ast::Ident {
+                name: name.clone(),
+                span: callee.span,
+            };
+            return self.call_named(&ident, None, args, span, out);
         }
         // Calling a closure value.
         let f = self.expr(callee, out);
@@ -2978,55 +2977,55 @@ impl<'a> Lowerer<'a> {
         span: Span,
         out: &mut Vec<Stmt>,
     ) -> Expr {
-        if let Some(arg) = args.iter().find(|a| matches!(a.value.kind, ast::ExprKind::Spread(_))) {
-            if !Builtin::from_name(&name.name).is_some_and(Builtin::accepts_spread) {
-                self.error(
-                    arg.value.span,
-                    "spreading is only supported by set, list, bag, min and max",
-                );
-            }
+        if let Some(arg) = args.iter().find(|a| matches!(a.value.kind, ast::ExprKind::Spread(_)))
+            && !Builtin::from_name(&name.name).is_some_and(Builtin::accepts_spread)
+        {
+            self.error(
+                arg.value.span,
+                "spreading is only supported by set, list, bag, min and max",
+            );
         }
-        if let Some(b) = Builtin::from_name(&name.name) {
-            if !self.fn_by_name.contains_key(&name.name) {
-                if b == Builtin::Take {
-                    self.check_arity(b, args.len() + 1, span);
-                    for key in self.argument_names(args) {
-                        self.error(span, format!("`take` doesn't take the named argument `{key}`"));
-                    }
-                    let Some(mut bag) = self.place(receiver, out, "take an item from") else {
-                        return lit(Lit::Unit, span);
-                    };
-                    // Fix the receiver's indices before evaluating an argument
-                    // that could change them, and use each index only once.
-                    for elem in &mut bag.path {
-                        if let PathElem::Index(index) = elem {
-                            let dest = self.temp(index.span);
-                            out.push(self.stmt(
-                                index.span,
-                                StmtKind::Set {
-                                    place: Place::slot(dest),
-                                    value: index.clone(),
-                                },
-                            ));
-                            *index = slot(dest, index.span);
-                        }
-                    }
-                    let count = args.first().map(|a| self.expr(&a.value, out));
-                    let dest = self.temp(span);
-                    let st = self.stmt(
-                        span,
-                        StmtKind::Take {
-                            place: Place::slot(dest),
-                            bag,
-                            count,
-                        },
-                    );
-                    out.push(st);
-                    return slot(dest, span);
+        if let Some(b) = Builtin::from_name(&name.name)
+            && !self.fn_by_name.contains_key(&name.name)
+        {
+            if b == Builtin::Take {
+                self.check_arity(b, args.len() + 1, span);
+                for key in self.argument_names(args) {
+                    self.error(span, format!("`take` doesn't take the named argument `{key}`"));
                 }
-                if b.is_mutating() {
-                    return self.mutating_method(b, receiver, name, args, span, out);
+                let Some(mut bag) = self.place(receiver, out, "take an item from") else {
+                    return lit(Lit::Unit, span);
+                };
+                // Fix the receiver's indices before evaluating an argument
+                // that could change them, and use each index only once.
+                for elem in &mut bag.path {
+                    if let PathElem::Index(index) = elem {
+                        let dest = self.temp(index.span);
+                        out.push(self.stmt(
+                            index.span,
+                            StmtKind::Set {
+                                place: Place::slot(dest),
+                                value: index.clone(),
+                            },
+                        ));
+                        *index = slot(dest, index.span);
+                    }
                 }
+                let count = args.first().map(|a| self.expr(&a.value, out));
+                let dest = self.temp(span);
+                let st = self.stmt(
+                    span,
+                    StmtKind::Take {
+                        place: Place::slot(dest),
+                        bag,
+                        count,
+                    },
+                );
+                out.push(st);
+                return slot(dest, span);
+            }
+            if b.is_mutating() {
+                return self.mutating_method(b, receiver, name, args, span, out);
             }
         }
         self.call_named(name, Some(receiver), args, span, out)

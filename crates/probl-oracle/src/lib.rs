@@ -883,10 +883,10 @@ impl<'a> Interp<'a> {
         let outs = self.expr(lhs, w, true)?;
         self.each(outs, |me, w, a| {
             let left = truth(&a, word)?;
-            if let Truth::Fact(x) = left {
-                if x != and {
-                    return Ok(vec![(w, Ok(Value::Bool(x)))]);
-                }
+            if let Truth::Fact(x) = left
+                && x != and
+            {
+                return Ok(vec![(w, Ok(Value::Bool(x)))]);
             }
             let outs = me.expr(rhs, w, true)?;
             me.each(outs, |_, w, b| {

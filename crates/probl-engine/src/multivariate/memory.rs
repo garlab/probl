@@ -70,13 +70,12 @@ impl Resources {
         Arc::ptr_eq(&self.0.counters, &other.0.counters)
     }
 
-    #[allow(deprecated)] // fetch_update supports our Rust 1.85 MSRV.
     pub(super) fn reserve(&self, bytes: usize) -> OpResult<Reservation> {
         if bytes != 0 {
             let counters = &self.0.counters;
             let old = counters
                 .used
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
                     used.checked_add(bytes).filter(|&new| new <= self.0.limit)
                 })
                 .map_err(|_| allocation())?;

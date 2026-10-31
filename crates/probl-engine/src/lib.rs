@@ -371,14 +371,14 @@ fn run_here(
             );
         }
     };
-    if let Some((runs, _)) = sample {
-        if runs == 0 || runs > u32::MAX as u64 {
-            return Err(OpError::new(format!(
-                "sample mode needs between 1 and {} runs",
-                report::thousands(u32::MAX as i64)
-            ))
-            .at(settings.mode_span.unwrap_or_default()));
-        }
+    if let Some((runs, _)) = sample
+        && (runs == 0 || runs > u32::MAX as u64)
+    {
+        return Err(OpError::new(format!(
+            "sample mode needs between 1 and {} runs",
+            report::thousands(u32::MAX as i64)
+        ))
+        .at(settings.mode_span.unwrap_or_default()));
     }
     // Enumeration stops at the first fault by default, and sampling ends
     // only the run that failed (section 11).

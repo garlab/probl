@@ -120,10 +120,10 @@ pub fn validate(ty: &TypeSpec, records: &[RecordType]) -> Vec<(String, TypeSpec,
                 let mut kinds = std::collections::BTreeMap::new();
                 let mut shapes = std::collections::BTreeMap::<Vec<String>, (&TypeSpec, Option<&TypeSpec>)>::new();
                 for a in xs {
-                    if let Some(kind) = a.container_kind() {
-                        if let Some(b) = kinds.insert(kind, a) {
-                            errors.push((path.to_owned(), b.clone(), a.clone()));
-                        }
+                    if let Some(kind) = a.container_kind()
+                        && let Some(b) = kinds.insert(kind, a)
+                    {
+                        errors.push((path.to_owned(), b.clone(), a.clone()));
                     }
                     if let Some(shape) = fields(a, records) {
                         let anonymous = matches!(a, TypeSpec::AnonRecord(_));

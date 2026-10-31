@@ -897,10 +897,11 @@ fn hash_number<H: Hasher>(re: f64, im: f64, state: &mut H) {
     if float_key(im) != 0 {
         return (float_key(re), float_key(im)).hash(state);
     }
-    if re.is_finite() && re.fract() == 0.0 {
-        if let Some(n) = probl_number::Integer::from_f64(re) {
-            return n.hash(state);
-        }
+    if re.is_finite()
+        && re.fract() == 0.0
+        && let Some(n) = probl_number::Integer::from_f64(re)
+    {
+        return n.hash(state);
     }
     float_key(re).hash(state)
 }

@@ -99,20 +99,16 @@ impl Budget {
     }
 
     /// Reserve payload bytes before allocation or growing a text builder.
-    // `try_update`, its new name, needs a newer Rust than the crates support (1.85).
-    #[allow(deprecated)]
     pub fn string_allocation(&self, bytes: usize) -> OpResult<()> {
         self.string_size(bytes)?;
         self.string_bytes_left
-            .fetch_update(Atomic::Relaxed, Atomic::Relaxed, |left| left.checked_sub(bytes as u64))
+            .try_update(Atomic::Relaxed, Atomic::Relaxed, |left| left.checked_sub(bytes as u64))
             .map(|_| ())
             .map_err(|_| OpError::limit("the run used up its string memory allowance"))
     }
 
     /// Reserve before materializing a collection, or after a single bounded
     /// result. Conservative: shared results may be charged again; no refunds.
-    // `try_update`, its new name, needs a newer Rust than the crates support (1.85).
-    #[allow(deprecated)]
     pub fn integer_allocation(&self, bits: u64, count: u64) -> OpResult<()> {
         self.integer_bits(bits)?;
         if bits <= 63 || count == 0 {
@@ -124,7 +120,7 @@ impl Budget {
             .saturating_add(48)
             .saturating_mul(count);
         self.integer_bytes_left
-            .fetch_update(Atomic::Relaxed, Atomic::Relaxed, |left| left.checked_sub(bytes))
+            .try_update(Atomic::Relaxed, Atomic::Relaxed, |left| left.checked_sub(bytes))
             .map(|_| ())
             .map_err(|_| OpError::limit("the run used up its large integer memory allowance"))
     }
@@ -184,14 +180,12 @@ impl Budget {
     }
 
     /// Take at least `need` units from the shared budget, if it has them.
-    // `try_update`, its new name, needs a newer Rust than the crates support (1.85).
-    #[allow(deprecated)]
     fn top_up(&mut self, need: u64) -> bool {
         let Some(shared) = &self.shared else {
             return false;
         };
         let want = need.max(WORK_CHUNK);
-        let taken = shared.fetch_update(Atomic::Relaxed, Atomic::Relaxed, |left| {
+        let taken = shared.try_update(Atomic::Relaxed, Atomic::Relaxed, |left| {
             (left >= need).then(|| left - want.min(left))
         });
         match taken {

@@ -302,20 +302,20 @@ impl Acc {
     }
 
     fn add(&mut self, value: &Value, weight: Weight) {
-        if let Some(online) = &mut self.online {
-            if let Some(number) = collection::number(value) {
-                online.add(number, matches!(value, Value::Prob(_)), weight);
-                return;
-            }
+        if let Some(online) = &mut self.online
+            && let Some(number) = collection::number(value)
+        {
+            online.add(number, matches!(value, Value::Prob(_)), weight);
+            return;
         }
         // A discrete outcome, like `floor(x)`, is each of its values.
-        if let Value::Analytic(a) = value {
-            if a.is_discrete() {
-                for (v, _, share) in a.atoms() {
-                    self.add(&v, weight.scale(share));
-                }
-                return;
+        if let Value::Analytic(a) = value
+            && a.is_discrete()
+        {
+            for (v, _, share) in a.atoms() {
+                self.add(&v, weight.scale(share));
             }
+            return;
         }
         self.continuous |= matches!(value, Value::Analytic(_) | Value::Continuous(_));
         self.nonnumeric |= !matches!(
@@ -1675,12 +1675,11 @@ fn table(key_label: &str, result: &ReportResult, format: Format, selection: Opti
 pub fn pct(p: f64, format: Format) -> String {
     let text = fmt_percent(p, 2);
     let text = if text == "-0.00%" { "0.00%".to_string() } else { text };
-    if format.fractions {
-        if let Some((n, d)) = fraction(p) {
-            if d > 1 {
-                return format!("{text} (≈ {n}/{d})");
-            }
-        }
+    if format.fractions
+        && let Some((n, d)) = fraction(p)
+        && d > 1
+    {
+        return format!("{text} (≈ {n}/{d})");
     }
     text
 }
@@ -1777,7 +1776,7 @@ fn group(digits: &str) -> String {
     }
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);

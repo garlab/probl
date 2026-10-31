@@ -42,10 +42,12 @@ Other building blocks include arbitrary-precision integers, complex numbers, imm
 
 The [browser playground](https://playground.probl.dev) runs locally in your browser; no installation is needed.
 
-To install the CLI from crates.io, install Rust 1.85 or later, then run:
+Use the latest stable Rust release (minimum Rust 1.99). To update an existing
+rustup installation and install the CLI from crates.io:
 
 ```sh
-cargo install probl-cli --locked
+rustup update stable
+cargo +stable install probl-cli --locked
 ```
 
 The package is named **`probl-cli`** and the installed command is **`probl`**. The examples are in this repository; from the root of a clone, run:
@@ -61,6 +63,10 @@ To build the CLI from the checkout instead, run `cargo install --path crates/pro
 ```sh
 cargo run --release -p probl-cli -- run examples/02_craps.probl
 ```
+
+The checkout selects the stable toolchain through `rust-toolchain.toml`, and CI
+tests stable. The numeric minimum in `Cargo.toml` applies to every workspace
+crate and may advance in future releases; see the [toolchain policy](docs/testing.md#rust-toolchain).
 
 Or run it from its container image, for linux/amd64 and linux/arm64, with the current folder mounted where it reads models and data:
 

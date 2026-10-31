@@ -73,7 +73,7 @@ fn numbers_convert_at_typed_boundaries() {
         assert_eq!(value(src), Value::str("prob"), "{src}");
     }
     close(chance("let x = 0.33\nreport bernoulli(x)"), 0.33);
-    close(chance("report bernoulli(euler_gamma)"), 0.5772156649015329);
+    close(chance("report bernoulli(euler_gamma)"), std::f64::consts::EULER_GAMMA);
     compile_error("let p: prob = 150%");
     compile_error("report bernoulli(150%)");
     close(chance("report bernoulli(33%)"), 0.33);

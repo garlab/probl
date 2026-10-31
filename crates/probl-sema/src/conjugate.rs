@@ -73,10 +73,10 @@ pub fn update<'a>(value: &'a Expr, from: Option<&'a Expr>) -> Option<Update<'a>>
     };
     let parameter_slot = |e: &'a Expr| slot(e).or_else(|| probability_slot(e));
     let mut distribution = builtin(from?)?;
-    if let (Builtin::BooleanLaw, [inner]) = distribution {
-        if let Some((Builtin::Bernoulli, args)) = builtin(inner) {
-            distribution = (Builtin::Bernoulli, args);
-        }
+    if let (Builtin::BooleanLaw, [inner]) = distribution
+        && let Some((Builtin::Bernoulli, args)) = builtin(inner)
+    {
+        distribution = (Builtin::Bernoulli, args);
     }
     let (slot, likelihood) = match distribution {
         (Builtin::Binomial, [trials, x]) => (parameter_slot(x)?, Likelihood::Binomial { value, trials }),
@@ -158,10 +158,10 @@ pub fn analyze(program: &Program) -> Conjugacy {
             continue;
         }
         each_stmt(&func.body, &mut |s| {
-            if let StmtKind::Draw { place, .. } = &s.kind {
-                if place.path.is_empty() {
-                    result.delays[s.id as usize] = index[place.slot as usize];
-                }
+            if let StmtKind::Draw { place, .. } = &s.kind
+                && place.path.is_empty()
+            {
+                result.delays[s.id as usize] = index[place.slot as usize];
             }
             let mut reads: Vec<SlotId> = Vec::new();
             own_reads(s, &mut |slot| {

@@ -10,10 +10,11 @@ To embed Probl in a Rust application, use the [`probl`](https://crates.io/crates
 
 ## Install
 
-Requires Rust 1.85 or later:
+Use the latest stable Rust release (minimum Rust 1.99):
 
 ```sh
-cargo install probl-cli --locked
+rustup update stable
+cargo +stable install probl-cli --locked
 ```
 
 ## Run a model

@@ -42,14 +42,14 @@ pub fn construct(n: &Value, scale: u64, budget: &mut Budget) -> OpResult<Value> 
 /// Some result when at least one operand is a duration, or both are datetimes.
 pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> Option<OpResult<Value>> {
     use BinOp::*;
-    if let (Value::DateTime(a), Value::DateTime(b)) = (a, b) {
-        if op == Sub {
-            let n = Integer::from(a.total_nanos() - b.total_nanos());
-            if let Err(error) = budget.integer_allocation(n.bits(), 1) {
-                return Some(Err(error));
-            }
-            return Some(from_number(Value::Int(n), false));
+    if let (Value::DateTime(a), Value::DateTime(b)) = (a, b)
+        && op == Sub
+    {
+        let n = Integer::from(a.total_nanos() - b.total_nanos());
+        if let Err(error) = budget.integer_allocation(n.bits(), 1) {
+            return Some(Err(error));
         }
+        return Some(from_number(Value::Int(n), false));
     }
     if !matches!(a, Value::Duration(_)) && !matches!(b, Value::Duration(_)) {
         return None;
@@ -110,24 +110,24 @@ pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> Option<Op
                 "duration arithmetic requires compatible units; divide by a duration such as '1s' to obtain a number",
             )),
         }?;
-        if let Value::Duration(d) = &value {
-            if let Some(n) = d.amount.as_integer() {
-                budget.integer_allocation(n.bits(), 1)?;
-            }
+        if let Value::Duration(d) = &value
+            && let Some(n) = d.amount.as_integer()
+        {
+            budget.integer_allocation(n.bits(), 1)?;
         }
         Ok(value)
     })())
 }
 
 fn divide(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
-    if let (Value::Int(a), Value::Int(b)) = (a, b) {
-        if !b.is_zero() {
-            budget.integer_work(a, b, true)?;
-            let (whole, remainder) = a.div_mod(b)?;
-            if remainder.is_zero() {
-                budget.integer_allocation(whole.bits(), 1)?;
-                return Ok(Value::Int(whole));
-            }
+    if let (Value::Int(a), Value::Int(b)) = (a, b)
+        && !b.is_zero()
+    {
+        budget.integer_work(a, b, true)?;
+        let (whole, remainder) = a.div_mod(b)?;
+        if remainder.is_zero() {
+            budget.integer_allocation(whole.bits(), 1)?;
+            return Ok(Value::Int(whole));
         }
     }
     ops::binary(BinOp::Div, a, b, budget)

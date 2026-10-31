@@ -10,7 +10,7 @@ To run `.probl` files from a terminal, install [`probl-cli`](https://crates.io/c
 
 ## Get started
 
-Requires Rust 1.85 or later. Add the library to your project:
+Requires Rust 1.99 or later; the latest stable release is recommended. Add the library to your project:
 
 ```sh
 cargo add probl
@@ -55,6 +55,9 @@ Interpret a probability's `point()` together with `is_complete()`, `bounds()` an
 The [library guide](https://github.com/garlab/probl/blob/main/docs/library.md) explains data loading, errors and result interpretation. The [language guide](https://github.com/garlab/probl/blob/main/docs/language-overview.md) and [examples](https://github.com/garlab/probl/tree/main/examples) introduce model writing.
 
 ## Compatibility
+
+The Rust minimum may advance in future releases. Each release declares its
+requirement in Cargo metadata; see the [toolchain policy](https://github.com/garlab/probl/blob/main/docs/testing.md#rust-toolchain).
 
 Probl is early-stage software; the language and Rust API are evolving. Use this crate to embed Probl. `probl-number`, `probl-syntax`, `probl-sema` and `probl-engine` are internal components with no stable API; the hidden `probl::__internal` adapter is also outside the supported API.
 

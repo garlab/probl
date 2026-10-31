@@ -851,24 +851,23 @@ impl Parser {
                 PREC_POW => self.expr_bp(PREC_POW)?, // right-associative
                 _ => self.expr_bp(prec + 1)?,
             };
-            if prec == PREC_CMP || prec == PREC_RANGE {
-                if let Some((next, next_prec, _)) = self.binary_op() {
-                    if next_prec == prec {
-                        let span = self.span();
-                        let msg = if prec == PREC_CMP {
-                            format!(
-                                "comparisons can't be chained: `{}` after `{}`",
-                                next.symbol(),
-                                op.symbol()
-                            )
-                        } else {
-                            format!("`{}` can't follow `{}` directly", next.symbol(), op.symbol())
-                        };
-                        self.error(span, msg)
-                            .help("add parentheses, or combine the tests with `and`");
-                        return Err(Failed);
-                    }
-                }
+            if (prec == PREC_CMP || prec == PREC_RANGE)
+                && let Some((next, next_prec, _)) = self.binary_op()
+                && next_prec == prec
+            {
+                let span = self.span();
+                let msg = if prec == PREC_CMP {
+                    format!(
+                        "comparisons can't be chained: `{}` after `{}`",
+                        next.symbol(),
+                        op.symbol()
+                    )
+                } else {
+                    format!("`{}` can't follow `{}` directly", next.symbol(), op.symbol())
+                };
+                self.error(span, msg)
+                    .help("add parentheses, or combine the tests with `and`");
+                return Err(Failed);
             }
             let span = lhs.span.to(rhs.span);
             lhs = Expr {

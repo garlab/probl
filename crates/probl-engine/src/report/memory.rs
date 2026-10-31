@@ -90,14 +90,12 @@ impl Clone for Reservation {
 }
 
 impl Reservation {
-    // `try_update` requires a newer Rust than our MSRV (1.85).
-    #[allow(deprecated)]
     fn grow(&mut self, bytes: usize) -> OpResult<()> {
         if let Some(budget) = &self.budget {
             budget
                 .0
                 .used
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
                     used.checked_add(bytes).filter(|&n| n <= budget.0.limit)
                 })
                 .map_err(|_| exceeded())?;

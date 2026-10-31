@@ -402,13 +402,13 @@ fn the_inventory_runs_as_listed() {
             ));
         }
         // Advice to sample only where sampling runs the model.
-        if let Some(e) = enumeration_error.filter(suggests_sampling) {
-            if matches!(sampled, Unsupported | Limit) {
-                wrong.push(format!(
-                    "{} `{program}`: suggests sampling, which fails too: {e:?}",
-                    c.item
-                ));
-            }
+        if let Some(e) = enumeration_error.filter(suggests_sampling)
+            && matches!(sampled, Unsupported | Limit)
+        {
+            wrong.push(format!(
+                "{} `{program}`: suggests sampling, which fails too: {e:?}",
+                c.item
+            ));
         }
         match c.item {
             "control" if (c.enumerate, c.sample) != (Works, Works) => {

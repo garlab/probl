@@ -539,10 +539,10 @@ fn binary_plain(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResul
             if let Value::Str(s) = v {
                 budget.string_work(s)?;
             }
-            if let Value::Duration(d) = v {
-                if let Some(n) = d.amount.as_integer() {
-                    budget.integer_work(n, &Integer::ONE, false)?;
-                }
+            if let Value::Duration(d) = v
+                && let Some(n) = d.amount.as_integer()
+            {
+                budget.integer_work(n, &Integer::ONE, false)?;
             }
         }
     }
@@ -551,10 +551,9 @@ fn binary_plain(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResul
             (a, b),
             (Value::Duration(_), _) | (_, Value::Duration(_)) | (Value::DateTime(_), Value::DateTime(_))
         )
+        && let Some(result) = crate::duration::binary(op, a, b, budget)
     {
-        if let Some(result) = crate::duration::binary(op, a, b, budget) {
-            return result;
-        }
+        return result;
     }
     match op {
         BinOp::Eq => Ok(Value::Bool(equals_counted(a, b, budget)?)),
@@ -779,21 +778,21 @@ fn unusual_binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpRes
 /// a fact or another event.
 #[inline(never)]
 fn analytic_comparison(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
-    if matches!(op, BinOp::Eq | BinOp::Ne) {
-        if let (Value::Event(x), Value::Bool(b)) | (Value::Bool(b), Value::Event(x)) = (a, b) {
-            return if *b == (op == BinOp::Eq) {
-                Ok(Value::Event(x.clone()))
-            } else {
-                not(&Value::Event(x.clone()), budget)
-            };
-        }
+    if matches!(op, BinOp::Eq | BinOp::Ne)
+        && let (Value::Event(x), Value::Bool(b)) | (Value::Bool(b), Value::Event(x)) = (a, b)
+    {
+        return if *b == (op == BinOp::Eq) {
+            Ok(Value::Event(x.clone()))
+        } else {
+            not(&Value::Event(x.clone()), budget)
+        };
     }
-    if let (Value::Event(x), Value::Event(y)) = (a, b) {
-        if matches!(op, BinOp::Eq | BinOp::Ne) {
-            budget.work((x.size() + y.size()) as u64)?;
-            let equal = x.combine(y, BinOp::Eq)?;
-            return Ok(if op == BinOp::Eq { equal } else { equal.complement()? }.value());
-        }
+    if let (Value::Event(x), Value::Event(y)) = (a, b)
+        && matches!(op, BinOp::Eq | BinOp::Ne)
+    {
+        budget.work((x.size() + y.size()) as u64)?;
+        let equal = x.combine(y, BinOp::Eq)?;
+        return Ok(if op == BinOp::Eq { equal } else { equal.complement()? }.value());
     }
     Err(crate::analytic::unsupported(
         "comparing aggregate or boolean analytic outcomes",

@@ -32,10 +32,10 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
     let value = call_plain_inner(b, args, budget)?;
     if let Value::Int(n) = &value {
         budget.integer_allocation(n.bits(), 1)?;
-    } else if let Value::Duration(d) = &value {
-        if let Some(n) = d.amount.as_integer() {
-            budget.integer_allocation(n.bits(), 1)?;
-        }
+    } else if let Value::Duration(d) = &value
+        && let Some(n) = d.amount.as_integer()
+    {
+        budget.integer_allocation(n.bits(), 1)?;
     }
     Ok(value)
 }
@@ -704,8 +704,8 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
     use Builtin as B;
     check_query_input(b, args)?;
     let v = &args[0];
-    if let Value::Range(lo, hi) = v {
-        if matches!(
+    if let Value::Range(lo, hi) = v
+        && matches!(
             b,
             B::Mean
                 | B::Variance
@@ -717,25 +717,24 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
                 | B::Cdf
                 | B::Pmf
                 | B::Support
-        ) {
-            return range_query(b, lo, hi, args.get(1), budget);
-        }
+        )
+    {
+        return range_query(b, lo, hi, args.get(1), budget);
     }
-    if let (B::Pmf | B::Cdf, Value::Dist(d)) = (b, v) {
-        if d.law.is_some() {
-            return listed_law_query(b, d, &args[1]);
-        }
+    if let (B::Pmf | B::Cdf, Value::Dist(d)) = (b, v)
+        && d.law.is_some()
+    {
+        return listed_law_query(b, d, &args[1]);
     }
     if let Value::Counts(law) = v {
         return law_stat(b, law, args, budget);
     }
-    if matches!(b, B::P | B::Cdf | B::Pmf | B::Pdf) {
-        if let Value::Dist(d) = v {
-            if d.missing > 0.0 {
-                return Err(OpError::new(format!("`{}` cannot return an exact scalar probability while the distribution has unresolved mass", b.name()))
+    if matches!(b, B::P | B::Cdf | B::Pmf | B::Pdf)
+        && let Value::Dist(d) = v
+        && d.missing > 0.0
+    {
+        return Err(OpError::new(format!("`{}` cannot return an exact scalar probability while the distribution has unresolved mass", b.name()))
                     .help("report a distribution comparison to retain probability bounds; scalar queries require a fully resolved distribution"));
-            }
-        }
     }
     if matches!(
         b,
@@ -790,10 +789,10 @@ pub fn call_raw(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Val
                 _ => m.variance,
             }
             .ok_or_else(|| OpError::new("this statistic is outside the supported time dimensions or finite range"))?;
-            if let Value::Duration(d) = &value {
-                if let Some(n) = d.amount.as_integer() {
-                    budget.integer_allocation(n.bits(), 1)?;
-                }
+            if let Value::Duration(d) = &value
+                && let Some(n) = d.amount.as_integer()
+            {
+                budget.integer_allocation(n.bits(), 1)?;
             }
             return Ok(value);
         }

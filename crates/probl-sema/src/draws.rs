@@ -40,11 +40,12 @@ fn block(b: Block, functions: &[Function], callable_prints: bool) -> Block {
     let mut carried: Vec<(Vec<Stmt>, SlotId)> = Vec::new();
     let mut just_carried = false;
     for mut s in b.stmts {
-        if let (StmtKind::Check { slot, .. }, Some((draw, last))) = (&s.kind, carried.last_mut()) {
-            if just_carried && slot == last {
-                draw.push(s);
-                continue;
-            }
+        if let (StmtKind::Check { slot, .. }, Some((draw, last))) = (&s.kind, carried.last_mut())
+            && just_carried
+            && slot == last
+        {
+            draw.push(s);
+            continue;
         }
         nested(&mut s, functions, callable_prints);
         // The draws that can't pass `s` land just before it, in order.

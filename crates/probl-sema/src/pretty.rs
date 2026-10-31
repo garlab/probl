@@ -56,14 +56,14 @@ impl Printer<'_> {
     fn line(&self, s: &Stmt, depth: usize, text: String, out: &mut String) {
         let indent = "  ".repeat(depth);
         write!(out, "{indent}{text}").unwrap();
-        if let Some(l) = self.liveness {
-            if !matches!(
+        if let Some(l) = self.liveness
+            && !matches!(
                 s.kind,
                 StmtKind::If { .. } | StmtKind::Chance { .. } | StmtKind::Loop { .. } | StmtKind::Try { .. }
-            ) {
-                let live: Vec<String> = l.after[s.id as usize].iter().map(|s| self.slot(s)).collect();
-                write!(out, "    [live: {}]", live.join(" ")).unwrap();
-            }
+            )
+        {
+            let live: Vec<String> = l.after[s.id as usize].iter().map(|s| self.slot(s)).collect();
+            write!(out, "    [live: {}]", live.join(" ")).unwrap();
         }
         out.push('\n');
     }

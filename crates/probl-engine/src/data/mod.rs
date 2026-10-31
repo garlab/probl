@@ -350,7 +350,7 @@ impl Budget<'_> {
         }
         self.values_left -= 1;
         self.ticks = self.ticks.wrapping_add(1);
-        if self.ticks % 4096 == 0 && self.cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+        if self.ticks.is_multiple_of(4096) && self.cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             return Err(Problem::limit("reading it was cancelled"));
         }
         Ok(())

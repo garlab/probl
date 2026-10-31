@@ -15,6 +15,8 @@ All notable changes to the published crates are recorded here. The format follow
 
 ### Changed
 
+- The minimum Rust version is now 1.99, and development uses the stable toolchain. Rust 1.85 source builds are no longer supported.
+
 - `days(n)` and `weeks(n)` now produce durations without rounding. Adding a duration to a date requires whole 24-hour days; adding one to a datetime requires whole nanoseconds.
 
 - `date(text)` is removed: write constant dates as `'YYYY-MM-DD'` and use `parse_date` for runtime text. The three-integer constructor remains. Dates and datetimes inside collections print as single-quoted literals; scalar display stays unquoted. Bundled examples and fixtures use the new syntax.
