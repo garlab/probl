@@ -19,6 +19,61 @@ def browser_fixture(folder, commit='a' * 40):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_release_requires_the_tagged_commit_on_remote_main(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            command = release.run
+
+            def git(*args):
+                return command('git', *args, cwd=root)
+
+            def commit(message):
+                git('-c', 'user.name=Test', '-c', 'user.email=test@example.com',
+                    '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', message)
+                return git('rev-parse', 'HEAD')
+
+            git('init', '-q', '-b', 'main')
+            (root / 'Cargo.toml').write_text('[workspace.package]\nversion = "1.2.3"\n')
+            git('add', 'Cargo.toml')
+            base = commit('before release')
+            tagged = commit('release')
+            git('-c', 'tag.gpgsign=false', 'tag', 'v1.2.3')
+            descendant = commit('after release')
+            git('checkout', '-q', '--detach', base)
+            sibling = commit('diverged main')
+            git('checkout', '-q', '--detach', tagged)
+
+            environment = {'GITHUB_REPOSITORY': release.REPO,
+                           'GITHUB_REF': 'refs/tags/v1.2.3', 'GITHUB_SHA': tagged}
+            responses = {'git/ref/tags/v1.2.3': {'object': {'type': 'commit', 'sha': tagged}},
+                         'releases/latest': None}
+            cases = [('main tip', tagged, None), ('main ancestor', descendant, None),
+                     ('tag pushed first', base, ValueError), ('diverged main', sibling, ValueError),
+                     ('missing main ref', None, subprocess.CalledProcessError)]
+            for name, main, error_type in cases:
+                with self.subTest(case=name):
+                    if main is None:
+                        git('update-ref', '-d', 'refs/remotes/origin/main')
+                    else:
+                        git('update-ref', 'refs/remotes/origin/main', main)
+                    with patch.dict(os.environ, environment), \
+                         patch.object(release, 'run', side_effect=lambda *args: command(
+                             *args, cwd=root, stderr=subprocess.PIPE)), \
+                         patch.object(release, 'api', side_effect=lambda path, **kw: responses[path]) as api:
+                        if error_type is None:
+                            self.assertEqual(release.check('v1.2.3'), tagged)
+                            self.assertEqual(api.call_count, 2)
+                        else:
+                            with self.assertRaises(error_type) as caught:
+                                release.check('v1.2.3')
+                            api.assert_not_called()
+                            if error_type is ValueError:
+                                self.assertIn(f'v1.2.3 points to {tagged}', str(caught.exception))
+                                self.assertIn('rerun the failed jobs', str(caught.exception))
+                                self.assertIn('Keep the existing tag unchanged', str(caught.exception))
+                            else:
+                                self.assertEqual(caught.exception.returncode, 128)
+
     def test_find_release_includes_paginated_drafts(self):
         draft = {'id': 7, 'tag_name': 'v1.2.3', 'draft': True}
         responses = {

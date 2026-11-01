@@ -55,6 +55,16 @@ workspace dependency versions, `Cargo.lock` and `CHANGELOG.md` together. See
 Changes are reviewed and tested on `main` before a maintainer pushes the version
 tag to start publication.
 
+Push `main` and the version tag together so the remote branch contains the
+release commit when validation starts (`vX.Y.Z` is a placeholder):
+
+```sh
+git push --atomic origin main refs/tags/vX.Y.Z
+```
+
+Pushing only the tag does not update GitHub's `main`, even when the release commit
+is already on your local `main`.
+
 Contributors can check packaging locally:
 
 ```sh
@@ -80,6 +90,11 @@ A failed run can leave some destinations published before others; retries reuse
 the same version and verify existing assets. The current automation publishes
 versions in increasing order and does not publish older maintenance releases
 over a newer release.
+
+If validation says the tagged commit is not on `origin/main`, push or merge that
+exact commit to `main`, then rerun the failed jobs of the original release run.
+Keep the tag unchanged. A retry publishes the original tagged commit; newer
+commits on `main` need their own version and tag to be included in a release.
 
 ## Browser distribution
 

@@ -85,7 +85,16 @@ def check(tag):
     commit = run('git', 'rev-parse', 'HEAD')
     if commit != os.environ['GITHUB_SHA']:
         raise ValueError("Checkout does not match the workflow commit")
-    run('git', 'merge-base', '--is-ancestor', 'HEAD', 'origin/main')
+    try:
+        run('git', 'merge-base', '--is-ancestor', 'HEAD', 'origin/main')
+    except subprocess.CalledProcessError as error:
+        if error.returncode != 1:
+            raise
+        raise ValueError(
+            f"Release tag {tag} points to {commit}, which is not on origin/main. "
+            "Push or merge that exact commit to main, then rerun the failed jobs. "
+            "Keep the existing tag unchanged."
+        ) from None
     cargo = tomllib.loads(run('git', 'show', 'HEAD:Cargo.toml'))
     if tag != 'v' + cargo['workspace']['package']['version']:
         raise ValueError("Tag does not match the Cargo workspace version")
