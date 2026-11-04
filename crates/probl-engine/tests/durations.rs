@@ -50,6 +50,52 @@ fn units_literals_construction_identity_and_dimensions() {
     );
 }
 #[test]
+fn division_and_remainder_split_matching_time_units() {
+    facts(
+        r#"
+        let elapsed = '1d 2h 3m 4.5s'
+        let whole_hours: int = elapsed div '1h'
+        let rest: duration = elapsed mod '1h'
+        report whole_hours == 26 and rest == '3m 4.5s'
+        report whole_hours * '1h' + rest == elapsed
+        report (rest div '1m') == 3 and (rest mod '1m') == '4.5s'
+        report '90m' div '1h' == 1 and '90m' mod '1h' == '30m'
+        report '-90m' div '1h' == -2 and '-90m' mod '1h' == '30m'
+        report '90m' div '-1h' == -2 and '90m' mod '-1h' == '-30m'
+        report '-90m' div '-1h' == 1 and '-90m' mod '-1h' == '-30m'
+        report '0s' div '1h' == 0 and '2h' mod '1h' == '0s'
+        report '0.75ns' div '0.5ns' == 1 and '0.75ns' mod '0.5ns' == '0.25ns'
+        report '1ns' div '0.375ns' == 2 and '1ns' mod '0.375ns' == '0.25ns'
+        report '-0.75ns' div '0.5ns' == -2 and '-0.75ns' mod '0.5ns' == '0.25ns'
+        let squared: squared_duration = '5s^2' mod '2s^2'
+        report '5s^2' div '2s^2' == 2 and squared == '1s^2'
+        let huge = nanoseconds(10^400 + 1)
+        report huge div '3ns' == (10^400 + 1) div 3 and huge mod '3ns' == '2ns'
+        report ('2024-03-01' - '2024-02-28') div '1d' == 2
+        let origin = '2027-01-04T00:00:00'
+        let t = '2027-01-12T09:30:00'
+        report t - ((t - origin) mod '1w') == '2027-01-11T00:00:00'
+        let values: dist[int] = one_of(['30m', '90m']) div '1h'
+        let remainders: dist[duration] = one_of(['30m', '90m']) mod '1h'
+        report pmf(values, 0) == 50% and pmf(values, 1) == 50%
+        report pmf(remainders, '30m') == 100%
+        report try { '1s' div '0s' } catch DivisionByZero { 42 } == 42
+        report try { '1s' mod '0s' } catch DivisionByZero { '2s' } == '2s'
+        report try { '0.5ns' mod '0ns' } catch DivisionByZero { '2s' } == '2s'
+    "#,
+    );
+    for source in [
+        "report '1s' div '1s^2'",
+        "report '1s^2' div '1s'",
+        "report '1s' mod '1s^2'",
+        "report '1s^2' mod '1s'",
+        "report '1s' div 2",
+        "report '1s' mod 2",
+    ] {
+        assert!(!error(source).is_empty(), "{source}");
+    }
+}
+#[test]
 fn date_differences_are_exact_durations_in_both_modes() {
     facts(
         r#"
@@ -156,6 +202,7 @@ fn time_values_obey_integer_and_work_limits() {
         "report '18446744073709551616ns'",
         "report '9999-12-31T00:00:00' - '0001-01-01T00:00:00'",
         "report '9999-12-31' - '0001-01-01'",
+        "report '1ns' div '0.00000000000000000001ns'",
     ] {
         assert_eq!(
             exec_raw(source, &options).unwrap_err().kind,

@@ -86,9 +86,11 @@ pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> Option<Op
             (Value::Duration(a), Value::Duration(b)) => {
                 let (x, y) = (number(a), number(b));
                 match op {
-                    Add | Sub if a.squared == b.squared => from_number(ops::binary(op, &x, &y, budget)?, a.squared),
+                    Add | Sub | Mod if a.squared == b.squared => {
+                        from_number(ops::binary(op, &x, &y, budget)?, a.squared)
+                    }
                     Mul if !a.squared && !b.squared => from_number(ops::binary(op, &x, &y, budget)?, true),
-                    Div if a.squared == b.squared => ops::binary(op, &x, &y, budget),
+                    Div | IntDiv if a.squared == b.squared => ops::binary(op, &x, &y, budget),
                     Div if a.squared && !b.squared => from_number(divide(&x, &y, budget)?, false),
                     _ => Err(OpError::new("incompatible time dimensions for this operation")),
                 }

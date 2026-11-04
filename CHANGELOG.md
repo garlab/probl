@@ -6,6 +6,8 @@ All notable changes to the published crates are recorded here. The format follow
 
 ### Added
 
+- `div` and `mod` on matching durations or squared durations: extract a whole-unit integer count or retain a unit-bearing remainder, following numeric floor-division sign rules.
+
 - Playground charts for date, datetime, duration and squared-duration reports and keys, with exact temporal inspection, units, compatible overlays and nanosecond-preserving coordinates. Single-point forecasts show their percentile ranges.
 
 - Typed `duration` and `squared_duration` values, unit-bearing literals and constructors, checked dimensional arithmetic, and explicit numeric conversion by dividing by a unit. Datetime means preserve nanoseconds; SD and variance return typed durations and squared durations. Report moments and JSON retain their units, including fractional nanoseconds.

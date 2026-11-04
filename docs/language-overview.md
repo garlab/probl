@@ -191,6 +191,18 @@ report arrivals[0] + '1h 30m'            # 2027-01-31T11:00:00
 
 A `duration` and a `squared_duration` are distinct types. Matching dimensions add, subtract and compare; multiplying two durations gives squared time, and `sqrt` takes squared time back to a duration. Divide by an explicit unit to get a number. Duration literals use `w`, `d`, `h`, `m`, `s`, `ms`, `us` and `ns`; squared units append `^2`. Equivalent units are identical as map keys and set elements.
 
+Use `div` to extract whole units and `mod` to keep the remainder:
+
+```probl
+let elapsed = '1d 2h 3m 4.5s'
+report elapsed div '1h'           # 26, an int
+report elapsed mod '1h'           # duration equal to '3m 4.5s'
+report (elapsed mod '1h') div '1m' # 3
+report elapsed mod '1m'           # duration equal to '4.5s'
+```
+
+The operands must have matching dimensions; two squared durations work too. As with numbers, `div` rounds down and a nonzero remainder has the divisor's sign: `'-90m' div '1h'` is `-2`, and `'-90m' mod '1h'` is `'30m'`. A zero divisor is an error. For calendar alignment, choose an origin explicitly. For example, `t - ((t - monday) mod '1w')` rounds a date or datetime down to a weekly boundary anchored at `monday` of the same type.
+
 Whole nanoseconds are exact integers; fractional durations have floating-point precision. This allows a standard deviation of `'0.5ns'`. Adding a duration to a datetime requires whole nanoseconds, and adding one to a date requires whole 24-hour days. To round explicitly to a whole nanosecond, use `round(d / '1ns') * '1ns'`. Datetime means round once to the nearest nanosecond, ties earlier; spread uses the unrounded mean. Reports can select `mean` and `sd` columns, with units retained in the output.
 
 ### Sorting with a comparator

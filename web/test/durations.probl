@@ -23,3 +23,14 @@ report (b-a) == '1ns'
 report a+'1ns' == b
 report mean([nanoseconds(10^100),nanoseconds(10^100+2)]) == nanoseconds(10^100+1)
 report sd([nanoseconds(10^100),nanoseconds(10^100+2)]) == '1ns'
+report ['90m' div '1h', '90m' mod '1h']
+report ['-90m' div '1h', '-90m' mod '1h']
+report ['90m' div '-1h', '90m' mod '-1h']
+report ['0.75ns' div '0.5ns', '0.75ns' mod '0.5ns']
+report ['5s^2' div '2s^2', '5s^2' mod '2s^2']
+report nanoseconds(10^400+1) div '3ns'
+report nanoseconds(10^400+1) mod '3ns'
+report one_of(['30m','90m']) div '1h'
+report one_of(['30m','90m']) mod '1h'
+report try { '1s' div '0s' } catch DivisionByZero { 42 }
+report try { '1s' mod '0s' } catch DivisionByZero { '2s' }
