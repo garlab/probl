@@ -85,6 +85,7 @@ impl Names<'_> {
             Value::Unit => atom("()"),
             Value::Bool(_) | Value::Event(_) => atom("bool"),
             Value::Int(_) => atom("int"),
+            Value::Analytic(a) if a.time.is_some() => atom(a.time.unwrap().name()),
             Value::Analytic(a) if a.int => atom("int"),
             Value::Float(_) | Value::Delayed(_) | Value::Analytic(_) => atom("float"),
             Value::Counts(c) => dist(if c.floats { "float" } else { "int" }),

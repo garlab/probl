@@ -302,3 +302,31 @@ fn time_summaries_keep_sampled_populations_and_selection_metadata() {
         .is_err()
     );
 }
+
+#[test]
+fn continuous_datetime_forecasts_export_typed_nonconstant_summaries() {
+    let p = probl::compile(
+        "forecast",
+        r#"
+        let start = '2027-01-31T09:00:00.000000001'
+        let x ~ normal(30, 5)
+        report start + x * '1m'
+        report minutes(x)
+    "#,
+    )
+    .unwrap();
+    for options in [Options::new(), Options::new().runs(400).seed(7)] {
+        let out = p.run(&options).unwrap();
+        let doc = document(&out);
+        let g = &doc["reports"][0]["groups"][0];
+        assert_eq!(g["kind"], "datetime");
+        assert_eq!(g["summary"]["deterministic"], false);
+        assert_eq!(g["summary"]["mean_value"]["kind"], "datetime");
+        assert_eq!(g["summary"]["sd_value"]["kind"], "duration");
+        for q in g["summary"]["quantiles"].as_array().unwrap() {
+            assert_eq!(q["value"]["kind"], "datetime");
+        }
+        assert_eq!(doc["reports"][1]["groups"][0]["kind"], "duration");
+        assert!(out.text().contains("sd"));
+    }
+}

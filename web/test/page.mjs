@@ -518,6 +518,19 @@ for k in 0..2 {
     await page.setViewport({width:800,height:600});
   }
 
+  for (const mode of ['', '@mode sample(runs:400,seed:42)\n']) {
+    const source = `${mode}let start='2027-01-31T09:00:00.000000001'
+let delay~normal(30,5)
+report start+delay*'1m' by 1 as "Arrival"
+report minutes(delay) by 1 as "Delay"`;
+    await page.evaluate((source) => window.playground.setSource(source), source);
+    const forecast = await run(page);
+    expect(!forecast.error && !forecast.result.includes('unavailable'), 'continuous datetime forecasts run with typed summaries in both modes', forecast.result);
+    expect(await page.$$eval('.report-chart', (cards) => cards.length) === 2, 'continuous datetime and duration forecasts draw typed charts');
+    expect(await page.$$eval(`${balance} .chart-band-whisker`, (lines) => lines.length) === 2, 'continuous datetime forecasts retain both percentile bands');
+    expect(await page.$eval(`${balance} .chart-readout`, (el) => el.dataset.valueKind === 'datetime' && el.textContent.includes('2027-01-31')), 'continuous forecast readouts retain calendar values');
+  }
+
   const sampledTimeSource = "@mode sample(runs:400,seed:17)\nlet n~d6; report '2027-01-31T09:59:59.447021209'+minutes(n) by 1";
   await page.evaluate((source) => window.playground.setSource(source), sampledTimeSource);
   await run(page);

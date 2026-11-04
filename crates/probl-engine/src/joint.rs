@@ -211,7 +211,7 @@ pub fn sample(d: &Dist, rng: &mut Rng, budget: &mut Budget) -> OpResult<Value> {
             (id, (c, family.quantile(c)))
         })
         .collect();
-    Ok(concrete(v, &at))
+    concrete(v, &at)
 }
 
 /// A latent's distribution, where it can be, and its likelihood.
@@ -276,15 +276,15 @@ fn axis(a: &analytic::Analytic, at: &BTreeMap<u64, (f64, f64)>) -> (f64, f64) {
 }
 
 /// `v` with each outcome of a draw at the values its latents have in `at`.
-fn concrete(v: &Value, at: &BTreeMap<u64, (f64, f64)>) -> Value {
+fn concrete(v: &Value, at: &BTreeMap<u64, (f64, f64)>) -> OpResult<Value> {
     if !analytic::contains(v) {
-        return v.clone();
+        return Ok(v.clone());
     }
     let child = |x: &Value| concrete(x, at);
-    match v {
+    Ok(match v {
         Value::Analytic(a) => {
             let (c, t) = axis(a, at);
-            a.at(c, t)
+            a.at(c, t)?
         }
         Value::Event(e) => {
             let coordinates: Vec<f64> = e.draws.iter().map(|d| axis(d, at).0).collect();
@@ -295,22 +295,34 @@ fn concrete(v: &Value, at: &BTreeMap<u64, (f64, f64)>) -> Value {
                     .any(|part| part.iter().zip(&coordinates).all(|(d, &c)| inside(d, c))),
             )
         }
-        Value::List(xs) => Value::list(xs.iter().map(child).collect()),
-        Value::Map(xs) => Value::map(xs.iter().map(|(k, x)| (k.clone(), child(x))).collect()),
+        Value::List(xs) => Value::list(xs.iter().map(child).collect::<OpResult<_>>()?),
+        Value::Map(xs) => Value::map(
+            xs.iter()
+                .map(|(k, x)| Ok((k.clone(), child(x)?)))
+                .collect::<OpResult<_>>()?,
+        ),
         Value::Record(r) => crate::ops::make_record(
             r.ty.clone(),
-            r.fields.iter().map(|(k, x)| (k.clone(), child(x))).collect(),
+            r.fields
+                .iter()
+                .map(|(k, x)| Ok((k.clone(), child(x)?)))
+                .collect::<OpResult<_>>()?,
         ),
-        Value::Dist(d) => {
-            Dist::from_pairs(d.outcomes.iter().map(|(x, p)| (child(x), *p)).collect(), d.missing).into_value()
-        }
+        Value::Dist(d) => Dist::from_pairs(
+            d.outcomes
+                .iter()
+                .map(|(x, p)| Ok((child(x)?, *p)))
+                .collect::<OpResult<_>>()?,
+            d.missing,
+        )
+        .into_value(),
         Value::Closure(c) => Value::Closure(Arc::new(crate::value::Closure {
             func: c.func,
-            captured: c.captured.iter().map(child).collect(),
+            captured: c.captured.iter().map(child).collect::<OpResult<_>>()?,
             named: c.named,
         })),
         v => v.clone(),
-    }
+    })
 }
 
 /// The marginal of a joint distribution of numbers: the mixture of its
@@ -321,7 +333,7 @@ pub fn mixture(d: &Dist) -> Option<Mixture> {
         .iter()
         .map(|(v, p)| {
             let part = match v {
-                Value::Analytic(a) => Part::Analytic((**a).clone()),
+                Value::Analytic(a) if a.time.is_none() => Part::Analytic((**a).clone()),
                 Value::Continuous(f) => Part::Continuous(**f),
                 v => Part::Point(v.as_f64()?),
             };

@@ -10,23 +10,20 @@ pub struct Moments {
 }
 
 pub fn kind(outcomes: &[(Value, f64)]) -> Option<&'static str> {
-    let first = &outcomes.first()?.0;
-    let name = match first {
-        Value::DateTime(_) => "datetime",
-        Value::Duration(d) => d.kind(),
-        _ => return None,
-    };
+    let name = crate::analytic_time::kind(&outcomes.first()?.0)?.name();
     outcomes
         .iter()
-        .all(|(v, _)| match (first, v) {
-            (Value::DateTime(_), Value::DateTime(_)) => true,
-            (Value::Duration(a), Value::Duration(b)) => a.squared == b.squared,
-            _ => false,
-        })
+        .all(|(v, _)| crate::analytic_time::kind(v).map(|k| k.name()) == Some(name))
         .then_some(name)
 }
 
 pub fn moments(outcomes: &[(Value, f64)], budget: Option<&mut Budget>) -> OpResult<Option<Moments>> {
+    if outcomes.iter().any(|(v, _)| matches!(v, Value::Analytic(_))) {
+        if let Some(b) = budget {
+            b.work((outcomes.len() as u64).saturating_mul(16_384))?;
+        }
+        return Ok(crate::analytic_time::moments(outcomes));
+    }
     compute(outcomes.iter().map(|(v, w)| (v, *w)), outcomes.len(), budget)
 }
 

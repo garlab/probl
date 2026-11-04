@@ -24,6 +24,9 @@ pub fn number(d: &Duration) -> Value {
 }
 pub fn from_number(v: Value, squared: bool) -> OpResult<Value> {
     let amount = match v {
+        Value::Analytic(a) if a.time.is_none() => {
+            return crate::analytic_time::wrap(Value::Analytic(a), crate::analytic_time::Kind::Duration(squared));
+        }
         Value::Int(n) => Amount::integer(n),
         Value::Float(f) | Value::Prob(f) => {
             Amount::fractional(f).ok_or_else(|| OpError::fault(Fault::NumericOverflow, "duration must be finite"))?
@@ -33,7 +36,9 @@ pub fn from_number(v: Value, squared: bool) -> OpResult<Value> {
     Ok(Value::Duration(Duration { squared, amount }))
 }
 pub fn construct(n: &Value, scale: u64, budget: &mut Budget) -> OpResult<Value> {
-    if !matches!(n, Value::Int(_) | Value::Float(_) | Value::Prob(_)) {
+    if !matches!(n, Value::Int(_) | Value::Float(_) | Value::Prob(_))
+        && !matches!(n, Value::Analytic(a) if a.time.is_none())
+    {
         return Err(OpError::new("a duration's count must be a real number"));
     }
     from_number(ops::binary(BinOp::Mul, n, &Value::Int(scale.into()), budget)?, false)
@@ -61,8 +66,17 @@ pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> Option<Op
     Some((|| {
         let value = match (a, b) {
             (Value::DateTime(t), Value::Duration(d)) if matches!(op, Add | Sub) && !d.squared => {
-                let n = whole_nanos(d, budget)?;
-                let n = if op == Sub { n.negated() } else { n };
+                let n = match d.amount.as_integer() {
+                    Some(n) => {
+                        budget.integer_work(n, &Integer::ONE, false)?;
+                        if op == Sub { n.negated() } else { n.clone() }
+                    }
+                    None => {
+                        let n = d.amount.as_float().unwrap();
+                        Integer::from_f64(round_nanos(if op == Sub { -n } else { n }))
+                            .ok_or_else(|| OpError::fault(Fault::NumericOverflow, "datetime delay out of range"))?
+                    }
+                };
                 n.to_i128()
                     .and_then(|n| t.add_nanos(n))
                     .map(Value::DateTime)
@@ -148,4 +162,11 @@ fn whole_nanos(d: &Duration, budget: &mut Budget) -> OpResult<Integer> {
             "datetime arithmetic requires a whole number of nanoseconds",
         )),
     }
+}
+
+/// Nearest nanosecond, ties toward the earlier time. Avoid subtracting 0.5
+/// from an already integral large float, which can itself round incorrectly.
+pub(crate) fn round_nanos(n: f64) -> f64 {
+    let floor = n.floor();
+    floor + if n - floor > 0.5 { 1.0 } else { 0.0 }
 }

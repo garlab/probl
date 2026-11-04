@@ -1109,6 +1109,9 @@ fn continuous_parts(v: &Value) -> bool {
 /// one, answered from the formulas (docs/semantics.md, section 13).
 fn continuous_query(b: Builtin, args: &[Value]) -> OpResult<Value> {
     use Builtin as B;
+    if let Some(result) = crate::analytic_time::query(b, args) {
+        return result;
+    }
     // PMF adds up the atoms equal to its argument, as `==` finds them, even
     // when continuous components are mixed in, which have none.
     if b == B::Pmf {

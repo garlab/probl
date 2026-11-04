@@ -2,6 +2,7 @@
 //! The rules it implements are in docs/semantics.md.
 
 pub mod analytic;
+pub mod analytic_time;
 pub mod builtins;
 pub mod chain;
 pub mod complex;

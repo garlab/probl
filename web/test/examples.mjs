@@ -72,6 +72,9 @@ for (const [source, report_summaries] of [
 console.log('same  configurable summaries and validation in native/WASM');
 
 for (const request of [
+  {source:"let start='2027-01-31T09:00:00.000000001'; let x~normal(30,5); report start+x*'1m'; report minutes(x); report start+x*'1m' < start+'30m'"},
+  {source:"@mode sample(runs:400,seed:42)\nlet start='2027-01-31T09:00:00.000000001'; let x~normal(30,5); report start+x*'1m'; report minutes(x)"},
+  {source:"let start='9999-01-01T00:00:00.000000001'; let x~uniform(-2,2); let finish=start+x*'1ns'; observe finish==start; report x; report finish; report x<0"},
   {source:"report minutes(one_of([10,20,35])); report hours(one_of([1,2,3])); report str(hours(3))"},
   {source:"@mode sample(runs:2100,seed:42)\nlet a='9999-12-31T23:59:59.999999000'; let huge=nanoseconds(10^100); let x~d6; score if x>3 {90%} else {10%}; for k in 1..x {let n=x+k; report n by k mod 2; report a+nanoseconds(n) by k mod 2; report huge+nanoseconds(n) by k mod 2; report n*'1ns^2' by k mod 2}", report_summaries:{0:'moments',1:'moments',2:'moments',3:'moments'}},
   {source:"@mode sample(runs:400,seed:7)\nlet x~d2; for n in [x,3-x] {report nanoseconds(n) by 0}", report_summaries:{0:'moments'}},

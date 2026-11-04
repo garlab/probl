@@ -172,6 +172,12 @@ pub fn statistic_value(group: &GroupResult, statistic: ReportStatistic) -> Optio
             }
         }
         ReportStatistic::Median => summary_quantile(&group.distribution, 0.5),
+        ReportStatistic::Quantile(q)
+            if crate::time_stats::kind(&group.distribution).is_some()
+                && group.distribution.iter().any(|(v, _)| matches!(v, Value::Analytic(_))) =>
+        {
+            crate::analytic_time::quantile(&group.distribution, q)
+        }
         ReportStatistic::Quantile(q) => crate::stats::quantile(&group.distribution, q).cloned(),
         _ => None,
     }

@@ -1006,6 +1006,24 @@ impl Mixture {
     /// that merely rounds to 0.5. This also handles disconnected analytic
     /// domains in report summaries without perturbing the requested quantile.
     pub fn median_bounds(&self) -> (f64, f64) {
+        if self
+            .parts
+            .iter()
+            .any(|(p, _)| matches!(p, Part::Analytic(a) if a.quantized()))
+            && self.parts.iter().all(|(p, _)| match p {
+                Part::Point(_) => true,
+                Part::Analytic(a) => a.quantized() || a.is_discrete(),
+                _ => false,
+            })
+        {
+            let lo = self.quantile(0.5);
+            let hi = if self.cdf(lo) == 0.5 {
+                self.quantile(0.5_f64.next_up())
+            } else {
+                lo
+            };
+            return (lo, hi);
+        }
         let mut intervals = Vec::new();
         for (part, weight) in &self.parts {
             if *weight <= 0.0 {

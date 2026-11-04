@@ -498,6 +498,7 @@ impl Value {
             Value::DateTime(_) => "datetime".into(),
             Value::Duration(d) => d.kind().into(),
             Value::Delayed(_) => "value not drawn yet".into(),
+            Value::Analytic(a) if a.time.is_some() => a.time.unwrap().name().into(),
             Value::Analytic(a) if a.int => "int".into(),
             Value::Analytic(_) => "float".into(),
             Value::Event(_) => "bool".into(),
@@ -1286,6 +1287,7 @@ fn write_value(v: &Value, f: &mut fmt::Formatter<'_>, nested: bool) -> fmt::Resu
             write!(f, "])")
         }
         Value::Counts(c) => write!(f, "{c}"),
+        Value::Analytic(a) if a.time.is_some() => write!(f, "<analytic {}>", a.time.unwrap().name()),
         Value::Analytic(a) => match a.affine() {
             Some(g) => write!(f, "<analytic float: {} * {} + {}>", g.scale, a.family, g.offset),
             None => write!(f, "<analytic float: piecewise in {}>", a.family),

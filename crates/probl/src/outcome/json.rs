@@ -295,7 +295,8 @@ fn group(
             "integrated_moments": g.numeric.as_ref().is_some_and(|n| n.integrated),
             "quantile_method": if g.numeric.as_ref().is_some_and(|n| n.approximation().is_some()) { "compactor_v1" }
                 else if g.numeric.as_ref().is_some_and(|n| !n.has_quantiles()) { "unavailable" } else { "exact" },
-            "deterministic": (g.distribution.len() == 1 && (dates || numbers))
+            "deterministic": (g.distribution.len() == 1 && (dates || numbers)
+                && !matches!(&g.distribution[0].0, Value::Analytic(_)))
                 || g.numeric.as_ref().is_some_and(|n| n.approximation().is_some()
                     && n.inverse_quantile(0.0).and_then(|q| q.point) == n.inverse_quantile(1.0).and_then(|q| q.point)),
         });
@@ -317,6 +318,11 @@ fn group(
                 .as_ref()
                 .filter(|_| selection.is_none() || columns.contains(&ReportStatistic::StandardDeviation))
                 .and_then(|m| m.sd.as_ref());
+            summary["integrated_moments"] = json!(
+                g.distribution
+                    .iter()
+                    .any(|(v, _)| matches!(v, Value::Analytic(a) if a.integrated_time_moments()))
+            );
             summary["mean_value"] = mean
                 .map(|m| typed(&m.mean, None, budget))
                 .transpose()?
@@ -353,7 +359,7 @@ fn group(
         "unresolved_share": g.unresolved_share,
         "complete": g.fact.or_else(|| g.numeric.as_ref().map(|n| n.mean))
             .or_else(|| g.values.as_ref().and_then(|values| values.first().map(|(_, q)| q)))
-            .map(|q| q.complete),
+            .map(|q| q.complete).or_else(|| temporal.map(|_| g.unresolved_share == 0.0)),
         "support": g.support.map(|s| json!({"contributing_runs":s.contributing_runs.to_string(),"effective_runs":s.effective})),
         "fields":fields,
     }))

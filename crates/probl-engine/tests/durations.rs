@@ -134,7 +134,6 @@ fn datetime_arithmetic_checks_resolution_and_date_bounds() {
     "#,
     );
     for source in [
-        "report '2027-01-01T00:00:00' + '0.5ns'",
         "report '2027-01-01' + '1h'",
         "report '9999-12-31T23:59:59.999999999' + '1ns'",
         "report '0001-01-01T00:00:00' - '1ns'",

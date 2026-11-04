@@ -171,6 +171,7 @@ impl Linear {
                     }),
                 )],
                 int: false,
+                time: None,
                 form: None,
                 weight: None,
             }
@@ -183,6 +184,7 @@ impl Linear {
                     domain: Domain::full(),
                     pieces: vec![(1.0, Fun::affine(map))],
                     int: false,
+                    time: None,
                     form: Some(axis),
                     weight: None,
                 }
@@ -433,6 +435,8 @@ pub enum Kernel {
     Exp,
     Ln,
     Recip,
+    /// Nearest integer, ties toward negative infinity; kept lazily.
+    Nanosecond,
 }
 impl Kernel {
     /// Its value at `z`, with `z` clamped into where it's defined: on a part
@@ -440,6 +444,7 @@ impl Kernel {
     fn apply(self, z: f64) -> f64 {
         match self {
             Kernel::Id => z,
+            Kernel::Nanosecond => crate::duration::round_nanos(z),
             Kernel::Square => z * z,
             Kernel::Sqrt => z.max(0.0).sqrt(),
             Kernel::Exp => crate::math::exp(z),
@@ -452,6 +457,7 @@ impl Kernel {
     fn inverse(self, y: f64, side: f64) -> f64 {
         match self {
             Kernel::Id => y,
+            Kernel::Nanosecond => y.floor() + 0.5,
             Kernel::Square if side < 0.0 => -y.sqrt(),
             Kernel::Square => y.sqrt(),
             Kernel::Sqrt => y * y,
@@ -558,6 +564,15 @@ impl Fun {
             Kernel::Recip => self.side(family, start, end),
             _ => 1.0,
         };
+        if self.kernel == Kernel::Nanosecond {
+            let a = self.inner.at(family.quantile(start));
+            let b = self.inner.at(family.quantile(end));
+            let low = a.min(b);
+            let low = crate::duration::round_nanos(low) + if low - low.floor() == 0.5 { 1.0 } else { 0.0 };
+            let high = crate::duration::round_nanos(a.max(b));
+            let (a, b) = if a <= b { (low, high) } else { (high, low) };
+            return (self.outer.at(a), self.outer.at(b));
+        }
         let at = |u: f64| {
             let x = family.quantile(u);
             match self.kernel {
@@ -600,6 +615,20 @@ impl Fun {
                 (start, end)
             } else {
                 (end, end)
+            });
+        }
+        if self.kernel == Kernel::Nanosecond {
+            let y = self.outer.inverse(t);
+            let up = self.outer.scale > 0.0;
+            let edge = if up == strict { y.ceil() - 0.5 } else { y.floor() + 0.5 };
+            let f = Fun::affine(self.inner);
+            let (a, b) = f.below_on(family, start, end, edge, false)?;
+            return Ok(if up {
+                (a, b)
+            } else if a == start {
+                (b, end)
+            } else {
+                (start, a)
             });
         }
         if let Some(f) = self.as_affine() {
@@ -736,6 +765,8 @@ pub struct Analytic {
     /// Whether it's an int, as `floor(x)` is: then every piece is a whole
     /// number.
     pub int: bool,
+    /// Time dimension, with an exact epoch for datetime offsets.
+    pub time: Option<crate::analytic_time::Kind>,
     /// For a function of several normal latents, its axis: a linear form
     /// of them, whose distribution is `family`. `id` is then 0.
     pub form: Option<Arc<Linear>>,
@@ -750,6 +781,7 @@ impl Analytic {
             domain: Domain::full(),
             pieces: vec![(1.0, Fun::IDENTITY)],
             int: false,
+            time: None,
             form: None,
             weight: None,
         }
@@ -822,14 +854,14 @@ impl Analytic {
         x
     }
     /// Its value where its axis is `value`, at the CDF coordinate `c`.
-    pub fn at(&self, c: f64, value: f64) -> Value {
+    pub fn at(&self, c: f64, value: f64) -> OpResult<Value> {
         let f = self
             .pieces
             .iter()
             .find(|(end, _)| c <= *end)
             .unwrap_or(&self.pieces[self.pieces.len() - 1])
             .1;
-        number(f.at(value), self.int)
+        self.scalar(f.at(value))
     }
     /// The same function of the same values, as a function of another
     /// axis, `id` or `form`, that `t` moves it to.
@@ -840,6 +872,7 @@ impl Analytic {
             domain: t.domain(&self.domain),
             pieces: t.pieces(&self.pieces),
             int: self.int,
+            time: self.time,
             form,
             weight: None,
         }
@@ -869,6 +902,7 @@ impl Analytic {
             domain: self.domain.moved(&self.family, to),
             pieces,
             int: self.int,
+            time: self.time,
             form: self.form.clone(),
             weight: self.weight.clone(),
         }
@@ -881,6 +915,7 @@ impl Analytic {
             domain: self.domain.clone(),
             pieces,
             int: false,
+            time: None,
             form: self.form.clone(),
             weight: self.weight.clone(),
         }
@@ -914,9 +949,16 @@ impl Analytic {
                 .map(|(end, f)| (float_key(*end), f.key()))
                 .collect::<Vec<_>>(),
             self.int,
+            self.time,
             self.form.as_ref().map(|f| f.key()),
             self.weight.as_ref().map(|w| w.key()),
         )
+    }
+    pub fn scalar(&self, n: f64) -> OpResult<Value> {
+        match self.time {
+            Some(kind) => kind.value(n),
+            None => Ok(number(n, self.int)),
+        }
     }
     pub fn value(mut self) -> OpResult<Value> {
         if !self.pieces.iter().all(|(_, f)| f.is_finite()) {
@@ -924,7 +966,7 @@ impl Analytic {
         }
         self.simplify();
         match self.pieces[..] {
-            [(_, f)] if f.as_constant().is_some() => Ok(number(f.outer.offset, self.int)),
+            [(_, f)] if f.as_constant().is_some() => self.scalar(f.outer.offset),
             _ => Ok(Value::Analytic(Arc::new(self))),
         }
     }
@@ -955,7 +997,7 @@ impl Analytic {
                 }
                 let region = Domain(region);
                 let share = self.measure(&region) / mass;
-                (number(c, self.int), region, share)
+                (self.scalar(c).expect("validated analytic atom"), region, share)
             })
             .collect()
     }
@@ -1021,8 +1063,24 @@ impl Analytic {
         }
         out
     }
-    /// Whether a single value has positive probability: a constant piece.
+    /// Whether every piece takes values on a discrete lattice.
+    pub fn quantized(&self) -> bool {
+        self.pieces
+            .iter()
+            .all(|(_, f)| f.as_constant().is_some() || f.kernel == Kernel::Nanosecond)
+    }
+    pub fn integrated_time_moments(&self) -> bool {
+        self.time.is_some()
+            && (self.weight.is_some()
+                || self.segments().iter().any(|&(lo, hi, f)| {
+                    f.kernel == Kernel::Nanosecond && nanosecond_bins(&self.family, f, lo, hi).is_none()
+                }))
+    }
+    /// Whether a single value has positive probability.
     pub fn has_atoms(&self) -> bool {
+        if self.pieces.iter().any(|(_, f)| f.kernel == Kernel::Nanosecond) {
+            return true;
+        }
         self.pieces.len() > 1 && self.segments().iter().any(|(_, _, f)| f.as_constant().is_some())
     }
     /// The measure of part of its coordinates: its length, or with a
@@ -1293,6 +1351,7 @@ fn segment_moments(family: &Family, f: Fun, lo: f64, hi: f64) -> Option<(f64, f6
             let (m, v) = family.interval_moments(family.quantile(lo), family.quantile(hi));
             return Some((f.outer.at(m), f.outer.scale * f.outer.scale * v));
         }
+        Kernel::Nanosecond => return quantized_moments(family, f, lo, hi),
         Kernel::Square => (
             moments::power(family, f.inner, 2.0, lo, hi)?,
             moments::power(family, f.inner, 4.0, lo, hi)?,
@@ -2108,6 +2167,9 @@ pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<
     if matches!(a, Value::Joint(_)) || matches!(b, Value::Joint(_)) {
         return crate::joint::binary(op, a, b, budget);
     }
+    if crate::analytic_time::has_time(a) || crate::analytic_time::has_time(b) {
+        return crate::analytic_time::binary(op, a, b, budget);
+    }
     let x = match (a, b) {
         (Value::Analytic(x), _) | (_, Value::Analytic(x)) => x,
         _ => return Err(unsupported("this operation")),
@@ -2271,6 +2333,74 @@ pub fn transformed(x: &Analytic, kernel: Kernel, budget: &mut Budget) -> OpResul
     x.with(pieces).value()
 }
 
+/// Round to nanoseconds without materializing the (potentially enormous) support.
+pub(crate) fn nanoseconds(x: &Analytic, budget: &mut Budget) -> OpResult<Value> {
+    let mut pieces = Vec::with_capacity(x.pieces.len());
+    let mut start = 0.0;
+    for &(end, f) in &x.pieces {
+        let rounded = if f.kernel == Kernel::Nanosecond && f.outer == Affine::IDENTITY {
+            f
+        } else {
+            compose(Kernel::Nanosecond, f, &x.family, start, end)?
+        };
+        pieces.push((end, rounded));
+        start = end;
+    }
+    spend(&pieces, budget)?;
+    x.with(pieces).value()
+}
+
+/// Find the rounded bins carrying probability at the CDF's precision. This
+/// also handles narrow unbounded laws: quadrature alone can miss a rare jump
+/// when all its initial nodes round to the same nanosecond.
+fn nanosecond_bins(family: &Family, f: Fun, lo: f64, hi: f64) -> Option<(i64, i64)> {
+    let at = |q: f64| crate::duration::round_nanos(f.inner.at(family.quantile(lo + q * (hi - lo))));
+    let (a, b) = (at(0.25), at(0.75));
+    let limit = (1_u64 << 52) as f64;
+    if !a.is_finite() || !b.is_finite() || a.abs().max(b.abs()) >= limit || (a - b).abs() > 4096.0 {
+        return None;
+    }
+    let (mut low, mut high) = (a.min(b) as i64, a.max(b) as i64);
+    let cdf = |x: f64| {
+        let p = family.cdf(f.inner.inverse(x)).clamp(lo, hi);
+        if f.inner.scale > 0.0 { p - lo } else { hi - p }
+    };
+    loop {
+        let left = cdf(low as f64 - 0.5) > 0.0;
+        let right = cdf(high as f64 + 0.5) < hi - lo;
+        if !left && !right {
+            return Some((low, high));
+        }
+        if high - low >= 4096 {
+            return None;
+        }
+        low -= i64::from(left);
+        high += i64::from(right);
+    }
+}
+
+/// Narrow supports use bin sums; wide supports use bounded quadrature.
+fn quantized_moments(family: &Family, f: Fun, lo: f64, hi: f64) -> Option<(f64, f64)> {
+    if let Some((low, high)) = nanosecond_bins(family, f, lo, hi) {
+        let mut points = Vec::new();
+        for n in low..=high {
+            let left = family.cdf(f.inner.inverse(n as f64 - 0.5));
+            let right = family.cdf(f.inner.inverse(n as f64 + 0.5));
+            let mass = (right.max(left).min(hi) - right.min(left).max(lo)).max(0.0);
+            points.push((f.outer.at(n as f64), mass));
+        }
+        let mean = crate::stats::weighted_mean(points.iter().copied());
+        let sd = crate::stats::weighted_sd(points.iter().map(|(x, p)| (*x, 0.0, *p)));
+        return Some((mean, sd * sd));
+    }
+    let integrate = |g: &dyn Fn(f64) -> f64| {
+        crate::quadrature::moment(|u| g(f.at(family.quantile(u))), lo, hi, 1e-10).map(|v| v / (hi - lo))
+    };
+    let mean = integrate(&|x| x)?;
+    let variance = integrate(&|x| (x - mean).powi(2))?;
+    Some((mean, variance))
+}
+
 /// The event that a difference `d` of outcomes of `x`'s draw compares with
 /// zero by `op`.
 fn compare(x: &Analytic, op: BinOp, d: &[(f64, Fun)]) -> OpResult<Event> {
@@ -2281,16 +2411,9 @@ fn compare(x: &Analytic, op: BinOp, d: &[(f64, Fun)]) -> OpResult<Event> {
         Gt => below(&x.family, d, 0.0, false)?.complement(),
         Ge => below(&x.family, d, 0.0, true)?.complement(),
         _ => {
-            // Only a constant piece can equal zero with positive probability.
-            let mut equal = Vec::new();
-            let mut start = 0.0;
-            for &(end, f) in d {
-                if f.as_constant() == Some(0.0) {
-                    push(&mut equal, start, end);
-                }
-                start = end;
-            }
-            let equal = Domain(equal);
+            let at_most = below(&x.family, d, 0.0, false)?;
+            let less = below(&x.family, d, 0.0, true)?;
+            let equal = at_most.intersect(&less.complement());
             if op == Eq { equal } else { equal.complement() }
         }
     };
@@ -2298,6 +2421,9 @@ fn compare(x: &Analytic, op: BinOp, d: &[(f64, Fun)]) -> OpResult<Event> {
 }
 
 pub fn negate(x: &Analytic) -> OpResult<Value> {
+    if let Some(kind) = x.time {
+        return crate::analytic_time::negate(x, kind);
+    }
     x.with_type(x.pieces.iter().map(|&(end, f)| (end, f.negated())).collect(), x.int)
         .value()
 }

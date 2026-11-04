@@ -3266,15 +3266,20 @@ impl<'p> Engine<'p> {
         match (ty, v) {
             (TypeSpec::Union(ts), v) => ts.iter().any(|t| self.conforms(v, t)),
             (TypeSpec::Int, Value::Int(_)) => true,
-            (TypeSpec::Int, Value::Analytic(a)) => a.int,
+            (TypeSpec::Int, Value::Analytic(a)) => a.int && a.time.is_none(),
             (TypeSpec::Float, Value::Float(_)) => true,
-            (TypeSpec::Float, Value::Analytic(a)) => !a.int,
+            (TypeSpec::Float, Value::Analytic(a)) => !a.int && a.time.is_none(),
             (TypeSpec::Complex, Value::Complex(_)) => true,
             (TypeSpec::Prob, Value::Prob(_)) => true,
             (TypeSpec::Bool, Value::Bool(_) | Value::Event(_)) => true,
             (TypeSpec::Str, Value::Str(_)) => true,
             (TypeSpec::Date, Value::Date(_)) => true,
             (TypeSpec::DateTime, Value::DateTime(_)) => true,
+            (TypeSpec::DateTime, Value::Analytic(a)) => matches!(a.time, Some(crate::analytic_time::Kind::DateTime(_))),
+            (TypeSpec::Duration, Value::Analytic(a)) => a.time == Some(crate::analytic_time::Kind::Duration(false)),
+            (TypeSpec::SquaredDuration, Value::Analytic(a)) => {
+                a.time == Some(crate::analytic_time::Kind::Duration(true))
+            }
             (TypeSpec::Duration, Value::Duration(d)) => !d.squared,
             (TypeSpec::SquaredDuration, Value::Duration(d)) => d.squared,
             (TypeSpec::Unit, Value::Unit) => true,
@@ -5100,7 +5105,10 @@ fn is_discrete(v: &Value) -> bool {
 fn handles_analytic(b: Builtin, values: &[Value]) -> bool {
     use Builtin as B;
     let plain = |v: &Value| !analytic::contains(v);
-    let number = |v: &Value| matches!(v, Value::Analytic(_) | Value::Int(_) | Value::Float(_) | Value::Prob(_));
+    let number = |v: &Value| {
+        matches!(v, Value::Int(_) | Value::Float(_) | Value::Prob(_))
+            || matches!(v, Value::Analytic(a) if a.time.is_none())
+    };
     let numbers = |v: &Value| matches!(v, Value::List(xs) if xs.iter().all(number));
     match b {
         B::MultivariateNormal
@@ -5127,17 +5135,25 @@ fn handles_analytic(b: Builtin, values: &[Value]) -> bool {
         | B::Pop
         | B::Last
         | B::DropLast => true,
+        B::Days
+        | B::Weeks
+        | B::Hours
+        | B::Minutes
+        | B::Seconds
+        | B::Milliseconds
+        | B::Microseconds
+        | B::Nanoseconds => true,
         B::Count => values.len() == 1,
         // A key is compared with others, so it can't be an outcome; an index
         // is a number, which an outcome isn't.
         B::Get | B::Insert | B::Remove => matches!(values[0], Value::List(_)) || plain(&values[1]),
         // Affine in one draw, piecewise affine.
         B::Sum | B::Mean => numbers(&values[0]),
-        B::Floor | B::Ceil | B::Trunc => matches!(values[0], Value::Analytic(_)),
+        B::Floor | B::Ceil | B::Trunc => matches!(values[0], Value::Analytic(_)) && number(&values[0]),
         B::Sqrt | B::Exp | B::Ln | B::Exp2 | B::Log10 | B::Log2 | B::Log1p | B::Expm1 => {
-            matches!(values[0], Value::Analytic(_))
+            matches!(values[0], Value::Analytic(_)) && number(&values[0])
         }
-        B::Round => matches!(values[0], Value::Analytic(_)) && values[1..].iter().all(plain),
+        B::Round => matches!(values[0], Value::Analytic(_)) && number(&values[0]) && values[1..].iter().all(plain),
         B::Abs | B::Min | B::Max | B::Clamp => values
             .iter()
             .all(|v| number(v) || matches!(v, Value::Dist(_)) && plain(v)),

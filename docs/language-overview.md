@@ -216,7 +216,18 @@ report elapsed mod '1m'           # duration equal to '4.5s'
 
 The operands must have matching dimensions; two squared durations work too. As with numbers, `div` rounds down and a nonzero remainder has the divisor's sign: `'-90m' div '1h'` is `-2`, and `'-90m' mod '1h'` is `'30m'`. A zero divisor is an error. For calendar alignment, choose an origin explicitly. For example, `t - ((t - monday) mod '1w')` rounds a date or datetime down to a weekly boundary anchored at `monday` of the same type.
 
-Whole nanoseconds are exact integers; fractional durations have floating-point precision. This allows a standard deviation of `'0.5ns'`. Adding a duration to a datetime requires whole nanoseconds, and adding one to a date requires whole 24-hour days. To round explicitly to a whole nanosecond, use `round(d / '1ns') * '1ns'`. Datetime means round once to the nearest nanosecond, ties earlier; spread uses the unrounded mean. Reports can select `mean` and `sd` columns, with units retained in the output.
+Whole nanoseconds are exact integers; fractional durations have floating-point precision. This allows a standard deviation of `'0.5ns'`. Adding a duration to a datetime rounds the result to the nearest nanosecond, with ties toward the earlier datetime. Adding one to a date still requires whole 24-hour days. To round explicitly to a whole nanosecond, use `round(d / '1ns') * '1ns'`. Datetime means round once to the nearest nanosecond, ties earlier; spread uses the unrounded mean. Reports can select `mean` and `sd` columns, with units retained in the output.
+
+Continuous delays can be applied directly to a datetime in either enumeration or sampling:
+
+```probl
+let start = '2027-01-31T09:00:00'
+let minutes_late ~ normal(30, 5)
+let arrival = start + minutes_late * '1m'
+report arrival
+report arrival < '2027-01-31T09:40:00'
+```
+
 
 ### Sorting with a comparator
 

@@ -713,6 +713,51 @@ impl Sink {
                 _ => (false, false),
             }
         }
+        fn analytic_time(v: &Value) -> bool {
+            match v {
+                Value::Analytic(a) => a.time.is_some(),
+                Value::Dist(d) | Value::Joint(d) => d.outcomes.iter().any(|(v, _)| analytic_time(v)),
+                _ => false,
+            }
+        }
+        if analytic_time(value)
+            || self
+                .groups
+                .get(key)
+                .is_some_and(|a| a.continuous && a.values.keys().any(analytic_time))
+        {
+            let mut leaves = vec![value];
+            if let Some(acc) = self.groups.get(key) {
+                leaves.extend(acc.values.keys());
+            }
+            let mut time_kind = None;
+            let mut temporal = false;
+            let mut incompatible = false;
+            while let Some(v) = leaves.pop() {
+                match v {
+                    Value::Dist(d) | Value::Joint(d) => leaves.extend(d.outcomes.iter().map(|(v, _)| v)),
+                    v => {
+                        temporal |= matches!(v, Value::Analytic(a) if a.time.is_some());
+                        match crate::analytic_time::kind(v) {
+                            Some(k) => match time_kind {
+                                None => time_kind = Some(k.name()),
+                                Some(name) => incompatible |= name != k.name(),
+                            },
+                            None => incompatible = true,
+                        }
+                    }
+                }
+            }
+            if temporal {
+                return if incompatible {
+                    Err(crate::analytic::unsupported(
+                        "mixing an analytic time report with other types",
+                    ))
+                } else {
+                    Ok(())
+                };
+            }
+        }
         let (mut analytic, mut numeric) = kinds(value);
         if let Some(acc) = self.groups.get(key) {
             analytic |= acc.continuous;
@@ -1206,6 +1251,14 @@ fn selected_value_text(group: &GroupResult, format: Format, selection: Option<&R
         }
     } else if let Some(numeric) = group.numeric.as_ref().filter(|n| n.mixture().is_some()) {
         analytic_stats(numeric)
+    } else if crate::time_stats::kind(dist).is_some() && dist.iter().any(|(v, _)| matches!(v, Value::Analytic(_))) {
+        use ReportStatistic::*;
+        temporal::Summary::new(
+            group,
+            &[Mean, StandardDeviation, Quantile(0.05), Median, Quantile(0.95)],
+        )
+        .unwrap()
+        .line()
     } else if dist.len() == 1 {
         if matches!(&dist[0].0, Value::Duration(_)) {
             temporal::scalar(&dist[0].0)
@@ -1381,7 +1434,7 @@ pub fn analytic_mixture(dist: &[(Value, f64)]) -> Option<crate::continuous::Mixt
         .iter()
         .map(|(v, p)| {
             let part = match v {
-                Value::Analytic(a) => Part::Analytic((**a).clone()),
+                Value::Analytic(a) if a.time.is_none() => Part::Analytic((**a).clone()),
                 Value::Continuous(f) => Part::Continuous(**f),
                 v => Part::Point(v.as_f64()?),
             };
@@ -1525,6 +1578,13 @@ pub fn temporal_kind(dist: &[(Value, f64)]) -> Option<&'static str> {
 pub fn summary_quantile(dist: &[(Value, f64)], q: f64) -> Option<Value> {
     if dist.is_empty() || !q.is_finite() || !(0.0..=1.0).contains(&q) {
         return None;
+    }
+    if crate::time_stats::kind(dist).is_some() && dist.iter().any(|(v, _)| matches!(v, Value::Analytic(_))) {
+        return if q == 0.5 {
+            crate::analytic_time::median(dist)
+        } else {
+            crate::analytic_time::quantile(dist, q)
+        };
     }
     if q != 0.5 {
         return Some(quantile(dist, q));
