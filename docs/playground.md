@@ -48,7 +48,9 @@ sides of 0.5 are paired from outside inward for bands. The inspector and table
 show all requested columns; mean/SD-only reports have no percentile bands.
 SD-only curves cannot be used as value baselines.
 
-Temporal axes retain exact typed values in point details and tables. Datetime
+Temporal axes retain exact typed coordinates and table values. Point readouts
+round duration summaries in a common unit and datetime clocks to an appropriate
+precision, matching the text summary rules. Datetime
 positions use nanosecond offsets from a shared origin, so modern dates do not
 lose submillisecond differences. Calendar labels use the stored fields without
 applying the browser's timezone. Short datetime spans use elapsed tick labels
@@ -58,8 +60,10 @@ also use offsets when needed to preserve nearby values.
 
 A datetime `mean,sd` selection plots the datetime mean and shows duration SD in
 the inspector and table. An SD-only selection plots a duration axis. These time
-summaries describe retained outcomes and have no Monte Carlo error estimate;
-partial results and support remain qualified alongside them.
+summaries describe retained outcomes. Sampled means show a unit-bearing `±`
+standard error, computed per independent run; SD and quantiles have no error
+estimate. Partial results and support remain qualified alongside them, and
+the table retains the unrounded typed values.
 
 For example, compare uncertain arrival times with a target at each departure:
 

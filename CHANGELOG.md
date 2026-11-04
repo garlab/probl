@@ -15,6 +15,8 @@ All notable changes to the published crates are recorded here. The format follow
 
 ### Changed
 
+- Temporal report summaries use shared duration units and numeric display rounding, with clock precision matched to the spread. Sampled datetime and duration means include typed standard errors; canonical JSON values and `str()` remain unchanged.
+
 - The minimum Rust version is now 1.99, and development uses the stable toolchain. Rust 1.85 source builds are no longer supported.
 
 - `days(n)` and `weeks(n)` now produce durations without rounding. Adding a duration to a date requires whole 24-hour days; adding one to a datetime requires whole nanoseconds.

@@ -56,11 +56,25 @@ Datetimes retain nanosecond precision; midpoint ties round to the earlier nanose
 Datetime and duration reports also support mean and SD columns, and include
 them by default in an ungrouped nondeterministic report. A datetime mean
 is a datetime; its SD is a duration, including fractional nanoseconds. Means
-round once, with ties earlier, while spread uses the unrounded mean. These
-values summarize the retained population; no Monte Carlo error estimate is
-currently attached to the typed time moments.
-Exact integer and temporal values are preserved in text and typed JSON values.
-Date report moments remain unavailable. A moment outside the finite supported
+round once, with ties earlier, while spread uses the unrounded mean. Sampled
+temporal means also carry a unit-bearing Monte Carlo standard error, computed
+from independent runs with their observation weights and visit counts.
+
+Text summaries use one duration unit per row: the largest unit in which every
+nonzero displayed duration (including a mean's error) is at least 1, down to
+nanoseconds. Zero does not force a smaller unit; subnanosecond values retain
+their fractions. As with numbers, moments use two decimals below a scale of 100
+and no decimals at 100 or above, with scientific notation for tiny nonzero values.
+Integer quantiles omit decimal zeros. Datetime summary clocks round to a decimal
+fraction of a second appropriate to the displayed spread, preserving nanoseconds
+for small spreads and never rounding more coarsely than a second. Date values
+and deterministic datetime reports remain exact.
+
+These are display choices: typed JSON values, `str()`, and the playground's
+exact-value table retain canonical precision. A sampled mean shows `±` when its
+error is visible at the display precision; runs that all agree do not establish
+a nonzero error estimate. Date report moments remain unavailable.
+A moment outside the finite supported
 range is unavailable and is never replaced with zero. Categorical, structured and mixed
 Boolean/other reports keep their default display and reject explicit summary
 overrides. Boolean reports accept an override but retain probability output.

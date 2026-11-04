@@ -1,5 +1,5 @@
 import { alignedBaseline, chartSeries, columnEstimate, compatibleBaselines, currencies, keyId, segments } from './chart-data.js';
-import { isTime, timeValue } from './chart-time.js';
+import { isTime, timeValue, timeSummaryFormat } from './chart-time.js';
 
 const svgNS = 'http://www.w3.org/2000/svg';
 const finite = (n) => typeof n === 'number' && Number.isFinite(n);
@@ -30,10 +30,14 @@ function numberFormat(series, currency, compact = false) {
   });
 }
 
-function shownValue(series, point, column, fmt) {
+function shownValue(series, point, column, fmt, exact = false) {
   const typed = point.typedValues[column];
   if (isTime(series.columns[column].valueKind)) {
-    return typed?.kind === series.columns[column].valueKind && timeValue(typed) ? typed.value : 'unavailable';
+    if (typed?.kind !== series.columns[column].valueKind || !timeValue(typed)) return 'unavailable';
+    if (exact) return typed.value;
+    const format = timeSummaryFormat(point.typedValues, series.columns, point.group.summary);
+    return series.columns[column].kind === 'mean' ? format.mean(typed)
+      : format.value(typed, series.columns[column].kind !== 'sd');
   }
   return finite(point.values[column]) ? fmt.format(point.values[column]) : 'unavailable';
 }
@@ -57,8 +61,16 @@ function groupNotes(series, point, fmt) {
   const g = point.group;
   const quantity = columnEstimate(g, series.columns[series.primary]);
   const notes = isTime(series.valueKind)
-    ? ['Time summaries describe retained outcomes; Monte Carlo error is not estimated.']
+    ? ['Time summaries describe retained outcomes.']
     : [estimateNotes(quantity, fmt)];
+  if (isTime(series.valueKind) && g.summary?.mean_sampling) {
+    const s = g.summary.mean_sampling;
+    const error = s.standard_error;
+    notes.push(error ? `Mean Monte Carlo standard error ${timeSummaryFormat([error]).value(error)}.`
+      : `Mean Monte Carlo error ${s.status.replaceAll('_', ' ')}.`);
+  } else if (isTime(series.valueKind) && g.support) {
+    notes.push('Monte Carlo error is not computed for these selected statistics.');
+  }
   const approximation = g.summary?.approximation;
   if (approximation && series.columns.some((c) => c.approximate)) {
     notes.push(`Approximate quantiles: capacity ${approximation.capacity}; ${approximation.samples} samples; ${approximation.zeros} zeros counted exactly.`);
@@ -145,7 +157,8 @@ export function renderCharts(container, document, settings, onChange) {
     const inspector = element('div', { class: 'chart-inspector' });
     const slider = element('input', { type: 'range', min: 0, max: s.points.length - 1, value: 0, step: 1, 'aria-label': `Inspect ${s.report.label} by ${s.report.key_label}`, class: 'chart-position' });
     const readout = element('div', { class: 'chart-readout', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' });
-    inspector.append(element('p', { class: 'chart-hint' }, 'Hover to inspect, or focus the slider and use arrow keys, Home or End.'), slider, readout);
+    inspector.append(element('p', { class: 'chart-hint' }, 'Hover to inspect, or focus the slider and use arrow keys, Home or End.'
+      + (isTime(s.valueKind) ? ' Time summaries are rounded here; the table retains exact values.' : '')), slider, readout);
     card.append(inspector);
     const explanation = s.kind === 'probability' ? 'Step curve: probability at each observed key. Monte Carlo error and confidence intervals are shown separately in the point details.'
       : s.deterministic ? 'One resolved value at each key. Deterministic values may still come from a partial or incomplete result.'
@@ -291,10 +304,10 @@ export function renderCharts(container, document, settings, onChange) {
         const row = element('tr', { 'data-group-id': p.group.id });
         row.append(element('th', { scope: 'row' }, p.key.label));
         const indices = compact ? [s.primary] : s.columns.map((_, i) => i);
-        for (const column of indices) row.append(element('td', {}, shownValue(s, p, column, fmt)));
+        for (const column of indices) row.append(element('td', {}, shownValue(s, p, column, fmt, true)));
         if (baseline) {
           const bp = baseline.points.find((b) => keyId(b.key) === keyId(p.key));
-          row.append(element('td', {}, bp && finite(aligned[i].y) ? shownValue(baseline, bp, baseline.primary, fmt) : 'unavailable'));
+          row.append(element('td', {}, bp && finite(aligned[i].y) ? shownValue(baseline, bp, baseline.primary, fmt, true) : 'unavailable'));
         }
         row.append(element('td', {}, groupNotes(s, p, fmt)));
         body.append(row);

@@ -17,8 +17,10 @@ mod results;
 use collection::OnlineNumbers;
 pub use collection::{ReportCollection, ReportCollectionError, selected_summaries, validate_collections};
 mod selection;
+mod temporal;
 use selection::SummaryCheck;
 pub use selection::{ReportStatistic, ReportSummary, ReportSummaryError, statistic_value};
+pub use temporal::Uncertainty as TemporalUncertainty;
 
 pub use results::{
     Fields, GroupResult, Numeric, Quantity, Reach, ReportResult, Status, Support, Uncertainty, ValueProbabilities,
@@ -201,6 +203,7 @@ struct Moments {
     sum: Sums,
     sum_positive: Weight,
     sum_negative: Weight,
+    temporal: Option<Box<temporal::Sampling>>,
     /// Each value's probability: a is its share of a run's visits, b the
     /// number of visits.
     visits: Base,
@@ -221,6 +224,9 @@ impl Moments {
         self.sum.absorb(other.sum);
         self.sum_positive += other.sum_positive;
         self.sum_negative += other.sum_negative;
+        if let Some(other) = other.temporal {
+            self.temporal.get_or_insert_with(Default::default).absorb(*other);
+        }
         self.visits.absorb(other.visits);
         for (v, sums) in other.values {
             match self.values.iter_mut().find(|(x, _)| *x == v) {
@@ -249,6 +255,7 @@ pub struct RunStat {
     pub sum: f64,
     /// The probability that the reported value was a number.
     pub numbers: f64,
+    temporal: Option<Box<temporal::Run>>,
     /// The probability of each other value (dates excluded).
     pub others: Vec<(Value, f64)>,
 }
@@ -271,7 +278,12 @@ impl RunStat {
                 self.numbers += share;
                 self.sum += share * value.as_f64().unwrap();
             }
-            Value::Date(_) | Value::DateTime(_) | Value::Duration(_) => {}
+            Value::DateTime(_) | Value::Duration(_) => {
+                self.temporal
+                    .get_or_insert_with(|| Box::new(temporal::Run::new(value)))
+                    .record(value, share);
+            }
+            Value::Date(_) => {}
             other => match self.others.iter_mut().find(|(v, _)| v == other) {
                 Some((_, s)) => *s += share,
                 None => self.others.push((other.clone(), share)),
@@ -293,6 +305,7 @@ impl Acc {
                 facts: 0.0,
                 sum: 0.0,
                 numbers: 0.0,
+                temporal: None,
                 others: Vec::new(),
             });
             stat.visits += 1;
@@ -452,6 +465,17 @@ impl Acc {
             return;
         }
         let m = self.moments.get_or_insert_with(Moments::default);
+        // The exact typed error is serialized as a canonical string: use a
+        // stable order across native/WASM hash-table layouts as well as workers.
+        let mut times: Vec<_> = self
+            .runs
+            .iter()
+            .filter_map(|(id, run)| run.temporal.as_ref().map(|t| (*id, run.weight, t)))
+            .collect();
+        times.sort_unstable_by_key(|(id, _, _)| *id);
+        for (_, weight, run) in times {
+            m.temporal.get_or_insert_with(Default::default).add(run, weight);
+        }
         // This batch is finished and its sink will be sent to the combiner.
         // Keeping the drained map's capacity retained one batch of per-run
         // bookkeeping in every completed/pending sink, including the result.
@@ -515,6 +539,13 @@ impl Acc {
     /// per-run contributions, including visit multiplicity.
     pub fn effective(&self) -> f64 {
         let m = self.moments();
+        if self.facts.is_zero()
+            && let Some(time) = &m.temporal
+            && self.values.keys().all(|v| time.same_kind(v))
+            && let Some(effective) = time.effective()
+        {
+            return effective.min(m.contributing_runs as f64);
+        }
         let base = if self.is_event() {
             m.facts
         } else if self.facts.is_zero()
@@ -1163,28 +1194,35 @@ fn selected_value_text(group: &GroupResult, format: Format, selection: Option<&R
     }
     let dist = &group.distribution;
     let mut text = if let Some(selection) = selection {
-        selection
-            .statistics()
-            .iter()
-            .map(|s| format!("{} {}", s.label(), summary_cell(group, *s)))
-            .collect::<Vec<_>>()
-            .join(" · ")
+        if let Some(summary) = temporal::Summary::new(group, selection.statistics()) {
+            summary.line()
+        } else {
+            selection
+                .statistics()
+                .iter()
+                .map(|s| format!("{} {}", s.label(), summary_cell(group, *s)))
+                .collect::<Vec<_>>()
+                .join(" · ")
+        }
     } else if let Some(numeric) = group.numeric.as_ref().filter(|n| n.mixture().is_some()) {
         analytic_stats(numeric)
     } else if dist.len() == 1 {
-        display(&dist[0].0)
+        if matches!(&dist[0].0, Value::Duration(_)) {
+            temporal::scalar(&dist[0].0)
+        } else {
+            display(&dist[0].0)
+        }
     } else if let Some(numeric) = &group.numeric {
         numeric_stats(numeric, dist)
     } else if temporal_kind(dist).is_some() {
-        let [a, b, c] =
-            [0.05, 0.5, 0.95].map(|q| summary_quantile(dist, q).map_or_else(|| "out of range".into(), |v| display(&v)));
-        let quantiles = format!("5% {a} · median {b} · 95% {c}");
-        if let Some(m) = crate::time_stats::moments(dist, None).ok().flatten() {
-            let sd = m.sd.as_ref().map_or_else(|| "unavailable".into(), display);
-            format!("mean {} · sd {sd} · {quantiles}", display(&m.mean))
+        use ReportStatistic::*;
+        let columns = [Mean, StandardDeviation, Quantile(0.05), Median, Quantile(0.95)];
+        let columns = if crate::time_stats::kind(dist).is_some() {
+            &columns[..]
         } else {
-            quantiles
-        }
+            &columns[2..]
+        };
+        temporal::Summary::new(group, columns).unwrap().line()
     } else if group.support.is_some() {
         categorical_sampled(group)
     } else {
@@ -1558,7 +1596,11 @@ fn table(key_label: &str, result: &ReportResult, format: Format, selection: Opti
         header = selection.statistics().iter().map(|s| s.label()).collect();
         for (key, group) in keys.iter().zip(groups) {
             let mut row = vec![key.clone()];
-            row.extend(selection.statistics().iter().map(|s| summary_cell(group, *s)));
+            if let Some(summary) = temporal::Summary::new(group, selection.statistics()) {
+                row.extend((0..selection.statistics().len()).map(|i| summary.cell(i)));
+            } else {
+                row.extend(selection.statistics().iter().map(|s| summary_cell(group, *s)));
+            }
             rows.push(row);
         }
     } else {
@@ -1916,6 +1958,14 @@ mod tests {
             .unwrap();
         numeric.end_batch().unwrap();
         assert!((numeric.groups[&Value::Unit].effective() - 1.21 / 1.01).abs() < 1e-12);
+
+        let value = Value::Duration(probl_syntax::duration::Duration::parse("1ns").unwrap());
+        let partial = crate::dist::Dist::from_pairs(vec![(value.clone(), 0.1)], 0.9).into_value();
+        let mut time = Sink::default();
+        time.add(Value::Unit, &partial, Weight::ONE, Some(0)).unwrap();
+        time.add(Value::Unit, &value, Weight::ONE, Some(1)).unwrap();
+        time.end_batch().unwrap();
+        assert!((time.groups[&Value::Unit].effective() - 1.21 / 1.01).abs() < 1e-12);
     }
 
     #[test]

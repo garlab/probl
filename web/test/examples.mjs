@@ -71,6 +71,20 @@ for (const [source, report_summaries] of [
 }
 console.log('same  configurable summaries and validation in native/WASM');
 
+for (const request of [
+  {source:"report minutes(one_of([10,20,35])); report hours(one_of([1,2,3])); report str(hours(3))"},
+  {source:"@mode sample(runs:2100,seed:42)\nlet a='9999-12-31T23:59:59.999999000'; let huge=nanoseconds(10^100); let x~d6; score if x>3 {90%} else {10%}; for k in 1..x {let n=x+k; report n by k mod 2; report a+nanoseconds(n) by k mod 2; report huge+nanoseconds(n) by k mod 2; report n*'1ns^2' by k mod 2}", report_summaries:{0:'moments',1:'moments',2:'moments',3:'moments'}},
+  {source:"@mode sample(runs:400,seed:7)\nlet x~d2; for n in [x,3-x] {report nanoseconds(n) by 0}", report_summaries:{0:'moments'}},
+]) {
+  request.today = '2026-10-19';
+  const expected = JSON.parse(execFileSync(nativeAdapter, [], {input:JSON.stringify(request),encoding:'utf8'}));
+  const actual = probl.run(request);
+  sameReports(actual.reports, expected.reports);
+  assert.equal(actual.output, expected.output);
+  assert.deepEqual(actual.error, expected.error);
+}
+console.log('same  rounded temporal summaries and typed, per-run mean errors in native/WASM');
+
 
 const summaryLimitSource = `@mode sample(runs:1)\nlet payload="${'x'.repeat(200000)}"; for k in 1..1000 {report 1 by [k,payload]}`;
 for (const request of [

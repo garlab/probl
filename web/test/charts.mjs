@@ -4,10 +4,43 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { load } from '../src/probl.js';
 import { alignedBaseline, chartSeries, chartSettings, compatibleBaselines, MAX_POINTS, readChartSettings, segments, seriesFor } from '../src/chart-data.js';
-import { timeAxis, timeValue } from '../src/chart-time.js';
+import { timeAxis, timeValue, timeSummaryFormat } from '../src/chart-time.js';
 
 const engine = await load(await readFile(new URL('../dist/probl.wasm', import.meta.url)));
 const run = (source) => engine.run({ source, today: '2026-10-19' }).reports;
+const time = (value, kind = 'duration') => ({ kind, value });
+const timeColumns = [{kind:'mean'}, {kind:'sd'}, {kind:'quantile'}];
+const minuteValues = [time('0.362225h'), time('0.17168282913397148h'), time('10m')];
+const minuteFormat = timeSummaryFormat(minuteValues, timeColumns);
+assert.deepEqual(minuteValues.map((v,i) => minuteFormat.value(v, i === 2)), ['21.73m','10.30m','10m']);
+assert.equal(minuteValues[0].value, '0.362225h', 'formatting leaves canonical values untouched');
+assert.equal(timeSummaryFormat([time('0.125d')]).value(time('0.125d'), true), '3h');
+for (const [value, expected] of [['1.125s','1.12s'], ['-1.125s','-1.12s'], ['1.015s','1.01s'], ['3.375s','3.38s']]) {
+  assert.equal(timeSummaryFormat([time(value)]).value(time(value)), expected, 'fixed rounding matches Rust at half-cent boundaries');
+}
+assert.equal(timeSummaryFormat([time('-0.0000001ns')]).value(time('-0.0000001ns')), '-1.00e-7ns');
+assert.equal(timeSummaryFormat([time('5s^2','squared_duration')]).value(time('5s^2','squared_duration')), '5.00s^2');
+const clockValues = [time('2027-01-31T09:59:59.447021209','datetime'), time('299.28463734324646s')];
+const clockFormat = timeSummaryFormat(clockValues, timeColumns.slice(0,2), {
+  mean_sampling: { status: 'estimated', standard_error: time('2s') },
+});
+assert.equal(clockFormat.mean(clockValues[0]), '2027-01-31T09:59:59 ± 2s');
+assert.equal(clockFormat.value(clockValues[1]), '299s');
+const tinyClocks = [time('1969-12-31T23:59:59.999999999','datetime'), time('0.5ns')];
+const tinyFormat = timeSummaryFormat(tinyClocks, timeColumns.slice(0,2));
+assert.equal(tinyFormat.mean(tinyClocks[0]), tinyClocks[0].value);
+assert.equal(tinyFormat.value(tinyClocks[1]), '0.50ns');
+const clockCarry = [time('1969-12-31T23:59:59.999999999','datetime'), time('300s')];
+assert.equal(timeSummaryFormat(clockCarry, timeColumns.slice(0,2)).mean(clockCarry[0]), '1970-01-01T00:00:00');
+const lastClock = [time('9999-12-31T23:59:59.999999999','datetime'), time('300s')];
+assert.equal(timeSummaryFormat(lastClock, timeColumns.slice(0,2)).mean(lastClock[0]), lastClock[0].value);
+const hugeTime = [time(`1${'0'.repeat(400)}ns`), time('1ns')];
+const hugeFormat = timeSummaryFormat(hugeTime, timeColumns.slice(0,2));
+assert.equal(hugeFormat.mean(hugeTime[0]), hugeTime[0].value);
+assert.equal(hugeFormat.value(hugeTime[1]), '1.00ns', 'an unrepresentable mean does not change the spread precision');
+const unsafeTime = [time('9007199254740993ns'), time('1ns')];
+assert.equal(timeSummaryFormat(unsafeTime, timeColumns.slice(0,2)).mean(unsafeTime[0]), '9,007,199,254,740,993ns');
+console.log('all passed: temporal display units, rounding, clock resolution, typed mean errors and canonical values');
 const fixture = run(await readFile(new URL('report-json.probl', import.meta.url), 'utf8'));
 const original = JSON.stringify(fixture);
 const all = chartSeries(fixture);

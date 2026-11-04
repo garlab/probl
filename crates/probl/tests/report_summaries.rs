@@ -251,7 +251,7 @@ fn datetime_summaries_preserve_precision_and_duration_units() {
         p.run(&Options::new())
             .unwrap()
             .text()
-            .contains("mean 1969-12-31T23:59:59.999999998 · sd 1ns")
+            .contains("mean 1969-12-31T23:59:59.999999998 · sd 1.00ns")
     );
     for options in [Options::new(), Options::new().runs(40).seed(7)] {
         let out = p
@@ -265,7 +265,7 @@ fn datetime_summaries_preserve_precision_and_duration_units() {
         );
         let out = p.run(&options.report_summary(0, ReportSummary::moments())).unwrap();
         assert!(
-            out.text().contains("mean 1969-12-31T23:59:59.999999998 · sd 1ns"),
+            out.text().contains("mean 1969-12-31T23:59:59.999999998 · sd 1.00ns"),
             "{}",
             out.text()
         );
@@ -275,7 +275,7 @@ fn datetime_summaries_preserve_precision_and_duration_units() {
         .run(&Options::new().report_summary(0, ReportSummary::moments()))
         .unwrap();
     assert!(
-        out.text().contains("mean 2027-01-01T00:00:00 · sd 0s"),
+        out.text().contains("mean 2027-01-01T00:00:00 · sd 0.00s"),
         "{}",
         out.text()
     );

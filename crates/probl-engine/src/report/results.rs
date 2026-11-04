@@ -44,6 +44,8 @@ pub struct GroupResult {
     pub distribution: Arc<[(Value, f64)]>,
     /// For real numbers, and continuous values: their summaries.
     pub numeric: Option<Numeric>,
+    /// A sampled temporal mean's error, retaining its time dimension.
+    pub temporal_mean_sampling: Option<super::TemporalUncertainty>,
     /// The share of the group's weight that isn't resolved, as the renderer
     /// counts it.
     pub unresolved_share: f64,
@@ -294,11 +296,15 @@ pub(super) fn group(key: &Value, acc: &Acc, format: Format, kind: ReportKind, un
     } else {
         numeric(acc, &distribution, complete, support, format.integrate)
     };
+    let temporal_mean_sampling = support
+        .filter(|_| crate::time_stats::kind(&distribution).is_some())
+        .and_then(|s| acc.moments.as_ref()?.temporal.as_ref().map(|t| t.uncertainty(s)));
     GroupResult {
         key: key.clone(),
         fact,
         values,
         numeric,
+        temporal_mean_sampling,
         unresolved_share: acc.unresolved_share(format.unresolved),
         distribution,
         support,
@@ -340,6 +346,7 @@ fn structured(key: &Value, acc: &Acc, format: Format, kind: ReportKind, unresolv
         values: None,
         distribution: Arc::from([]),
         numeric: None,
+        temporal_mean_sampling: None,
         unresolved_share: acc.unresolved_share(format.unresolved),
         support: None,
         fields: Some(Box::new(Fields(fields))),

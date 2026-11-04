@@ -94,7 +94,17 @@ these have kinds `datetime` and `duration`, respectively; `"0.5ns"` is a valid S
 Duration means and SD preserve their dimension. An explicit selection omits a
 statistic by setting its typed field to null. The existing numeric `mean` and
 `sd` estimate fields remain null for time populations. Typed moments describe
-the retained population and carry no Monte Carlo standard-error estimate.
+the retained population and keep canonical precision even when text is rounded.
+
+`mean_sampling` is null for enumeration or an unselected/unavailable temporal
+mean. In sample mode it contains `status`, `standard_error`, `contributing_runs`
+and `effective_runs`. The error is a typed duration for datetime/duration means,
+or a typed squared duration for squared-duration means. It uses independent
+run contributions, including observation weights and repeated visits. Its status
+is `estimated` when the error is positive, `not_estimable` when the runs cannot
+establish one, or `not_computed` when the calculation is outside the supported
+finite range. The latter two have a null `standard_error`. Older version-1
+documents can omit this field; SD and quantiles still have no temporal error estimate.
 
 A true `deterministic` flag does not override incompleteness or partial-failure
 metadata. With exact collection, by default the 50% entry uses the midpoint median; other levels use the

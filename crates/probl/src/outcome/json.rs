@@ -321,6 +321,16 @@ fn group(
                 .transpose()?
                 .unwrap_or(Json::Null);
             summary["sd_value"] = sd.map(|v| typed(v, None, budget)).transpose()?.unwrap_or(Json::Null);
+            summary["mean_sampling"] = if let Some(s) = g.temporal_mean_sampling.as_ref().filter(|_| mean.is_some()) {
+                let se = s.standard_error.as_ref().map(|v| typed(v, None, budget)).transpose()?;
+                json!({
+                    "status": uncertainty_status(s.status), "standard_error": se,
+                    "contributing_runs": s.support.contributing_runs.to_string(),
+                    "effective_runs": s.support.effective,
+                })
+            } else {
+                Json::Null
+            };
         }
         if let Some(a) = g.numeric.as_ref().and_then(|n| n.approximation()) {
             summary["approximation"] = json!({
@@ -382,12 +392,20 @@ fn quantity(q: Quantity) -> Json {
         "nonfinite": q.point.filter(|x|!x.is_finite()).map(extended),
         "complete":q.complete, "bounds":q.bounds.map(|(a,b)|[extended(a),extended(b)]),
         "sampling":q.sampling.map(|s|json!({
-            "status":match s.status { Status::Estimated => "estimated", Status::NotEstimable => "not_estimable", Status::NotComputed => "not_computed", Status::IntegratedZero => "integrated_zero" },
+            "status":uncertainty_status(s.status),
             "standard_error":s.se.filter(|x|x.is_finite()),
             "confidence_interval":s.wilson.map(|(lower,upper)|json!({"level":0.95,"method":"wilson","lower":lower,"upper":upper})),
             "contributing_runs":s.support.contributing_runs.to_string(),"effective_runs":s.support.effective,
         }))
     })
+}
+fn uncertainty_status(status: Status) -> &'static str {
+    match status {
+        Status::Estimated => "estimated",
+        Status::NotEstimable => "not_estimable",
+        Status::NotComputed => "not_computed",
+        Status::IntegratedZero => "integrated_zero",
+    }
 }
 fn extended(x: f64) -> Json {
     if x.is_finite() {

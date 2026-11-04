@@ -451,7 +451,7 @@ try {
   await page.select('#summary-0', 'moments');
   const timeMoments = await applySummaries();
   const timeExpected = api.run({source:timeSource,report_summaries:{0:'moments'}});
-  expect(!timeMoments.error && timeMoments.result === timeExpected.output && timeMoments.result.includes('0.5ns'), 'datetime summary controls preserve fractional duration units', timeMoments.result);
+  expect(!timeMoments.error && timeMoments.result === timeExpected.output && timeMoments.result.includes('0.50ns'), 'datetime summary controls preserve fractional duration units', timeMoments.result);
   expect(timeExpected.reports.reports[0].groups[0].summary.sd_value.value === '0.5ns', 'typed JSON carries the SD unit');
 
   const timeChartsSource = `let t='2027-01-01T00:00:00.000000001'
@@ -481,11 +481,11 @@ for k in 0..2 {
   expect(await page.$eval(`${balance} tbody tr[data-group-id="2"]`, (row) => row.cells[3].textContent === '2027-01-01T00:00:00.000000003'), 'time tables preserve the exact midpoint value');
   await page.select('#summary-0', 'moments');
   await applySummaries();
-  expect(await page.$eval(`${balance} .chart-readout`, (el) => el.textContent.includes('Mean: 2027-01-01T00:00:00.000000001') && el.textContent.includes('SD: 0.5ns')), 'datetime mean and duration SD retain separate units');
+  expect(await page.$eval(`${balance} .chart-readout`, (el) => el.textContent.includes('Mean: 2027-01-01T00:00:00.000000001') && el.textContent.includes('SD: 0.50ns')), 'datetime mean and duration SD retain separate units');
   await page.select('#summary-0', 'custom');
   await setCustom('sd');
   await applySummaries();
-  expect(await page.$eval(`${balance} .chart-readout`, (el) => el.dataset.valueKind === 'duration' && el.textContent.includes('SD: 0.5ns'))
+  expect(await page.$eval(`${balance} .chart-readout`, (el) => el.dataset.valueKind === 'duration' && el.textContent.includes('SD: 0.50ns'))
     && await page.$$eval(`${balance} .chart-baseline`, (controls) => controls.length) === 0, 'SD-only datetime charts use a duration axis without value overlays');
   await page.select('#summary-0', 'forecast');
   await applySummaries();
@@ -515,6 +515,26 @@ for k in 0..2 {
     await page.setViewport({width:390,height:844});
     await page.$eval('.report-chart', (el) => el.scrollIntoView());
     await page.screenshot({path:'/tmp/probl-time-calendar-phone.png'});
+    await page.setViewport({width:800,height:600});
+  }
+
+  const sampledTimeSource = "@mode sample(runs:400,seed:17)\nlet n~d6; report '2027-01-31T09:59:59.447021209'+minutes(n) by 1";
+  await page.evaluate((source) => window.playground.setSource(source), sampledTimeSource);
+  await run(page);
+  await page.select('#summary-0', 'moments');
+  const sampledTime = await applySummaries();
+  const sampledTimeExpected = api.run({source:sampledTimeSource,report_summaries:{0:'moments'}});
+  const exactTimeMean = sampledTimeExpected.reports.reports[0].groups[0].summary.mean_value.value;
+  expect(!sampledTime.error && sampledTime.result === sampledTimeExpected.output && sampledTime.result.includes('±'), 'sampled time text carries rounded mean uncertainty');
+  expect(await page.$eval(`${balance} .chart-readout`, (el) => el.textContent.includes('±') && el.textContent.includes('Mean Monte Carlo standard error')), 'time chart mean includes its typed sampling error');
+  expect(await page.$eval(`${balance} .chart-readout`, (el) => el.dataset.value) === exactTimeMean, 'rounded time readout retains exact coordinates');
+  await page.$eval(`${balance} details`, (el) => { el.open = true; });
+  await page.waitForSelector(`${balance} tbody tr`);
+  expect(await page.$eval(`${balance} tbody tr`, (row) => row.cells[1].textContent) === exactTimeMean, 'time table retains the unrounded mean');
+  if (process.argv.includes('--screenshots')) {
+    await page.setViewport({width:1300,height:1000});
+    await page.$eval(`${balance} .chart-readout`, (el) => el.scrollIntoView({block:'center',behavior:'instant'}));
+    await page.screenshot({path:'/tmp/probl-time-mean-error.png'});
     await page.setViewport({width:800,height:600});
   }
 
