@@ -8,6 +8,44 @@ fn phi(x: f64) -> f64 {
 }
 
 #[test]
+fn rounded_draws_have_int_order_statistics() {
+    let out = outcome("let x~normal(30,5); report round(x)");
+    assert!(out.output.contains("5% 22 · median 30 · 95% 38"), "{}", out.output);
+    for query in ["quantile(f, 5%)", "median_low(f)", "median_high(f)", "median(f)"] {
+        close(
+            chance(&format!(
+                "let f = simulate {{ let z~normal(30,5); round(z) }}; let q = {query}; report typeof q == \"int\""
+            )),
+            1.0,
+        );
+    }
+    close(
+        chance("let f = simulate { let z~normal(30,5); round(z) }; report quantile(f, 5%) == 22"),
+        1.0,
+    );
+    close(
+        chance("let f = simulate { let z~uniform(0,1000000); floor(z) }; report quantile(f, 5%) == 50000"),
+        1.0,
+    );
+    // Unrounded draws keep float order statistics.
+    close(
+        chance("let f = simulate { let z~normal(30,5); z }; report typeof quantile(f, 50%) == \"float\""),
+        1.0,
+    );
+}
+
+#[test]
+fn duration_hints_fit_the_context() {
+    let compare = error("report '1h' > 0");
+    assert!(compare.contains("compare with a duration"), "{compare}");
+    let index = error("report [1,2]['1d']");
+    assert!(
+        index.contains("whole-unit int") && !index.contains("compare with"),
+        "{index}"
+    );
+}
+
+#[test]
 fn unbounded_rounding_keeps_integer_types_probabilities_and_observations() {
     for (name, mass, below) in [
         ("floor", phi(1.0) - 0.5, phi(1.0)),

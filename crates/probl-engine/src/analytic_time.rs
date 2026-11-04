@@ -116,7 +116,7 @@ pub(crate) fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> Op
         return date_binary(op, a, b, budget);
     }
     if compare(op) && ((ka == Some(Duration(false)) && kb.is_none()) || (kb == Some(Duration(false)) && ka.is_none())) {
-        return Err(crate::duration::day_count_hint(OpError::new(format!(
+        return Err(crate::duration::compare_hint(OpError::new(format!(
             "can't compare {} with {}",
             ops::article(&a.kind()),
             ops::article(&b.kind())

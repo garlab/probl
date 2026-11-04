@@ -1169,13 +1169,20 @@ fn continuous_query(b: Builtin, args: &[Value]) -> OpResult<Value> {
         _ => unreachable!("checked by `continuous_parts`"),
     };
     let m = Mixture { parts };
+    // Order statistics of an int population, such as `round(x)` of a normal
+    // draw, are ints. A midpoint between two ints stays a float, as for lists.
+    let ints = crate::report::integral(&args[0]);
+    let order = |x: f64, name: &str| match Integer::from_f64(x) {
+        Some(n) if ints && x.fract() == 0.0 => Ok(Value::Int(n)),
+        _ => finite_float(x, name),
+    };
     match b {
         B::Mean => finite_float(m.mean(), "mean"),
         B::Variance => finite_float(m.variance(), "variance"),
         B::Sd => finite_float(m.sd(), "sd"),
         B::Median | B::MedianLow | B::MedianHigh => {
             let (lo, hi) = m.median_bounds();
-            finite_float(
+            order(
                 match b {
                     B::MedianLow => lo,
                     B::MedianHigh => hi,
@@ -1184,7 +1191,7 @@ fn continuous_query(b: Builtin, args: &[Value]) -> OpResult<Value> {
                 b.name(),
             )
         }
-        B::Quantile => finite_float(m.quantile(to_prob(&args[1])?), "quantile"),
+        B::Quantile => order(m.quantile(to_prob(&args[1])?), "quantile"),
         B::Cdf => ops::computed_prob(m.cdf(number(&args[1], "cdf")?), "cdf"),
         B::Pdf => {
             let x = number(&args[1], "pdf")?;

@@ -24,6 +24,10 @@ All notable changes to the published crates are recorded here. The format follow
 - `days(n)` and `weeks(n)` produce durations without rounding. Adding a duration to a date requires whole 24-hour days; adding one to a datetime rounds to the nearest nanosecond, ties earlier.
 - `date(text)` is removed: write constant dates as `'YYYY-MM-DD'` and use `parse_date` for runtime text. The three-integer constructor remains. Dates and datetimes inside collections print in single quotes; scalar display stays unquoted. Bundled examples and fixtures use the new syntax.
 
+### Fixed
+
+- Quantiles and medians of int outcomes of continuous draws, such as `floor(x)` of a uniform draw or `round(x)` of a normal one, are ints in queries, report summaries and tables, rather than floats. A median midpoint between two ints remains a float.
+
 ## [0.4.0] - 2026-10-29
 
 ### Added

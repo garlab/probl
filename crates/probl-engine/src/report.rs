@@ -1250,7 +1250,7 @@ fn selected_value_text(group: &GroupResult, format: Format, selection: Option<&R
                 .join(" · ")
         }
     } else if let Some(numeric) = group.numeric.as_ref().filter(|n| n.mixture().is_some()) {
-        analytic_stats(numeric)
+        analytic_stats(numeric, !dist.is_empty() && dist.iter().all(|(v, _)| integral(v)))
     } else if temporal_kind(dist).is_some() && dist.iter().any(|(v, _)| matches!(v, Value::Analytic(_))) {
         use ReportStatistic::*;
         temporal::Summary::new(
@@ -1449,18 +1449,31 @@ pub fn analytic_mixture(dist: &[(Value, f64)]) -> Option<crate::continuous::Mixt
 }
 
 /// A continuous marginal's quantile, by the report convention.
-fn mixture_quantile(numeric: &Numeric, q: f64, decimals: usize) -> String {
-    fixed(numeric.quantile(q).and_then(|x| x.point).unwrap_or(f64::NAN), decimals)
+/// Whether every outcome is an int, including a rounded continuous draw such
+/// as `round(x)`. Order statistics of such a population are ints too.
+pub(crate) fn integral(v: &Value) -> bool {
+    match v {
+        Value::Int(_) => true,
+        Value::Analytic(a) => a.int && a.time.is_none(),
+        Value::Dist(d) | Value::Joint(d) => !d.outcomes.is_empty() && d.outcomes.iter().all(|(x, _)| integral(x)),
+        _ => false,
+    }
 }
 
-fn analytic_stats(numeric: &Numeric) -> String {
+/// A quantile, printed as an int when the population's outcomes are ints.
+fn mixture_quantile(numeric: &Numeric, q: f64, decimals: usize, ints: bool) -> String {
+    let x = numeric.quantile(q).and_then(|x| x.point).unwrap_or(f64::NAN);
+    fixed(x, if ints && x.fract() == 0.0 { 0 } else { decimals })
+}
+
+fn analytic_stats(numeric: &Numeric, ints: bool) -> String {
     let (mean, sd) = (numeric.mean.point, numeric.sd.point);
     let scale = match (mean, sd) {
         (Some(m), Some(s)) => m.abs().max(s),
         _ => numeric.quantile(0.95).and_then(|x| x.point).unwrap_or(0.0).abs(),
     };
     let decimals = if scale < 100.0 { 2 } else { 0 };
-    let [a, b, c] = [0.05, 0.5, 0.95].map(|q| mixture_quantile(numeric, q, decimals));
+    let [a, b, c] = [0.05, 0.5, 0.95].map(|q| mixture_quantile(numeric, q, decimals, ints));
     // Some outcomes' moments have no formula yet: their quantiles do.
     let shown = |x: Option<f64>| x.map_or("unavailable".to_string(), |x| fixed(x, decimals));
     format!(
@@ -1692,8 +1705,9 @@ fn table(key_label: &str, result: &ReportResult, format: Format, selection: Opti
                         numeric.sd.point.unwrap_or(f64::NAN),
                     );
                     let decimals = if mean.abs().max(sd) < 100.0 { 2 } else { 0 };
+                    let ints = group.distribution.iter().all(|(v, _)| integral(v));
                     let mut row = vec![key.clone()];
-                    row.extend([0.05, 0.25, 0.5, 0.75, 0.95].map(|q| mixture_quantile(numeric, q, decimals)));
+                    row.extend([0.05, 0.25, 0.5, 0.75, 0.95].map(|q| mixture_quantile(numeric, q, decimals, ints)));
                     rows.push(row);
                     continue;
                 }

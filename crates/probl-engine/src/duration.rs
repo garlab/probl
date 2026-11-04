@@ -172,6 +172,19 @@ pub(crate) fn whole_days_error() -> OpError {
         .help("round explicitly, such as `start + days(round(x))`; use `datetime(start)` to retain fractional days")
 }
 
-pub(crate) fn day_count_hint(error: OpError) -> OpError {
-    error.help("date subtraction returns a duration; divide by '1d' for a day count, or use `div '1d'` when an int is required")
+/// Help for comparing a duration with a bare number, which is often a day
+/// count from before date subtraction returned durations.
+pub(crate) fn compare_hint(error: OpError) -> OpError {
+    error.help(
+        "compare with a duration such as '3d', or divide by '1d' (or another unit) for a number; \
+         `div '1d'` gives whole days as an int, and subtracting dates gives a duration",
+    )
+}
+
+/// Help for a duration where an int is required, such as an index or count.
+pub(crate) fn int_hint(error: OpError) -> OpError {
+    error.help(
+        "use `div '1d'` (or another unit) for a whole-unit int, or divide by '1d' for a number; \
+         subtracting dates gives a duration",
+    )
 }

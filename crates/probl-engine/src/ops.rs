@@ -14,7 +14,7 @@ pub fn integer<'a>(v: &'a Value, context: &str, _budget: &mut Budget) -> OpResul
     match v {
         Value::Int(n) => Ok(Cow::Borrowed(n)),
         v if crate::analytic_time::kind(v) == Some(crate::analytic_time::Kind::Duration(false)) => Err(
-            crate::duration::day_count_hint(OpError::new(format!("`{context}` needs an int, found a duration"))),
+            crate::duration::int_hint(OpError::new(format!("`{context}` needs an int, found a duration"))),
         ),
         Value::Analytic(a) if a.int => Err(crate::analytic::unsupported(&format!(
             "an int outcome of a continuous draw as `{context}`"
@@ -1015,7 +1015,7 @@ pub fn compare_counted(a: &Value, b: &Value, mut budget: Option<&mut Budget>) ->
             if (matches!(a,Value::Duration(d) if !d.squared) && numeric(b))
                 || (matches!(b,Value::Duration(d) if !d.squared) && numeric(a))
             {
-                Err(crate::duration::day_count_hint(error))
+                Err(crate::duration::compare_hint(error))
             } else {
                 Err(error)
             }
