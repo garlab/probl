@@ -13,5 +13,5 @@ fn#0 the top level ()
   report ordered_0 as "forecast date"    [live: ordered_0 holidays_1 delivered_5 promised_6]
   report delivered_5 as "delivery date"    [live: ordered_0 holidays_1 delivered_5 promised_6]
   report (<= delivered_5 promised_6) as "on time"    [live: ordered_0 holidays_1 delivered_5]
-  report (- delivered_5 ordered_0) as "calendar days to delivery"    [live: holidays_1 delivered_5]
+  report (div (- delivered_5 ordered_0) '1d') as "calendar days to delivery"    [live: holidays_1 delivered_5]
   report is_workday(delivered_5, holidays_1) as "arrives on an open day"    [live: ]

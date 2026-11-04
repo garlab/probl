@@ -43,7 +43,19 @@ pub fn call_plain(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<V
 fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult<Value> {
     use Builtin as B;
     let a = |i: usize| &args[i];
+    if matches!(
+        b,
+        B::Date | B::DateTime | B::Hour | B::Minute | B::Second | B::Nanosecond
+    ) && args.len() == 1
+        && let Value::Analytic(x) = a(0)
+    {
+        return crate::analytic_time::project(b, x, budget);
+    }
     match b {
+        B::Uniform | B::To if matches!(a(0), Value::DateTime(_)) || matches!(a(1), Value::DateTime(_)) => {
+            let (Value::DateTime(lo), Value::DateTime(hi))=(a(0),a(1)) else { return Err(OpError::new("datetime intervals need two datetime endpoints")); };
+            crate::analytic_time::distribution(b,*lo,*hi,budget)
+        }
         B::Min | B::Max if args.iter().any(|v| matches!(v, Value::Analytic(_))) => {
             let want_max = b == B::Max;
             ops::lift_n(args, budget, &|args, budget| {

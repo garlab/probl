@@ -531,6 +531,12 @@ report minutes(delay) by 1 as "Delay"`;
     expect(await page.$eval(`${balance} .chart-readout`, (el) => el.dataset.valueKind === 'datetime' && el.textContent.includes('2027-01-31')), 'continuous forecast readouts retain calendar values');
   }
 
+  await page.evaluate(() => window.playground.setSource("let t='2027-01-31'; let x~normal(30,5); report t+days(round(x)) by 1 as \"Delivery\"; report date(datetime(t)+x*'1d') by 1 as \"Calendar projection\""));
+  const dateForecast = await run(page);
+  expect(!dateForecast.error && !dateForecast.result.includes('unavailable'), 'rounded continuous date forecasts and calendar projections run', dateForecast.result);
+  expect(await page.$$eval('.report-chart', (cards) => cards.length) === 2, 'analytic date forecasts draw calendar charts');
+  expect(await page.$eval(`${balance} .chart-readout`, (el) => el.dataset.valueKind === 'date' && el.textContent.includes('2027-03-')), 'analytic date forecasts retain typed calendar readouts');
+
   const sampledTimeSource = "@mode sample(runs:400,seed:17)\nlet n~d6; report '2027-01-31T09:59:59.447021209'+minutes(n) by 1";
   await page.evaluate((source) => window.playground.setSource(source), sampledTimeSource);
   await run(page);

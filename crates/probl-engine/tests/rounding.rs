@@ -92,12 +92,7 @@ fn rounded_outcomes_are_ints_in_arithmetic() {
 #[test]
 fn what_rounding_cant_do_yet() {
     for (tail, what) in [
-        ("let z ~ normal(0, 1)\nreport floor(z)", "values have no bound"),
         ("let x ~ uniform(0, 3)\nreport round(x, 1)", "decimal places"),
-        (
-            "let x ~ uniform(0, 1)\nreport floor(1000000 * x)",
-            "pieces is over the limit",
-        ),
         (
             "let x ~ uniform(0, 3)\nlet k: int = x\nreport k",
             "converting this outcome to int",

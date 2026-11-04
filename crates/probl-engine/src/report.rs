@@ -1251,11 +1251,15 @@ fn selected_value_text(group: &GroupResult, format: Format, selection: Option<&R
         }
     } else if let Some(numeric) = group.numeric.as_ref().filter(|n| n.mixture().is_some()) {
         analytic_stats(numeric)
-    } else if crate::time_stats::kind(dist).is_some() && dist.iter().any(|(v, _)| matches!(v, Value::Analytic(_))) {
+    } else if temporal_kind(dist).is_some() && dist.iter().any(|(v, _)| matches!(v, Value::Analytic(_))) {
         use ReportStatistic::*;
         temporal::Summary::new(
             group,
-            &[Mean, StandardDeviation, Quantile(0.05), Median, Quantile(0.95)],
+            if temporal_kind(dist) == Some("date") {
+                &[Quantile(0.05), Median, Quantile(0.95)]
+            } else {
+                &[Mean, StandardDeviation, Quantile(0.05), Median, Quantile(0.95)]
+            },
         )
         .unwrap()
         .line()
@@ -1554,6 +1558,13 @@ pub fn temporal_kind(dist: &[(Value, f64)]) -> Option<&'static str> {
     if let Some(kind) = crate::time_stats::kind(dist) {
         return Some(kind);
     }
+    if dist
+        .iter()
+        .all(|(v, _)| matches!(crate::analytic_time::kind(v), Some(crate::analytic_time::Kind::Date(_))))
+        && !dist.is_empty()
+    {
+        return Some("date");
+    }
     let first = &dist.first()?.0;
     let kind = match first {
         Value::Date(_) => "date",
@@ -1579,7 +1590,7 @@ pub fn summary_quantile(dist: &[(Value, f64)], q: f64) -> Option<Value> {
     if dist.is_empty() || !q.is_finite() || !(0.0..=1.0).contains(&q) {
         return None;
     }
-    if crate::time_stats::kind(dist).is_some() && dist.iter().any(|(v, _)| matches!(v, Value::Analytic(_))) {
+    if temporal_kind(dist).is_some() && dist.iter().any(|(v, _)| matches!(v, Value::Analytic(_))) {
         return if q == 0.5 {
             crate::analytic_time::median(dist)
         } else {

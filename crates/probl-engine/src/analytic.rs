@@ -437,6 +437,10 @@ pub enum Kernel {
     Recip,
     /// Nearest integer, ties toward negative infinity; kept lazily.
     Nanosecond,
+    Floor,
+    Ceil,
+    Trunc,
+    Round,
 }
 impl Kernel {
     /// Its value at `z`, with `z` clamped into where it's defined: on a part
@@ -445,6 +449,10 @@ impl Kernel {
         match self {
             Kernel::Id => z,
             Kernel::Nanosecond => crate::duration::round_nanos(z),
+            Kernel::Floor => z.floor(),
+            Kernel::Ceil => z.ceil(),
+            Kernel::Trunc => libm::trunc(z),
+            Kernel::Round => z.round(),
             Kernel::Square => z * z,
             Kernel::Sqrt => z.max(0.0).sqrt(),
             Kernel::Exp => crate::math::exp(z),
@@ -457,13 +465,31 @@ impl Kernel {
     fn inverse(self, y: f64, side: f64) -> f64 {
         match self {
             Kernel::Id => y,
-            Kernel::Nanosecond => y.floor() + 0.5,
+            k if k.rounded() => k.upper_edge(y.floor()),
             Kernel::Square if side < 0.0 => -y.sqrt(),
             Kernel::Square => y.sqrt(),
             Kernel::Sqrt => y * y,
             Kernel::Exp => libm::log(y),
             Kernel::Ln => crate::math::exp(y),
             Kernel::Recip => 1.0 / y,
+            _ => unreachable!("rounding kernels handled above"),
+        }
+    }
+    fn rounded(self) -> bool {
+        matches!(
+            self,
+            Self::Nanosecond | Self::Floor | Self::Ceil | Self::Trunc | Self::Round
+        )
+    }
+    /// Upper edge of the cell with integer value n. Endpoint ownership only
+    /// matters for constant pieces, which are evaluated directly.
+    fn upper_edge(self, n: f64) -> f64 {
+        match self {
+            Self::Nanosecond | Self::Round => n + 0.5,
+            Self::Floor => n + 1.0,
+            Self::Ceil => n,
+            Self::Trunc => n + if n >= 0.0 { 1.0 } else { 0.0 },
+            _ => unreachable!("a rounding kernel"),
         }
     }
     /// Whether it increases on the side of 0 that `side` is on.
@@ -480,6 +506,8 @@ impl Kernel {
     }
 }
 
+pub(crate) type FunKey = (u8, u64, u64, u64, u64, u64);
+
 /// The function an outcome is of the draw on a piece of it: `outer`, of
 /// `kernel`, of `inner`, of the draw's value. Monotone on its piece. An
 /// affine one has the identity kernel and inner function, so that `outer`
@@ -489,12 +517,15 @@ pub struct Fun {
     pub outer: Affine,
     pub kernel: Kernel,
     pub inner: Affine,
+    /// Rounding cell width in the inner coordinate; one for other kernels.
+    pub quantum: f64,
 }
 impl Fun {
     pub const IDENTITY: Fun = Fun {
         outer: Affine::IDENTITY,
         kernel: Kernel::Id,
         inner: Affine::IDENTITY,
+        quantum: 1.0,
     };
     pub fn affine(outer: Affine) -> Fun {
         Fun { outer, ..Fun::IDENTITY }
@@ -508,6 +539,7 @@ impl Fun {
             outer: Affine::IDENTITY,
             kernel,
             inner,
+            quantum: 1.0,
         }
     }
     /// The affine function it is, if it is one.
@@ -522,8 +554,14 @@ impl Fun {
     pub fn at(self, x: f64) -> f64 {
         match self.kernel {
             Kernel::Id => self.outer.at(x),
-            k => self.outer.at(k.apply(self.inner.at(x))),
+            k => self.outer.at(k.apply(self.inner.at(x) / self.quantum)),
         }
+    }
+    pub(crate) fn integer_valued(self) -> bool {
+        if let Some(c) = self.as_constant() {
+            return c.fract() == 0.0;
+        }
+        self.kernel.rounded() && self.outer.scale.fract() == 0.0 && self.outer.offset.fract() == 0.0
     }
     /// `scale * self + offset`.
     fn then(self, scale: f64, offset: f64) -> Fun {
@@ -542,15 +580,16 @@ impl Fun {
         }
     }
     fn is_finite(self) -> bool {
-        self.outer.is_finite() && self.inner.is_finite()
+        self.outer.is_finite() && self.inner.is_finite() && self.quantum.is_finite() && self.quantum > 0.0
     }
-    pub(crate) fn key(self) -> (u8, u64, u64, u64, u64) {
+    pub(crate) fn key(self) -> FunKey {
         (
             self.kernel as u8,
             float_key(self.outer.scale),
             float_key(self.outer.offset),
             float_key(self.inner.scale),
             float_key(self.inner.offset),
+            float_key(self.quantum),
         )
     }
     /// The sign of the kernel's input on a piece, which doesn't change there.
@@ -564,13 +603,19 @@ impl Fun {
             Kernel::Recip => self.side(family, start, end),
             _ => 1.0,
         };
-        if self.kernel == Kernel::Nanosecond {
+        if self.kernel.rounded() {
             let a = self.inner.at(family.quantile(start));
             let b = self.inner.at(family.quantile(end));
-            let low = a.min(b);
-            let low = crate::duration::round_nanos(low) + if low - low.floor() == 0.5 { 1.0 } else { 0.0 };
-            let high = crate::duration::round_nanos(a.max(b));
-            let (a, b) = if a <= b { (low, high) } else { (high, low) };
+            let (low, high) = (a.min(b), a.max(b));
+            let mut first = self.kernel.apply(low / self.quantum);
+            let mut last = self.kernel.apply(high / self.quantum);
+            if self.kernel.upper_edge(first) * self.quantum == low {
+                first += 1.0;
+            }
+            if self.kernel.upper_edge(last - 1.0) * self.quantum == high {
+                last -= 1.0;
+            }
+            let (a, b) = if a <= b { (first, last) } else { (last, first) };
             return (self.outer.at(a), self.outer.at(b));
         }
         let at = |u: f64| {
@@ -602,7 +647,7 @@ impl Fun {
         match self.kernel {
             Kernel::Id => family.cdf(self.outer.inverse(t)),
             k => {
-                let z = k.inverse(self.outer.inverse(t), self.side(family, start, end));
+                let z = k.inverse(self.outer.inverse(t), self.side(family, start, end)) * self.quantum;
                 family.cdf(self.inner.inverse(z))
             }
         }
@@ -617,12 +662,14 @@ impl Fun {
                 (end, end)
             });
         }
-        if self.kernel == Kernel::Nanosecond {
+        if self.kernel.rounded() {
             let y = self.outer.inverse(t);
             let up = self.outer.scale > 0.0;
-            let edge = if up == strict { y.ceil() - 0.5 } else { y.floor() + 0.5 };
+            let edge = self
+                .kernel
+                .upper_edge(if up == strict { y.ceil() - 1.0 } else { y.floor() });
             let f = Fun::affine(self.inner);
-            let (a, b) = f.below_on(family, start, end, edge, false)?;
+            let (a, b) = f.below_on(family, start, end, edge * self.quantum, false)?;
             return Ok(if up {
                 (a, b)
             } else if a == start {
@@ -684,6 +731,7 @@ impl Fun {
                 offset: c - a * vertex * vertex,
             },
             kernel: Kernel::Square,
+            quantum: 1.0,
             inner: Affine {
                 scale: 1.0,
                 offset: -vertex,
@@ -1067,18 +1115,19 @@ impl Analytic {
     pub fn quantized(&self) -> bool {
         self.pieces
             .iter()
-            .all(|(_, f)| f.as_constant().is_some() || f.kernel == Kernel::Nanosecond)
+            .all(|(_, f)| f.as_constant().is_some() || f.kernel.rounded())
     }
     pub fn integrated_time_moments(&self) -> bool {
         self.time.is_some()
             && (self.weight.is_some()
-                || self.segments().iter().any(|&(lo, hi, f)| {
-                    f.kernel == Kernel::Nanosecond && nanosecond_bins(&self.family, f, lo, hi).is_none()
-                }))
+                || self
+                    .segments()
+                    .iter()
+                    .any(|&(lo, hi, f)| f.kernel.rounded() && nanosecond_bins(&self.family, f, lo, hi, 4096).is_none()))
     }
     /// Whether a single value has positive probability.
     pub fn has_atoms(&self) -> bool {
-        if self.pieces.iter().any(|(_, f)| f.kernel == Kernel::Nanosecond) {
+        if self.pieces.iter().any(|(_, f)| f.kernel.rounded()) {
             return true;
         }
         self.pieces.len() > 1 && self.segments().iter().any(|(_, _, f)| f.as_constant().is_some())
@@ -1351,7 +1400,9 @@ fn segment_moments(family: &Family, f: Fun, lo: f64, hi: f64) -> Option<(f64, f6
             let (m, v) = family.interval_moments(family.quantile(lo), family.quantile(hi));
             return Some((f.outer.at(m), f.outer.scale * f.outer.scale * v));
         }
-        Kernel::Nanosecond => return quantized_moments(family, f, lo, hi),
+        Kernel::Nanosecond | Kernel::Floor | Kernel::Ceil | Kernel::Trunc | Kernel::Round => {
+            return quantized_moments(family, f, lo, hi);
+        }
         Kernel::Square => (
             moments::power(family, f.inner, 2.0, lo, hi)?,
             moments::power(family, f.inner, 4.0, lo, hi)?,
@@ -2053,7 +2104,7 @@ fn sum(a: Fun, b: Fun, sign: f64) -> OpResult<Fun> {
     if let (Some(p), Some(q)) = (a.polynomial(), b.polynomial()) {
         return Ok(Fun::from_polynomial([0, 1, 2].map(|i| p[i] + sign * q[i])));
     }
-    if a.kernel == b.kernel && a.inner == b.inner {
+    if a.kernel == b.kernel && a.inner == b.inner && a.quantum == b.quantum {
         let outer = Affine {
             scale: a.outer.scale + sign * b.outer.scale,
             offset: a.outer.offset + sign * b.outer.offset,
@@ -2136,6 +2187,7 @@ fn quotient(a: Fun, b: Fun, plain: bool) -> OpResult<Fun> {
                 offset: 0.0,
             },
             kernel: Kernel::Recip,
+            quantum: 1.0,
             inner: Affine {
                 scale: 1.0,
                 offset: y.offset / y.scale,
@@ -2338,7 +2390,7 @@ pub(crate) fn nanoseconds(x: &Analytic, budget: &mut Budget) -> OpResult<Value> 
     let mut pieces = Vec::with_capacity(x.pieces.len());
     let mut start = 0.0;
     for &(end, f) in &x.pieces {
-        let rounded = if f.kernel == Kernel::Nanosecond && f.outer == Affine::IDENTITY {
+        let rounded = if f.integer_valued() {
             f
         } else {
             compose(Kernel::Nanosecond, f, &x.family, start, end)?
@@ -2353,11 +2405,14 @@ pub(crate) fn nanoseconds(x: &Analytic, budget: &mut Budget) -> OpResult<Value> 
 /// Find the rounded bins carrying probability at the CDF's precision. This
 /// also handles narrow unbounded laws: quadrature alone can miss a rare jump
 /// when all its initial nodes round to the same nanosecond.
-fn nanosecond_bins(family: &Family, f: Fun, lo: f64, hi: f64) -> Option<(i64, i64)> {
-    let at = |q: f64| crate::duration::round_nanos(f.inner.at(family.quantile(lo + q * (hi - lo))));
+fn nanosecond_bins(family: &Family, f: Fun, lo: f64, hi: f64, max_bins: i64) -> Option<(i64, i64)> {
+    let at = |q: f64| {
+        f.kernel
+            .apply(f.inner.at(family.quantile(lo + q * (hi - lo))) / f.quantum)
+    };
     let (a, b) = (at(0.25), at(0.75));
     let limit = (1_u64 << 52) as f64;
-    if !a.is_finite() || !b.is_finite() || a.abs().max(b.abs()) >= limit || (a - b).abs() > 4096.0 {
+    if !a.is_finite() || !b.is_finite() || a.abs().max(b.abs()) >= limit || (a - b).abs() > max_bins as f64 {
         return None;
     }
     let (mut low, mut high) = (a.min(b) as i64, a.max(b) as i64);
@@ -2366,12 +2421,12 @@ fn nanosecond_bins(family: &Family, f: Fun, lo: f64, hi: f64) -> Option<(i64, i6
         if f.inner.scale > 0.0 { p - lo } else { hi - p }
     };
     loop {
-        let left = cdf(low as f64 - 0.5) > 0.0;
-        let right = cdf(high as f64 + 0.5) < hi - lo;
+        let left = cdf(f.kernel.upper_edge(low as f64 - 1.0) * f.quantum) > 0.0;
+        let right = cdf(f.kernel.upper_edge(high as f64) * f.quantum) < hi - lo;
         if !left && !right {
             return Some((low, high));
         }
-        if high - low >= 4096 {
+        if high - low >= max_bins {
             return None;
         }
         low -= i64::from(left);
@@ -2381,11 +2436,11 @@ fn nanosecond_bins(family: &Family, f: Fun, lo: f64, hi: f64) -> Option<(i64, i6
 
 /// Narrow supports use bin sums; wide supports use bounded quadrature.
 fn quantized_moments(family: &Family, f: Fun, lo: f64, hi: f64) -> Option<(f64, f64)> {
-    if let Some((low, high)) = nanosecond_bins(family, f, lo, hi) {
+    if let Some((low, high)) = nanosecond_bins(family, f, lo, hi, 4096) {
         let mut points = Vec::new();
         for n in low..=high {
-            let left = family.cdf(f.inner.inverse(n as f64 - 0.5));
-            let right = family.cdf(f.inner.inverse(n as f64 + 0.5));
+            let left = family.cdf(f.inner.inverse(f.kernel.upper_edge(n as f64 - 1.0) * f.quantum));
+            let right = family.cdf(f.inner.inverse(f.kernel.upper_edge(n as f64) * f.quantum));
             let mass = (right.max(left).min(hi) - right.min(left).max(lo)).max(0.0);
             points.push((f.outer.at(n as f64), mass));
         }
@@ -2504,14 +2559,12 @@ pub fn rounded(x: &Analytic, how: Rounding, budget: &mut Budget) -> OpResult<Val
         }
         let (a, b) = f.ends(family, lo, hi);
         if !a.is_finite() || !b.is_finite() {
-            return Err(unsupported("rounding an outcome whose values have no bound"));
+            return lazy_rounded(x, how, budget);
         }
         let (vmin, vmax) = (a.min(b), a.max(b));
         let steps: Vec<f64> = how.steps(vmin, vmax).take(MAX_PIECES + 1).collect();
         if pieces.len() + steps.len() > MAX_PIECES {
-            return Err(OpError::limit(format!(
-                "a continuous outcome with more than {MAX_PIECES} pieces is over the limit"
-            )));
+            return lazy_rounded(x, how, budget);
         }
         budget.work(steps.len() as u64 + 1)?;
         // Each step, as a coordinate of the draw, in increasing order.
@@ -2547,6 +2600,115 @@ pub fn rounded(x: &Analytic, how: Rounding, budget: &mut Budget) -> OpResult<Val
     }
     spend(&tiling, budget)?;
     x.with_type(tiling, true).value()
+}
+
+/// A lazy rounding transform for supports too broad to split into worlds.
+fn lazy_rounded(x: &Analytic, how: Rounding, budget: &mut Budget) -> OpResult<Value> {
+    let kernel = match how {
+        Rounding::Floor => Kernel::Floor,
+        Rounding::Ceil => Kernel::Ceil,
+        Rounding::Trunc => Kernel::Trunc,
+        Rounding::Round => Kernel::Round,
+    };
+    let mut start = 0.0;
+    let mut pieces = Vec::new();
+    for &(end, f) in &x.pieces {
+        let rounded = if f.integer_valued() {
+            f
+        } else {
+            compose(kernel, f, &x.family, start, end)?
+        };
+        pieces.push((end, rounded));
+        start = end;
+    }
+    spend(&pieces, budget)?;
+    x.with_type(pieces, true).value()
+}
+
+/// Floor whole time units without expanding a nanosecond lattice. Datetimes
+/// have already rounded their offsets, so preserve half-nanosecond boundaries.
+pub(crate) fn time_floor(x: &Analytic, shift: f64, unit: f64, budget: &mut Budget) -> OpResult<Value> {
+    let mut start = 0.0;
+    let mut pieces = Vec::new();
+    for &(end, f) in &x.pieces {
+        let scaled = f.then(1.0 / unit, shift / unit);
+        let g = if scaled.integer_valued() {
+            scaled
+        } else if scaled.kernel.rounded() && scaled.outer.scale.fract() == 0.0 {
+            // An integral lattice plus a fixed clock fraction: floor only
+            // the offset, retaining the existing rounding of the delay.
+            Fun {
+                outer: Affine {
+                    offset: scaled.outer.offset.floor(),
+                    ..scaled.outer
+                },
+                ..scaled
+            }
+        } else if f.kernel == Kernel::Nanosecond && f.outer.scale == 1.0 && f.outer.offset.fract() == 0.0 {
+            Fun {
+                kernel: Kernel::Ceil,
+                quantum: unit,
+                inner: Affine {
+                    scale: f.inner.scale,
+                    offset: f.inner.offset + f.outer.offset + shift + 0.5,
+                },
+                outer: Affine {
+                    scale: 1.0,
+                    offset: -1.0,
+                },
+            }
+        } else {
+            compose(Kernel::Floor, scaled, &x.family, start, end)?
+        };
+        pieces.push((end, g));
+        start = end;
+    }
+    spend(&pieces, budget)?;
+    x.with_type(pieces, true).value()
+}
+
+/// A periodic clock field. Split only coarse unit boundaries at CDF precision,
+/// preserving the axis and its restrictions; never enumerate nanoseconds.
+pub(crate) fn clock_field(x: &Analytic, modulus: f64, budget: &mut Budget) -> OpResult<Value> {
+    let mut pieces = Vec::new();
+    for (lo, hi, f) in x.segments() {
+        if pieces.last().map_or(0.0, |(end, _)| *end) < lo {
+            pieces.push((lo, Fun::constant(0.0)));
+        }
+        if let Some(c) = f.as_constant() {
+            pieces.push((hi, Fun::constant(c.rem_euclid(modulus))));
+            continue;
+        }
+        let (low, high) = nanosecond_bins(&x.family, f, lo, hi, MAX_PIECES as i64).ok_or_else(|| {
+            OpError::limit("analytic clock projection spans too many unit boundaries")
+                .help("use `@mode sample(runs: 10_000)` for a forecast this broad")
+        })?;
+        if pieces.len().saturating_add((high - low + 1) as usize) > MAX_PIECES {
+            return Err(OpError::limit("analytic clock projection exceeds the piece limit"));
+        }
+        budget.work((high - low + 1) as u64)?;
+        let mut cells = Vec::new();
+        for n in low..=high {
+            let a = x
+                .family
+                .cdf(f.inner.inverse(f.kernel.upper_edge(n as f64 - 1.0) * f.quantum))
+                .clamp(lo, hi);
+            let b = x
+                .family
+                .cdf(f.inner.inverse(f.kernel.upper_edge(n as f64) * f.quantum))
+                .clamp(lo, hi);
+            if a != b {
+                cells.push((a.max(b), Fun::constant(f.outer.at(n as f64).rem_euclid(modulus))));
+            }
+        }
+        cells.sort_by(|a, b| a.0.total_cmp(&b.0));
+        pieces.extend(cells);
+    }
+    if let Some(last) = pieces.last_mut() {
+        last.0 = 1.0;
+    }
+    spend(&pieces, budget)?;
+    x.with_type(pieces, true).value()
 }
 
 /// `min` or `max` of numbers and outcomes of one draw. As with numbers, each

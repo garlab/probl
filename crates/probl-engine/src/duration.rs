@@ -86,9 +86,7 @@ pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> Option<Op
                 let n = whole_nanos(d, budget)?;
                 let (days, remainder) = n.div_mod(&Integer::from(crate::dates::NANOS_PER_DAY))?;
                 if !remainder.is_zero() {
-                    return Err(OpError::new(
-                        "adding a duration to a date requires a whole number of 24-hour days",
-                    ));
+                    return Err(whole_days_error());
                 }
                 let days = if op == Sub { days.negated() } else { days };
                 days.to_i64()
@@ -158,9 +156,7 @@ fn whole_nanos(d: &Duration, budget: &mut Budget) -> OpResult<Integer> {
             budget.integer_work(n, &Integer::ONE, false)?;
             Ok(n.clone())
         }
-        None => Err(OpError::new(
-            "datetime arithmetic requires a whole number of nanoseconds",
-        )),
+        None => Err(whole_days_error()),
     }
 }
 
@@ -169,4 +165,13 @@ fn whole_nanos(d: &Duration, budget: &mut Budget) -> OpResult<Integer> {
 pub(crate) fn round_nanos(n: f64) -> f64 {
     let floor = n.floor();
     floor + if n - floor > 0.5 { 1.0 } else { 0.0 }
+}
+
+pub(crate) fn whole_days_error() -> OpError {
+    OpError::new("adding a duration to a date requires a whole number of 24-hour days")
+        .help("round explicitly, such as `start + days(round(x))`; use `datetime(start)` to retain fractional days")
+}
+
+pub(crate) fn day_count_hint(error: OpError) -> OpError {
+    error.help("date subtraction returns a duration; divide by '1d' for a day count, or use `div '1d'` when an int is required")
 }

@@ -663,8 +663,8 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "The distribution whose logarithm is `normal(mu, sigma)`. For an estimate, `a to b` is easier.",
         ),
         B::Uniform => doc(
-            "uniform(lo: float or date, hi: float or date) -> dist[float] or dist[date]",
-            "For numbers, a continuous uniform law with lo < hi. For two dates, every calendar day from lo through hi is equally likely, including endpoints; equal dates give one outcome. Date support respects outcome and work limits.",
+            "uniform(lo: float or date or datetime, hi: float or date or datetime) -> dist[float] or dist[date] or dist[datetime]",
+            "For numbers, a continuous uniform law with lo < hi. For two dates, every calendar day from lo through hi is equally likely, including endpoints; equal dates give one outcome. Date support respects outcome and work limits. Two datetimes give a continuous elapsed interval rounded to nanoseconds; endpoint nanoseconds have half-width bins.",
         ),
         B::Beta => doc(
             "beta(a: float, b: float) -> dist[float]",
@@ -695,7 +695,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Bins => doc("bins(d, n)", "Not implemented yet."),
         B::To => doc(
             "a to b",
-            "A 90% estimate with a < b. Positive numbers give a lognormal; two dates give a symmetric normal timing estimate rounded to days. Date endpoints are the underlying 5% and 95% points. Less than 1e-18 tail probability is omitted; meaningful probability outside years 1–9999 is rejected. Outcome and work limits apply.",
+            "A 90% estimate with a < b. Positive numbers give a lognormal; two dates or datetimes give a symmetric normal timing estimate rounded to days or nanoseconds. Calendar endpoints are the underlying 5% and 95% points. Date laws omit less than 1e-18 tail probability. Datetime laws retain analytic rounding; probability outside years 1–9999 at CDF precision is rejected. Outcome and work limits apply.",
         ),
         // Statistics and probabilities
         B::P => doc(

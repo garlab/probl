@@ -137,11 +137,7 @@ pub struct Factor {
     pub value: f64,
 }
 
-type FactorKey = (
-    &'static str,
-    Vec<Result<u64, Vec<(u64, (u8, u64, u64, u64, u64))>>>,
-    u64,
-);
+type FactorKey = (&'static str, Vec<Result<u64, Vec<(u64, crate::analytic::FunKey)>>>, u64);
 
 impl Factor {
     fn key(&self) -> FactorKey {
@@ -198,7 +194,7 @@ pub struct Likelihood {
 type Moments = Option<(f64, f64)>;
 
 /// An outcome's pieces and domain, which its moments are of.
-pub type MomentKey = (Vec<(u64, (u8, u64, u64, u64, u64))>, Vec<(u64, u64)>);
+pub type MomentKey = (Vec<(u64, crate::analytic::FunKey)>, Vec<(u64, u64)>);
 
 impl Clone for Likelihood {
     fn clone(&self) -> Likelihood {

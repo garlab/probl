@@ -121,7 +121,7 @@ const CASES: &[Case] = &[
     case("D", "let x ~ uniform(0, 3)\nreport floor(x)", Works, Works),
     case("D", "let x ~ uniform(0, 3)\nreport round(x)", Works, Works),
     // Not yet: infinitely many bins, and decimal places.
-    case("D", "let x ~ normal(0, 1)\nreport floor(x)", Unsupported, Works),
+    case("D", "let x ~ normal(0, 1)\nreport floor(x)", Works, Works),
     case("D", "let x ~ uniform(0, 3)\nreport round(x, 1)", Unsupported, Works),
     // E: nonlinear transforms of one latent.
     case("E", "let x ~ uniform(-1, 1)\nreport x * x", Works, Works),

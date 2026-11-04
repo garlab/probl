@@ -330,3 +330,18 @@ fn continuous_datetime_forecasts_export_typed_nonconstant_summaries() {
         assert!(out.text().contains("sd"));
     }
 }
+
+#[test]
+fn analytic_date_forecasts_export_dates_without_numeric_or_datetime_moments() {
+    let out = run("let t='2027-01-31'; let x~normal(30,5); report t+days(round(x)); report date(datetime(t)+x*'1d')");
+    let doc = document(&out);
+    for report in doc["reports"].as_array().unwrap() {
+        let g = &report["groups"][0];
+        assert_eq!(g["kind"], "date");
+        assert_eq!(g["summary"]["deterministic"], false);
+        assert!(g["summary"]["mean"].is_null());
+        for q in g["summary"]["quantiles"].as_array().unwrap() {
+            assert_eq!(q["value"]["kind"], "date");
+        }
+    }
+}

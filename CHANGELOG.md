@@ -6,34 +6,23 @@ All notable changes to the published crates are recorded here. The format follow
 
 ### Added
 
-- Calendar queries `day_of_year`, `quarter`, `iso_week` and `iso_week_year`; inclusive uniform date distributions and normal 90% date estimates with `to`.
-- Explicit `date(datetime)` and `datetime(date)` conversions, dropping the clock or choosing midnight, with finite-distribution lifting.
+- Single-quoted date and datetime literals, validated during compilation and usable in match patterns. `datetime` retains nanosecond precision, accepts `Z` and numeric offsets by normalizing to UTC, and stores no timezone metadata. Calendar and clock helpers preserve precision and check bounds.
+- `parse_date(text)` and `parse_datetime(text)` for runtime parsing, plus `datetime(year, month, day, hour, minute, second, nanosecond?)` for construction from integer parts.
+- Typed `duration` and `squared_duration` values, unit-bearing literals and constructors, dimensional arithmetic, and explicit numeric conversion by dividing by a unit. Datetime means preserve nanoseconds; SD and variance return typed durations and squared durations, including fractional nanoseconds.
+- Temporal report summaries with shared duration units, numeric display rounding, and clock precision matched to the spread. Sampled means include typed standard errors; canonical JSON values and `str()` retain their full precision.
+- Continuous datetime forecasts in sampling and enumeration, with lazy nanosecond rounding, typed summaries, and deadline probabilities. Lazy rounding of unbounded draws supports whole-day forecasts such as `start + days(round(x))`; analytic datetimes support date conversion and clock projections within the analytic piece limits.
+- Calendar queries `day_of_year`, `quarter`, `iso_week` and `iso_week_year`; inclusive uniform date distributions and normal 90% date estimates with `to`. Datetime intervals use continuous uniform or normal delays rounded to nanoseconds.
+- Explicit `date(datetime)` and `datetime(date)` conversions, dropping the clock or choosing midnight, including analytic forecasts and finite distributions.
 - A captured `now` datetime alongside `today`, `--now` for replay, and library/WASM snapshot inputs and output metadata. `--today` alone chooses midnight; conflicting snapshots are rejected.
-
-- `div` and `mod` on matching durations or squared durations: extract a whole-unit integer count or retain a unit-bearing remainder, following numeric floor-division sign rules.
-
-- Playground charts for date, datetime, duration and squared-duration reports and keys, with exact temporal inspection, units, compatible overlays and nanosecond-preserving coordinates. Single-point forecasts show their percentile ranges.
-
-- Typed `duration` and `squared_duration` values, unit-bearing literals and constructors, checked dimensional arithmetic, and explicit numeric conversion by dividing by a unit. Datetime means preserve nanoseconds; SD and variance return typed durations and squared durations. Report moments and JSON retain their units, including fractional nanoseconds.
-
-- Single-quoted date and datetime literals, validated during compilation and usable in match patterns. `datetime` retains nanosecond precision, accepts `Z` and numeric offsets by normalizing to UTC, and stores no timezone metadata. It supports typed containers, input schemas, ordering, medians and exact report quantiles. Calendar and clock helpers preserve precision and check bounds.
-- `parse_date(text)` and `parse_datetime(text)` for explicit runtime parsing, plus `datetime(year, month, day, hour, minute, second, nanosecond?)` for construction from integer parts.
+- `div` and `mod` on matching durations or squared durations: extract a whole-unit integer count or retain a remainder with its units, following numeric floor-division sign rules.
+- Playground charts for temporal reports and keys, with exact inspection, units, compatible overlays and nanosecond-preserving coordinates. Single-point forecasts show their percentile ranges.
 
 ### Changed
 
-- Subtracting two dates now returns an exact duration, matching datetime subtraction. Each calendar day is 24 hours; divide the result by `'1d'` to obtain a numeric day count.
-
-- Temporal report summaries use shared duration units and numeric display rounding, with clock precision matched to the spread. Sampled datetime and duration means include typed standard errors; canonical JSON values and `str()` remain unchanged.
-
-- The minimum Rust version is now 1.99, and development uses the stable toolchain. Rust 1.85 source builds are no longer supported.
-
-- `days(n)` and `weeks(n)` now produce durations without rounding. Adding a duration to a date requires whole 24-hour days; adding one to a datetime rounds to the nearest nanosecond, ties earlier.
-
-- `date(text)` is removed: write constant dates as `'YYYY-MM-DD'` and use `parse_date` for runtime text. The three-integer constructor remains. Dates and datetimes inside collections print as single-quoted literals; scalar display stays unquoted. Bundled examples and fixtures use the new syntax.
-
-### Fixed
-
-- Continuous duration delays now work with datetimes in sampling and analytic enumeration, with nanosecond rounding, typed report summaries and deadline probabilities.
+- Subtracting two dates returns an exact duration, matching datetime subtraction. Each calendar day is 24 hours; divide by `'1d'` for a numeric day count or use `div '1d'` for an integer. Comparison and indexing errors include migration guidance.
+- The minimum Rust version is 1.99, and development uses the stable toolchain. Rust 1.85 source builds are no longer supported.
+- `days(n)` and `weeks(n)` produce durations without rounding. Adding a duration to a date requires whole 24-hour days; adding one to a datetime rounds to the nearest nanosecond, ties earlier.
+- `date(text)` is removed: write constant dates as `'YYYY-MM-DD'` and use `parse_date` for runtime text. The three-integer constructor remains. Dates and datetimes inside collections print in single quotes; scalar display stays unquoted. Bundled examples and fixtures use the new syntax.
 
 ## [0.4.0] - 2026-10-29
 

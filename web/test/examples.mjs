@@ -72,6 +72,10 @@ for (const [source, report_summaries] of [
 console.log('same  configurable summaries and validation in native/WASM');
 
 for (const request of [
+  {source:"let start='2027-01-31'; let x~normal(30,5); let finish=start+days(round(x)); let arrival=datetime(start)+x*'1d'; report finish; report date(arrival); report arrival.hour(); report typeof finish; let morning=datetime(finish)+'9h 30m'; report date(morning)==finish; report morning.hour()==9 and morning.minute()==30"},
+  {source:"@mode sample(runs:400,seed:42)\nlet start='2027-01-31'; let x~normal(30,5); report start+days(round(x)); report date(datetime(start)+x*'1d')"},
+  {source:"let a='2027-01-31T09:00:00.000000001'; report uniform(a,a+'1h'); report a to a+'1h'; let x~uniform(a,a+'1h'); report x.hour()"},
+  {source:"let t='9999-01-31T23:59:59.999999999'; let x~normal(0,1); let arrival=t+x*'1ns'; report arrival.second()==0; report arrival.nanosecond()==0"},
   {source:"let start='2027-01-31T09:00:00.000000001'; let x~normal(30,5); report start+x*'1m'; report minutes(x); report start+x*'1m' < start+'30m'"},
   {source:"@mode sample(runs:400,seed:42)\nlet start='2027-01-31T09:00:00.000000001'; let x~normal(30,5); report start+x*'1m'; report minutes(x)"},
   {source:"let start='9999-01-01T00:00:00.000000001'; let x~uniform(-2,2); let finish=start+x*'1ns'; observe finish==start; report x; report finish; report x<0"},

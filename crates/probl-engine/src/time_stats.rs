@@ -11,6 +11,9 @@ pub struct Moments {
 
 pub fn kind(outcomes: &[(Value, f64)]) -> Option<&'static str> {
     let name = crate::analytic_time::kind(&outcomes.first()?.0)?.name();
+    if name == "date" {
+        return None;
+    }
     outcomes
         .iter()
         .all(|(v, _)| crate::analytic_time::kind(v).map(|k| k.name()) == Some(name))

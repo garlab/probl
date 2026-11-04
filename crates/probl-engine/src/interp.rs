@@ -3274,6 +3274,7 @@ impl<'p> Engine<'p> {
             (TypeSpec::Bool, Value::Bool(_) | Value::Event(_)) => true,
             (TypeSpec::Str, Value::Str(_)) => true,
             (TypeSpec::Date, Value::Date(_)) => true,
+            (TypeSpec::Date, Value::Analytic(a)) => matches!(a.time, Some(crate::analytic_time::Kind::Date(_))),
             (TypeSpec::DateTime, Value::DateTime(_)) => true,
             (TypeSpec::DateTime, Value::Analytic(a)) => matches!(a.time, Some(crate::analytic_time::Kind::DateTime(_))),
             (TypeSpec::Duration, Value::Analytic(a)) => a.time == Some(crate::analytic_time::Kind::Duration(false)),
@@ -5143,6 +5144,7 @@ fn handles_analytic(b: Builtin, values: &[Value]) -> bool {
         | B::Milliseconds
         | B::Microseconds
         | B::Nanoseconds => true,
+        B::Date | B::DateTime | B::Hour | B::Minute | B::Second | B::Nanosecond => values.len() == 1,
         B::Count => values.len() == 1,
         // A key is compared with others, so it can't be an outcome; an index
         // is a number, which an outcome isn't.
