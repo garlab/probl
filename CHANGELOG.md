@@ -15,6 +15,8 @@ All notable changes to the published crates are recorded here. The format follow
 
 ### Changed
 
+- Subtracting two dates now returns an exact duration, matching datetime subtraction. Each calendar day is 24 hours; divide the result by `'1d'` to obtain a numeric day count.
+
 - Temporal report summaries use shared duration units and numeric display rounding, with clock precision matched to the spread. Sampled datetime and duration means include typed standard errors; canonical JSON values and `str()` remain unchanged.
 
 - The minimum Rust version is now 1.99, and development uses the stable toolchain. Rust 1.85 source builds are no longer supported.

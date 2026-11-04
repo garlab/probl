@@ -6,6 +6,12 @@ report '0001-01-01'.weekday()
 report '9999-12-31'.end_of_month()
 report '1969-12-31' + days(1)
 report '2024-03-01' - '2024-02-28'
+let elapsed: duration = '2024-03-01' - '2024-02-28'
+report [typeof elapsed, elapsed, elapsed / '1d']
+report '2024-02-28' - '2024-03-01'
+report '2024-02-28' - '2024-02-28'
+report '9999-12-31' - '0001-01-01'
+report one_of(['2024-02-28', '2024-03-01']) - '2024-02-28'
 report '2024-01-31'.add_months(one_of([-1, 1, 2]))
 report '2024-02-29'.add_years(one_of([1, 4]))
 report date(2024, 2, one_of([28, 29]))

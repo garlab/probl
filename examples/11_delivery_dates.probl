@@ -23,5 +23,5 @@ report delivered.is_workday(holidays) as "arrives on an open day"
 # forecast date                2026-09-29
 # delivery date                5% 2026-10-05 · median 2026-10-06 · 95% 2026-10-08
 # on time                      87.50%
-# calendar days to delivery    mean 7.20 · sd 1.17 · 5% 6 · median 7 · 95% 9 · 6 █▅▆▂▂ 10
+# calendar days to delivery    mean 7.20d · sd 1.17d · 5% 6d · median 7d · 95% 9d
 # arrives on an open day       100.00%

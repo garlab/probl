@@ -86,7 +86,7 @@ both_modes! {
             report [true,false,true].sort((a,b)->if a==b {0} else if a {1} else {-1}) == [false,true,true]
             report [3,1,2].sort((a,b)->(a-b)*10^400) == [1,2,3]
             report [3,1,2].sort((a,b)->(a-b)*1e-300) == [1,2,3]
-            report [date(2026,1,2),date(2025,1,3)].sort((a,b)->a-b) == [date(2025,1,3),date(2026,1,2)]
+            report [date(2026,1,2),date(2025,1,3)].sort((a,b)->(a-b)/'1d') == [date(2025,1,3),date(2026,1,2)]
             report ["bbb","a","cc"].sort((a,b)->len(a)-len(b)) == ["a","cc","bbb"]
         "#,
         );

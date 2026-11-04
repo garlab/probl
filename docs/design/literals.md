@@ -56,6 +56,7 @@ The parsers share literal validation and offset normalization. Invalid text prod
 - `hour`, `minute`, `second` and `nanosecond` extract clock components.
 - `add_hours`, `add_minutes`, `add_seconds` and `add_nanoseconds` shift a datetime by an integer count, carrying across calendar boundaries. Each day is exactly 24 hours; no daylight-saving transitions apply.
 - Datetime arithmetic also accepts typed durations; subtraction of datetimes produces an exact duration. Bare numeric offsets are rejected, and out-of-range or fractional-nanosecond results fail.
+- Subtraction of dates also produces an exact duration, with each calendar day represented as 24 hours. Divide by `'1d'` to obtain a numeric day count.
 - Ordering, extrema, CDFs, quantiles and low/high medians work on homogeneous datetime populations. Midpoint medians round half a nanosecond toward the earlier value. Datetime means round once to the nearest nanosecond, ties earlier. Standard deviation and variance use the unrounded mean and return duration and squared_duration.
 - Reports retain exact datetime quantiles and medians, including typed canonical strings in JSON. The playground keeps datetime charts in the text view rather than converting nanoseconds through JavaScript numbers.
 

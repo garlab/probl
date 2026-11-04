@@ -50,6 +50,30 @@ fn units_literals_construction_identity_and_dimensions() {
     );
 }
 #[test]
+fn date_differences_are_exact_durations_in_both_modes() {
+    facts(
+        r#"
+        let start = '2024-02-28'
+        let end = '2024-03-01'
+        let elapsed: duration = end - start
+        report typeof elapsed == "duration" and elapsed == '2d' and elapsed == hours(48)
+        report elapsed != 2 and elapsed / '1d' == 2
+        report start - end == '-2d' and start - start == '0s'
+        report start + elapsed == end and end - elapsed == start
+        report elapsed == '2024-03-01T00:00:00' - '2024-02-28T00:00:00'
+        report '1970-01-01' - '1969-12-31' == '1d'
+        let span = '9999-12-31' - '0001-01-01'
+        report span == days(3652058) and span + '0001-01-01' == '9999-12-31'
+        report '9999-12-31' + ('0001-01-01' - '9999-12-31') == '0001-01-01'
+        let delays: dist[duration] = one_of([start, end]) - start
+        report typeof delays == "dist[duration]" and pmf(delays, '0d') == 50% and pmf(delays, '2d') == 50%
+        report pmf(end - one_of([start, end]), '2d') == 50%
+        let arrival ~ one_of([start, end])
+        report start + (arrival - start) == arrival
+    "#,
+    );
+}
+#[test]
 fn datetime_arithmetic_checks_resolution_and_date_bounds() {
     facts(
         r#"
@@ -131,6 +155,7 @@ fn time_values_obey_integer_and_work_limits() {
         "report parse_duration(\"18446744073709551616ns\")",
         "report '18446744073709551616ns'",
         "report '9999-12-31T00:00:00' - '0001-01-01T00:00:00'",
+        "report '9999-12-31' - '0001-01-01'",
     ] {
         assert_eq!(
             exec_raw(source, &options).unwrap_err().kind,

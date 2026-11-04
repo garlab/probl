@@ -142,7 +142,7 @@ report delivery <= today + weeks(1)
 report delivery.is_workday(holidays)
 ```
 
-Adding or subtracting an integer shifts by calendar days; subtracting two dates gives an integer day count. `days(n)` and `weeks(n)` construct fixed durations without rounding; adding one to a date requires whole 24-hour days. `add_workdays(d, n, holidays?)` counts Monday–Friday, excluding any dates in the optional holiday list. It does not count the starting date; a negative count goes backwards and zero leaves the date unchanged. No national holidays are assumed. `weekday(d)` returns an English name such as `"Monday"`.
+Subtracting two dates gives a duration, just as subtracting two datetimes does: `'2024-03-01' - '2024-02-28'` is `'2d'`. Divide by `'1d'` for a numeric day count. `days(n)` and `weeks(n)` construct fixed durations without rounding; adding one to a date requires whole 24-hour days. Adding or subtracting an integer still shifts by calendar days. `add_workdays(d, n, holidays?)` counts Monday–Friday, excluding any dates in the optional holiday list. It does not count the starting date; a negative count goes backwards and zero leaves the date unchanged. No national holidays are assumed. `weekday(d)` returns an English name such as `"Monday"`.
 
 ```probl
 let anchor = date(2027, 1, 31)

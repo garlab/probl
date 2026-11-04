@@ -549,7 +549,10 @@ fn binary_plain(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResul
     if !is_comparison(op)
         && matches!(
             (a, b),
-            (Value::Duration(_), _) | (_, Value::Duration(_)) | (Value::DateTime(_), Value::DateTime(_))
+            (Value::Duration(_), _)
+                | (_, Value::Duration(_))
+                | (Value::Date(_), Value::Date(_))
+                | (Value::DateTime(_), Value::DateTime(_))
         )
         && let Some(result) = crate::duration::binary(op, a, b, budget)
     {
@@ -614,7 +617,6 @@ fn add(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
 
 fn sub(a: &Value, b: &Value, budget: &mut Budget) -> OpResult<Value> {
     match (a, b) {
-        (Value::Date(x), Value::Date(y)) => Ok(Value::Int((*x as i64 - *y as i64).into())),
         (Value::Date(d), n @ (Value::Int(_) | Value::Float(_))) => {
             match integer(n, "date offset", budget)?.negated().to_i64() {
                 Some(m) => date_plus(*d, m),

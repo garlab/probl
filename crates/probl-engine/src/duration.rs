@@ -39,13 +39,17 @@ pub fn construct(n: &Value, scale: u64, budget: &mut Budget) -> OpResult<Value> 
     from_number(ops::binary(BinOp::Mul, n, &Value::Int(scale.into()), budget)?, false)
 }
 
-/// Some result when at least one operand is a duration, or both are datetimes.
+/// Some result when at least one operand is a duration, or matching dates or
+/// datetimes are subtracted.
 pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> Option<OpResult<Value>> {
     use BinOp::*;
-    if let (Value::DateTime(a), Value::DateTime(b)) = (a, b)
-        && op == Sub
-    {
-        let n = Integer::from(a.total_nanos() - b.total_nanos());
+    let elapsed = match (op, a, b) {
+        (Sub, Value::Date(a), Value::Date(b)) => Some((i128::from(*a) - i128::from(*b)) * crate::dates::NANOS_PER_DAY),
+        (Sub, Value::DateTime(a), Value::DateTime(b)) => Some(a.total_nanos() - b.total_nanos()),
+        _ => None,
+    };
+    if let Some(nanos) = elapsed {
+        let n = Integer::from(nanos);
         if let Err(error) = budget.integer_allocation(n.bits(), 1) {
             return Some(Err(error));
         }
