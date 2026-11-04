@@ -132,7 +132,7 @@ The input is still built eagerly; `any` saves predicate calls, not construction 
 
 Dates are immutable Gregorian calendar dates, without a time of day or timezone. Construct one with `'2027-01-31'` or `date(2027, 1, 31)`. Years run from 1 through 9999. Single-quoted literals are checked during compilation; parse runtime text explicitly with `parse_date(s)`, which requires exactly `YYYY-MM-DD`. Single quotes never hold strings.
 
-`today` is a value captured once at the start of execution, shared by every world, function and nested `simulate`. It never advances while a model runs. The command line and playground use the UTC date by default. Pin it with `probl run model.probl --today 2026-09-29` to reproduce a forecast; `--stats` records the date used. A REPL session keeps its initial date throughout the session. Like the math constants, `today` can be hidden by a program's own name.
+`now` is a datetime captured once at the start of execution; `today` is its calendar date. Both are shared by every world, function and nested `simulate`, and never advance while a model runs. The command line and playground capture UTC. Pin the snapshot with `probl run model.probl --now 2027-01-31T09:30:00Z`; offsets normalize to UTC as in datetime literals. `--today 2026-09-29` alone sets `now` to midnight on that date. When both are supplied, their normalized dates must agree. `--stats` records both values. A REPL session keeps its initial snapshot throughout the session. Like the math constants, these names can be hidden by a program's own bindings.
 
 ```probl
 let holidays = ['2026-10-02']
@@ -157,6 +157,17 @@ report anchor                  # still 2027-01-31
 
 `add_months` and `add_years` clamp to the last valid day of the target month. Consequently, adding one month twice may differ from adding two months once. For recurring schedules, compute each date from the original anchor, as in the [invoice example](../examples/12_invoice_calendar.probl). These functions, component extraction and workday helpers also lift over finite distributions. Month/year/workday counts and constructor components require ints; even `1.0` needs an explicit `int(…)` conversion. All transformations return new dates and reject results outside the supported range.
 
+`day_of_year(d)` counts from January 1 = 1 through 365 or 366. `quarter(d)` returns 1–4. `iso_week(d)` gives ISO week 1–53, and `iso_week_year(d)` gives its year, which may differ from `year(d)` near New Year. These helpers accept dates and datetimes.
+
+`uniform(start, end)` on two dates gives every whole date between the endpoints equal probability, including both endpoints. `start to end` on dates expresses a symmetric normal estimate with the endpoints as its underlying 5% and 95% points, rounded to whole calendar days. Thus a rounded date can lie outside the stated 90% interval. Date estimates require `start < end`; uniform dates allow equal endpoints. These are discrete distributions in both enumeration and sampling and obey outcome/work limits. Estimates omit less than 1e-18 total tail probability and reject meaningful probability outside years 1–9999.
+
+```probl
+let arrival = '2027-01-01' to '2027-01-11'
+report arrival
+report P(arrival <= '2027-01-08')
+report uniform('2024-02-28', '2024-03-01') # includes February 29
+```
+
 ### Dates with a clock time
 
 A `datetime` has a date and a clock time with nanosecond precision. An explicit `Z` or `±HH:MM` offset normalizes to UTC, then disappears; without a suffix, the written fields are kept. No machine timezone or daylight-saving rules are involved.
@@ -171,6 +182,8 @@ report '2027-01-01T00:00:00.000000001'   # preserves all nine fractional digits
 ```
 
 `datetime(year, month, day, hour, minute, second, nanosecond?)` builds from integer parts; the final part defaults to zero. `parse_datetime(s)` parses runtime text with the same validation as literals. Seconds are required; fractions have one to nine digits. Years are 1–9999, hours 0–23 and minutes/seconds 0–59, with no leap seconds. An offset that moves the result outside the year range is an error.
+
+Convert explicitly with `datetime(d)` to get midnight on a date, or `date(t)` to discard a datetime's clock fields after offset normalization. Both preserve an input already of the requested type, and lift over finite distributions. They never parse strings; use `parse_date` and `parse_datetime` for text. For a time on an existing date, use `datetime(d) + '9h 30m'`.
 
 Use `add_days`, `add_hours`, `add_minutes`, `add_seconds` or `add_nanoseconds` for explicit units. The calendar and workday helpers also accept datetimes and preserve their clock fields. Values compare chronologically after normalization and work as map keys, distribution outcomes and match patterns. Quantiles and medians preserve nanosecond precision; a midpoint tie chooses the earlier nanosecond. Datetime means preserve nanosecond precision; standard deviations and variances carry duration units. Nested dates and datetimes print in single quotes; scalar reports and `str` omit the quotes.
 
@@ -1086,11 +1099,11 @@ From loosest to tightest binding:
 | Math | `abs` `min` `max` `clamp` `floor` `ceil` `trunc` `round(x, digits?)` `int` `float` `sqrt` `cbrt` `hypot(x, y)` `exp` `exp2` `expm1` `ln` `log1p` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `sinh` `cosh` `tanh` `asinh` `acosh` `atanh` |
 | Integer and special functions | `choose(n, k)` `factorial(n)` `gcd(a, b)` `lcm(a, b)` `euler_phi(n)` `prime_factors(n)` `is_prime(n)` `is_squarefree(n)` `divisors(n)` `primes(lo?, hi)` `next_prime(n)` `prev_prime(n)` `isqrt(n)` `mod_pow(b, e, m)` `mod_inverse(a, m)` `ln_gamma(x)` `erf(x)` `erfc(x)` |
 | Complex numbers | `complex(re, im?)` `real(z)` `imag(z)` `conj(z)` `abs(z)` `abs2(z)` `arg(z)` `cis(theta)` |
-| Constants | `pi` `e` `euler_gamma` `today` `env`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
+| Constants | `pi` `e` `euler_gamma` `today` `now` `env`; a variable, variant or function of the program's with the same name hides one, so `let e = 5` still works |
 | Collections | `list` `set` `bag` `len` `slice(xs, start, end?)` `combinations(xs, n)` `push` `pop` `insert` `remove` `get(key, default)` `keys` `values` `map` `filter` `reduce` `sum` `count` `any(xs, test)` `minimum` `maximum` `highest(n, compare?)` `lowest(n, compare?)` `sort` `sort_desc` `reverse` `enumerate` `zip` |
 | Text | `str` `upper` `lower` `trim(s, chars?)` `trim_start(s, chars?)` `trim_end(s, chars?)` `starts_with` `ends_with` `chars` `split` `join` |
 | Datetimes | `'2027-01-31T09:30:00Z'`, `datetime(year, month, day, hour, minute, second, nanosecond?)`, `parse_datetime(text)`; `add_days` `add_hours` `add_minutes` `add_seconds` `add_nanoseconds` `hour` `minute` `second` `nanosecond`; calendar helpers also apply |
-| Dates | `'2027-01-31'`, `date(year, month, day)` or `parse_date(text)`; `days(n)` `weeks(n)` `add_workdays(d, n, holidays?)` `is_workday(d, holidays?)` `weekday(d)` `add_months(d, n)` `add_years(d, n)` `start_of_month(d)` `end_of_month(d)` `year(d)` `month(d)` `day(d)` |
+| Dates | `'2027-01-31'`, `date(year, month, day)` or `parse_date(text)`; `days(n)` `weeks(n)` `add_workdays(d, n, holidays?)` `is_workday(d, holidays?)` `weekday(d)` `add_months(d, n)` `add_years(d, n)` `start_of_month(d)` `end_of_month(d)` `year(d)` `month(d)` `day(d)` `day_of_year(d)` `quarter(d)` `iso_week(d)` `iso_week_year(d)` |
 | Debugging | `print` |
 
 \* Planned, not built yet.

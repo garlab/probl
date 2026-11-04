@@ -6,6 +6,10 @@ All notable changes to the published crates are recorded here. The format follow
 
 ### Added
 
+- Calendar queries `day_of_year`, `quarter`, `iso_week` and `iso_week_year`; inclusive uniform date distributions and normal 90% date estimates with `to`.
+- Explicit `date(datetime)` and `datetime(date)` conversions, dropping the clock or choosing midnight, with finite-distribution lifting.
+- A captured `now` datetime alongside `today`, `--now` for replay, and library/WASM snapshot inputs and output metadata. `--today` alone chooses midnight; conflicting snapshots are rejected.
+
 - `div` and `mod` on matching durations or squared durations: extract a whole-unit integer count or retain a unit-bearing remainder, following numeric floor-division sign rules.
 
 - Playground charts for date, datetime, duration and squared-duration reports and keys, with exact temporal inspection, units, compatible overlays and nanosecond-preserving coordinates. Single-point forecasts show their percentile ranges.

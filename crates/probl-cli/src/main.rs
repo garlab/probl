@@ -2,7 +2,7 @@
 
 use clap::{Parser, Subcommand, ValueEnum};
 use probl::__internal::{EngineChecks, Symbolic, diagrams, engine_checks};
-use probl::{Cancel, Date, ErrorKind, FailureMode, Files, Limits, LocalFiles, Options, Program, Snapshots};
+use probl::{Cancel, Date, DateTime, ErrorKind, FailureMode, Files, Limits, LocalFiles, Options, Program, Snapshots};
 use probl_cli::parse_size;
 use probl_engine::data::{self, InputLimits};
 use probl_engine::report::thousands;
@@ -64,9 +64,12 @@ impl FormatArg {
 #[derive(clap::Args)]
 struct RunArgs {
     file: PathBuf,
-    /// Pin the execution-date snapshot (`today`); defaults to the UTC date at launch.
+    /// Pin `today`; without --now, use midnight on this date. Defaults to the captured UTC date.
     #[arg(long, value_parser = parse_execution_date, value_name = "YYYY-MM-DD")]
     today: Option<Date>,
+    /// Pin the execution datetime (`now`), deriving `today`; UTC offsets are accepted.
+    #[arg(long, value_name = "DATETIME")]
+    now: Option<DateTime>,
     /// Set a variable in the program's `env`, in place of the process's (repeatable).
     #[arg(long = "env", value_parser = parse_env_var, value_name = "NAME=VALUE")]
     env: Vec<(String, String)>,
@@ -181,6 +184,7 @@ fn main() -> ExitCode {
             let RunArgs {
                 file,
                 today,
+                now,
                 env,
                 fractions,
                 summaries,
@@ -206,15 +210,23 @@ fn main() -> ExitCode {
                 no_solve,
                 symbolic,
             } = *args;
-            let today = match today.map(Ok).unwrap_or_else(execution_date) {
+            let now = match now
+                .or_else(|| today.map(Date::at_midnight))
+                .map(Ok)
+                .unwrap_or_else(execution_datetime)
+            {
                 Ok(d) => d,
                 Err(e) => {
                     eprintln!("error: {e}");
                     return ExitCode::FAILURE;
                 }
             };
+            if today.is_some_and(|d| d != now.date()) {
+                eprintln!("error: --today must match the calendar date of --now");
+                return ExitCode::FAILURE;
+            }
             let mut options = environment(Options::new(), &env)
-                .today(today)
+                .now(now)
                 .fractions(fractions)
                 .conjugate(!no_conjugate);
             let mut configured = std::collections::BTreeSet::new();
@@ -370,8 +382,8 @@ fn environment(options: Options, given: &[(String, String)]) -> Options {
 }
 
 /// The CLI reads the clock once. Neither the compiler nor engine reads it.
-fn execution_date() -> Result<Date, String> {
-    Date::today_utc().ok_or_else(|| "the system clock is outside the supported date range".to_string())
+fn execution_datetime() -> Result<DateTime, String> {
+    DateTime::now_utc().ok_or_else(|| "the system clock is outside the supported date range".to_string())
 }
 
 fn color() -> bool {
@@ -439,6 +451,9 @@ fn run_file(path: &Path, options: Options, cancel: Option<&Cancel>, stats: bool)
             if stats {
                 if let Some(today) = outcome.today() {
                     eprintln!("execution date: {today} (UTC default; --today overrides it)");
+                }
+                if let Some(now) = outcome.now() {
+                    eprintln!("execution datetime: {now} (UTC default; --now overrides it)");
                 }
                 let s = outcome.stats();
                 let mut line = format!(
@@ -601,7 +616,7 @@ fn ir_file(path: &Path) -> ExitCode {
 /// A session is a growing program: each input is appended and the whole
 /// program runs again, printing only the reports the new input added.
 fn repl() -> ExitCode {
-    let today = match execution_date() {
+    let now = match execution_datetime() {
         Ok(d) => d,
         Err(e) => {
             eprintln!("error: {e}");
@@ -621,8 +636,8 @@ fn repl() -> ExitCode {
     // running the session again doesn't change earlier bindings. Standard
     // input is the session, not data.
     let mut files = Snapshots::new(LocalFiles::new("."));
-    // One date and one environment for the whole session.
-    let options = environment(Options::new().today(today), &[]);
+    // One datetime and one environment for the whole session.
+    let options = environment(Options::new().now(now), &[]);
     loop {
         let mut input = String::new();
         let mut prompt = "probl> ";

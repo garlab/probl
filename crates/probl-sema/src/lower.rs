@@ -2761,6 +2761,7 @@ impl<'a> Lowerer<'a> {
             return match c.value() {
                 Some(value) => lit(Lit::FloatConstant(value), span),
                 None if c == Constant::Env => builtin(Builtin::RunEnv, vec![], span),
+                None if c == Constant::Now => builtin(Builtin::RunNow, vec![], span),
                 None => builtin(Builtin::RunDate, vec![], span),
             };
         }
@@ -3226,9 +3227,11 @@ impl<'a> Lowerer<'a> {
 
     fn check_arity(&mut self, b: Builtin, n: usize, span: Span) {
         let (min, max) = b.arity();
-        if n < min || n > max {
+        if !b.accepts_arity(n) {
             let expected = if b == Builtin::Date {
-                "three integers (year, month, day)".to_string()
+                "a date/datetime or three integers (year, month, day)".to_string()
+            } else if b == Builtin::DateTime {
+                "a date/datetime or six to seven integer components".to_string()
             } else if min == max {
                 format!("{min} argument{}", plural(min))
             } else if max == usize::MAX {
@@ -3244,12 +3247,6 @@ impl<'a> Lowerer<'a> {
                     if n == 1 { "was" } else { "were" }
                 ),
             );
-            if b == Builtin::Date && n == 1 {
-                self.diags
-                    .last_mut()
-                    .unwrap()
-                    .help("write a constant date as 'YYYY-MM-DD'; use `parse_date(text)` for runtime text");
-            }
         }
     }
 

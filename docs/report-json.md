@@ -26,6 +26,10 @@ The document contains `schema_version: 1`, `run`, `failures`, and `reports`.
 Consumers must check the version and tolerate additional fields in version 1.
 Removing fields or changing their meaning requires a new schema version.
 
+`run.today` and `run.now` record the canonical date and datetime snapshot, or
+null when the host supplies neither. `now` is additive; older version-1 documents
+may omit it. Replaying `now` derives `today`; replaying only `today` chooses midnight.
+
 Reports are in source order, including unreached report sites:
 
 | Field | Meaning |

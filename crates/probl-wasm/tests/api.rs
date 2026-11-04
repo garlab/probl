@@ -37,6 +37,33 @@ fn execution_date_is_supplied_by_the_host_and_returned_for_replay() {
 }
 
 #[test]
+fn datetime_snapshots_normalize_replay_and_survive_partial_results() {
+    for source in [
+        "report now; report date(now)==today",
+        "@on_error partial\nlet n~d2; report now; report 1/(n-1)",
+    ] {
+        let (out, _) = run(json!({"source":source,"now":"2027-01-01T00:15:00.123456789+01:00"}));
+        assert_eq!(out["now"], "2026-12-31T23:15:00.123456789");
+        assert_eq!(out["today"], "2026-12-31");
+        assert_eq!(out["reports"]["run"]["now"], out["now"]);
+        assert_eq!(out["reports"]["run"]["today"], out["today"]);
+        let (replay, _) = run(json!({"source":source,"now":out["now"]}));
+        assert_eq!(out["output"], replay["output"]);
+        assert_eq!(out["reports"], replay["reports"]);
+    }
+    let (out, _) = run(json!({"source":"report now","today":"2024-02-29"}));
+    assert_eq!(out["now"], "2024-02-29T00:00:00");
+    for request in [
+        json!({"source":"report now"}),
+        json!({"source":"report now","now":null}),
+        json!({"source":"report now","now":"2024-02-29"}),
+        json!({"source":"report now","now":"2024-03-01T00:00:00","today":"2024-02-29"}),
+    ] {
+        assert!(run(request).0["error"].is_object());
+    }
+}
+
+#[test]
 fn the_environment_is_supplied_by_the_host() {
     let source = "report env.get(\"REGION\", \"eu\") as \"region\"";
     let (out, _) = run(json!({ "source": source, "env": { "REGION": "us" } }));

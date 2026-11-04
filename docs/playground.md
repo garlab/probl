@@ -17,6 +17,8 @@ Open `http://localhost:8000`. The development server rebuilds when page sources,
 
 `bun run build` generates `web/dist`. The build compiles `probl-wasm` with the workspace's `wasm` profile, bundles JavaScript with Bun and renders `docs/language-overview.md` as the guide. Complete Probl snippets get a button to load them into the editor. Built-in documentation comes from the compiler, rather than a separately maintained JavaScript list.
 
+The JavaScript wrapper captures `now` once per execution, in UTC with the host's clock precision; `today` is derived from it. API callers can pin `now` with a datetime string or `today` with a date string (midnight). Explicit snapshots must agree on the normalized date. Responses and report metadata return both values for replay.
+
 ## Using the page
 
 - Run with Ctrl/⌘-Enter; stop with Escape or the Stop button. Options select mode, run count, seed, what a fault does to the other worlds (`--on-error`), exact conjugate updates and the time limit. A dot on the Options button means some differ from their defaults; a click elsewhere or Escape closes the panel.

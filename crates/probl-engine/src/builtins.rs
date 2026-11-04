@@ -456,6 +456,9 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
             number(a(0), "lognormal")?,
             number(a(1), "lognormal")?,
         )),
+        B::Uniform | B::To if matches!(a(0), Value::Date(_)) || matches!(a(1), Value::Date(_)) => {
+            date_distribution(b, a(0), a(1), budget)
+        }
         B::Uniform => continuous(Family::uniform(number(a(0), "uniform")?, number(a(1), "uniform")?)),
         B::Beta => continuous(Family::beta(number(a(0), "beta")?, number(a(1), "beta")?)),
         B::Gamma => continuous(Family::gamma(number(a(0), "gamma")?, number(a(1), "gamma")?)),
@@ -500,6 +503,10 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         }
         B::InvLogit => ops::computed_prob(1.0 / (1.0 + crate::math::exp(-number(a(0), "inv_logit")?)), "inv_logit"),
         B::Date => {
+            if args.len() == 1 {
+                return calendar_day(a(0), b.name()).map(Value::Date).map_err(|e|
+                    e.help("use a 'YYYY-MM-DD' literal or parse_date(text) for text"));
+            }
             let date = dates::from_parts(
                     date_count(a(0), "date", budget)?,
                     date_count(a(1), "date", budget)?,
@@ -515,6 +522,14 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::ParseDate => dates::parse(&text(a(0), b.name())?).map(Value::Date).ok_or_else(||
             OpError::fault(Fault::ConversionError, "invalid date; use YYYY-MM-DD within 0001-01-01..9999-12-31")),
         B::DateTime => {
+            if args.len() == 1 {
+                return match a(0) {
+                    Value::Date(day) => Ok(Value::DateTime(dates::DateTime::new(*day, 0, 0, 0, 0).unwrap())),
+                    Value::DateTime(d) => Ok(Value::DateTime(*d)),
+                    _ => Err(OpError::new("datetime conversion needs a date or datetime")
+                        .help("use a datetime literal or parse_datetime(text) for text")),
+                };
+            }
             let parts: Vec<i64> = args.iter().map(|v| date_count(v, b.name(), budget)).collect::<OpResult<_>>()?;
             let d = dates::from_parts(parts[0], parts[1], parts[2])
                 .and_then(|day| dates::DateTime::new(day, parts[3], parts[4], parts[5], parts.get(6).copied().unwrap_or(0)));
@@ -585,6 +600,16 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
                 _ => d.into(),
             }))
         }
+        B::DayOfYear | B::IsoWeek | B::IsoWeekYear | B::Quarter => {
+            let day = calendar_day(a(0), b.name())?;
+            let n = match b {
+                B::DayOfYear => i64::from(dates::day_of_year(day)),
+                B::IsoWeek => i64::from(dates::iso_week(day).1),
+                B::IsoWeekYear => dates::iso_week(day).0,
+                _ => i64::from((dates::to_civil(i64::from(day)).1 - 1) / 3 + 1),
+            };
+            Ok(Value::Int(n.into()))
+        }
         B::Weekday => crate::text::value(
             dates::WEEKDAYS[dates::weekday(calendar_day(a(0), b.name())?) as usize],
             budget,
@@ -597,6 +622,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::Minimum | B::Maximum => unreachable!("population extrema receive distributions whole"),
         B::Typeof
         | B::RunDate
+        | B::RunNow
         | B::RunEnv
         | B::Count
         | B::Any
@@ -1408,6 +1434,57 @@ fn median(v: &Value, b: Builtin, budget: &mut Budget) -> OpResult<Value> {
         _ if lo == hi => Ok(lo.clone()),
         _ => midpoint(lo, hi, budget),
     }
+}
+
+fn date_distribution(b: Builtin, a: &Value, z: &Value, budget: &mut Budget) -> OpResult<Value> {
+    let (a, z) = (date_value(a, b.name())?, date_value(z, b.name())?);
+    if a > z || (b == Builtin::To && a == z) {
+        return Err(OpError::fault(
+            Fault::DomainError,
+            if b == Builtin::To {
+                "a date estimate needs its first date before its second"
+            } else {
+                "uniform dates need the lower date at or before the upper date"
+            },
+        ));
+    }
+    if b == Builtin::Uniform {
+        let count = (i64::from(z) - i64::from(a) + 1) as u64;
+        budget.outcomes(u128::from(count))?;
+        budget.work(count)?;
+        return Ok(Dist::uniform((a..=z).map(Value::Date).collect()).into_value());
+    }
+    // Calendar positions have no meaningful zero. Use a symmetric normal 90%
+    // interval and round it to days. Materialize the same finite law in both
+    // modes, omitting less than 1e-18 total tail mass, as for count laws.
+    let law = Family::normal_range(f64::from(a), f64::from(z))?;
+    let (mean, sd) = (law.mean(), law.sd());
+    let cdf = crate::continuous::std_normal_cdf;
+    let outside = cdf((f64::from(dates::MIN) - 0.5 - mean) / sd) + cdf((mean - f64::from(dates::MAX) - 0.5) / sd);
+    if outside > 1e-18 {
+        return Err(
+            OpError::fault(Fault::DomainError, "date estimate extends outside years 1..9999")
+                .help("move the estimate away from the calendar boundary or use uniform dates for bounded support"),
+        );
+    }
+    let lo = ((mean - 9.0 * sd).floor() as i32).max(dates::MIN);
+    let hi = ((mean + 9.0 * sd).ceil() as i32).min(dates::MAX);
+    let count = (i64::from(hi) - i64::from(lo) + 1) as u64;
+    budget.outcomes(u128::from(count))?;
+    budget.work(count * 16)?;
+    let pairs = (lo..=hi)
+        .map(|day| {
+            let lower = (f64::from(day) - 0.5 - mean) / sd;
+            let upper = (f64::from(day) + 0.5 - mean) / sd;
+            let mass = if lower >= 0.0 {
+                cdf(-lower) - cdf(-upper)
+            } else {
+                cdf(upper) - cdf(lower)
+            };
+            (Value::Date(day), mass)
+        })
+        .collect();
+    Ok(Dist::from_pairs(pairs, 0.0).into_value())
 }
 
 fn date_mean(v: &Value, d: &Dist) -> OpResult<Value> {

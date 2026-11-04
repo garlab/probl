@@ -143,6 +143,7 @@ impl Outcome {
             "mode": if sampled.is_some() { "sample" } else { "enumerate" },
             "sampling": sampled.map(|s| json!({"runs": s.runs().to_string(), "seed": s.seed().to_string(), "effective_runs": s.effective_runs()})),
             "today": self.today().map(|d| d.to_string()),
+            "now": self.now().map(|d| d.to_string()),
             "finished": self.finished(), "partial": !self.failures().is_empty(), "failed_share": self.failed_share(),
             "evidence": evidence,
             "unresolved": {"zero": self.unresolved().is_zero(), "log_weight_upper_bound": extended(self.unresolved().log_weight_upper_bound())},

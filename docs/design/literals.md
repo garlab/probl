@@ -26,7 +26,7 @@ An unsuffixed value keeps its written fields. No machine timezone is consulted. 
 
 Storage is an integer day plus an integer nanosecond within that day. Comparisons, map/set identity, distribution outcomes and arithmetic retain all nine fractional digits. A datetime never silently becomes a date, number or string. A `date` and midnight on that date remain different values.
 
-Printing omits offset suffixes and unnecessary trailing fractional zeroes. A scalar report and `str` use unquoted canonical text; nested values use single quotes so lists, maps and records can be written back as source. `today` remains a date supplied by the host once per run; this change adds no clock-reading constant.
+Printing omits offset suffixes and unnecessary trailing fractional zeroes. A scalar report and `str` use unquoted canonical text; nested values use single quotes so lists, maps and records can be written back as source. `today` remains a date supplied by the host once per run; `now` supplies the associated datetime snapshot without reading the clock during execution.
 
 ## Construction and parsing
 
@@ -38,7 +38,7 @@ let meeting = datetime(2027, 1, 31, 9, 30, 0)
 let precise = datetime(2027, 1, 31, 9, 30, 0, 123456789)
 ```
 
-The optional seventh datetime component is nanoseconds, defaulting to zero. Components must be ints. `date(text)` is removed; its diagnostic explains the literal and runtime parser alternatives.
+`date(datetime)` drops normalized clock fields; `datetime(date)` chooses midnight. Both preserve inputs already of the target type and lift over finite distributions. The optional seventh datetime component is nanoseconds, defaulting to zero. Components must be ints. `date(text)` is removed; its diagnostic explains the literal and runtime parser alternatives.
 
 Runtime text is explicit:
 

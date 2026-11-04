@@ -147,7 +147,7 @@ fn invalid_literals_fail_during_compilation_and_parsing_fails_at_runtime() {
     }
     assert!(compile_error("report '2027-01-01").contains("unterminated"));
     assert!(compile_error("report 'hello'").contains("double quotes"));
-    assert!(compile_error("report date(\"2027-01-01\")").contains("parse_date"));
+    assert!(error("report date(\"2027-01-01\")").contains("parse_date"));
     assert!(error("let f=date; report f(\"2027-01-01\")").contains("parse_date"));
     assert!(!compile_error("let x: str = '2027-01-01'").is_empty());
     for source in [

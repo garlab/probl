@@ -194,8 +194,13 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Year
         | B::Month
         | B::Day
-        | B::Weekday => "Dates",
+        | B::Weekday
+        | B::DayOfYear
+        | B::IsoWeek
+        | B::IsoWeekYear
+        | B::Quarter => "Dates",
         B::RunDate
+        | B::RunNow
         | B::RunEnv
         | B::IterItems
         | B::RepeatCount
@@ -658,8 +663,8 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "The distribution whose logarithm is `normal(mu, sigma)`. For an estimate, `a to b` is easier.",
         ),
         B::Uniform => doc(
-            "uniform(lo: float, hi: float) -> dist[float]",
-            "Every value from `lo` to `hi` equally likely.",
+            "uniform(lo: float or date, hi: float or date) -> dist[float] or dist[date]",
+            "For numbers, a continuous uniform law with lo < hi. For two dates, every calendar day from lo through hi is equally likely, including endpoints; equal dates give one outcome. Date support respects outcome and work limits.",
         ),
         B::Beta => doc(
             "beta(a: float, b: float) -> dist[float]",
@@ -690,7 +695,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         B::Bins => doc("bins(d, n)", "Not implemented yet."),
         B::To => doc(
             "a to b",
-            "An estimate: 90% confident it's between `a` and `b`, as a lognormal, so both must be above 0.",
+            "A 90% estimate with a < b. Positive numbers give a lognormal; two dates give a symmetric normal timing estimate rounded to days. Date endpoints are the underlying 5% and 95% points. Less than 1e-18 tail probability is omitted; meaningful probability outside years 1–9999 is rejected. Outcome and work limits apply.",
         ),
         // Statistics and probabilities
         B::P => doc(
@@ -756,16 +761,16 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         ),
         // Dates
         B::Date => doc(
-            "date(year: int, month: int, day: int) -> date",
-            "Build an immutable Gregorian date from three integer components. Years are 1 through 9999; impossible dates are errors. Write a constant as '2027-01-31', or parse runtime text with parse_date(s). Dates have no time of day or time zone.",
+            "date(d: date or datetime) or date(year: int, month: int, day: int) -> date",
+            "Convert a datetime by discarding its clock fields, preserve an existing date, or build a date from three integer components. Years are 1 through 9999; impossible dates are errors. Write a constant as '2027-01-31', or parse runtime text with parse_date(s). Dates have no time of day or time zone.",
         ),
         B::ParseDate => doc(
             "parse_date(s: str) -> date",
             "Parse exactly YYYY-MM-DD within years 1 through 9999. Invalid runtime text is a ConversionError. Constant dates can use checked single-quoted literals.",
         ),
         B::DateTime => doc(
-            "datetime(year: int, month: int, day: int, hour: int, minute: int, second: int, nanosecond: int?) -> datetime",
-            "Build a calendar date and time without timezone metadata. Nanoseconds default to zero. Use hours 0–23, minutes and seconds 0–59, and nanoseconds 0–999999999; leap seconds are unsupported. A literal such as '2027-01-31T09:30:00+02:00' normalizes to '2027-01-31T07:30:00'.",
+            "datetime(d: date or datetime) or datetime(year: int, month: int, day: int, hour: int, minute: int, second: int, nanosecond: int?) -> datetime",
+            "Convert a date to midnight or preserve an existing datetime. Build a calendar date and time without timezone metadata. Nanoseconds default to zero. Use hours 0–23, minutes and seconds 0–59, and nanoseconds 0–999999999; leap seconds are unsupported. A literal such as '2027-01-31T09:30:00+02:00' normalizes to '2027-01-31T07:30:00'.",
         ),
         B::ParseDateTime => doc(
             "parse_datetime(s: str) -> datetime",
@@ -870,6 +875,22 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
             "The month number, January = 1 through December = 12.",
         ),
         B::Day => doc("day(d: date or datetime) -> int", "The day of the month, from 1 to 31."),
+        B::DayOfYear => doc(
+            "day_of_year(d: date or datetime) -> int",
+            "The ordinal day, January 1 = 1, through 365 or 366.",
+        ),
+        B::IsoWeek => doc(
+            "iso_week(d: date or datetime) -> int",
+            "ISO week number, 1 through 53. Weeks start Monday; week 1 contains January 4. Use iso_week_year for its year.",
+        ),
+        B::IsoWeekYear => doc(
+            "iso_week_year(d: date or datetime) -> int",
+            "The ISO week year; it can differ from the Gregorian year near New Year.",
+        ),
+        B::Quarter => doc(
+            "quarter(d: date or datetime) -> int",
+            "Calendar quarter, January–March = 1 through October–December = 4.",
+        ),
         B::Weekday => doc(
             "weekday(d: date or datetime) -> str",
             "The day of the week: `\"Monday\"` to `\"Sunday\"`.",
@@ -878,6 +899,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         | B::SetLiteral
         | B::SpreadItems
         | B::RunDate
+        | B::RunNow
         | B::RunEnv
         | B::IterItems
         | B::RepeatCount
@@ -904,6 +926,10 @@ pub fn constant(c: Constant) -> Doc {
         Constant::EulerGamma => (
             "euler_gamma = 0.5772156649015329",
             "The Euler–Mascheroni constant γ: how far `1 + 1/2 + … + 1/n` ends up above `ln(n)`.",
+        ),
+        Constant::Now => (
+            "now = execution datetime (datetime)",
+            "A UTC-normalized datetime captured once per execution or REPL session. Shared by all worlds, samples, calls and simulate blocks. --now pins it; --today alone gives midnight on that date. date(now) equals today. The engine never reads a clock.",
         ),
         Constant::Today => (
             "today = execution date (date)",

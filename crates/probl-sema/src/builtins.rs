@@ -193,9 +193,9 @@ builtins! {
     Logit = "logit", 1..=1, Lift, true;
     InvLogit = "inv_logit", 1..=1, Lift, true;
     // Dates
-    Date = "date", 3..=3, Lift, true;
+    Date = "date", 1..=3, Lift, true;
     ParseDate = "parse_date", 1..=1, Lift, true;
-    DateTime = "datetime", 6..=7, Lift, true;
+    DateTime = "datetime", 1..=7, Lift, true;
     ParseDateTime = "parse_datetime", 1..=1, Lift, true;
     AddDays = "add_days", 2..=2, Lift, true;
     AddHours = "add_hours", 2..=2, Lift, true;
@@ -207,6 +207,7 @@ builtins! {
     Second = "second", 1..=1, Lift, true;
     Nanosecond = "nanosecond", 1..=1, Lift, true;
     RunDate = "$run_date", 0..=0, Raw, false;
+    RunNow = "$run_now", 0..=0, Raw, false;
     Days = "days", 1..=1, Lift, true;
     Weeks = "weeks", 1..=1, Lift, true;
     Hours = "hours", 1..=1, Lift, true;
@@ -223,6 +224,10 @@ builtins! {
     StartOfMonth = "start_of_month", 1..=1, Lift, true;
     EndOfMonth = "end_of_month", 1..=1, Lift, true;
     Year = "year", 1..=1, Lift, true;
+    DayOfYear = "day_of_year", 1..=1, Lift, true;
+    IsoWeek = "iso_week", 1..=1, Lift, true;
+    IsoWeekYear = "iso_week_year", 1..=1, Lift, true;
+    Quarter = "quarter", 1..=1, Lift, true;
     Month = "month", 1..=1, Lift, true;
     Day = "day", 1..=1, Lift, true;
     Weekday = "weekday", 1..=1, Lift, true;
@@ -261,6 +266,17 @@ builtins! {
 }
 
 impl Builtin {
+    pub fn accepts_arity(self, n: usize) -> bool {
+        match self {
+            Self::Date => matches!(n, 1 | 3),
+            Self::DateTime => matches!(n, 1 | 6 | 7),
+            _ => {
+                let (min, max) = self.arity();
+                (min..=max).contains(&n)
+            }
+        }
+    }
+
     pub fn accepts_spread(self) -> bool {
         matches!(
             self,
@@ -316,6 +332,7 @@ pub enum Constant {
     E,
     EulerGamma,
     Today,
+    Now,
     Env,
 }
 
@@ -325,6 +342,7 @@ impl Constant {
         Constant::E,
         Constant::EulerGamma,
         Constant::Today,
+        Constant::Now,
         Constant::Env,
     ];
 
@@ -334,18 +352,19 @@ impl Constant {
             Constant::E => "e",
             Constant::EulerGamma => "euler_gamma",
             Constant::Today => "today",
+            Constant::Now => "now",
             Constant::Env => "env",
         }
     }
 
-    /// Static numeric values; `today` and `env` are supplied by the
+    /// Static numeric values; `today`, `now` and `env` are supplied by the
     /// execution context.
     pub fn value(self) -> Option<f64> {
         Some(match self {
             Constant::Pi => std::f64::consts::PI,
             Constant::E => std::f64::consts::E,
             Constant::EulerGamma => std::f64::consts::EULER_GAMMA,
-            Constant::Today | Constant::Env => return None,
+            Constant::Today | Constant::Now | Constant::Env => return None,
         })
     }
 

@@ -273,6 +273,19 @@ pub fn weekday(days: i32) -> u32 {
     ((days as i64 + 3).rem_euclid(7)) as u32
 }
 
+/// Ordinal calendar day, January 1 = 1.
+pub fn day_of_year(days: i32) -> u32 {
+    let (year, _, _) = to_civil(i64::from(days));
+    (i64::from(days) - from_civil(year, 1, 1) + 1) as u32
+}
+
+/// ISO weeks start on Monday; week 1 contains the year's first Thursday.
+pub fn iso_week(days: i32) -> (i64, u32) {
+    let thursday = i64::from(days) + 3 - i64::from(weekday(days));
+    let (year, _, _) = to_civil(thursday);
+    (year, ((thursday - from_civil(year, 1, 1)) / 7 + 1) as u32)
+}
+
 pub const WEEKDAYS: [&str; 7] = [
     "Monday",
     "Tuesday",

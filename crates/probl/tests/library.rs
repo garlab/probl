@@ -672,6 +672,36 @@ fn dates_and_today() {
 }
 
 #[test]
+fn datetime_snapshots_convert_normalize_and_replay() {
+    use probl::{Date, DateTime};
+    let now: DateTime = "2027-01-01T00:15:00.123456789+01:00".parse().unwrap();
+    let today: Date = "2026-12-31".parse().unwrap();
+    assert_eq!(now.date(), today);
+    assert_eq!(now.to_string(), "2026-12-31T23:15:00.123456789");
+    assert_eq!(DateTime::from_parts(2026, 12, 31, 23, 15, 0, 123456789), Some(now));
+    assert!(DateTime::from_parts(2026, 12, 31, 24, 0, 0, 0).is_none());
+    assert!(DateTime::now_utc().is_some());
+    for options in [
+        Options::new().now(now),
+        Options::new().today(today).now(now),
+        Options::new().now(now).today(today),
+    ] {
+        let out = run("report now; report today; report date(now)==today", &options);
+        assert_eq!(out.now(), Some(now));
+        assert_eq!(out.today(), Some(today));
+        assert!(out.text().contains("23:15:00.123456789"));
+    }
+    let out = run("report now", &Options::new().today(today));
+    assert_eq!(out.now(), Some(today.at_midnight()));
+    let program = probl::compile("snapshot", "report now").unwrap();
+    assert!(
+        program
+            .run(&Options::new().now(now).today("2027-01-01".parse().unwrap()))
+            .is_err()
+    );
+}
+
+#[test]
 fn printing_is_collected_or_streamed() {
     let program = probl::compile("p.probl", "print(\"hello\")\nprint(\"world\")\nreport d6 > 4").unwrap();
     let outcome = program.run(&Options::new()).unwrap();

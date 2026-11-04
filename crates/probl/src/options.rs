@@ -21,6 +21,7 @@ pub struct Options {
     runs: Option<u64>,
     seed: Option<u64>,
     today: Option<Date>,
+    now: Option<DateTime>,
     env: Arc<BTreeMap<String, String>>,
     epsilon: Option<f64>,
     integrate: Option<f64>,
@@ -79,6 +80,7 @@ impl Default for Options {
             runs: None,
             seed: None,
             today: None,
+            now: None,
             env: Arc::default(),
             epsilon: None,
             integrate: None,
@@ -128,8 +130,14 @@ impl Options {
         self
     }
 
-    /// The date `today` stands for. It's needed only when the program uses
-    /// `today`: the engine never reads a clock.
+    /// Pin `now`; `today` is derived from its calendar date unless explicitly supplied.
+    pub fn now(mut self, datetime: DateTime) -> Options {
+        self.now = Some(datetime);
+        self
+    }
+
+    /// Pin `today`; without `now`, its midnight is used as the datetime snapshot.
+    /// The engine never reads a clock. Explicit snapshots must agree on the date.
     pub fn today(mut self, date: Date) -> Options {
         self.today = Some(date);
         self
@@ -257,6 +265,7 @@ impl Options {
     pub(crate) fn engine(&self, program: &ir::Program) -> probl_engine::Options {
         probl_engine::Options {
             today: self.today.map(|d| d.0),
+            now: self.now.map(|d| d.0),
             env: self.env.clone(),
             merge: self.checks.merge,
             memoize: self.checks.memoize,
@@ -285,6 +294,7 @@ impl fmt::Debug for Options {
             .field("runs", &self.runs)
             .field("seed", &self.seed)
             .field("today", &self.today)
+            .field("now", &self.now)
             .field("env", &self.env.keys().collect::<Vec<_>>())
             .field("epsilon", &self.epsilon)
             .field("integrate", &self.integrate)
@@ -523,6 +533,11 @@ impl Date {
             .map(Date)
     }
 
+    /// Midnight at the beginning of this calendar date.
+    pub fn at_midnight(self) -> DateTime {
+        DateTime(probl_engine::dates::DateTime::new(self.0, 0, 0, 0, 0).unwrap())
+    }
+
     pub(crate) fn from_days(days: i32) -> Date {
         Date(days)
     }
@@ -559,6 +574,71 @@ impl fmt::Display for ParseDateError {
 }
 
 impl std::error::Error for ParseDateError {}
+
+/// A calendar datetime with nanosecond precision, normalized to UTC when an
+/// input includes an offset. No timezone metadata is retained.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DateTime(pub(crate) probl_engine::dates::DateTime);
+
+impl DateTime {
+    pub fn from_parts(
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        minute: u32,
+        second: u32,
+        nanosecond: u32,
+    ) -> Option<Self> {
+        let day = probl_engine::dates::from_parts(year.into(), month.into(), day.into())?;
+        probl_engine::dates::DateTime::new(day, hour.into(), minute.into(), second.into(), nanosecond.into()).map(Self)
+    }
+
+    pub fn date(self) -> Date {
+        Date(self.0.day())
+    }
+
+    /// Read the UTC clock once. Hosts choose when to capture this snapshot.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn now_utc() -> Option<Self> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(d) => i128::try_from(d.as_nanos()).ok()?,
+            Err(e) => -i128::try_from(e.duration().as_nanos()).ok()?,
+        };
+        probl_engine::dates::DateTime::from_total_nanos(nanos).map(Self)
+    }
+}
+
+impl fmt::Display for DateTime {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0.format())
+    }
+}
+impl fmt::Debug for DateTime {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "DateTime({self})")
+    }
+}
+impl FromStr for DateTime {
+    type Err = ParseDateTimeError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        probl_engine::dates::DateTime::parse(s)
+            .map(Self)
+            .ok_or(ParseDateTimeError)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParseDateTimeError;
+impl fmt::Display for ParseDateTimeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(
+            "expected YYYY-MM-DDTHH:MM:SS with optional fractional seconds and UTC offset, within years 1..9999",
+        )
+    }
+}
+impl std::error::Error for ParseDateTimeError {}
 
 #[cfg(test)]
 mod tests {

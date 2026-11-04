@@ -47,7 +47,7 @@ The model enumerates two six-sided dice and reports a probability of 6/36, displ
 - **Modes:** the program's mode applies unless overridden. The default enumerates; it does not automatically fall back to sampling. For sampling, pass options such as `Options::new().runs(100_000).seed(42)`.
 - **Structured results:** `Outcome` exposes reports, evidence, unresolved weight, sampling metadata and execution statistics, as well as formatted text.
 - **Data:** models using `read` load their inputs through `Program::load` and a host-chosen `Files` provider. Use `MemoryFiles` for supplied bytes or `LocalFiles` for native filesystem access.
-- **Host controls:** options configure resource limits, cancellation, progress callbacks and a fixed date for models using `today`.
+- **Host controls:** options configure resource limits, cancellation, progress callbacks and fixed `Date`/`DateTime` snapshots through `Options::today` and `Options::now`.
 - **Errors:** compilation, loading and execution return diagnostics. In partial failure mode, execution still returns an error; `Error::partial()` exposes the available results explicitly.
 
 Interpret a probability's `point()` together with `is_complete()`, `bounds()` and its sampling uncertainty. An available point does not guarantee a complete answer. Enumeration uses floating-point weights, and sampling carries Monte Carlo error.

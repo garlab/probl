@@ -25,3 +25,12 @@ report '2026-10-06'.add_workdays(-1, holidays)
 report '2026-10-02'.is_workday(holidays)
 report '2026-10-03'.add_workdays(0)
 report '2000-01-03'.add_workdays(1_000_000)
+report ['2024-03-01'.day_of_year(), '2024-12-31'.quarter()]
+report [iso_week_year('2021-01-01'), iso_week('2021-01-01')]
+report [iso_week_year('2018-12-31'), iso_week('2018-12-31')]
+report datetime('2024-02-29')
+report date('2024-03-01T00:15:00+01:00')
+report uniform('2024-02-28','2024-03-01')
+report '2027-01-01' to '2027-01-11'
+report now
+report date(now) == today

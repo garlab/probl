@@ -230,7 +230,10 @@ pub fn docs() -> String {
 ///   `@on_error` as `--on-error` does;
 /// - `"files"`: `{path: text}`, the files `read` may read.
 /// - `"today"`: `"YYYY-MM-DD"`, the date captured by the host for this execution.
-///   Required when a program uses `today`; the JavaScript wrapper supplies UTC.
+///   Alone, this also pins `now` to midnight.
+/// - `"now"`: a datetime string, optionally with an offset; derives `today`.
+///   When both are supplied, normalized dates must agree. The JavaScript wrapper
+///   captures UTC once when neither is given.
 /// - `"env"`: `{name: text}`, the environment that `env` stands for. The
 ///   module has no environment of its own, and the playground sends none.
 /// - `"symbolic"`: `"only"` or `"prefer"`, to answer the program with
@@ -321,6 +324,21 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
             }
         }
     }
+    if let Some(now) = request.get("now") {
+        match now.as_str().and_then(|s| s.parse::<probl::DateTime>().ok()) {
+            Some(datetime) => options = options.now(datetime),
+            None => {
+                let message =
+                    "now must be a datetime within years 1..9999, with optional fractional seconds and UTC offset";
+                let mut error = compiler_diagnostic(
+                    &probl_syntax::Diagnostic::error(Span::default(), message),
+                    &SourceFile::new(FILE, source),
+                );
+                error["kind"] = json!("language");
+                return failed(error);
+            }
+        }
+    }
     if let Some(env) = request.get("env") {
         let vars = env.as_object().and_then(|vars| {
             vars.iter()
@@ -385,19 +403,21 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
     match program.run_with(&options, print) {
         Ok(outcome) => {
             let today = outcome.today().map(|d| d.to_string());
+            let now = outcome.now().map(|d| d.to_string());
             with_reports(
-                json!({ "output": outcome.text(), "today": today, "stats": stats(&outcome), "diagnostics": diagnostics }),
+                json!({ "output": outcome.text(), "today": today, "now": now, "stats": stats(&outcome), "diagnostics": diagnostics }),
                 &outcome,
             )
         }
         Err(e) if e.partial().is_some() => {
             let outcome = e.partial().expect("checked");
             let today = outcome.today().map(|d| d.to_string());
+            let now = outcome.now().map(|d| d.to_string());
             let failures: Vec<Json> = e.diagnostics().iter().map(|d| diagnostic(d, source)).collect();
             with_reports(
                 json!({
                     "output": outcome.text(),
-                    "today": today,
+                    "today": today, "now": now,
                     "stats": stats(outcome),
                     "partial": true,
                     "finished": outcome.finished(),

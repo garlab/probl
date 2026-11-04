@@ -55,17 +55,18 @@ export async function load(module, { onPrint = () => {}, onProgress = () => {} }
     /** `{diagnostics, symbols, reports}` for source. `symbols` is null when it
      * doesn't parse; `reports` is `[{id, label}]` when compiled, null otherwise. */
     check: (source) => JSON.parse(call(exports.probl_check, source)),
-    /** Run `{source, today?, env?, mode?, runs?, seed?, conjugate?, files?, report_summaries?, report_collections?}`.
+    /** Run `{source, today?, now?, env?, mode?, runs?, seed?, conjugate?, files?, report_summaries?, report_collections?}`.
      * `report_collections` maps report IDs to "exact" (default), "moments", or "quantiles[:CAPACITY]".
      * `report_summaries` maps zero-based report IDs to specifications such as
      * `{"0":"forecast","2":"mean,median,q:0.9"}` (docs/report-summaries.md).
      * Successful and partial results include a versioned `reports` document,
      * or `reports_error` if its serialization exceeded a budget. `output`
      * remains available in either case. See docs/report-json.md.
-     * Snapshot the UTC date once, before entering WASM; an explicit date replays a run. */
+     * Snapshot UTC once before entering WASM. Explicit now replays the instant; today alone chooses midnight. */
     run: (request) => {
-      const today = request.today === undefined ? new Date().toISOString().slice(0, 10) : request.today;
-      return JSON.parse(call(exports.probl_run, JSON.stringify({ ...request, today })));
+      const snapshot = request.today === undefined && request.now === undefined
+        ? { ...request, now: new Date().toISOString() } : request;
+      return JSON.parse(call(exports.probl_run, JSON.stringify(snapshot)));
     },
     /** `[{name, title, source, files}]` */
     examples: () => JSON.parse(call(exports.probl_examples)),

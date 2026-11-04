@@ -1,7 +1,7 @@
 //! What a run gives back: its text, its reports as numbers, with what's
 //! known about their uncertainty, the evidence, and statistics.
 
-use crate::{DataSource, Date, Diagnostic, FailureMode};
+use crate::{DataSource, Date, DateTime, Diagnostic, FailureMode};
 use probl_engine::report::{self, GroupResult, Status};
 use probl_engine::value::Value;
 use probl_sema::ir;
@@ -29,6 +29,7 @@ pub struct Outcome {
     stats: Stats,
     data: Vec<DataSource>,
     today: Option<Date>,
+    now: Option<DateTime>,
     failure_mode: FailureMode,
     failures: Vec<Failure>,
     failed_share: Option<f64>,
@@ -83,6 +84,7 @@ impl Outcome {
             stats: Stats::new(&outcome, file),
             data: outcome.data.iter().map(DataSource::new).collect(),
             today: outcome.today.map(Date::from_days),
+            now: outcome.now.map(DateTime),
             failure_mode: FailureMode::new(outcome.on_error),
             failures,
             failed_share,
@@ -169,6 +171,11 @@ impl Outcome {
     /// The data the program read: what its results were computed from.
     pub fn data(&self) -> &[DataSource] {
         &self.data
+    }
+
+    /// The datetime captured for `now`, if the host supplied a snapshot.
+    pub fn now(&self) -> Option<DateTime> {
+        self.now
     }
 
     /// The date `today` stood for, if the run was given one.

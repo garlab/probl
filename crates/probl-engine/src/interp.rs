@@ -99,6 +99,7 @@ pub struct Config {
     pub max_report_groups: usize,
     pub(crate) report_summary_budget: crate::report::SummaryBudget,
     pub today: Option<i32>,
+    pub now: Option<crate::dates::DateTime>,
     /// The host's environment snapshot, for `env`.
     pub env: Arc<BTreeMap<String, String>>,
     pub epsilon: f64,
@@ -4491,14 +4492,16 @@ impl<'p> Engine<'p> {
             Value::Closure(c) => self.check_arity(c, given, span),
             Value::Builtin(b) => {
                 let (min, max) = b.arity();
-                if given < min || given > max {
+                if !b.accepts_arity(given) {
                     return Err(RuntimeError::new(
                         span,
                         format!(
                             "`{}` takes {}, but {given} were given",
                             b.name(),
                             if *b == Builtin::Date {
-                                "three integers (year, month, day); use a 'YYYY-MM-DD' literal or parse_date(text) for text".into()
+                                "a date/datetime or three integers (year, month, day)".into()
+                            } else if *b == Builtin::DateTime {
+                                "a date/datetime or six to seven integer components".into()
                             } else if min == max {
                                 format!("{min} argument(s)")
                             } else if max == usize::MAX {
@@ -4602,6 +4605,10 @@ impl<'p> Engine<'p> {
             Builtin::RunDate => self.config.today.map(Value::Date).ok_or_else(|| {
                 RuntimeError::new(span, "the host did not supply an execution date for `today`")
                     .with_help("set Options.today, or supply today in the WASM request")
+            }),
+            Builtin::RunNow => self.config.now.map(Value::DateTime).ok_or_else(|| {
+                RuntimeError::new(span, "the host did not supply an execution datetime for `now`")
+                    .with_help("set Options.now, or supply now in the WASM request")
             }),
             Builtin::RunEnv => self.env(span),
             Builtin::Print => {

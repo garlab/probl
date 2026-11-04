@@ -132,13 +132,15 @@ impl Default for Limits {
 }
 
 /// How the engine runs. The defaults are what `probl run` uses, except that
-/// the CLI also supplies an execution-date snapshot.
+/// the CLI also supplies a date/datetime snapshot.
 #[derive(Clone, Debug)]
 pub struct Options {
     /// Execution-date snapshot, as days since 1970-01-01. The host captures
     /// it once or supplies a replay date. The engine never reads a clock.
     /// Required only when the program evaluates the `today` constant.
     pub today: Option<i32>,
+    /// Captured UTC-normalized datetime for `now`; the engine never reads a clock.
+    pub now: Option<dates::DateTime>,
     /// The environment snapshot that the `env` constant stands for: each
     /// variable's text, by name. The host captures it once; the engine never
     /// reads the process's environment, so it's empty unless the host gives
@@ -202,6 +204,7 @@ impl Default for Options {
     fn default() -> Options {
         Options {
             today: None,
+            now: None,
             env: Arc::default(),
             merge: true,
             memoize: true,
@@ -227,6 +230,8 @@ impl Default for Options {
 pub struct Outcome {
     /// The execution-date snapshot supplied by the host, for reproducibility.
     pub today: Option<i32>,
+    /// Captured UTC-normalized datetime for `now`; the engine never reads a clock.
+    pub now: Option<dates::DateTime>,
     /// The summary line and the reports, as printed by `probl run`.
     pub output: String,
     pub stats: Stats,
@@ -352,6 +357,22 @@ fn run_here(
             "execution date must be within 0001-01-01..9999-12-31",
         ));
     }
+    let mut snapshots = options.clone();
+    snapshots.now = snapshots
+        .now
+        .or_else(|| snapshots.today.and_then(|d| dates::DateTime::new(d, 0, 0, 0, 0)));
+    snapshots.today = snapshots.today.or_else(|| snapshots.now.map(|d| d.day()));
+    if snapshots
+        .now
+        .zip(snapshots.today)
+        .is_some_and(|(now, today)| now.day() != today)
+    {
+        return Err(RuntimeError::new(
+            Default::default(),
+            "execution date must match the calendar date of now",
+        ));
+    }
+    let options = &snapshots;
     let settings = &program.settings;
     let mode = options.mode.clone().unwrap_or_else(|| settings.mode.clone());
     report::validate_collections(
@@ -393,6 +414,7 @@ fn run_here(
         max_report_groups: limits.max_report_groups,
         report_summary_budget: report::SummaryBudget::new(limits.max_report_summary_bytes, options.cancel.clone()),
         today: options.today,
+        now: options.now,
         env: options.env.clone(),
         epsilon: options.epsilon.unwrap_or(settings.epsilon),
         merging: options.merge,
@@ -635,6 +657,7 @@ fn enumerated(
     };
     Ok(Outcome {
         today: options.today,
+        now: options.now,
         output,
         stats,
         unresolved,
@@ -1056,6 +1079,7 @@ fn sampled(
     };
     Ok(Outcome {
         today: options.today,
+        now: options.now,
         output,
         stats: engine.stats.clone(),
         unresolved,
