@@ -123,8 +123,8 @@ match program.run(&options) {
 }
 ```
 
-- The error is a `Language` error, with a diagnostic for each place worlds failed (the first ten), noting how much failed there.
-- `failures()` groups them by place and kind of fault, in the order they first failed. Each `Failure` has its `diagnostic()`, the `weight()` the worlds had when they failed and, when sampling, the `runs()` that failed and the `first_run()`.
+- The error is a `Language` error, with a diagnostic for each place worlds failed (the first ten), noting how much failed there and, as an example, the first failing world's values of the operation's inputs.
+- `failures()` groups them by place and kind of fault, in the order they first failed. Each `Failure` has its `diagnostic()`, the `weight()` the worlds had when they failed, its `fault()` with the first failing world's inputs (as [below](#a-fault-that-stopped-the-run), without a share or run) and, when sampling, the `runs()` that failed and the `first_run()`.
 - `share()` and `failed_share()` are the share of the weight, or of the runs, that failed, with a `standard_error()` when sampling. They're `None` when the failed worlds could still have met evidence: their weight then stops short of the finished worlds', and the two can't be compared. Reach is unavailable then too, and `evidence()` is only the finished worlds' contribution, as the summary line says.
 - The reports describe the worlds that reached them, failed worlds included when they reported before failing. `finished()` says whether any world finished at all.
 - `failure_mode()` says which mode the run used, and `Program::failure_mode()` gives the program's `@on_error`, if any. An outcome without failures is an ordinary result, whatever its mode.

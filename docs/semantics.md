@@ -534,7 +534,9 @@ Error: division by zero
 - **The share**, when enumerating, is of the weight of the statement's worlds that reach the operation, including the evidence so far. It isn't the probability that the program fails. The worlds already through the statement passed the operation; the others are checked by evaluating what the statement evaluates in them, which prints nothing and changes nothing. The share is given only for an assignment, a report or a call of a built-in in the main program, outside `try`, a function call, `simulate`, a callback and a loop being solved; when every world reaches the operation (it isn't on the right of an `and` or `or`), nothing else fails first in the worlds checked, no callback or `simulate` would have to run, and the weights have the same number of densities. Inside a loop running pass by pass, it's labelled `on this pass through the loop`. Otherwise only the example is given: `for example, it fails when n = 0`.
 - **When sampling**, the note names the run instead: `fails in run 19 of 1,000 (seed 0), when x = 0`. Runs are numbered from 1; a share of the runs isn't estimated, since the run stopped at the first failure.
 
-The library gives the same as `Error::fault`: the inputs, the share and whether it's per loop pass, and the run, each absent when unavailable, which doesn't mean zero. Diagnostics of partial results are unchanged.
+The library gives the same as `Error::fault`: the inputs, the share and whether it's per loop pass, and the run, each absent when unavailable, which doesn't mean zero.
+
+A partial result's diagnostics give the same example, from the first world or run that failed at each place: `it failed in 16.67% of the worlds, for example when x = 0`, or `it failed in 176 of 1,000 runs, first in run 19, when x = 0`. The library gives it as each `Failure`'s `fault()`.
 
 ### Catching faults
 

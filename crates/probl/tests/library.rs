@@ -581,6 +581,30 @@ fn a_fault_that_stops_a_run_says_how_often_and_for_which_values() {
 
     // Other errors have no fault context.
     assert!(run_err("report today", Options::new()).fault().is_none());
+
+    // A partial result's failures give the first failing world's values.
+    let source = "let x ~ d6 - 1\nlet y = 1 / x\nreport y";
+    let e = run_err(source, Options::new().on_error(probl::FailureMode::Partial));
+    assert!(e.fault().is_none());
+    let failure = &e.partial().unwrap().failures()[0];
+    let fault = failure.fault().unwrap();
+    assert_eq!((fault.inputs()[0].name(), fault.inputs()[0].value()), (Some("x"), "0"));
+    assert!(fault.share().is_none() && fault.run().is_none());
+    assert_eq!(
+        failure.diagnostic().notes(),
+        ["it failed in 16.67% of the worlds, for example when x = 0; the other worlds finished"]
+    );
+    let e = run_err(source, Options::new().runs(1000).seed(0));
+    let failure = &e.partial().unwrap().failures()[0];
+    let note = format!(
+        ", first in run {}, when x = 0; the other runs finished",
+        failure.first_run().unwrap()
+    );
+    assert!(
+        failure.diagnostic().notes()[0].ends_with(&note),
+        "{:?}",
+        failure.diagnostic().notes()
+    );
 }
 
 // ── Failure modes ────────────────────────────────────────────────────────

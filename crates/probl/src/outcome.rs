@@ -1,7 +1,7 @@
 //! What a run gives back: its text, its reports as numbers, with what's
 //! known about their uncertainty, the evidence, and statistics.
 
-use crate::{DataSource, Date, DateTime, Diagnostic, FailureMode};
+use crate::{DataSource, Date, DateTime, Diagnostic, FailureMode, FaultContext};
 use probl_engine::report::{self, GroupResult, Status};
 use probl_engine::value::Value;
 use probl_sema::ir;
@@ -215,6 +215,7 @@ impl Outcome {
 #[derive(Clone, Debug)]
 pub struct Failure {
     diagnostic: Diagnostic,
+    fault: Option<Arc<FaultContext>>,
     share: Option<f64>,
     standard_error: Option<f64>,
     weight: f64,
@@ -227,6 +228,13 @@ impl Failure {
     /// how much failed there.
     pub fn diagnostic(&self) -> &Diagnostic {
         &self.diagnostic
+    }
+
+    /// The failing operation's inputs, as the first world (or run) that
+    /// failed here had them. Its share and run are absent: the failure's
+    /// own say how much failed.
+    pub fn fault(&self) -> Option<&FaultContext> {
+        self.fault.as_deref()
     }
 
     /// The share of the weight (or of the runs) that failed here. `None`
@@ -290,26 +298,40 @@ fn failures(outcome: &probl_engine::Outcome, file: &Arc<SourceFile>) -> (Vec<Fai
                 }
                 _ => None,
             };
+            // The first failing world's (or run's) values: an example.
+            let fault = g.error.context.as_deref().map(|c| FaultContext::new(c, file));
+            let when = fault.as_ref().and_then(FaultContext::when);
             let note = match (&outcome.sample, share) {
                 (Some(s), _) => {
-                    let first = g
-                        .first_run
-                        .map_or(String::new(), |r| format!(", first in run {}", r + 1));
+                    let first = match (g.first_run, &when) {
+                        (Some(r), Some(when)) => format!(", first in run {}, when {when}", r + 1),
+                        (Some(r), None) => format!(", first in run {}", r + 1),
+                        (None, _) => String::new(),
+                    };
                     format!(
                         "it failed in {} of {} runs{first}; {others}",
                         report::thousands(g.runs as i64),
                         report::thousands(s.runs as i64)
                     )
                 }
-                (None, Some(p)) => format!("it failed in {} of the worlds; {others}", pct(p)),
-                (None, None) if all.other_units => {
-                    format!("it failed in worlds that observed another number of continuous values; {others}")
+                (None, share) => {
+                    let failed = match share {
+                        Some(p) => format!("it failed in {} of the worlds", pct(p)),
+                        None if all.other_units => {
+                            "it failed in worlds that observed another number of continuous values".to_string()
+                        }
+                        None => "it failed in worlds that hadn't met all the evidence yet".to_string(),
+                    };
+                    match &when {
+                        Some(when) => format!("{failed}, for example when {when}; {others}"),
+                        None => format!("{failed}; {others}"),
+                    }
                 }
-                (None, None) => format!("it failed in worlds that hadn't met all the evidence yet; {others}"),
             };
             let error = g.error.clone().with_note(note);
             Failure {
                 diagnostic: Diagnostic::new(error.to_diagnostic(), file),
+                fault: fault.map(Arc::new),
                 share,
                 standard_error,
                 weight: g.weight.to_f64(),

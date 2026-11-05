@@ -125,7 +125,7 @@ fn a_partial_result_prints_the_other_worlds_and_exits_with_3() {
          failed\n  line 2: division by zero    16.67%\n\n"
     );
     assert!(
-        err.contains("it failed in 16.67% of the worlds; the other worlds finished"),
+        err.contains("it failed in 16.67% of the worlds, for example when x = 0; the other worlds finished"),
         "{err}"
     );
     // Sampling is partial by default, unless asked otherwise.

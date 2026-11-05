@@ -6,7 +6,7 @@ All notable changes to the published crates are recorded here. The format follow
 
 ### Added
 
-- When a fault stops a run, its diagnostic notes for which values the operation failed (`for example when x = 0`) and, when enumerating, how often: `fails for 16.67% of the weight reaching this operation`. The share is given only where it can be established without running anything more of the model, and is labelled per pass inside a loop. When sampling, the note names the failing run and the seed. The library's `Error::fault` returns the same as a `FaultContext`.
+- When a fault stops a run, its diagnostic notes for which values the operation failed (`for example when x = 0`) and, when enumerating, how often: `fails for 16.67% of the weight reaching this operation`. The share is given only where it can be established without running anything more of the model, and is labelled per pass inside a loop. When sampling, the note names the failing run and the seed. The library's `Error::fault` returns the same as a `FaultContext`. Partial results' diagnostics, and each `Failure::fault`, give the first failing world's or run's values as an example.
 
 ## [0.5.0] - 2026-11-05
 

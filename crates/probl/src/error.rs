@@ -197,7 +197,7 @@ impl FailedRun {
 }
 
 impl FaultContext {
-    fn new(c: &probl_engine::FaultContext, file: &SourceFile) -> FaultContext {
+    pub(crate) fn new(c: &probl_engine::FaultContext, file: &SourceFile) -> FaultContext {
         let len = file.text.len();
         let inputs = c
             .inputs
@@ -225,10 +225,9 @@ impl FaultContext {
         }
     }
 
-    /// The note that says it: `fails for 16.67% of the weight reaching this
-    /// operation, for example when x = 0`.
-    fn note(&self) -> Option<String> {
-        // A variable by its name, anything else by its source text when short.
+    /// The inputs, as a note says them: `x = 0 and n = 3`. A variable by its
+    /// name, anything else by its source text when short.
+    pub(crate) fn when(&self) -> Option<String> {
         let inputs: Vec<String> = self
             .inputs
             .iter()
@@ -242,11 +241,17 @@ impl FaultContext {
                 Some(format!("{label} = {}", i.value))
             })
             .collect();
-        let when = match inputs.split_last() {
+        match inputs.split_last() {
             None => None,
             Some((last, [])) => Some(last.clone()),
             Some((last, rest)) => Some(format!("{} and {last}", rest.join(", "))),
-        };
+        }
+    }
+
+    /// The note that says it: `fails for 16.67% of the weight reaching this
+    /// operation, for example when x = 0`.
+    fn note(&self) -> Option<String> {
+        let when = self.when();
         let thousands = |n: u64| probl_engine::report::thousands(i64::try_from(n).unwrap_or(i64::MAX));
         Some(match (&self.run, self.share, when) {
             (Some(r), _, when) => {
