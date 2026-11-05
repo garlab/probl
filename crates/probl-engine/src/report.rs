@@ -42,6 +42,10 @@ pub struct Acc {
     pub missing: Weight,
     /// When sampling: what each run of the current batch reported.
     runs: FxHashMap<u32, RunStat>,
+    /// When sampling: each run's datetimes or durations, for typed standard
+    /// errors. Kept apart from `runs`, so that other reports' per-run
+    /// bookkeeping doesn't grow for them.
+    temporal_runs: FxHashMap<u32, temporal::Run>,
     /// When sampling: sums over the finished runs, for standard errors.
     moments: Option<Moments>,
     online: Option<OnlineNumbers>,
@@ -65,6 +69,7 @@ impl Default for Acc {
             values: FxHashMap::default(),
             missing: Weight::ZERO,
             runs: FxHashMap::default(),
+            temporal_runs: FxHashMap::default(),
             moments: None,
             online: None,
             sketch: None,
@@ -255,13 +260,14 @@ pub struct RunStat {
     pub sum: f64,
     /// The probability that the reported value was a number.
     pub numbers: f64,
-    temporal: Option<Box<temporal::Run>>,
     /// The probability of each other value (dates excluded).
     pub others: Vec<(Value, f64)>,
 }
 
 impl RunStat {
-    fn record(&mut self, value: &Value, share: f64) {
+    /// Datetimes and durations go to `temporal`, which keeps them outside
+    /// this per-run record.
+    fn record(&mut self, value: &Value, share: f64, temporal: &mut dyn FnMut(&Value, f64)) {
         match value {
             Value::Bool(b) => {
                 self.facts += share;
@@ -271,18 +277,14 @@ impl RunStat {
             }
             Value::Dist(d) => {
                 for (x, q) in &d.outcomes {
-                    self.record(x, share * q);
+                    self.record(x, share * q, temporal);
                 }
             }
             Value::Int(_) | Value::Float(_) | Value::Prob(_) if value.as_f64().is_some() => {
                 self.numbers += share;
                 self.sum += share * value.as_f64().unwrap();
             }
-            Value::DateTime(_) | Value::Duration(_) => {
-                self.temporal
-                    .get_or_insert_with(|| Box::new(temporal::Run::new(value)))
-                    .record(value, share);
-            }
+            Value::DateTime(_) | Value::Duration(_) => temporal(value, share),
             Value::Date(_) => {}
             other => match self.others.iter_mut().find(|(v, _)| v == other) {
                 Some((_, s)) => *s += share,
@@ -305,12 +307,17 @@ impl Acc {
                 facts: 0.0,
                 sum: 0.0,
                 numbers: 0.0,
-                temporal: None,
                 others: Vec::new(),
             });
             stat.visits += 1;
             stat.integrated |= matches!(value, Value::Dist(_));
-            stat.record(value, 1.0);
+            let temporal_runs = &mut self.temporal_runs;
+            stat.record(value, 1.0, &mut |v, share| {
+                temporal_runs
+                    .entry(run)
+                    .or_insert_with(|| temporal::Run::new(v))
+                    .record(v, share)
+            });
         }
     }
 
@@ -427,7 +434,10 @@ impl Acc {
     /// Add what another batch of runs reported for this key.
     fn absorb(&mut self, other: Acc) -> crate::error::OpResult<()> {
         debug_assert!(
-            self.runs.is_empty() && other.runs.is_empty(),
+            self.runs.is_empty()
+                && other.runs.is_empty()
+                && self.temporal_runs.is_empty()
+                && other.temporal_runs.is_empty(),
             "batches end before they're combined"
         );
         if let (Some(mine), Some(theirs)) = (&mut self.sketch, other.sketch) {
@@ -467,13 +477,10 @@ impl Acc {
         let m = self.moments.get_or_insert_with(Moments::default);
         // The exact typed error is serialized as a canonical string: use a
         // stable order across native/WASM hash-table layouts as well as workers.
-        let mut times: Vec<_> = self
-            .runs
-            .iter()
-            .filter_map(|(id, run)| run.temporal.as_ref().map(|t| (*id, run.weight, t)))
-            .collect();
-        times.sort_unstable_by_key(|(id, _, _)| *id);
-        for (_, weight, run) in times {
+        let mut times: Vec<_> = std::mem::take(&mut self.temporal_runs).into_iter().collect();
+        times.sort_unstable_by_key(|(id, _)| *id);
+        for (id, run) in &times {
+            let weight = self.runs[id].weight;
             m.temporal.get_or_insert_with(Default::default).add(run, weight);
         }
         // This batch is finished and its sink will be sent to the combiner.
@@ -720,14 +727,11 @@ impl Sink {
                 _ => false,
             }
         }
-        if analytic_time(value)
-            || self
-                .groups
-                .get(key)
-                .is_some_and(|a| a.continuous && a.values.keys().any(analytic_time))
-        {
+        // Every report visit comes here, sampled or not: look the group up once.
+        let group = self.groups.get(key);
+        if analytic_time(value) || group.is_some_and(|a| a.continuous && a.values.keys().any(analytic_time)) {
             let mut leaves = vec![value];
-            if let Some(acc) = self.groups.get(key) {
+            if let Some(acc) = group {
                 leaves.extend(acc.values.keys());
             }
             let mut time_kind = None;
@@ -759,7 +763,7 @@ impl Sink {
             }
         }
         let (mut analytic, mut numeric) = kinds(value);
-        if let Some(acc) = self.groups.get(key) {
+        if let Some(acc) = group {
             analytic |= acc.continuous;
             numeric &= !acc.nonnumeric;
         }
