@@ -1,15 +1,15 @@
 # Static checking and explanations
 
-> Draft proposal, 5 November 2026. Priority 2 of the [development priorities](../architecture.md#priorities). Nothing here is implemented. It proposes what the compiler should reject or warn about before a program runs, in which order to build it, and how to measure it. The survey below was taken at commit `befb69f`.
+> Draft proposal, 5 November 2026, revised after review the same day. Priority 2 of the [development priorities](../architecture.md#priorities). Nothing here is implemented. It proposes what the compiler should reject or warn about before a program runs, in which order to build it, and how to measure it. The survey below was taken at commit `befb69f`.
 
 ## Recommendation
 
-1. **Report only definite mistakes as errors.** An error before running means the construct fails every time it's evaluated, whatever the values. Anything less certain is a warning or nothing. Where the compiler can't tell, it says nothing: a program that runs today must not gain an error because the checker guessed.
+1. **Report only definite mistakes that certainly run as errors.** An error before running means the construct fails every time it's evaluated, whatever the values, and that it's evaluated whenever the program runs. A definite mistake in code that might not run is a warning; anything less certain is nothing. A program that runs today never gains an error.
 2. **Start with kinds, not full types.** The first slice tells facts (settled values), recipes (distributions) and continuous recipes apart, with the scalar types needed to say why. That covers the mistakes the language makes easiest to write: `P` of a fact, `match` on a distribution, arithmetic on an undrawn `normal`, spreading a distribution.
 3. **Describe built-ins once, as data.** A typed signature table in `probl-sema` drives the checker, and the reference's signature strings are generated from it or tested against it, so documentation and checking can't drift apart.
-4. **Then types, then effects.** Scalar and collection types catch the largest group of runtime errors. Effects come third, and as warnings: a callback that draws only fails if it runs.
+4. **Then types, then effects.** Scalar and collection types catch the largest group of runtime errors. Effects come third, mostly as warnings: a callback that draws only fails if it's called, which depends on the operation and the collection's size, and draws inside `simulate` don't count.
 5. **Explain on the error path first.** The world limit and lost conjugate updates get explanations where they happen: when a run hits the limit, and in `--stats`. This follows stage 0 of [error handling](error-handling.md): nothing is added to a run that succeeds.
-6. **Measure with the test corpus.** Keep the survey below as a test. Each stage states which runtime errors it must now catch before running, and the programs that run today must still compile without a new error.
+6. **Measure with the test corpus.** Keep the survey below as a test. Each stage states which runtime errors it must now catch before running; the programs that run today must still compile without a new error, and their new warnings are listed and reviewed.
 
 ## The problem
 
@@ -53,7 +53,7 @@ The 272 non-fault language errors, by what deciding them before running would ne
 | The model's behavior | 26 | no | impossible evidence, a loop some worlds never leave |
 | The host | 16 | no | a program reading data that wasn't loaded |
 
-So 194 of the 272 (71%) are decidable from the source with the analyses in this proposal, 27 of them as warnings, and 78 aren't. The corpus is biased: tests are written to reach each runtime check, so these are counts of checks, not of mistakes in real programs. It's still the right regression corpus, since every runtime check that could move earlier is in it. Arity of direct calls is already checked during compilation (`round(1, 2, 3)`, `f(1, 2)`); the 19 above call through a value. Faults and unsupported features are out of scope, except that a fault whose operands are literals (`1 / 0`) could also be reported.
+So 194 of the 272 (71%) are decidable from the source with the analyses in this proposal, 27 of them as warnings, and 78 aren't. The corpus is biased: tests are written to reach each runtime check, so these are counts of checks, not of mistakes in real programs. It's still the right regression corpus, since every runtime check that could move earlier is in it. Arity of direct calls is already checked during compilation (`round(1, 2, 3)`, `f(1, 2)`); the 19 above call through a value. Faults and unsupported features are out of scope, except that a fault whose operands are literals (`1 / 0`) can be a warning ([below](#the-contract)).
 
 ## What exists
 
@@ -65,9 +65,11 @@ So 194 of the 272 (71%) are decidable from the source with the analyses in this 
 
 ## The contract
 
-**Definite errors.** An error is reported before running only when the construct fails every time it's evaluated, for every value its operands can have. `P(x > 3)` with `x` drawn is definite: `x > 3` is a fact in every world, whatever `x` is. `P(c)` where `c` is a parameter without a declared type isn't: nothing is known about `c`.
+**Definite mistakes.** A construct is a definite mistake when it fails every time it's evaluated, for every value its operands can have. `P(x > 3)` with `x` drawn is one: `x > 3` is a fact in every world, whatever `x` is. `P(c)` where `c` is a parameter without a declared type isn't: nothing is known about `c`.
 
-**Reachability.** A definite error in code that never runs (`if false { report 1 + "a" }`) runs today. Recommendation: report it anyway, as the compiler already does for declared literals (`let n: int = 2.0` is rejected wherever it is). A definite mistake in a branch is almost always a bug, and probabilistic branching makes reachability weak evidence: a branch rarely taken in enumeration is still taken. This is a deliberate change of what compiles. Record it in the changelog, and measure it with the corpus (below).
+**Errors only where it certainly runs.** A definite mistake is an error only when it's certainly evaluated whenever the program runs: in a statement of the main program that isn't inside a conditional branch, a `match` arm, a loop's body, a `try`, or the right of `and` or `or`; or in the body of a function that such a statement certainly calls, under the same conditions there. Anywhere else it's a warning. `if false { report 1 + "a" }` runs today, and keeps running, with a warning. So a program that runs today never gains an error: if it ran, it never evaluated its definite mistakes. (If no world gets as far as the mistake, an earlier error, fault or impossible evidence already stops the run.) The compile-time checks of declared literals (`let n: int = 2.0`) stay as they are: they're already part of the language.
+
+**Faults are recoverable.** A fault whose operands are literals, like `1 / 0`, is a warning at most, never an error: `try` catches faults, also from a called function (`fn f() { 1 / 0 }` is caught by `try { f() } catch DivisionByZero { 0 }` in its caller), and partial mode lets the other worlds finish. There's no warning when a `try` in the same function catches that fault: `report try { 1 / 0 } catch DivisionByZero { 42 }` is valid and intended. Kind and type mistakes aren't faults, and `try` doesn't catch them, so this only concerns faults.
 
 **Unknown stays silent.** Types and kinds are inferred from literals, declarations, data schemas, built-in signatures, draws (`~` gives a fact), and the bodies of functions. What can't be inferred, such as an unannotated parameter used in several ways, a value read through `env`, or a closure's result, is `unknown`, and nothing about `unknown` is an error. Unions are sets of possibilities: an operation is a definite error only if it fails for each member.
 
@@ -79,12 +81,20 @@ So 194 of the 272 (71%) are decidable from the source with the analyses in this 
 
 ## First slice: kinds
 
-**The lattice.** For each expression: `fact[T]` (a settled value of type `T`), `dist[T]` (a recipe whose outcomes can be listed, or a count law), `continuous` (an undrawn continuous distribution), `analytic[T]` (a continuous draw's outcome when enumerating, which is a fact for these rules), a union of these, or `unknown`. `T` is one of the scalar types, a collection type or `unknown`; the first slice only needs enough of `T` to tell `bool` from the rest.
+**The lattice.** For each expression: `fact[T]` (a settled value of type `T`, including lists, ranges and other collections), `dist[T]` (a recipe whose outcomes can be listed, or a count law), `continuous` (an undrawn continuous distribution), `joint[T]` (a `simulate` result whose outcomes include continuous draws' outcomes, like an analytic datetime forecast), `analytic[T]` (a continuous draw's outcome when enumerating, which is a fact for these rules), a union of these, or `unknown`. `T` is one of the scalar types, a collection type or `unknown`; the first slice only needs enough of `T` to tell `bool` from the rest.
 
 **Rules**, from the [semantics](../semantics.md#2-events-and-identity):
 
 - Draws (`let x ~ D`, `~D`) give facts. Distribution expressions (`d6`, `one_of`, `normal(…)`, `simulate`) give recipes, and `let die = d6` binds a recipe.
-- A built-in that lifts maps a recipe argument to a recipe result; a raw built-in states the kinds it accepts. For example, `P` takes `dist[bool]`; `support`, `pmf` and listing take a listable recipe; `mean` and `quantile` take a recipe or a collection.
+- A built-in that lifts maps a recipe argument to a recipe result. A raw built-in states, input by input, what it accepts; whether a recipe can be listed doesn't decide it. For example:
+
+  | Query | Accepts | A definite mistake |
+  |---|---|---|
+  | `P(d)` | `dist[bool]` | a scalar, including a `bool` or `prob` fact |
+  | `pmf(d, v)` | listed recipes and count laws; continuous distributions, where it's 0; `joint` forecasts, including analytic datetimes; nonempty lists and ranges | a scalar |
+  | `support(d)` | listed recipes and count laws; lists and ranges | a continuous distribution; a scalar |
+
+  Each row is taken from the built-in's runtime dispatch, and tested against it: every accepted form must run, and every form called a mistake must fail at runtime with the matching error.
 - Operators lift over listable recipes. Arithmetic on a `continuous` operand is unsupported in both modes: an error, until it's supported (then the rule goes).
 - `match`, spread and map keys need facts or collections; `if`, `while` and guards accept `bool`, `prob` and `dist[bool]` (numbers are checked as probabilities at runtime, so they're not an error here).
 - Function results are inferred from their bodies, as the join of their `return`s; recursion starts from `unknown`.
@@ -103,7 +113,21 @@ Scalar and collection types, with unions and unknowns, cover the largest group (
 
 ## Third slice: effects, as warnings
 
-Extend `effects.rs` with draws and branching on chances, as definite ("on every path through the function") as well as possible. A callback that definitely draws is a mistake the runtime reports, but only when the callback runs: `[].map(x -> pick())` runs today. So it's a warning, or an error only when the collection is a nonempty literal. A callback that possibly draws gets nothing. This covers the 27 callback errors without rejecting a program that runs.
+Extend `effects.rs` with draws and branching on chances, as definite ("on every path through the function") as well as possible.
+
+**`simulate` contains its effects.** Draws, branching on chances and observations inside a `simulate` block belong to that local model: they don't make the function around it draw or observe. `[1].map(x -> simulate { let y ~ d6; x + y })` is valid, and stays silent. Printing isn't restricted in callbacks, so it isn't an effect here either.
+
+**A callback is a mistake only if it's called.** The runtime reports a callback that draws, branches on chances or observes when it runs it, and whether it runs depends on the operation. For the main ones:
+
+| Operation | Calls its function |
+|---|---|
+| `map`, `filter`, `count`, `any` | once per element, so at least once on a nonempty collection |
+| `sort`, `sort_desc`, `minimum`, `maximum` with a comparator | only with two or more elements |
+| `reduce` | with two or more elements, or with one and an initial value |
+
+`[1].sort((a, b) -> { let x ~ d6; x })` and `[1].reduce((a, b) -> { let x ~ d6; x })` run today, since neither calls its function, and so does `[].map(x -> pick())`. A collection's size is known only for literals and ranges with literal bounds.
+
+**Severity.** An error needs all of: the call certainly runs (as [above](#the-contract)); its function is certainly called, by the table and a known size; and the function draws, branches on chances or observes on every path, outside `simulate`. When the function does so on every path but it might not be called, it's a warning. When it might do so, nothing. This covers the 27 callback errors, mostly as warnings, without rejecting a program that runs.
 
 ## Explanations
 
@@ -117,9 +141,9 @@ A formatter and a standalone language server come after the first slice. The lan
 
 ## Implementation order and validation
 
-1. **Survey as a test.** Turn the survey into a test over the same corpus: for each program, whether it runs, fails to compile, or fails at runtime, with the category. It fails when a program that ran stops compiling, and records which runtime errors moved before running.
+1. **Survey as a test.** Turn the survey into a test over the same corpus: for each program, whether it runs, fails to compile, or fails at runtime, with the category. It fails when a program that ran gains an error, which the rule of [errors only where it certainly runs](#the-contract) excludes by construction, so a failure is a checker bug. It lists the warnings those programs gain, for review, and records which runtime errors moved before running.
 2. **Signatures as data, for kinds.** Table and docs agreement test.
-3. **Kinds.** Definite kind errors; the 20 kind cases caught; zero new errors on the 1,129 programs that run, the examples, the benchmarks and the playground's programs. Native and WASM give the same diagnostics.
+3. **Kinds.** Definite kind mistakes, as errors or warnings by where they are; the 20 kind cases caught; zero new errors on the 1,129 programs that run, the examples, the benchmarks and the playground's programs, and zero new warnings on the last three. Native and WASM give the same diagnostics.
 4. **Explanations on the error path.** World limit and `--stats` conjugacy reasons, with tests on small models whose answer is known.
 5. **Types.** The 127 type cases and 19 arity cases, under the same no-new-errors rule.
 6. **Effects warnings**, and the recipe-reuse warning if the corpus supports it.
@@ -129,7 +153,7 @@ Each stage updates the semantics where a check moves before running, the changel
 
 ## Open questions
 
-- **Reachability.** Is rejecting a definite mistake in a branch that's never taken acceptable? Recommended above, as for declared literals; the alternative is a warning there.
+- **Warnings in CI.** Should `probl check` have a `--deny-warnings` option, so a project can treat a definite mistake in a branch as an error?
 - **Saying "I meant it".** For warnings: a pragma, a comment, or rewriting the program? Rewriting is preferred where it doesn't change the meaning.
 - **Data.** Programs that `read` data have declared schemas, so their inputs' types are known. Should the checker also use the data file when `probl check --data` is given?
 - **Cost.** The checker should be linear in the program's size, so the playground can check as you type. The first slice's fixpoint over function results needs a bound for recursion.
