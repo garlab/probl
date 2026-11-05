@@ -4,6 +4,8 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-05
+
 ### Added
 
 - Single-quoted date and datetime literals, validated during compilation and usable in match patterns. `datetime` retains nanosecond precision, accepts `Z` and numeric offsets by normalizing to UTC, and stores no timezone metadata. Calendar and clock helpers preserve precision and check bounds.
@@ -167,7 +169,8 @@ The first release.
 
 The [language overview](docs/language-overview.md) and the [reference semantics](docs/semantics.md) describe the language, and [status and limits](README.md#status-and-limits) lists what isn't implemented yet.
 
-[Unreleased]: https://github.com/garlab/probl/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/garlab/probl/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/garlab/probl/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/garlab/probl/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/garlab/probl/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/garlab/probl/compare/v0.3.1...v0.3.2
