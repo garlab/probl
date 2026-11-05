@@ -12,7 +12,7 @@ use crate::chain::{Chain, Solution};
 use crate::conjugate::{self, Seen};
 use crate::continuous::{Family, Rng};
 use crate::dist::{Budget, Counts, Dist};
-use crate::error::{ErrorKind, Fault, OpError, OpResult, Result, RuntimeError};
+use crate::error::{ErrorKind, FailedRun, Fault, FaultContext, FaultInput, OpError, OpResult, Result, RuntimeError};
 use crate::failure::Failures;
 use crate::ops::{self, Truth};
 use crate::report::Sink;
@@ -341,6 +341,14 @@ pub struct Engine<'p> {
     /// Where evidence can still be applied, to tell whether a failed
     /// world's weight can be added to the finished worlds'.
     evidence: EvidenceOrder,
+    /// Checking how often a fault that stopped the run happens in other
+    /// worlds: nothing is printed, and nothing that could run the
+    /// program's own code (callbacks, `simulate`) runs (`fault_share`).
+    probing: bool,
+    /// How many loops are running pass by pass around the current statement.
+    passes: u32,
+    /// How many loops are being solved as chains around the current statement.
+    solving: u32,
 }
 
 /// Where a world was when it failed.
@@ -365,12 +373,165 @@ impl At {
     }
 }
 
+/// What a statement evaluates in each world before it acts, to check how
+/// often a fault that stopped the run happens in its other worlds.
+#[derive(Clone, Copy)]
+enum Probe<'p> {
+    /// `place = value`.
+    Set { place: &'p Place, value: &'p Expr },
+    /// A report's value, then its key.
+    Report { value: &'p Expr, key: Option<&'p Expr> },
+    /// A call of a built-in, as a statement: the call's own span.
+    Builtin {
+        callee: &'p Expr,
+        named: &'p [String],
+        args: &'p [Expr],
+        span: Span,
+    },
+}
+
+impl Probe<'_> {
+    /// Whether every world evaluating this reaches the one operation at
+    /// `span`: it's there once, and not on the right of an `and` or `or`.
+    fn reaches(&self, span: Span) -> bool {
+        let mut found = Vec::new();
+        match *self {
+            Probe::Set { value, .. } => find_operation(value, span, false, &mut found),
+            Probe::Report { value, key } => {
+                find_operation(value, span, false, &mut found);
+                if let Some(key) = key {
+                    find_operation(key, span, false, &mut found);
+                }
+            }
+            Probe::Builtin {
+                callee, args, span: at, ..
+            } => {
+                find_operation(callee, span, false, &mut found);
+                for arg in args {
+                    find_operation(arg, span, false, &mut found);
+                }
+                if at == span {
+                    found.push(false);
+                }
+            }
+        }
+        found == [false]
+    }
+}
+
+/// Each operation at `span` within `e`: whether only some evaluations of
+/// `e` reach it.
+fn find_operation(e: &Expr, span: Span, conditional: bool, found: &mut Vec<bool>) {
+    let operation = matches!(
+        e.kind,
+        ExprKind::Unary(..)
+            | ExprKind::Binary(..)
+            | ExprKind::Index(..)
+            | ExprKind::Field(..)
+            | ExprKind::Builtin { .. }
+    );
+    if operation && e.span == span {
+        found.push(conditional);
+    }
+    let mut visit = |x: &Expr, conditional: bool| find_operation(x, span, conditional, found);
+    match &e.kind {
+        ExprKind::Lit(_)
+        | ExprKind::Slot(_)
+        | ExprKind::Closure { .. }
+        | ExprKind::Simulate { .. }
+        | ExprKind::Input(_) => {}
+        ExprKind::Unary(_, x) | ExprKind::Spread(x) | ExprKind::Field(x, _) => visit(x, conditional),
+        ExprKind::Bind { value, .. } => visit(value, conditional),
+        ExprKind::Binary(op, a, b) => {
+            visit(a, conditional);
+            visit(b, conditional || matches!(op, BinOp::And | BinOp::Or));
+        }
+        ExprKind::Index(x, i) => {
+            visit(x, conditional);
+            visit(i, conditional);
+        }
+        ExprKind::List(items) => items.iter().for_each(|x| visit(x, conditional)),
+        ExprKind::Map(entries) => entries.iter().for_each(|(k, v)| {
+            visit(k, conditional);
+            visit(v, conditional);
+        }),
+        ExprKind::Record { fields, .. } => fields.iter().for_each(|(_, x)| visit(x, conditional)),
+        ExprKind::With(x, fields) => {
+            visit(x, conditional);
+            fields.iter().for_each(|(_, v)| visit(v, conditional));
+        }
+        ExprKind::Builtin { args, named, .. } => {
+            args.iter().for_each(|x| visit(x, conditional));
+            named.iter().for_each(|(_, x)| visit(x, conditional));
+        }
+        ExprKind::Interp(parts) => parts.iter().for_each(|part| {
+            if let InterpPart::Expr(x) = part {
+                visit(x, conditional);
+            }
+        }),
+    }
+}
+
+/// `v` as source-like text, at most about `max` bytes.
+fn bounded_text(v: &Value, max: usize) -> String {
+    struct Capped(String, usize);
+    impl std::fmt::Write for Capped {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            let room = self.1.saturating_sub(self.0.len());
+            if s.len() <= room {
+                self.0.push_str(s);
+                return Ok(());
+            }
+            let mut cut = room;
+            while !s.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            self.0.push_str(&s[..cut]);
+            Err(std::fmt::Error)
+        }
+    }
+    let mut out = Capped(String::new(), max);
+    if std::fmt::Write::write_fmt(&mut out, format_args!("{v:?}")).is_err() {
+        out.0.push('…');
+    }
+    out.0
+}
+
 /// The value of `$e` in one world. If it fails with a fault that a `catch`
 /// or partial mode takes, the world leaves the statement: `$undo` runs, and
 /// the statement goes on with the next world (see `Engine::fail`). A catch
 /// gets the world as its statement began: `world w` when `$e` leaves `w` as
 /// it was, or `saved s` with a copy `s` taken before `$e` changed it.
+///
+/// With `stop 'label`, a fault that stops the run leaves the block with
+/// that label with the error, rather than the function, so that the
+/// statement can describe it with its other worlds (`Engine::describe_stop`).
 macro_rules! each {
+    ($self:ident, stop $l:lifetime, $at:expr, world $w:expr, $e:expr $(, $undo:block)?) => {
+        match $e {
+            Ok(v) => v,
+            Err(e) => {
+                let saved = $self.snapshot(&$w);
+                if let Err(stop) = $self.fail(e, $at, saved) {
+                    break $l Err(stop);
+                }
+                $($undo)?
+                continue;
+            }
+        }
+    };
+    ($self:ident, stop $l:lifetime, $at:expr, saved $saved:ident, $e:expr $(, $undo:block)?) => {
+        match $e {
+            Ok(v) => v,
+            Err(e) => {
+                if let Err(stop) = $self.fail(e, $at, $saved.take()) {
+                    break $l Err(stop);
+                }
+                $($undo)?
+                continue;
+            }
+        }
+    };
     ($self:ident, $at:expr, world $w:expr, $e:expr $(, $undo:block)?) => {
         match $e {
             Ok(v) => v,
@@ -466,6 +627,9 @@ impl<'p> Engine<'p> {
             evidence: probl_sema::effects::evidence_order(prog),
             handlers: Vec::new(),
             faulted: Vec::new(),
+            probing: false,
+            passes: 0,
+            solving: 0,
         }
     }
 
@@ -1349,7 +1513,7 @@ impl<'p> Engine<'p> {
             return Ok(());
         }
         if !self.partial() && !self.catches_above(e.fault) {
-            return Err(e);
+            return Err(self.stopping(e, at));
         }
         let fun = &self.prog.functions[at.f as usize];
         let e = match fun.kind {
@@ -1363,6 +1527,210 @@ impl<'p> Engine<'p> {
         let run = self.sampler.is_some().then_some(at.run);
         self.failures.record(e, at.weight, run, before_evidence, at.densities);
         Ok(())
+    }
+
+    /// A fault stops the run. When sampling, it says in which run; the
+    /// sampler adds how many there were, and the seed.
+    #[cold]
+    #[inline(never)]
+    fn stopping(&self, mut e: RuntimeError, at: At) -> RuntimeError {
+        if self.sampler.is_some() {
+            let context = e.context.get_or_insert_with(Default::default);
+            context.run.get_or_insert(FailedRun {
+                run: u64::from(at.run),
+                runs: 0,
+                seed: 0,
+            });
+        }
+        e
+    }
+
+    /// A fault that stopped the run in the world described by `failing`
+    /// (its weight and densities): how often the operation that faulted
+    /// fails among this statement's worlds, those already through it
+    /// (`before`) and those not yet started (`after`). The ones through it
+    /// passed the operation; the others are checked by evaluating `probe`
+    /// in each, printing nothing. A share is given only when every world
+    /// reaches the operation, the check finds nothing else failing, and the
+    /// weights are in the same units (stage 0 of
+    /// docs/design/error-handling.md). Otherwise the error is unchanged.
+    #[cold]
+    #[inline(never)]
+    fn describe_stop(
+        &mut self,
+        mut e: RuntimeError,
+        f: FnId,
+        probe: Option<Probe<'p>>,
+        before: &[World],
+        failing: (Weight, u32),
+        after: &[World],
+    ) -> RuntimeError {
+        if let Some(probe) = probe
+            && let Some(share) = self.fault_share(&e, f, &probe, before, failing, after)
+        {
+            let context = e.context.get_or_insert_with(Default::default);
+            context.share = Some(share);
+            context.per_pass = self.passes > 0;
+        }
+        e
+    }
+
+    fn fault_share(
+        &mut self,
+        e: &RuntimeError,
+        f: FnId,
+        probe: &Probe<'p>,
+        before: &[World],
+        (weight, densities): (Weight, u32),
+        after: &[World],
+    ) -> Option<f64> {
+        // Only for the main program's own statements when enumerating: a
+        // call, a `simulate` or a callback sees one invocation's worlds, a
+        // solver one state at a time, and a `try` may have taken some.
+        let top = self.sampler.is_none()
+            && f == MAIN
+            && self.depth == 0
+            && self.nested == 0
+            && self.callback.is_none()
+            && self.handlers.is_empty()
+            && self.solving == 0;
+        if !top || e.fault.is_none() || !probe.reaches(e.span) {
+            return None;
+        }
+        if before.iter().chain(after).any(|w| w.densities != densities) {
+            return None;
+        }
+        let mut reached = weight + total_weight(before);
+        let mut failed = weight;
+        self.probing = true;
+        let mut complete = true;
+        for w in after {
+            if self.spend(1, e.span).is_err() {
+                complete = false;
+                break;
+            }
+            match self.probe(f, probe, w) {
+                Ok(()) => reached += w.weight,
+                Err(other) if other.span == e.span && other.fault == e.fault => {
+                    reached += w.weight;
+                    failed += w.weight;
+                }
+                // Something else fails first, or the check can't go on.
+                Err(_) => {
+                    complete = false;
+                    break;
+                }
+            }
+        }
+        self.probing = false;
+        (complete && !reached.is_zero()).then(|| failed.ratio(reached))
+    }
+
+    /// Evaluate what a statement evaluates in `w` before acting on it.
+    fn probe(&mut self, f: FnId, probe: &Probe<'p>, w: &World) -> Result<()> {
+        match *probe {
+            Probe::Set { place, value } => match self.record_place_type(place, w) {
+                Some(ty) => self.eval_expected(f, value, w, &ty).map(drop),
+                None => self.eval(f, value, w).map(drop),
+            },
+            Probe::Report { value, key } => {
+                self.eval(f, value, w)?;
+                if let Some(key) = key {
+                    self.eval(f, key, w)?;
+                }
+                Ok(())
+            }
+            Probe::Builtin {
+                callee,
+                named,
+                args,
+                span,
+            } => {
+                let Value::Builtin(b) = self.eval(f, callee, w)? else {
+                    return Err(RuntimeError::new(span, "not a built-in"));
+                };
+                let spread = args.iter().any(|a| matches!(a.kind, ExprKind::Spread(_)));
+                let key = self.eval_items(f, args, w, span)?;
+                self.builtin_values(b, &key, named, w.weight, (f, span), spread)
+                    .map(drop)
+            }
+        }
+    }
+
+    /// The operation `e` failed with `err`, given its operands' values (`y`
+    /// for the second, when it has one). Out of line, as the other error
+    /// paths below: `eval` is recursive, and its frame stays small.
+    #[cold]
+    #[inline(never)]
+    fn op_fault(&self, err: OpError, f: FnId, e: &Expr, x: &Value, y: Option<&Value>) -> RuntimeError {
+        let (a, b) = match &e.kind {
+            ExprKind::Unary(_, a) | ExprKind::Field(a, _) => (Some(&**a), None),
+            ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => (Some(&**a), Some(&**b)),
+            _ => (None, None),
+        };
+        let mut inputs = Vec::with_capacity(2);
+        if let Some(a) = a {
+            inputs.push((a, x));
+        }
+        if let (Some(b), Some(y)) = (b, y) {
+            inputs.push((b, y));
+        }
+        self.fault_inputs(err.at(e.span), f, e.span, &inputs)
+    }
+
+    /// A built-in called at `span` with `args`, then `named`, failed with `err`.
+    #[cold]
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn builtin_fault(
+        &self,
+        err: RuntimeError,
+        f: FnId,
+        span: Span,
+        args: &[Expr],
+        named: &[(String, Expr)],
+        values: &[Value],
+        spread: bool,
+    ) -> RuntimeError {
+        // Spreads make values and arguments differ in number.
+        let inputs: Vec<(&Expr, &Value)> = match spread {
+            false => args.iter().chain(named.iter().map(|(_, x)| x)).zip(values).collect(),
+            true => Vec::new(),
+        };
+        self.fault_inputs(err, f, span, &inputs)
+    }
+
+    /// A fault of the operation at `span` keeps its inputs other than
+    /// literals, as the failing world has them, for the error to show.
+    #[cold]
+    #[inline(never)]
+    fn fault_inputs(&self, mut e: RuntimeError, f: FnId, span: Span, inputs: &[(&Expr, &Value)]) -> RuntimeError {
+        if e.fault.is_none() || e.span != span || e.context.is_some() {
+            return e;
+        }
+        let slots = self
+            .prog
+            .functions
+            .get(f as usize)
+            .map_or(&[][..], |fun| &fun.slots[..]);
+        let inputs = inputs
+            .iter()
+            .filter(|(x, _)| !matches!(x.kind, ExprKind::Lit(_)))
+            .take(4)
+            .map(|(x, v)| FaultInput {
+                span: x.span,
+                name: match x.kind {
+                    ExprKind::Slot(s) => slots.get(s as usize).map(|s| s.name.clone()).filter(|n| n != TEMP),
+                    _ => None,
+                },
+                value: bounded_text(v, 60),
+            })
+            .collect();
+        e.context = Some(Box::new(FaultContext {
+            inputs,
+            ..FaultContext::default()
+        }));
+        e
     }
 
     /// Stop if a statement produced more worlds than allowed. (When sampling,
@@ -1675,24 +2043,36 @@ impl<'p> Engine<'p> {
                 let mut worlds = worlds;
                 let mut failed = Vec::new();
                 let mut discrete = false;
-                for (i, w) in worlds.iter_mut().enumerate() {
-                    let mut saved = self.snapshot(w);
-                    if let Some(check) = update {
-                        let updated = self.update(f, place, value, check, w, span);
-                        each!(self, At::new(f, stmt, w), saved saved, updated, { failed.push(i) });
-                        continue;
+                let mut current = 0;
+                let stopped: Result<()> = 'stmt: {
+                    for (i, w) in worlds.iter_mut().enumerate() {
+                        current = i;
+                        let mut saved = self.snapshot(w);
+                        if let Some(check) = update {
+                            let updated = self.update(f, place, value, check, w, span);
+                            each!(self, At::new(f, stmt, w), saved saved, updated, { failed.push(i) });
+                            continue;
+                        }
+                        let v = match self.record_place_type(place, w) {
+                            Some(ty) => self.eval_expected(f, value, w, &ty),
+                            None => self.eval(f, value, w),
+                        };
+                        let v = each!(self, stop 'stmt, At::new(f, stmt, w), saved saved, v, { failed.push(i) });
+                        if let Value::Analytic(_) = v {
+                            discrete |= is_discrete(&v);
+                        }
+                        each!(self, At::new(f, stmt, w), saved saved, self.assign(f, place, v, w, span), {
+                            failed.push(i)
+                        });
                     }
-                    let v = match self.record_place_type(place, w) {
-                        Some(ty) => self.eval_expected(f, value, w, &ty),
-                        None => self.eval(f, value, w),
-                    };
-                    let v = each!(self, At::new(f, stmt, w), saved saved, v, { failed.push(i) });
-                    if let Value::Analytic(_) = v {
-                        discrete |= is_discrete(&v);
-                    }
-                    each!(self, At::new(f, stmt, w), saved saved, self.assign(f, place, v, w, span), {
-                        failed.push(i)
-                    });
+                    Ok(())
+                };
+                if let Err(e) = stopped {
+                    // The worlds before this one are through; its weight is unchanged.
+                    let probe = update.is_none().then_some(Probe::Set { place, value });
+                    let failing = (worlds[current].weight, worlds[current].densities);
+                    let (before, after) = (&worlds[..current], &worlds[current + 1..]);
+                    return Err(self.describe_stop(e, f, probe, before, failing, after));
                 }
                 if discrete {
                     self.split_discrete(f, stmt, place, &mut worlds, &mut failed)?;
@@ -1805,93 +2185,122 @@ impl<'p> Engine<'p> {
             StmtKind::Call { dest, callee, args } => {
                 let spread = args.iter().any(|a| matches!(a.kind, ExprKind::Spread(_)));
                 let mut out = Vec::with_capacity(worlds.len());
-                for w in worlds {
-                    let at = At::new(f, stmt, &w);
-                    let target = match callee {
-                        Callee::Value(e, _) => Some(each!(self, at, world w, self.eval(f, e, &w))),
+                // Whether each world so far called a built-in, leaving one
+                // world of the same weight.
+                let mut plain = true;
+                let mut at = None;
+                let mut rest = worlds.into_iter();
+                let stopped: Result<()> = 'stmt: {
+                    for w in rest.by_ref() {
+                        let here = At::new(f, stmt, &w);
+                        at = Some(here);
+                        let at = here;
+                        let target = match callee {
+                            Callee::Value(e, _) => Some(each!(self, stop 'stmt, at, world w, self.eval(f, e, &w))),
+                            _ => None,
+                        };
+                        let mut key = each!(self, stop 'stmt, at, world w, self.eval_items(f, args, &w, span));
+                        let func = match callee {
+                            Callee::Fn { func, capture_args } => {
+                                self.capture(&mut key, f, *func, capture_args, &w, span, false)?;
+                                *func
+                            }
+                            Callee::Value(e, named) => match target.unwrap() {
+                                Value::Builtin(b) => {
+                                    let value = self
+                                        .builtin_values(b, &key, named, w.weight, (f, span), spread)
+                                        .map_err(|err| self.builtin_fault(err, f, span, args, &[], &key, spread));
+                                    let value = each!(self, stop 'stmt, at, world w, value);
+                                    let mut saved = self.snapshot(&w);
+                                    let mut nw = w;
+                                    each!(self, at, saved saved, self.assign(f, dest, value, &mut nw, span));
+                                    out.push(nw);
+                                    continue;
+                                }
+                                Value::Closure(c) => {
+                                    if spread {
+                                        return Err(RuntimeError::new(
+                                            span,
+                                            "spreading into a user function isn't supported",
+                                        ));
+                                    }
+                                    if !named.is_empty() {
+                                        return Err(RuntimeError::new(
+                                            span,
+                                            "only builtin minimum/maximum accept named defaults",
+                                        ));
+                                    }
+                                    self.check_arity(&c, args.len(), span)?;
+                                    key.extend(c.captured.iter().cloned());
+                                    c.func
+                                }
+                                other => {
+                                    return Err(RuntimeError::new(
+                                        e.span,
+                                        format!("can't call {}", ops::article(&other.kind())),
+                                    ));
+                                }
+                            },
+                        };
+                        plain = false;
+                        let result = each!(self, at, world w, self.call(func, key, span));
+                        self.unresolved += w.weight * result.unresolved;
+                        self.lost += w.weight * result.lost;
+                        // What faulted in the call faulted in this world: a catch
+                        // here takes it with the world as it was, and otherwise
+                        // the world fails, for a `try` further up or as a
+                        // failure, and may still meet evidence after the call.
+                        let run = self.sampler.is_some().then_some(w.run);
+                        let after = self.evidence.after[stmt.id as usize];
+                        for g in &result.failures.groups {
+                            if self.catches_here(g.error.fault) {
+                                let mut caught = w.clone();
+                                caught.weight = caught.weight * g.weight;
+                                self.faulted.push((caught, g.error.clone()));
+                            } else if self.partial() || self.catches_above(g.error.fault) {
+                                self.failures.absorb_group(g, w.weight, run, after, w.densities);
+                            } else {
+                                return Err(g.error.clone());
+                            }
+                        }
+                        add_pending(&mut self.pending, &result.pending, w.weight);
+                        let last = result.outcomes.len().saturating_sub(1);
+                        let mut w = Some(w);
+                        for (i, (v, p, restrictions)) in result.outcomes.iter().enumerate() {
+                            let mut nw = if i == last {
+                                w.take().unwrap()
+                            } else {
+                                w.clone().unwrap()
+                            };
+                            nw.weight = nw.weight * *p;
+                            // Only copy the constraints (shared with the other
+                            // outcomes' worlds) when the call added some.
+                            if !restrictions.is_empty() {
+                                Arc::make_mut(&mut nw.constraints)
+                                    .extend(restrictions.iter().map(|(id, d)| (*id, d.clone())));
+                            }
+                            self.assign(f, dest, v.clone(), &mut nw, span)?;
+                            out.push(nw);
+                        }
+                        self.check_worlds(out.len(), span)?;
+                    }
+                    Ok(())
+                };
+                if let Err(e) = stopped {
+                    let probe = match callee {
+                        Callee::Value(e, named) if plain => Some(Probe::Builtin {
+                            callee: e,
+                            named,
+                            args,
+                            span,
+                        }),
                         _ => None,
                     };
-                    let mut key = each!(self, at, world w, self.eval_items(f, args, &w, span));
-                    let func = match callee {
-                        Callee::Fn { func, capture_args } => {
-                            self.capture(&mut key, f, *func, capture_args, &w, span, false)?;
-                            *func
-                        }
-                        Callee::Value(e, named) => match target.unwrap() {
-                            Value::Builtin(b) => {
-                                let value = each!(self, at, world w, self.builtin_values(b, &key, named, w.weight, (f, span), spread));
-                                let mut saved = self.snapshot(&w);
-                                let mut nw = w;
-                                each!(self, at, saved saved, self.assign(f, dest, value, &mut nw, span));
-                                out.push(nw);
-                                continue;
-                            }
-                            Value::Closure(c) => {
-                                if spread {
-                                    return Err(RuntimeError::new(
-                                        span,
-                                        "spreading into a user function isn't supported",
-                                    ));
-                                }
-                                if !named.is_empty() {
-                                    return Err(RuntimeError::new(
-                                        span,
-                                        "only builtin minimum/maximum accept named defaults",
-                                    ));
-                                }
-                                self.check_arity(&c, args.len(), span)?;
-                                key.extend(c.captured.iter().cloned());
-                                c.func
-                            }
-                            other => {
-                                return Err(RuntimeError::new(
-                                    e.span,
-                                    format!("can't call {}", ops::article(&other.kind())),
-                                ));
-                            }
-                        },
-                    };
-                    let result = each!(self, at, world w, self.call(func, key, span));
-                    self.unresolved += w.weight * result.unresolved;
-                    self.lost += w.weight * result.lost;
-                    // What faulted in the call faulted in this world: a catch
-                    // here takes it with the world as it was, and otherwise
-                    // the world fails, for a `try` further up or as a
-                    // failure, and may still meet evidence after the call.
-                    let run = self.sampler.is_some().then_some(w.run);
-                    let after = self.evidence.after[stmt.id as usize];
-                    for g in &result.failures.groups {
-                        if self.catches_here(g.error.fault) {
-                            let mut caught = w.clone();
-                            caught.weight = caught.weight * g.weight;
-                            self.faulted.push((caught, g.error.clone()));
-                        } else if self.partial() || self.catches_above(g.error.fault) {
-                            self.failures.absorb_group(g, w.weight, run, after, w.densities);
-                        } else {
-                            return Err(g.error.clone());
-                        }
-                    }
-                    add_pending(&mut self.pending, &result.pending, w.weight);
-                    let last = result.outcomes.len().saturating_sub(1);
-                    let mut w = Some(w);
-                    for (i, (v, p, restrictions)) in result.outcomes.iter().enumerate() {
-                        let mut nw = if i == last {
-                            w.take().unwrap()
-                        } else {
-                            w.clone().unwrap()
-                        };
-                        nw.weight = nw.weight * *p;
-                        // Only copy the constraints (shared with the other
-                        // outcomes' worlds) when the call added some.
-                        if !restrictions.is_empty() {
-                            Arc::make_mut(&mut nw.constraints)
-                                .extend(restrictions.iter().map(|(id, d)| (*id, d.clone())));
-                        }
-                        self.assign(f, dest, v.clone(), &mut nw, span)?;
-                        out.push(nw);
-                    }
-                    self.check_worlds(out.len(), span)?;
+                    let failing = at.map_or((Weight::ZERO, 0), |at| (at.weight, at.densities));
+                    return Err(self.describe_stop(e, f, probe, &out, failing, rest.as_slice()));
                 }
+                // Free the worlds that came in before merging those going out.
+                drop(rest);
                 Ok(Flow::next(self.merge(out, stmt.id)))
             }
             StmtKind::If { cond, then, otherwise } => {
@@ -2143,86 +2552,101 @@ impl<'p> Engine<'p> {
             }
             StmtKind::Report { site, value, key } => {
                 let mut failed = Vec::new();
-                for (i, w) in worlds.iter().enumerate() {
-                    let v = each!(self, At::new(f, stmt, w), world w, self.eval(f, value, w), { failed.push(i) });
-                    // A report of a count law lists it.
-                    let v = match v {
-                        Value::Counts(_) => ops::listed(&v, &mut self.budget)
-                            .map_err(|e| e.at(value.span))?
-                            .into_owned(),
-                        v => v,
-                    };
-                    let k = match key {
-                        Some(k) => {
-                            let k_value =
-                                each!(self, At::new(f, stmt, w), world w, self.eval(f, k, w), { failed.push(i) });
-                            if analytic::contains(&k_value) && !matches!(k_value, Value::Event(_)) {
-                                return Err(analytic::unsupported("grouping by a continuous outcome").at(k.span));
+                let mut current = 0;
+                let stopped: Result<()> = 'stmt: {
+                    for (i, w) in worlds.iter().enumerate() {
+                        current = i;
+                        let v = each!(self, stop 'stmt, At::new(f, stmt, w), world w, self.eval(f, value, w), { failed.push(i) });
+                        // A report of a count law lists it.
+                        let v = match v {
+                            Value::Counts(_) => ops::listed(&v, &mut self.budget)
+                                .map_err(|e| e.at(value.span))?
+                                .into_owned(),
+                            v => v,
+                        };
+                        let k = match key {
+                            Some(k) => {
+                                let k_value = each!(self, stop 'stmt, At::new(f, stmt, w), world w, self.eval(f, k, w), {
+                                    failed.push(i)
+                                });
+                                if analytic::contains(&k_value) && !matches!(k_value, Value::Event(_)) {
+                                    return Err(analytic::unsupported("grouping by a continuous outcome").at(k.span));
+                                }
+                                if k_value.is_uncertain() {
+                                    return Err(RuntimeError::new(
+                                        k.span,
+                                        "a `by` key must be a plain value, not a distribution",
+                                    )
+                                    .with_help("draw a value first with `~`"));
+                                }
+                                k_value
                             }
-                            if k_value.is_uncertain() {
-                                return Err(RuntimeError::new(
-                                    k.span,
-                                    "a `by` key must be a plain value, not a distribution",
-                                )
-                                .with_help("draw a value first with `~`"));
-                            }
-                            k_value
-                        }
-                        None => Value::Unit,
-                    };
-                    // A distribution of outcomes, from `max(x, d6)` say, reports
-                    // as their mixture, and a record or list of them field by
-                    // field.
-                    let (v, run) = if self.sampler.is_some() {
-                        let drawn = each!(self, At::new(f, stmt, w), world w,
+                            None => Value::Unit,
+                        };
+                        // A distribution of outcomes, from `max(x, d6)` say, reports
+                        // as their mixture, and a record or list of them field by
+                        // field.
+                        let (v, run) = if self.sampler.is_some() {
+                            let drawn = each!(self, At::new(f, stmt, w), world w,
                             self.sample_continuous(v).map_err(|e| e.at(value.span)), { failed.push(i) });
-                        (drawn, Some(w.run))
-                    } else {
-                        each!(self, At::new(f, stmt, w), world w,
+                            (drawn, Some(w.run))
+                        } else {
+                            each!(self, At::new(f, stmt, w), world w,
                             if crate::multivariate::is_law(&v) {
                                 Err(crate::multivariate::unsupported("reporting a vector law in enumeration").at(value.span))
                             } else { Ok(()) }, { failed.push(i) });
-                        (v, None)
-                    };
-                    if let Value::Event(event) = &k {
-                        // An event of a draw is a key with two values: each
-                        // group has its part of the world.
-                        let span = key.as_ref().map_or(span, |k| k.span);
-                        for yes in [true, false] {
-                            for (p, constraints) in self.event_parts(event, yes, &w.constraints, span)? {
-                                if p <= 0.0 {
-                                    continue;
+                            (v, None)
+                        };
+                        if let Value::Event(event) = &k {
+                            // An event of a draw is a key with two values: each
+                            // group has its part of the world.
+                            let span = key.as_ref().map_or(span, |k| k.span);
+                            for yes in [true, false] {
+                                for (p, constraints) in self.event_parts(event, yes, &w.constraints, span)? {
+                                    if p <= 0.0 {
+                                        continue;
+                                    }
+                                    let v = analytic::resolve(&v, &constraints, &mut self.budget)
+                                        .map_err(|e| e.at(value.span))?;
+                                    let k = Value::Bool(yes);
+                                    self.same_units(w, value.span)?;
+                                    let sink = &self.sinks[*site as usize];
+                                    sink.validate_collection(&k, &v).map_err(|e| e.at(value.span))?;
+                                    sink.validate_analytic(&k, &v).map_err(|e| e.at(value.span))?;
+                                    sink.validate_structure(&k, &v).map_err(|e| e.at(value.span))?;
+                                    self.sinks[*site as usize]
+                                        .add(k, &v, w.weight.scale(p), run)
+                                        .map_err(|e| e.at(value.span))?;
                                 }
-                                let v = analytic::resolve(&v, &constraints, &mut self.budget)
-                                    .map_err(|e| e.at(value.span))?;
-                                let k = Value::Bool(yes);
-                                self.same_units(w, value.span)?;
-                                let sink = &self.sinks[*site as usize];
-                                sink.validate_collection(&k, &v).map_err(|e| e.at(value.span))?;
-                                sink.validate_analytic(&k, &v).map_err(|e| e.at(value.span))?;
-                                sink.validate_structure(&k, &v).map_err(|e| e.at(value.span))?;
-                                self.sinks[*site as usize]
-                                    .add(k, &v, w.weight.scale(p), run)
-                                    .map_err(|e| e.at(value.span))?;
                             }
+                            continue;
                         }
-                        continue;
-                    }
-                    if run.is_none() {
-                        self.same_units(w, value.span)?;
+                        if run.is_none() {
+                            self.same_units(w, value.span)?;
+                            self.sinks[*site as usize]
+                                .validate_structure(&k, &v)
+                                .map_err(|e| e.at(value.span))?;
+                        }
                         self.sinks[*site as usize]
-                            .validate_structure(&k, &v)
+                            .validate_analytic(&k, &v)
+                            .map_err(|e| e.at(value.span))?;
+                        self.sinks[*site as usize]
+                            .validate_collection(&k, &v)
+                            .map_err(|e| e.at(value.span))?;
+                        self.sinks[*site as usize]
+                            .add(k, &v, w.weight, run)
                             .map_err(|e| e.at(value.span))?;
                     }
-                    self.sinks[*site as usize]
-                        .validate_analytic(&k, &v)
-                        .map_err(|e| e.at(value.span))?;
-                    self.sinks[*site as usize]
-                        .validate_collection(&k, &v)
-                        .map_err(|e| e.at(value.span))?;
-                    self.sinks[*site as usize]
-                        .add(k, &v, w.weight, run)
-                        .map_err(|e| e.at(value.span))?;
+                    Ok(())
+                };
+                if let Err(e) = stopped {
+                    let probe = Probe::Report {
+                        value,
+                        key: key.as_ref(),
+                    };
+                    let failing = (worlds[current].weight, worlds[current].densities);
+                    let (before, after) = (&worlds[..current], &worlds[current + 1..]);
+                    return Err(self.describe_stop(e, f, Some(probe), before, failing, after));
                 }
                 let mut worlds = worlds;
                 drop_failed(&mut worlds, &failed);
@@ -2324,7 +2748,10 @@ impl<'p> Engine<'p> {
             };
             if cycles {
                 met = None;
-                if let Some(solved) = self.solve_loop(f, stmt, body, &inside, cutoff, &mut iterations)? {
+                self.solving += 1;
+                let solved = self.solve_loop(f, stmt, body, &inside, cutoff, &mut iterations);
+                self.solving -= 1;
+                if let Some(solved) = solved? {
                     out.join(solved);
                     break;
                 }
@@ -2346,7 +2773,10 @@ impl<'p> Engine<'p> {
                 ))
                 .with_help("check that every world can leave the loop"));
             }
-            let mut flow = self.exec_block(f, body, inside)?;
+            self.passes += 1;
+            let flow = self.exec_block(f, body, inside);
+            self.passes -= 1;
+            let mut flow = flow?;
             clear_dead(&mut flow.broke, &live.after[stmt.id as usize]);
             clear_dead(&mut flow.continued, &live.loop_head[stmt.id as usize]);
             out.next.extend(flow.broke);
@@ -3637,6 +4067,9 @@ impl<'p> Engine<'p> {
     /// `simulate { … }`: run a block as a separate model and return its
     /// normalized distribution (docs/semantics.md, section 8).
     fn simulate(&mut self, func: FnId, key: Vec<Value>, span: Span) -> Result<Value> {
+        if self.probing {
+            return Err(RuntimeError::new(span, "`simulate` while checking other worlds"));
+        }
         if key.iter().any(analytic::contains) {
             return Err(analytic::unsupported("capturing an analytic draw inside `simulate`").at(span));
         }
@@ -3714,6 +4147,9 @@ impl<'p> Engine<'p> {
 
     /// Call a closure that must not split worlds (used by `map`, `filter`, …).
     fn call_pure(&mut self, closure: &Value, args: Vec<Value>, what: &'static str, span: Span) -> Result<Value> {
+        if self.probing {
+            return Err(RuntimeError::new(span, "a callback while checking other worlds"));
+        }
         if let Value::Builtin(b) = closure {
             return self.builtin_values(*b, &args, &[], Weight::ONE, (u32::MAX, span), false);
         }
@@ -3880,7 +4316,7 @@ impl<'p> Engine<'p> {
                 ops::article(&found)
             ),
         );
-        e.help = mismatch_help(&w.slots[slot as usize], ty);
+        e.help = mismatch_help(&w.slots[slot as usize], ty).map(String::into_boxed_str);
         Err(e)
     }
 
@@ -4227,7 +4663,7 @@ impl<'p> Engine<'p> {
             ExprKind::Slot(s) => self.slot(f, *s, w, span),
             ExprKind::Unary(op, x) => {
                 let v = self.eval(f, x, w)?;
-                ops::unary(*op, &v, &mut self.budget).map_err(at)
+                ops::unary(*op, &v, &mut self.budget).map_err(|err| self.op_fault(err, f, e, &v, None))
             }
             ExprKind::Binary(op @ (BinOp::And | BinOp::Or), a, b) => {
                 let and = *op == BinOp::And;
@@ -4247,7 +4683,7 @@ impl<'p> Engine<'p> {
             ExprKind::Binary(op, a, b) => {
                 let va = self.eval(f, a, w)?;
                 let vb = self.eval(f, b, w)?;
-                ops::binary(*op, &va, &vb, &mut self.budget).map_err(at)
+                ops::binary(*op, &va, &vb, &mut self.budget).map_err(|err| self.op_fault(err, f, e, &va, Some(&vb)))
             }
             ExprKind::List(items) => {
                 self.budget.collection(items.len() as u128).map_err(at)?;
@@ -4288,7 +4724,7 @@ impl<'p> Engine<'p> {
                                     v.span,
                                     format!("field `{name}` should be {}, found {found}", t.describe(self.prog)),
                                 );
-                                e.help = mismatch_help(&value, &t);
+                                e.help = mismatch_help(&value, &t).map(String::into_boxed_str);
                                 return Err(e);
                             }
                             value
@@ -4304,12 +4740,12 @@ impl<'p> Engine<'p> {
             }
             ExprKind::Field(x, name) => {
                 let v = self.eval(f, x, w)?;
-                ops::field(&v, name, &mut self.budget).map_err(at)
+                ops::field(&v, name, &mut self.budget).map_err(|err| self.op_fault(err, f, e, &v, None))
             }
             ExprKind::Index(x, i) => {
                 let v = self.eval(f, x, w)?;
-                let i = self.eval(f, i, w)?;
-                ops::index(&v, &i, &mut self.budget).map_err(at)
+                let iv = self.eval(f, i, w)?;
+                ops::index(&v, &iv, &mut self.budget).map_err(|err| self.op_fault(err, f, e, &v, Some(&iv)))
             }
             ExprKind::With(x, fields) => {
                 let base = self.eval(f, x, w)?;
@@ -4325,7 +4761,7 @@ impl<'p> Engine<'p> {
                                     v.span,
                                     format!("field `{name}` should be {}, found {found}", ty.describe(self.prog)),
                                 );
-                                e.help = mismatch_help(&value, &ty);
+                                e.help = mismatch_help(&value, &ty).map(String::into_boxed_str);
                                 return Err(e);
                             }
                             value
@@ -4491,6 +4927,7 @@ impl<'p> Engine<'p> {
             values.push(self.eval(f, value, w)?);
         }
         self.builtin_values(b, &values, &names, w.weight, (f, span), spread)
+            .map_err(|err| self.builtin_fault(err, f, span, args, named, &values, spread))
     }
 
     fn check_function_arity(&self, value: &Value, given: usize, span: Span) -> Result<()> {
@@ -4617,6 +5054,7 @@ impl<'p> Engine<'p> {
                     .with_help("set Options.now, or supply now in the WASM request")
             }),
             Builtin::RunEnv => self.env(span),
+            Builtin::Print if self.probing => Ok(Value::Unit),
             Builtin::Print => {
                 let mut text = String::new();
                 for (i, value) in values.iter().enumerate() {

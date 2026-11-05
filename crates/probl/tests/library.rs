@@ -541,6 +541,48 @@ fn run_err(source: &str, options: Options) -> probl::Error {
     probl::compile("e.probl", source).unwrap().run(&options).unwrap_err()
 }
 
+#[test]
+fn a_fault_that_stops_a_run_says_how_often_and_for_which_values() {
+    let e = run_err("let x ~ d6 - 1\nlet y = 10 / (x - 2)\nreport y", Options::new());
+    let fault = e.fault().expect("a fault's context");
+    close(fault.share().unwrap(), 1.0 / 6.0, 1e-12);
+    assert!(!fault.per_loop_pass() && fault.run().is_none());
+    let input = &fault.inputs()[0];
+    assert_eq!((input.name(), input.source(), input.value()), (None, "(x - 2)", "0"));
+    assert_eq!(input.span(), 28..35);
+    let notes = e.diagnostics()[0].notes();
+    assert_eq!(
+        notes,
+        ["fails for 16.67% of the weight reaching this operation, for example when `x - 2` = 0"]
+    );
+    assert!(
+        e.render(false).contains("Note: fails for 16.67%"),
+        "{}",
+        e.render(false)
+    );
+
+    // A call's worlds aren't the program's: no share, but an example.
+    let e = run_err("fn f(n) { 1 / n }\nlet x ~ d6 - 1\nreport f(x)", Options::new());
+    assert_eq!(e.fault().unwrap().share(), None);
+    assert!(
+        e.diagnostics()[0]
+            .notes()
+            .contains(&"for example, it fails when n = 0".to_string())
+    );
+
+    // When sampling, the run.
+    let options = Options::new().runs(500).seed(7).on_error(probl::FailureMode::Total);
+    let e = run_err("let x ~ d6 - 1\nreport 1 / x", options);
+    let failed = e.fault().unwrap().run().unwrap();
+    assert_eq!((failed.runs(), failed.seed()), (500, 7));
+    assert!((1..=500).contains(&failed.run()));
+    let note = format!("fails in run {} of 500 (seed 7), when x = 0", failed.run());
+    assert_eq!(e.diagnostics()[0].notes(), [note]);
+
+    // Other errors have no fault context.
+    assert!(run_err("report today", Options::new()).fault().is_none());
+}
+
 // ── Failure modes ────────────────────────────────────────────────────────
 
 const RECIPROCAL: &str = "let x ~ d6 - 1\nprint(x)\nlet y = 1 / x\nreport y";

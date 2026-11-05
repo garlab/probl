@@ -516,6 +516,26 @@ failed
 
 `probl run` prints it, then a diagnostic for each place, and exits with status 3 (status 1 when no world finished). The library returns it in the run's error, as `Error::partial`, so a caller that only handles success doesn't mistake it for a complete answer. A partial result is reproducible as any other: the same program, data, date, seed and engine version give the same output and the same failures on any number of threads.
 
+**When a fault stops the run.** In total mode, the diagnostic of the fault that stopped the run has a note saying for which values the operation failed, and, when it can be established, how often:
+
+```text
+Error: division by zero
+   ╭─[ model.probl:2:7 ]
+   │
+ 2 │ print(1 / x)
+   │       ──┬──
+   │         ╰──── here
+   │
+   │ Note: fails for 16.67% of the weight reaching this operation, for example when x = 0
+───╯
+```
+
+- **The example** is the failing world's own values of the operation's inputs: a variable by its name, another expression by its source, a literal not at all, and a long value cut short.
+- **The share**, when enumerating, is of the weight of the statement's worlds that reach the operation, including the evidence so far. It isn't the probability that the program fails. The worlds already through the statement passed the operation; the others are checked by evaluating what the statement evaluates in them, which prints nothing and changes nothing. The share is given only for an assignment, a report or a call of a built-in in the main program, outside `try`, a function call, `simulate`, a callback and a loop being solved; when every world reaches the operation (it isn't on the right of an `and` or `or`), nothing else fails first in the worlds checked, no callback or `simulate` would have to run, and the weights have the same number of densities. Inside a loop running pass by pass, it's labelled `on this pass through the loop`. Otherwise only the example is given: `for example, it fails when n = 0`.
+- **When sampling**, the note names the run instead: `fails in run 19 of 1,000 (seed 0), when x = 0`. Runs are numbered from 1; a share of the runs isn't estimated, since the run stopped at the first failure.
+
+The library gives the same as `Error::fault`: the inputs, the share and whether it's per loop pass, and the run, each absent when unavailable, which doesn't mean zero. Diagnostics of partial results are unchanged.
+
 ### Catching faults
 
 `try { body } catch F { … } catch { … }` is an expression. In each world it runs the body, and its value is the body's. A world where the body faults goes on in the first `catch`, in source order, that names the fault, or that names none: a `catch` without a name takes every fault. The `try`'s value is then the catch's.

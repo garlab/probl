@@ -32,7 +32,7 @@ pub mod value;
 pub mod weight;
 pub mod world;
 
-pub use error::{ErrorKind, Fault, RuntimeError};
+pub use error::{ErrorKind, FailedRun, Fault, FaultContext, FaultInput, RuntimeError};
 pub use failure::{Failure, Failures};
 pub use interp::{Stats, Updates};
 pub use probl_sema::ir::FailureMode;
@@ -1000,7 +1000,14 @@ fn sampled(
     seed: u64,
     on_error: FailureMode,
 ) -> Result<Outcome, RuntimeError> {
-    let mut engine = run_batches(program, live, conj, &config, options, print, runs, seed)?;
+    let mut engine = run_batches(program, live, conj, &config, options, print, runs, seed).map_err(|mut e| {
+        // A fault that stopped the run names its run: say of how many, and the seed.
+        if let Some(failed) = e.context.as_mut().and_then(|c| c.run.as_mut()) {
+            failed.runs = runs;
+            failed.seed = seed;
+        }
+        e
+    })?;
     let totals = engine.totals;
     let failures = std::mem::take(&mut engine.failures);
     if totals.weight.is_zero() && failures.is_empty() {

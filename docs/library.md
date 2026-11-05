@@ -129,6 +129,27 @@ match program.run(&options) {
 - The reports describe the worlds that reached them, failed worlds included when they reported before failing. `finished()` says whether any world finished at all.
 - `failure_mode()` says which mode the run used, and `Program::failure_mode()` gives the program's `@on_error`, if any. An outcome without failures is an ordinary result, whatever its mode.
 
+### A fault that stopped the run
+
+In total mode, a fault stops the run, and the error's `fault()` says what it can about it ([when a fault stops the run](semantics.md#failure-modes)); its diagnostic has the same as a note.
+
+```rust
+if let Err(e) = program.run(&options)
+    && let Some(fault) = e.fault()
+{
+    for input in fault.inputs() {
+        eprintln!("{} = {}", input.name().unwrap_or(input.source()), input.value());
+    }
+    if let Some(share) = fault.share() {
+        eprintln!("fails for {:.2}% of the weight reaching it", share * 100.0);
+    }
+}
+```
+
+- `inputs()` are the failing operation's inputs other than literals, as the world or run that failed had them: the variable's `name()` when it's one, the `source()` text and byte `span()`, and the `value()` as text, cut short when long.
+- `share()` is, when enumerating, the share of the weight reaching the operation for which it fails, and `per_loop_pass()` says whether it counts only the loop's current pass. `run()`, when sampling, gives the failing `run()` (from 1), the number of `runs()` and the `seed()`.
+- Each part is optional: absent means it couldn't be established, not zero. `fault()` is `None` for errors other than faults.
+
 ## Read reports without parsing text
 
 `Outcome::reports()` returns report sites in order; `report(label)` looks one up. Without `as`, the label is the report expression. A report contains groups for its `by` keys, or one group without a key.

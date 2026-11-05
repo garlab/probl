@@ -323,10 +323,15 @@ fn a_partial_result_has_the_output_and_the_failures() {
     assert_eq!(out["error"]["message"], "division by zero");
     assert_eq!(out["failures"].as_array().unwrap().len(), 1);
     assert_eq!(out["stats"]["runs"], 1000);
-    // Enumeration is total, unless the request asks otherwise.
+    // Enumeration is total, unless the request asks otherwise. The fault
+    // that stops it says how often, and for which values.
     let (out, _) = run(json!({ "source": source }));
     assert!(out["output"].is_null() && out["partial"].is_null(), "{out}");
     assert_eq!(out["error"]["message"], "division by zero");
+    assert_eq!(
+        out["error"]["notes"],
+        json!(["fails for 16.67% of the weight reaching this operation, for example when x = 0"])
+    );
     let (out, _) = run(json!({ "source": source, "on_error": "partial" }));
     assert!(
         out["output"]

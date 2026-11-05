@@ -36,7 +36,7 @@ mod options;
 mod outcome;
 mod program;
 
-pub use error::{Diagnostic, Error, ErrorKind, Severity};
+pub use error::{Diagnostic, Error, ErrorKind, FailedRun, FaultContext, FaultInput, Severity};
 #[cfg(not(target_arch = "wasm32"))]
 pub use files::LocalFiles;
 pub use files::{Data, DataSource, Files, MemoryFiles, Snapshots};

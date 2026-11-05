@@ -424,7 +424,7 @@ fn failure(input: &Input, problem: Problem) -> RuntimeError {
     };
     let mut error = RuntimeError::new(input.span, format!("{place}: {}", problem.message));
     error.notes = problem.notes;
-    error.help = problem.help;
+    error.help = problem.help.map(String::into_boxed_str);
     if problem.limit {
         error.kind = ErrorKind::Limit;
     }

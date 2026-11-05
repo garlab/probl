@@ -17,6 +17,43 @@ pub enum ErrorKind {
 
 pub use probl_sema::ir::Fault;
 
+/// What a fault that stops a run can say about itself (stage 0 of
+/// docs/design/error-handling.md). A part that's absent is unavailable, not
+/// zero.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FaultContext {
+    /// The failing operation's inputs other than literals, as the failing
+    /// world or run had them.
+    pub inputs: Vec<FaultInput>,
+    /// When enumerating: of the weight reaching the operation, the share
+    /// for which it faults.
+    pub share: Option<f64>,
+    /// `share` counts only the current pass through a loop.
+    pub per_pass: bool,
+    /// When sampling: the run that failed.
+    pub run: Option<FailedRun>,
+}
+
+/// One input of a failing operation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FaultInput {
+    /// Where it is in the source.
+    pub span: Span,
+    /// The variable's name, when the input is one.
+    pub name: Option<String>,
+    /// Its value, as text, cut short when long.
+    pub value: String,
+}
+
+/// The sampled run in which a fault stopped the program.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FailedRun {
+    /// From 0.
+    pub run: u64,
+    pub runs: u64,
+    pub seed: u64,
+}
+
 /// An error from an operation that doesn't know where in the source it is;
 /// the interpreter attaches the span.
 #[derive(Clone, Debug, PartialEq)]
@@ -86,9 +123,10 @@ impl OpError {
             message: self.message,
             span,
             notes: Vec::new(),
-            help: self.help,
+            help: self.help.map(String::into_boxed_str),
             kind: self.kind,
             fault: self.fault,
+            context: None,
         }
     }
 }
@@ -110,9 +148,14 @@ pub struct RuntimeError {
     pub message: String,
     pub span: Span,
     pub notes: Vec<String>,
-    pub help: Option<String>,
+    /// Boxed: with `context`, it keeps the error, and every `Result` carrying
+    /// it, as small as it was (88 bytes).
+    pub help: Option<Box<str>>,
     pub kind: ErrorKind,
     pub fault: Option<Fault>,
+    /// For a fault: its operation's inputs and, once it stopped the run,
+    /// how often it fails. Hosts render it with the source.
+    pub context: Option<Box<FaultContext>>,
 }
 
 impl RuntimeError {
@@ -130,7 +173,7 @@ impl RuntimeError {
     }
 
     pub fn with_help(mut self, help: impl Into<String>) -> RuntimeError {
-        self.help = Some(help.into());
+        self.help = Some(help.into().into_boxed_str());
         self
     }
 
@@ -145,7 +188,7 @@ impl RuntimeError {
     pub fn to_diagnostic(&self) -> Diagnostic {
         let mut d = Diagnostic::error(self.span, &self.message);
         d.notes = self.notes.clone();
-        d.help = self.help.clone();
+        d.help = self.help.as_deref().map(str::to_string);
         d
     }
 }
