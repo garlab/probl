@@ -133,6 +133,7 @@ fn diagnostics_say_where_in_javascript_terms() {
     let units: Vec<u16> = src.encode_utf16().collect();
     assert_eq!(String::from_utf16(&units[from..from + 1]).unwrap(), "y");
     assert!(d["rendered"].as_str().unwrap().contains("playground.probl:2"), "{d}");
+    assert_eq!(d["file"], "playground.probl");
     // A program that compiles has none.
     let answer: Value = serde_json::from_str(&probl_wasm::check("report d6")).unwrap();
     assert_eq!(answer["diagnostics"], json!([]));
@@ -468,4 +469,146 @@ fn quantile_collection_has_explicit_approximation_metadata() {
         answer["reports"]["reports"][0]["groups"][0]["summary"]["deterministic"],
         true
     );
+}
+
+fn check(request: Value) -> Value {
+    serde_json::from_str(&probl_wasm::check_program(&request.to_string())).unwrap()
+}
+
+const MAIN: &str = "import { walk, step as move, Day } from \"./lib/walk.probl\"\nlet d = Day { visitors: 3 }\nreport walk(2) + move + d.visitors\n";
+const WALK: &str = "\
+# One step, left or right.
+export let step = one_of([-1, 1])
+export type Day = { visitors: int }
+# A walk of `turns` steps.
+export fn walk(turns: int): int {
+  var position = 0
+  repeat turns { position += ~step }
+  position
+}
+";
+
+/// The text from UTF-16 offsets `from` and `to` in `text`.
+fn slice(text: &str, from: &Value, to: &Value) -> String {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    String::from_utf16(&units[from.as_u64().unwrap() as usize..to.as_u64().unwrap() as usize]).unwrap()
+}
+
+#[test]
+fn a_program_of_several_files_runs() {
+    let request = json!({ "source": MAIN, "name": "main.probl", "sources": { "lib/walk.probl": WALK } });
+    let (answer, _) = run(request.clone());
+    assert!(
+        answer["output"].as_str().unwrap().contains("walk(2) + move"),
+        "{answer}"
+    );
+    // An error in an imported file says which file, and where in it.
+    let broken = WALK.replace("position\n}", "position + nothing\n}");
+    let (answer, _) = run(json!({ "source": MAIN, "name": "main.probl", "sources": { "lib/walk.probl": broken } }));
+    let e = &answer["error"];
+    assert_eq!(e["file"], "lib/walk.probl", "{answer}");
+    assert_eq!(e["line"], 8);
+    assert_eq!(slice(&broken, &e["from"], &e["to"]), "nothing");
+    assert!(e["rendered"].as_str().unwrap().contains("lib/walk.probl:8:"), "{e}");
+    // A file that isn't given can't be imported.
+    let (answer, _) = run(json!({ "source": MAIN }));
+    assert!(
+        answer["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("there's no such file"),
+        "{answer}"
+    );
+    // Nor can sources that aren't text.
+    let (answer, _) = run(json!({ "source": MAIN, "sources": { "lib/walk.probl": 1 } }));
+    assert_eq!(answer["error"]["kind"], "usage", "{answer}");
+}
+
+#[test]
+fn checking_a_file_gives_its_own_names_and_what_they_import() {
+    let sources = json!({ "lib/walk.probl": WALK });
+    let answer = check(json!({ "source": MAIN, "name": "main.probl", "sources": sources }));
+    assert_eq!(answer["diagnostics"], json!([]), "{answer}");
+    assert_eq!(answer["files"], json!(["main.probl", "lib/walk.probl"]));
+    let symbols = &answer["symbols"];
+    let definitions = symbols["definitions"].as_array().unwrap();
+    let named = |name: &str, file: Value| {
+        definitions
+            .iter()
+            .position(|d| d["name"] == name && d["file"] == file)
+            .unwrap_or_else(|| panic!("{name} in {file}: {symbols}"))
+    };
+    // `walk` is declared in the import, and stands for the function in the
+    // other file, which describes itself there.
+    let walk = named("walk", Value::Null);
+    let d = &definitions[walk];
+    assert_eq!(d["kind"], "function");
+    assert_eq!(slice(MAIN, &d["from"], &d["to"]), "walk");
+    assert_eq!(d["scope"], json!([0, MAIN.encode_utf16().count()]));
+    let origin = &definitions[d["imported"].as_u64().unwrap() as usize];
+    assert_eq!(origin["file"], "lib/walk.probl");
+    assert_eq!(origin["line"], 5);
+    assert_eq!(origin["detail"], "export fn walk(turns: int): int");
+    assert_eq!(origin["doc"], "A walk of `turns` steps.");
+    assert_eq!(origin["scope"], json!([-1, -1]));
+    assert_eq!(slice(WALK, &origin["from"], &origin["to"]), "walk");
+    // `step as move`: `move` is declared here, a global, and `step` names
+    // the variable there.
+    let local = named("move", Value::Null);
+    assert_eq!(definitions[local]["global"], true);
+    let step = named("step", json!("lib/walk.probl"));
+    assert_eq!(definitions[local]["imported"], step);
+    let references = symbols["references"].as_array().unwrap();
+    let uses = |def: usize| -> Vec<String> {
+        references
+            .iter()
+            .filter(|r| r[2] == def)
+            .map(|r| slice(MAIN, &r[0], &r[1]))
+            .collect()
+    };
+    assert_eq!(uses(walk), ["walk"]);
+    assert_eq!(uses(local), ["move"]);
+    assert_eq!(uses(step), ["step"]);
+    // A field of an imported record is the other file's.
+    let visitors = named("visitors", json!("lib/walk.probl"));
+    assert_eq!(uses(visitors), ["visitors", "visitors"]);
+
+    // The other file, checked as it's imported: its own names, and an
+    // error where it reports.
+    let answer = check(json!({
+        "source": MAIN, "name": "main.probl", "file": "lib/walk.probl",
+        "sources": { "lib/walk.probl": format!("{WALK}report walk(1)\n") },
+    }));
+    assert_eq!(answer["files"], json!(["lib/walk.probl"]));
+    let d = &answer["diagnostics"][0];
+    assert_eq!(d["file"], "lib/walk.probl");
+    assert!(
+        d["message"]
+            .as_str()
+            .unwrap()
+            .contains("only allowed in the program's entry file"),
+        "{d}"
+    );
+    let definitions = answer["symbols"]["definitions"].as_array().unwrap();
+    assert!(definitions.iter().all(|d| d["file"].is_null()), "{definitions:?}");
+    assert!(
+        definitions
+            .iter()
+            .any(|d| d["name"] == "walk" && d["imported"].is_null())
+    );
+    // The entry, checked by its name, is checked as the entry.
+    let answer = check(json!({ "source": "report 1", "name": "main.probl", "file": "main.probl" }));
+    assert_eq!(answer["diagnostics"], json!([]), "{answer}");
+    // Errors in a file it imports say which file.
+    let broken = WALK.replace("position\n}", "position + nothing\n}");
+    let answer = check(json!({ "source": MAIN, "name": "main.probl", "sources": { "lib/walk.probl": broken } }));
+    let d = &answer["diagnostics"][0];
+    assert_eq!(
+        (d["file"].as_str(), d["line"].as_u64()),
+        (Some("lib/walk.probl"), Some(8)),
+        "{answer}"
+    );
+    // A file that isn't there can't be checked.
+    let answer = check(json!({ "source": MAIN, "file": "nowhere.probl" }));
+    assert_eq!(answer["error"]["kind"], "usage", "{answer}");
 }

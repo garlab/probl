@@ -47,6 +47,20 @@ impl SourceText {
             text: text.into(),
         }
     }
+
+    /// What the file is, whatever path named it.
+    pub fn identity(&self) -> &str {
+        &self.identity
+    }
+
+    /// What diagnostics call it.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
 }
 
 /// The compiler's loader, for any [`Sources`].
@@ -97,9 +111,12 @@ impl MemorySources {
         MemorySources::default()
     }
 
-    /// Add a file, or replace one.
+    /// Add a file, or replace one. `./lib.probl` and `lib.probl` are the
+    /// same file.
     pub fn insert(&mut self, path: impl Into<String>, text: impl Into<String>) {
-        self.files.insert(path.into(), text.into());
+        let path = path.into();
+        let path = join("", &path).unwrap_or(path);
+        self.files.insert(path, text.into());
     }
 }
 
@@ -210,7 +227,7 @@ mod tests {
             Some("a/lib/x.probl")
         );
         assert_eq!(join("main.probl", "../x.probl"), None);
-        let mut files: MemorySources = [("main.probl", "1"), ("lib/a.probl", "2")].into_iter().collect();
+        let mut files: MemorySources = [("main.probl", "1"), ("./lib/a.probl", "2")].into_iter().collect();
         let a = files.load("main.probl", "./lib/a.probl").unwrap();
         assert_eq!(a, SourceText::new("lib/a.probl", "lib/a.probl", "2"));
         assert_eq!(

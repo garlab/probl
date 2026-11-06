@@ -72,6 +72,19 @@ pub struct Compiled {
 /// Compile the program whose entry is `entry`, loading the files it imports
 /// with `loader`.
 pub fn compile_program(entry: Source, loader: &mut dyn Loader) -> Compiled {
+    compile(entry, loader, true)
+}
+
+/// Compile a file as it's compiled when another file imports it, with the
+/// files it imports: to check it on its own, as an editor does. It can't
+/// `report` or set pragmas, and its program is only for checking.
+pub fn compile_module(source: Source, loader: &mut dyn Loader) -> Compiled {
+    compile(source, loader, false)
+}
+
+/// Compile the file `root` and the files it imports; `root` is the entry
+/// when `entry` is true.
+fn compile(root: Source, loader: &mut dyn Loader, entry: bool) -> Compiled {
     let mut graph = Graph {
         loader: &mut *loader,
         nodes: Vec::new(),
@@ -81,7 +94,7 @@ pub fn compile_program(entry: Source, loader: &mut dyn Loader) -> Compiled {
         stack: Vec::new(),
         order: Vec::new(),
     };
-    if entry.text.len() > MAX_SOURCE {
+    if root.text.len() > MAX_SOURCE {
         let d = Diagnostic::error(
             Span::default(),
             format!("the program is larger than {MAX_SOURCE} bytes"),
@@ -93,7 +106,7 @@ pub fn compile_program(entry: Source, loader: &mut dyn Loader) -> Compiled {
             symbols: None,
         };
     }
-    let root = graph.add(entry);
+    let root = graph.add(root);
     graph.visit(root);
     let Graph {
         nodes,
@@ -120,7 +133,7 @@ pub fn compile_program(entry: Source, loader: &mut dyn Loader) -> Compiled {
         .iter()
         .map(|&i| ModuleAst {
             ast: &nodes[i].ast,
-            entry: i == root,
+            entry: entry && i == root,
             imports: nodes[i].imports.iter().map(|t| t.map(|t| position[t])).collect(),
         })
         .collect();

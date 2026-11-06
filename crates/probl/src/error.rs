@@ -60,6 +60,12 @@ impl Diagnostic {
         &self.file.name
     }
 
+    /// The text of the file it's about, which its [`span`](Self::span) is
+    /// in.
+    pub fn file_text(&self) -> &str {
+        &self.file.text
+    }
+
     pub fn severity(&self) -> Severity {
         match self.inner.severity {
             probl_syntax::Severity::Error => Severity::Error,

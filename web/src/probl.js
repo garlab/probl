@@ -52,10 +52,13 @@ export async function load(module, { onPrint = () => {}, onProgress = () => {} }
   }
 
   return {
-    /** `{diagnostics, symbols, reports}` for source. `symbols` is null when it
-     * doesn't parse; `reports` is `[{id, label}]` when compiled, null otherwise. */
-    check: (source) => JSON.parse(call(exports.probl_check, source)),
-    /** Run `{source, today?, now?, env?, mode?, runs?, seed?, conjugate?, files?, report_summaries?, report_collections?}`.
+    /** `{diagnostics, symbols, reports, files}` for source. `symbols` is null
+     * when it doesn't parse; `reports` is `[{id, label}]` when compiled, null
+     * otherwise. A program of several files gives `{name, sources, file?}`:
+     * the entry's name, the other files by path, and the file to check, the
+     * entry by default. Each diagnostic names its `file`. */
+    check: (source, program = {}) => JSON.parse(call(exports.probl_check, JSON.stringify({ ...program, source }))),
+    /** Run `{source, name?, sources?, today?, now?, env?, mode?, runs?, seed?, conjugate?, files?, report_summaries?, report_collections?}`.
      * `report_collections` maps report IDs to "exact" (default), "moments", or "quantiles[:CAPACITY]".
      * `report_summaries` maps zero-based report IDs to specifications such as
      * `{"0":"forecast","2":"mean,median,q:0.9"}` (docs/report-summaries.md).

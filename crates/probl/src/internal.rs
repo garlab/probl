@@ -2,7 +2,7 @@
 //! no compatibility promise between releases. `probl-cli` and `probl-bench`
 //! depend on the matching version of `probl`.
 
-use crate::{Options, Stats};
+use crate::{Options, Sources, Stats};
 
 pub use probl_engine::Symbolic;
 
@@ -45,4 +45,10 @@ pub fn engine_checks(mut options: Options, checks: EngineChecks) -> Options {
 /// nodes.
 pub fn diagrams(stats: &Stats) -> Option<(u64, u64)> {
     stats.diagrams
+}
+
+/// The compiler's loader, for `sources`: for checking files as an editor
+/// does, with `probl_sema` (the playground).
+pub fn loader(sources: &mut dyn Sources) -> impl probl_sema::Loader + '_ {
+    crate::sources::Load(sources)
 }

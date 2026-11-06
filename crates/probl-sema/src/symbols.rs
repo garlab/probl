@@ -48,6 +48,9 @@ pub struct Definition {
     pub owner: Option<String>,
     /// For a field: its type, as written.
     pub ty: Option<String>,
+    /// For a name an `import` declares: the definition it imports, in
+    /// another file.
+    pub imported: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

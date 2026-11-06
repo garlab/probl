@@ -1,20 +1,21 @@
 //! Probl compiled to WebAssembly, for the playground in the browser
 //! (docs/playground.md).
 //!
-//! The functions take and give JSON text: [`check`] gives a program's
-//! diagnostics, [`run`] runs it with the playground's limits, and
-//! [`examples`] gives the bundled examples. Built for
+//! The functions take and give JSON text: [`check_program`] gives a
+//! program's diagnostics, [`run`] runs it with the playground's limits, and
+//! [`examples`] gives the bundled examples. A program can have several
+//! files: requests give the entry's text, and the others as `"sources"`. Built for
 //! `wasm32-unknown-unknown`, the module exports them as plain functions
 //! (see `exports` below), and `web/src/probl.js` passes the text through
 //! the module's memory. Natively, they're ordinary Rust functions, which
 //! the tests call.
 
-use probl::__internal::{EngineChecks, Symbolic, diagrams, engine_checks};
-use probl::{Date, FailureMode, Limits, MemoryFiles, Options};
-use probl_sema::Builtin;
+use probl::__internal::{EngineChecks, Symbolic, diagrams, engine_checks, loader};
+use probl::{Date, FailureMode, Limits, MemoryFiles, MemorySources, Options, Sources};
 use probl_sema::ir::Fault;
 use probl_sema::symbols::{DefKind, Symbols};
-use probl_syntax::{Severity, SourceFile, Span};
+use probl_sema::{Builtin, Source};
+use probl_syntax::{Severity, SourceFile, SourceMap, Span};
 use serde_json::{Value as Json, json};
 use std::io::Read;
 use std::sync::Arc;
@@ -22,28 +23,123 @@ use std::sync::Arc;
 /// A function told how many sampled runs are done, and how many there are.
 pub type Progress = Arc<dyn Fn(u64, u64) + Send + Sync>;
 
-/// The name programs are shown under in diagnostics.
+/// What a program's entry file is called, unless a request names it.
 const FILE: &str = "playground.probl";
 
-/// A program's diagnostics and names: `{"diagnostics": [...], "symbols":
-/// {...}}`. Each diagnostic has its severity, message, notes and help, where
-/// it is (see [`diagnostic`]), and the text the command line would print.
-/// The symbols, where the program's names are declared and used, are there
-/// when it parses (see [`symbols`]); they're `null` otherwise. `reports` lists
-/// `{id, label}` in compiled report order, or is `null` when compilation fails.
+/// A program of one file's diagnostics and names: [`check_program`], for
+/// `{"source": source}`.
 pub fn check(source: &str) -> String {
-    let file = SourceFile::new(FILE, source);
-    let (program, diags, symbols) = probl_sema::compile_with_symbols(source);
-    let reports = program.as_ref().map(|p| {
+    checked(&json!({ "source": source })).to_string()
+}
+
+/// A program's diagnostics and names. The request is `{"source": …}`, the
+/// entry file's text, and optionally:
+///
+/// - `"name"`: what the entry is called, which its imports are resolved
+///   against: `playground.probl` by default;
+/// - `"sources"`: `{path: text}`, the program's other files, which it
+///   imports by their paths relative to the importing file;
+/// - `"file"`: the file to check, the entry by default. Another file is
+///   checked as it's compiled when it's imported, with the files it imports.
+///
+/// The answer is `{"diagnostics": [...], "symbols": {...}, "reports":
+/// [...], "files": [...]}`. Each diagnostic has its severity, message, notes
+/// and help, the `file` it's about and where it is there (see
+/// [`diagnostic`]), and the text the command line would print. The symbols,
+/// where the checked file's names are declared and used, are there when its
+/// files parse (see [`symbols`]); they're `null` otherwise. `reports` lists
+/// `{id, label}` in compiled report order, or is `null` when compilation
+/// fails. `files` names the files checked: the one asked for, and those it
+/// imports. A request that can't be checked gets `{"error": …}`, with the
+/// error's `kind` and `message`.
+pub fn check_program(request: &str) -> String {
+    match serde_json::from_str(request) {
+        Ok(request) => checked(&request).to_string(),
+        Err(e) => json!({ "error": { "kind": "internal", "message": format!("a bad request: {e}") } }).to_string(),
+    }
+}
+
+fn checked(request: &Json) -> Json {
+    let source = request["source"].as_str().unwrap_or_default();
+    let (name, mut files) = match program_files(request, source) {
+        Ok(program) => program,
+        Err(message) => return json!({ "error": { "kind": "usage", "message": message } }),
+    };
+    let entry = files.entry(&name);
+    let compiled = match request.get("file") {
+        None => probl_sema::compile_program(
+            Source {
+                identity: entry,
+                name,
+                text: source.to_string(),
+            },
+            &mut loader(&mut files),
+        ),
+        Some(file) => {
+            let Some(file) = file.as_str() else {
+                return json!({ "error": { "kind": "usage", "message": "file must be a file's path" } });
+            };
+            let identity = files.entry(file);
+            let text = match files.load("", &identity) {
+                Ok(text) => text,
+                Err(message) => {
+                    let message = format!("can't check `{file}`: {message}");
+                    return json!({ "error": { "kind": "usage", "message": message } });
+                }
+            };
+            let source = Source {
+                identity: identity.clone(),
+                name: text.name().to_string(),
+                text: text.text().to_string(),
+            };
+            if identity == entry {
+                probl_sema::compile_program(source, &mut loader(&mut files))
+            } else {
+                probl_sema::compile_module(source, &mut loader(&mut files))
+            }
+        }
+    };
+    let reports = compiled.program.as_ref().map(|p| {
         p.reports
             .iter()
             .enumerate()
             .map(|(id, r)| json!({"id":id, "label":r.label}))
             .collect::<Vec<_>>()
     });
-    let symbols = symbols.map(|s| self::symbols(&s, source));
-    let diagnostics: Vec<Json> = diags.iter().map(|d| compiler_diagnostic(d, &file)).collect();
-    json!({ "diagnostics": diagnostics, "symbols": symbols, "reports": reports }).to_string()
+    let symbols = compiled.symbols.map(|s| self::symbols(&s, &compiled.sources));
+    let diagnostics: Vec<Json> = compiled
+        .diagnostics
+        .iter()
+        .map(|d| compiler_diagnostic(d, &compiled.sources))
+        .collect();
+    let checked: Vec<&str> = compiled.sources.files().map(|(_, f)| f.name.as_str()).collect();
+    json!({ "diagnostics": diagnostics, "symbols": symbols, "reports": reports, "files": checked })
+}
+
+/// A request's program: what its entry is called, and its files, the entry
+/// with `source` among them.
+fn program_files(request: &Json, source: &str) -> Result<(String, MemorySources), String> {
+    let name = match request.get("name") {
+        None => FILE,
+        Some(name) => name
+            .as_str()
+            .filter(|n| !n.is_empty())
+            .ok_or("name must be the entry file's path")?,
+    };
+    let mut files = MemorySources::new();
+    if let Some(sources) = request.get("sources") {
+        let sources = sources
+            .as_object()
+            .ok_or("sources must be an object of paths and texts")?;
+        for (path, text) in sources {
+            let text = text
+                .as_str()
+                .ok_or_else(|| format!("the source of `{path}` must be text"))?;
+            files.insert(path.as_str(), text);
+        }
+    }
+    files.insert(name, source);
+    Ok((name.to_string(), files))
 }
 
 /// Offsets in UTF-16 code units, as JavaScript counts them, for byte offsets
@@ -73,53 +169,129 @@ impl Utf16 {
     }
 }
 
-/// The program's names, for an editor:
+/// A file's text, where it is in a [`SourceMap`], and how to count in it.
+struct Text<'a> {
+    name: &'a str,
+    text: &'a str,
+    base: u32,
+    utf16: Utf16,
+    newlines: Vec<usize>,
+}
+
+impl Text<'_> {
+    /// A map offset in this file, in UTF-16 code units from its start.
+    fn at(&self, offset: u32) -> u32 {
+        self.utf16.at(offset.saturating_sub(self.base))
+    }
+
+    /// Whether a map offset is in this file, or at its end.
+    fn has(&self, offset: u32) -> bool {
+        self.base <= offset && offset <= self.base + self.text.len() as u32
+    }
+}
+
+/// The checked file's names, for an editor. The checked file is the first
+/// in `sources`, and the others are the files it imports.
 ///
 /// - `definitions`: each with its name, kind, where it's declared (`from`,
 ///   `to`, `line`), where it can be used (`scope`, and `global` for
 ///   top-level variables, which functions can also use), its declaration's
 ///   line (`detail`), and the comments that describe it (`doc`): the lines
-///   of comments just above, and a comment at the end of its line;
+///   of comments just above, and a comment at the end of its line. A name
+///   an import declares has the index of the definition it imports, in
+///   `imported`. Definitions in another file, which the checked file uses
+///   (imported ones, and their fields and variants), say which `file`,
+///   with their `from`, `to` and `line` in it, and a `scope` of `[-1, -1]`:
+///   they can't be used by name in the checked file;
 /// - `references`: `[from, to, definition]` for every use of a name;
 /// - `functions`: `[from, to]` for each named function.
 ///
 /// Offsets count UTF-16 code units.
-fn symbols(symbols: &Symbols, source: &str) -> Json {
-    let utf16 = Utf16::new(source);
-    let newlines: Vec<usize> = source.match_indices('\n').map(|(i, _)| i).collect();
-    let definitions: Vec<Json> = symbols
-        .definitions
+fn symbols(symbols: &Symbols, sources: &SourceMap) -> Json {
+    let texts: Vec<Text> = sources
+        .files()
+        .map(|(base, file)| Text {
+            name: &file.name,
+            text: &file.text,
+            base,
+            utf16: Utf16::new(&file.text),
+            newlines: file.text.match_indices('\n').map(|(i, _)| i).collect(),
+        })
+        .collect();
+    let root = &texts[0];
+    let file_of = |offset: u32| sources.file_index(offset).unwrap_or(0);
+    // The checked file's definitions, then the others it uses, in order.
+    let mut index: Vec<Option<usize>> = vec![None; symbols.definitions.len()];
+    let mut order = Vec::new();
+    for (i, d) in symbols.definitions.iter().enumerate() {
+        if root.has(d.span.lo) {
+            index[i] = Some(order.len());
+            order.push(i);
+        }
+    }
+    let used = symbols
+        .references
         .iter()
-        .map(|d| {
-            let (line, detail, doc) = declaration(source, &newlines, d.span.lo as usize);
+        .filter(|(span, _)| root.has(span.lo))
+        .map(|&(_, d)| d)
+        .chain(order.iter().filter_map(|&i| symbols.definitions[i].imported))
+        .collect::<Vec<_>>();
+    for d in used {
+        if index[d].is_none() {
+            index[d] = Some(order.len());
+            order.push(d);
+        }
+    }
+    let definitions: Vec<Json> = order
+        .iter()
+        .map(|&i| {
+            let d = &symbols.definitions[i];
+            let file = file_of(d.span.lo);
+            let t = &texts[file];
+            let at = (d.span.lo - t.base) as usize;
+            let (line, detail, doc) = declaration(t.text, &t.newlines, at);
             let detail = match (d.kind, &d.owner, &d.ty) {
                 (DefKind::Field, Some(owner), Some(ty)) => format!("{owner}.{}: {ty}", d.name),
                 _ => detail,
+            };
+            let elsewhere = file != 0;
+            let scope = if elsewhere {
+                json!([-1, -1])
+            } else {
+                let end = root.base + root.text.len() as u32;
+                json!([
+                    root.at(d.scope.lo.clamp(root.base, end)),
+                    root.at(d.scope.hi.clamp(root.base, end))
+                ])
             };
             json!({
                 "name": d.name,
                 "kind": d.kind.name(),
                 "mutable": d.mutable,
-                "global": d.global,
+                "global": d.global && !elsewhere,
                 "owner": d.owner,
-                "from": utf16.at(d.span.lo),
-                "to": utf16.at(d.span.hi),
+                "from": t.at(d.span.lo),
+                "to": t.at(d.span.hi),
                 "line": line,
-                "scope": [utf16.at(d.scope.lo), utf16.at(d.scope.hi)],
+                "scope": scope,
                 "detail": detail,
                 "doc": doc,
+                "file": elsewhere.then_some(t.name),
+                "imported": d.imported.and_then(|origin| index[origin]),
             })
         })
         .collect();
     let references: Vec<Json> = symbols
         .references
         .iter()
-        .map(|(span, d)| json!([utf16.at(span.lo), utf16.at(span.hi), d]))
+        .filter(|(span, _)| root.has(span.lo))
+        .filter_map(|&(span, d)| Some(json!([root.at(span.lo), root.at(span.hi), index[d]?])))
         .collect();
     let functions: Vec<Json> = symbols
         .functions
         .iter()
-        .map(|f| json!([utf16.at(f.lo), utf16.at(f.hi)]))
+        .filter(|f| root.has(f.lo))
+        .map(|f| json!([root.at(f.lo), root.at(f.hi)]))
         .collect();
     json!({ "definitions": definitions, "references": references, "functions": functions })
 }
@@ -220,6 +392,8 @@ pub fn docs() -> String {
 
 /// Run a program. The request is `{"source": …}`, and optionally:
 ///
+/// - `"name"` and `"sources"`: what the entry file is called, and the
+///   program's other files, as for [`check_program`];
 /// - `"mode"`: `"enumerate"` or `"sample"`, and `"runs"` and `"seed"`,
 ///   which override the program's `@mode` as on the command line;
 /// - `"conjugate"`: `false` to sample without exact updates;
@@ -262,19 +436,30 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
         }
     };
     let source = request["source"].as_str().unwrap_or_default();
-    let program = match probl::compile(FILE, source) {
+    let (name, mut sources) = match program_files(&request, source) {
+        Ok(program) => program,
+        Err(message) => return json!({ "error": { "kind": "usage", "message": message } }).to_string(),
+    };
+    let program = match probl::compile_with(&name, source, &mut sources) {
         Ok(program) => program,
         Err(e) => {
-            let diagnostics: Vec<Json> = e.diagnostics().iter().map(|d| diagnostic(d, source)).collect();
+            let diagnostics: Vec<Json> = e.diagnostics().iter().map(diagnostic).collect();
             let first = e
                 .diagnostics()
                 .iter()
                 .find(|d| d.severity() == probl::Severity::Error)
-                .map(|d| diagnostic(d, source));
+                .map(diagnostic);
             return json!({ "error": first, "diagnostics": diagnostics }).to_string();
         }
     };
-    let diagnostics: Vec<Json> = program.warnings().iter().map(|d| diagnostic(d, source)).collect();
+    let diagnostics: Vec<Json> = program.warnings().iter().map(diagnostic).collect();
+    // An error in the request, about no place in the program.
+    let entry = SourceMap::single(SourceFile::new(name.as_str(), source));
+    let invalid = |message: &str| {
+        let mut error = compiler_diagnostic(&probl_syntax::Diagnostic::error(Span::default(), message), &entry);
+        error["kind"] = json!("language");
+        error
+    };
     let failed = |error: Json| json!({ "error": error, "diagnostics": diagnostics }).to_string();
     let mut options = mode(&request, Options::new())
         .limits(Limits::browser())
@@ -314,13 +499,7 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
         match today.as_str().and_then(|s| s.parse::<Date>().ok()) {
             Some(date) => options = options.today(date),
             None => {
-                let message = "today must be YYYY-MM-DD within 0001-01-01..9999-12-31";
-                let mut error = compiler_diagnostic(
-                    &probl_syntax::Diagnostic::error(Span::default(), message),
-                    &SourceFile::new(FILE, source),
-                );
-                error["kind"] = json!("language");
-                return failed(error);
+                return failed(invalid("today must be YYYY-MM-DD within 0001-01-01..9999-12-31"));
             }
         }
     }
@@ -328,14 +507,9 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
         match now.as_str().and_then(|s| s.parse::<probl::DateTime>().ok()) {
             Some(datetime) => options = options.now(datetime),
             None => {
-                let message =
-                    "now must be a datetime within years 1..9999, with optional fractional seconds and UTC offset";
-                let mut error = compiler_diagnostic(
-                    &probl_syntax::Diagnostic::error(Span::default(), message),
-                    &SourceFile::new(FILE, source),
-                );
-                error["kind"] = json!("language");
-                return failed(error);
+                return failed(invalid(
+                    "now must be a datetime within years 1..9999, with optional fractional seconds and UTC offset",
+                ));
             }
         }
     }
@@ -346,13 +520,7 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
                 .collect::<Option<Vec<_>>>()
         });
         let Some(vars) = vars else {
-            let message = "env must be an object whose values are strings";
-            let mut error = compiler_diagnostic(
-                &probl_syntax::Diagnostic::error(Span::default(), message),
-                &SourceFile::new(FILE, source),
-            );
-            error["kind"] = json!("language");
-            return failed(error);
+            return failed(invalid("env must be an object whose values are strings"));
         };
         for (name, text) in vars {
             options = options.env(name, text);
@@ -368,7 +536,7 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
         );
         match program.load(&mut files, &options) {
             Ok(data) => options = options.data(data),
-            Err(e) => return failed(error(&e, source)),
+            Err(e) => return failed(error(&e)),
         }
     }
     let stats = |outcome: &probl::Outcome| {
@@ -413,7 +581,7 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
             let outcome = e.partial().expect("checked");
             let today = outcome.today().map(|d| d.to_string());
             let now = outcome.now().map(|d| d.to_string());
-            let failures: Vec<Json> = e.diagnostics().iter().map(|d| diagnostic(d, source)).collect();
+            let failures: Vec<Json> = e.diagnostics().iter().map(diagnostic).collect();
             with_reports(
                 json!({
                     "output": outcome.text(),
@@ -421,14 +589,14 @@ pub fn run(request: &str, print: &mut (dyn FnMut(&str) + Send), progress: Option
                     "stats": stats(outcome),
                     "partial": true,
                     "finished": outcome.finished(),
-                    "error": error(&e, source),
+                    "error": error(&e),
                     "failures": failures,
                     "diagnostics": diagnostics,
                 }),
                 outcome,
             )
         }
-        Err(e) => failed(error(&e, source)),
+        Err(e) => failed(error(&e)),
     }
 }
 
@@ -507,17 +675,19 @@ impl probl::Files for Files {
     }
 }
 
-/// A diagnostic as JSON. `from` and `to` count UTF-16 code units, as
-/// JavaScript strings do; `line` and `column` start at 1.
-fn diagnostic(d: &probl::Diagnostic, source: &str) -> Json {
+/// A diagnostic as JSON, with the `file` it's about. `from` and `to` count
+/// UTF-16 code units in that file, as JavaScript strings do; `line` and
+/// `column` start at 1.
+fn diagnostic(d: &probl::Diagnostic) -> Json {
     let severity = match d.severity() {
         probl::Severity::Warning => "warning",
         _ => "error",
     };
     let span = d.span();
     let fields = Fields {
-        from: utf16(source, span.start),
-        to: utf16(source, span.end),
+        file: d.file(),
+        from: utf16(d.file_text(), span.start),
+        to: utf16(d.file_text(), span.end),
         line_column: d.line_column(),
         severity,
         message: d.message(),
@@ -527,15 +697,24 @@ fn diagnostic(d: &probl::Diagnostic, source: &str) -> Json {
     fields.json(d.render(false))
 }
 
-/// A diagnostic of the compiler's, for the editor, as JSON (see
-/// [`diagnostic`]).
-fn compiler_diagnostic(d: &probl_syntax::Diagnostic, file: &SourceFile) -> Json {
+/// A diagnostic of the compiler's, whose span is in `sources`' offsets, for
+/// the editor, as JSON (see [`diagnostic`]).
+fn compiler_diagnostic(d: &probl_syntax::Diagnostic, sources: &SourceMap) -> Json {
     let severity = match d.severity {
         Severity::Error => "error",
         Severity::Warning => "warning",
     };
+    let mut d = d.clone();
+    let file = match sources.locate(d.span) {
+        Some((file, span)) => {
+            d.span = span;
+            file.clone()
+        }
+        None => Arc::new(SourceFile::new("", "")),
+    };
     let (lo, hi) = (d.span.lo as usize, d.span.hi.max(d.span.lo) as usize);
     let fields = Fields {
+        file: &file.name,
         from: utf16(&file.text, lo),
         to: utf16(&file.text, hi),
         line_column: file.line_col(clamp(&file.text, lo) as u32),
@@ -544,11 +723,12 @@ fn compiler_diagnostic(d: &probl_syntax::Diagnostic, file: &SourceFile) -> Json 
         notes: &d.notes,
         help: d.help.as_deref(),
     };
-    fields.json(d.render(file, false))
+    fields.json(d.render(&file, false))
 }
 
 /// What a diagnostic's JSON says.
 struct Fields<'a> {
+    file: &'a str,
     from: usize,
     to: usize,
     line_column: (usize, usize),
@@ -562,6 +742,7 @@ impl Fields<'_> {
     fn json(self, rendered: String) -> Json {
         let (line, column) = self.line_column;
         json!({
+            "file": self.file,
             "from": self.from,
             "to": self.to,
             "line": line,
@@ -576,11 +757,11 @@ impl Fields<'_> {
 }
 
 /// An error, as a diagnostic with its kind.
-fn error(e: &probl::Error, source: &str) -> Json {
+fn error(e: &probl::Error) -> Json {
     let mut out = e
         .diagnostics()
         .first()
-        .map_or_else(|| json!({ "message": e.to_string() }), |d| diagnostic(d, source));
+        .map_or_else(|| json!({ "message": e.to_string() }), diagnostic);
     out["kind"] = json!(match e.kind() {
         probl::ErrorKind::Unsupported => "unsupported",
         probl::ErrorKind::Limit => "limit",
@@ -723,7 +904,7 @@ mod exports {
     #[unsafe(no_mangle)]
     pub extern "C" fn probl_check(ptr: *mut u8, len: usize) -> usize {
         setup();
-        give(super::check(&take(ptr, len)))
+        give(super::check_program(&take(ptr, len)))
     }
 
     #[unsafe(no_mangle)]

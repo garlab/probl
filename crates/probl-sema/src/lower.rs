@@ -277,8 +277,20 @@ impl<'a> Lowerer<'a> {
             global: false,
             owner: None,
             ty: None,
+            imported: None,
         });
         self.symbols.definitions.len() - 1
+    }
+
+    /// Record the name an import declares in this file, for the definition
+    /// `origin` it imports. Uses in this file refer to it.
+    fn define_import(&mut self, local: &ast::Ident, origin: usize, global: bool) -> usize {
+        let kind = self.symbols.definitions[origin].kind;
+        let def = self.define(&local.name, kind, local.span, EVERYWHERE);
+        let d = &mut self.symbols.definitions[def];
+        d.imported = Some(origin);
+        d.global = global;
+        def
     }
 
     fn refer(&mut self, span: Span, def: usize) {
@@ -1136,28 +1148,37 @@ impl<'a> Lowerer<'a> {
                         .help(format!("import it under another name: `{name} as …`"));
                     continue;
                 }
+                // The name it has in this file is a definition of its own,
+                // and the name it has there, when they differ, refers to
+                // the definition it imports.
+                let declare = |this: &mut Self, origin: usize, global: bool| {
+                    if n.alias.is_some() {
+                        this.refer(n.name.span, origin);
+                    }
+                    this.define_import(local, origin, global)
+                };
                 let mut found = false;
                 if let Some(&(id, def)) = ex.fns.get(name) {
                     self.fn_by_name.insert(local.name.clone(), id);
                     if let Some(def) = def {
+                        let def = declare(self, def, false);
                         self.fn_defs.insert(local.name.clone(), def);
-                        self.refer(n.name.span, def);
                     }
                     found = true;
                 }
                 if let Some(&(id, def)) = ex.records.get(name) {
                     self.record_by_name.insert(local.name.clone(), id);
                     if let Some(def) = def {
+                        let def = declare(self, def, false);
                         self.type_defs.insert(local.name.clone(), def);
-                        self.refer(n.name.span, def);
                     }
                     found = true;
                 }
                 if let Some(&(id, def)) = ex.enums.get(name) {
                     self.enum_by_name.insert(local.name.clone(), id);
                     if let Some(def) = def {
+                        let def = declare(self, def, false);
                         self.type_defs.insert(local.name.clone(), def);
-                        self.refer(n.name.span, def);
                     }
                     found = true;
                 }
@@ -1166,9 +1187,9 @@ impl<'a> Lowerer<'a> {
                         mutable: false,
                         captured: false,
                         imported: true,
+                        def: declare(self, b.def, true),
                         ..b.clone()
                     };
-                    self.refer(n.name.span, b.def);
                     self.globals.insert(local.name.clone(), b.clone());
                     values.insert(local.name.clone(), b);
                     found = true;

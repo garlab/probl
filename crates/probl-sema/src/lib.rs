@@ -20,7 +20,7 @@ pub mod types;
 pub use builtins::{Builtin, Constant};
 pub use liveness::{Liveness, SlotSet, analyze};
 pub use lower::{lower, lower_with_symbols};
-pub use modules::{Compiled, Loader, NoImports, Source, compile_program};
+pub use modules::{Compiled, Loader, NoImports, Source, compile_module, compile_program};
 
 use probl_syntax::Diagnostic;
 

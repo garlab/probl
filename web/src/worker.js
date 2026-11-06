@@ -3,7 +3,7 @@
 // worker, which the page then replaces.
 //
 //   → {type: 'init', module}              ← {type: 'ready', examples, docs, version}
-//   → {type: 'check', id, source}         ← {type: 'done', id, result}
+//   → {type: 'check', id, source, program} ← {type: 'done', id, result}
 //   → {type: 'run', id, request}          ← {type: 'print', id, line}, {type: 'progress', id, done, total},
 //                                           then {type: 'done', id, result, memory}
 //   ← {type: 'crash', id, message}: the module stopped, and this worker is done.
@@ -27,7 +27,7 @@ self.onmessage = async ({ data }) => {
   const probl = await loaded;
   current = data.id;
   try {
-    const result = data.type === 'check' ? probl.check(data.source) : probl.run(data.request);
+    const result = data.type === 'check' ? probl.check(data.source, data.program) : probl.run(data.request);
     self.postMessage({ type: 'done', id: data.id, result, memory: probl.memoryBytes() });
   } catch (error) {
     const message = error instanceof Crash ? error.message : String(error);
