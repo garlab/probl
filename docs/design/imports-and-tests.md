@@ -253,7 +253,13 @@ During setup, `foo` is still an `int` in each world. Inside `expect`, a referenc
 
 #### What varies across worlds
 
-Whether an expression in an expectation is world-indexed or shared is decided before running, by what it depends on, not by the values a run happens to produce. A binding is world-indexed when its value can depend on a draw or a probabilistic branch: a binding of the test's setup, a binding of an imported module or of the test file (they run in the test's worlds), or any binding assigned under such a branch. An expression is world-indexed when it reads one, directly or through a function it calls: through its arguments, a lambda's captures, or the module and file bindings a named function reads, transitively. Literals, constants, the run's snapshots (`today`, `now`, `env`), data read by any file, and bindings computed only from these are shared.
+Whether an expression in an expectation is world-indexed or shared is decided before running, by what it reads, never by the values a run happens to produce.
+
+- **Every binding is a population.** A binding of the test's setup, of the test file or of an imported module is world-indexed, whatever it's computed from: all of them run in the test's worlds. `let xs = [1, 2, 3]` is a population of lists, the same list in every world; a binding of data from `read` is a population too. A binding never becomes a shared scalar because it happens to be the same everywhere.
+- **Expressions follow what they read.** An expression is world-indexed when it reads a binding, directly or through a function it calls: through its arguments, a lambda's captures, or the bindings a named function reads, transitively. A call through a function value reads the binding or captures that hold it.
+- **Shared** are literals, built-in constants, the run's snapshots (`today`, `now`, `env`), recipe expressions written in the expectation (`d6 > 3`), and calls of built-ins or of functions that read no binding, with shared arguments.
+
+So every expression is classified, and binding a value during setup always gives it population meaning.
 
 For example, with a module that has
 
@@ -262,7 +268,9 @@ export let roll ~ d6
 export fn current() { roll }
 ```
 
-`current()` takes no argument, but it reads `roll`, so it's world-indexed: `expect mean(current()) == 3.5` averages it across the test's worlds, and `expect current() == roll` compares it with `roll` world by world, the two always agreeing. When the analysis can't tell, as for a call through a function value whose target varies, a reducer applied to the result is rejected, with help to bind the value during setup, rather than choosing a meaning by guess.
+`current()` takes no argument, but it reads `roll`, so it's world-indexed: `expect mean(current()) == 3.5` averages it across the test's worlds, and `expect current() == roll` compares it with `roll` world by world, the two always agreeing.
+
+**Reducers.** A statistical query applied to a world-indexed argument reduces across the test's worlds, integrating recipe values, as defined below. Applied to a shared argument, it's the ordinary built-in: `mean([1, 2, 3])` is the list's mean, 2; `mean(d6)` is the recipe's, 3.5; `mean(2)` is a type error, as outside a test. Parameters that aren't the reduced argument, such as a quantile's level, don't change the query's meaning: a world-indexed one is accepted when it has the same value in every world, checked when it's evaluated, so `let level = 90%` in setup works.
 
 #### Query operations
 
@@ -288,7 +296,7 @@ Do not implement this by independently turning each captured name into an ordina
 
 Distribution recipes retain their ordinary meaning within a world. If setup binds `let d = d6`, `d == d` still compares independent recipe outcomes; if it binds `let x ~ d6`, `x == x` compares the same realized outcome. Reducing a recipe-valued expression integrates its outcomes with each world's weight, consistently with numeric reports; it does not sample the recipe. Thus `mean(d)` and `mean(d6)` both give 3.5 for that deterministic recipe. Incomplete recipes retain missing-mass metadata. Supported analytic expressions use existing inference capabilities; unsupported joint/nonlinear operations remain errors.
 
-Start with the existing population query families (`mean`, `variance`, `sd`, medians, quantiles, `P`, CDF/PMF and support) where their types and completeness contracts can be preserved. Parameter arguments such as a percentile or comparison threshold must be shared scalar query results initially; reject a world-varying threshold rather than silently choosing one. Methods and statically known aliases of these built-ins must resolve to the same query operation; identify the resolved definition, not its spelling. World-varying callable targets that could select a reducer are unsupported initially.
+Start with the existing population query families (`mean`, `variance`, `sd`, medians, quantiles, `P`, CDF/PMF and support) where their types and completeness contracts can be preserved. Parameter arguments such as a percentile or comparison threshold must have one value across the test's worlds ([above](#what-varies-across-worlds)); reject a world-varying threshold rather than silently choosing one. Methods and statically known aliases of these built-ins must resolve to the same query operation; identify the resolved definition, not its spelling. World-varying callable targets that could select a reducer are unsupported initially.
 
 Ordinary helper functions retain ordinary bodies. A call of a pure helper is world-indexed when an argument is, or when the helper reads a world-indexed binding through its captures or free variables ([above](#what-varies-across-worlds)); it's then evaluated pointwise. It does not make a hidden `mean` inside that function reach into the caller's population. A user function shadowing `mean` is that user function, not a reducer selected by name. This keeps imported helpers independent of whether their caller is a test. A future API for user-defined population reducers is separate work.
 
@@ -310,7 +318,10 @@ This makes the boundary visible even when it changes the argument's interpretati
 | `mean(foo)` outside `expect`, where `foo` is a scalar | Type error, as today |
 | `mean(foo)` inside `expect`, where `foo` comes from setup | Mean across test worlds |
 | `mean(xs)` inside `expect`, where `xs` is a setup list | Error: the population elements are lists; compute per-world list means during setup |
+| `mean(unit_list)` inside `expect`, where `unit_list` is a module's constant list | Error, as for a setup list: every binding is a population |
+| `mean(current())` inside `expect`, where `current` reads a module binding | Mean across test worlds |
 | `mean([1, 2, 3])` inside `expect` | Ordinary query of a shared literal collection, 2 |
+| `mean(2)` inside `expect` | Type error, as outside a test |
 | `mean(d6)` | Ordinary recipe mean, 3.5 |
 | `P(foo > 0)` inside `expect` | Probability of the fact across test worlds |
 
@@ -393,7 +404,7 @@ Modules and basic tests do not require the deferred portal implementation or loc
 | Test grammar/discovery | Test-only source mode, no imported tests, duplicate names, optional labels, empty suite/filter, no expectation, illegal nested/late model statements |
 | Isolation | Mutable collections/bags, observations, captures, input snapshots, `now` and `today`, budgets and output isolated across tests; imported modules and file-level fixtures evaluated afresh per test, a fixture derived from an imported draw correlated with it; order does not affect results |
 | Expectations | Non-boolean rejection, all-world/recipe predicates, tiny positive counterexample weight, failed expectations do not filter, all expectations share the final population |
-| Statistics | Symmetric mean, weighted posterior, scalar/list/recipe distinctions, correlated projection, world dependence through captures, free variables and module bindings (`current()` above), reducers on results the analysis can't classify rejected, aliases and user-function shadowing, reducer dependencies, incomplete summaries from setup, no implicit recipe draws |
+| Statistics | Symmetric mean, weighted posterior, scalar/list/recipe distinctions, correlated projection, every binding a population whatever it's computed from (`xs`, `actual`, module constants), world dependence through captures, free variables and module bindings (`current()` above), reducers on shared arguments as ordinary built-ins, a constant world-indexed parameter accepted and a varying one rejected, aliases and user-function shadowing, reducer dependencies, incomplete summaries from setup, no implicit recipe draws |
 | Non-success | Impossible evidence, runtime errors, later test execution, unresolved mass even below display precision, assertion evaluation errors, cancellation and internal failures |
 | Hosts | CLI exit status, structured library results, in-memory imports, actual WASM parity, source navigation and bounded diagnostics |
 
