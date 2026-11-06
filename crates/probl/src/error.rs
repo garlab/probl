@@ -2,7 +2,7 @@
 
 use crate::Outcome;
 use probl_engine::RuntimeError;
-use probl_syntax::{SourceFile, Span};
+use probl_syntax::{SourceFile, SourceMap, Span};
 use std::fmt;
 use std::ops::Range;
 use std::sync::Arc;
@@ -44,11 +44,20 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    pub(crate) fn new(inner: probl_syntax::Diagnostic, file: &Arc<SourceFile>) -> Diagnostic {
-        Diagnostic {
-            inner,
-            file: file.clone(),
-        }
+    /// `inner`, whose span is in `sources`' offsets, about the file it's in,
+    /// with its span within that file.
+    pub(crate) fn new(mut inner: probl_syntax::Diagnostic, sources: &SourceMap) -> Diagnostic {
+        let (file, span) = match sources.locate(inner.span) {
+            Some((file, span)) => (file.clone(), span),
+            None => (Arc::new(SourceFile::new("", "")), inner.span),
+        };
+        inner.span = span;
+        Diagnostic { inner, file }
+    }
+
+    /// The name of the file it's about.
+    pub fn file(&self) -> &str {
+        &self.file.name
     }
 
     pub fn severity(&self) -> Severity {
@@ -197,14 +206,19 @@ impl FailedRun {
 }
 
 impl FaultContext {
-    pub(crate) fn new(c: &probl_engine::FaultContext, file: &SourceFile) -> FaultContext {
-        let len = file.text.len();
+    pub(crate) fn new(c: &probl_engine::FaultContext, sources: &SourceMap) -> FaultContext {
+        let none = SourceFile::new("", "");
         let inputs = c
             .inputs
             .iter()
             .map(|input| {
-                let lo = (input.span.lo as usize).min(len);
-                let span = lo..(input.span.hi as usize).clamp(lo, len);
+                let (file, local) = match sources.locate(input.span) {
+                    Some((file, local)) => (&**file, local),
+                    None => (&none, input.span),
+                };
+                let len = file.text.len();
+                let lo = (local.lo as usize).min(len);
+                let span = lo..(local.hi as usize).clamp(lo, len);
                 FaultInput {
                     name: input.name.clone(),
                     source: file.text.get(span.clone()).unwrap_or_default().to_string(),
@@ -371,17 +385,17 @@ impl Error {
         }
     }
 
-    pub(crate) fn compile(diagnostics: Vec<probl_syntax::Diagnostic>, file: &Arc<SourceFile>) -> Error {
+    pub(crate) fn compile(diagnostics: Vec<probl_syntax::Diagnostic>, sources: &SourceMap) -> Error {
         Error {
             kind: ErrorKind::Compile,
-            diagnostics: diagnostics.into_iter().map(|d| Diagnostic::new(d, file)).collect(),
+            diagnostics: diagnostics.into_iter().map(|d| Diagnostic::new(d, sources)).collect(),
             partial: None,
             fault: None,
         }
     }
 
     /// An error that stopped a run. A fault's context becomes a note.
-    pub(crate) fn runtime(e: RuntimeError, file: &Arc<SourceFile>) -> Error {
+    pub(crate) fn runtime(e: RuntimeError, sources: &SourceMap) -> Error {
         let kind = match e.kind {
             probl_engine::ErrorKind::Language => ErrorKind::Language,
             probl_engine::ErrorKind::Unsupported => ErrorKind::Unsupported,
@@ -392,25 +406,25 @@ impl Error {
             .context
             .as_deref()
             .filter(|_| e.fault.is_some())
-            .map(|c| FaultContext::new(c, file));
+            .map(|c| FaultContext::new(c, sources));
         let mut diagnostic = e.to_diagnostic();
         if let Some(note) = fault.as_ref().and_then(FaultContext::note) {
             diagnostic.notes.push(note);
         }
         Error {
             kind,
-            diagnostics: vec![Diagnostic::new(diagnostic, file)],
+            diagnostics: vec![Diagnostic::new(diagnostic, sources)],
             partial: None,
             fault: fault.map(Arc::new),
         }
     }
 
-    pub(crate) fn usage(span: Span, message: &str, help: &str, file: &Arc<SourceFile>) -> Error {
+    pub(crate) fn usage(span: Span, message: &str, help: &str, sources: &SourceMap) -> Error {
         Error {
             kind: ErrorKind::Usage,
             diagnostics: vec![Diagnostic::new(
                 probl_syntax::Diagnostic::error(span, message).with_help(help),
-                file,
+                sources,
             )],
             partial: None,
             fault: None,

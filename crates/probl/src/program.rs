@@ -1,24 +1,53 @@
 //! Compiling a program, loading its data and running it.
 
 use crate::files::{Data, Files, Resolve};
+use crate::sources::{Load, Sources};
 use crate::{Diagnostic, Error, FailureMode, Options, Outcome};
 use probl_sema::ir;
-use probl_syntax::SourceFile;
+use probl_syntax::{SourceFile, SourceMap};
 use std::sync::Arc;
 
 /// Compile a program. `name` is what its diagnostics call it, such as its
 /// file's name. Warnings come with the program; errors come instead of it, as
 /// an error of kind [`Compile`](crate::ErrorKind::Compile).
+///
+/// A program compiled this way can't import: see [`compile_with`].
 pub fn compile(name: &str, source: &str) -> Result<Program, Error> {
-    let file = Arc::new(SourceFile::new(name, source));
+    let sources = Arc::new(SourceMap::single(SourceFile::new(name, source)));
     let (program, diagnostics) = probl_sema::compile(source);
     match program {
         Some(ir) => Ok(Program {
             ir: Arc::new(ir),
-            warnings: diagnostics.into_iter().map(|d| Diagnostic::new(d, &file)).collect(),
-            file,
+            warnings: diagnostics.into_iter().map(|d| Diagnostic::new(d, &sources)).collect(),
+            sources,
         }),
-        None => Err(Error::compile(diagnostics, &file)),
+        None => Err(Error::compile(diagnostics, &sources)),
+    }
+}
+
+/// Compile a program that may import files, from `sources`. `name` is what
+/// its diagnostics call the entry file, and what `sources` resolves its
+/// imports against. Each file the program imports is read once, and each
+/// diagnostic says which [`file`](Diagnostic::file) it's about.
+pub fn compile_with(name: &str, source: &str, sources: &mut dyn Sources) -> Result<Program, Error> {
+    let entry = probl_sema::Source {
+        identity: sources.entry(name),
+        name: name.to_string(),
+        text: source.to_string(),
+    };
+    let compiled = probl_sema::compile_program(entry, &mut Load(sources));
+    let map = Arc::new(compiled.sources);
+    match compiled.program {
+        Some(ir) => Ok(Program {
+            ir: Arc::new(ir),
+            warnings: compiled
+                .diagnostics
+                .into_iter()
+                .map(|d| Diagnostic::new(d, &map))
+                .collect(),
+            sources: map,
+        }),
+        None => Err(Error::compile(compiled.diagnostics, &map)),
     }
 }
 
@@ -27,7 +56,8 @@ pub fn compile(name: &str, source: &str) -> Result<Program, Error> {
 #[derive(Clone)]
 pub struct Program {
     ir: Arc<ir::Program>,
-    file: Arc<SourceFile>,
+    /// Its files.
+    sources: Arc<SourceMap>,
     warnings: Vec<Diagnostic>,
 }
 
@@ -96,7 +126,7 @@ impl Program {
             cancel,
         )
         .map(Data::new)
-        .map_err(|e| Error::runtime(e, &self.file))
+        .map_err(|e| Error::runtime(e, &self.sources))
     }
 
     /// Run it. What it `print`s is collected in the outcome.
@@ -132,8 +162,8 @@ impl Program {
         let result = probl_engine::run_on_this_thread(&self.ir, &engine, print);
         #[cfg(not(target_arch = "wasm32"))]
         let result = probl_engine::run(&self.ir, &engine, print);
-        let outcome = result.map_err(|e| Error::runtime(e, &self.file))?;
-        let outcome = Outcome::new(outcome, &self.ir, &self.file);
+        let outcome = result.map_err(|e| Error::runtime(e, &self.sources))?;
+        let outcome = Outcome::new(outcome, &self.ir, &self.sources);
         match outcome.failures().is_empty() {
             true => Ok(outcome),
             false => Err(Error::failed(outcome)),
@@ -148,14 +178,14 @@ impl Program {
                 span,
                 "the data was loaded for another program",
                 "load this program's data with its `Program::load`",
-                &self.file,
+                &self.sources,
             )),
             Some(data) => Ok(Some(data.inputs.clone())),
             None if self.reads_data() => Err(Error::usage(
                 span,
                 "the program reads data, which wasn't loaded",
                 "load it with `Program::load`, and give it to the run with `Options::data`",
-                &self.file,
+                &self.sources,
             )),
             None => Ok(None),
         }
@@ -177,7 +207,7 @@ impl Program {
                     Default::default(),
                     &e.message,
                     "use an existing report ID and compatible summary/collection settings",
-                    &self.file,
+                    &self.sources,
                 )
             })
     }
@@ -197,7 +227,10 @@ impl Program {
 impl std::fmt::Debug for Program {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Program")
-            .field("name", &self.file.name)
+            .field(
+                "name",
+                &self.sources.files().next().map_or("", |(_, f)| f.name.as_str()),
+            )
             .field("mode", &self.mode())
             .field("reports", &self.report_count())
             .field("warnings", &self.warnings)

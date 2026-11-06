@@ -263,3 +263,49 @@ fn summary_memory_limit_is_configurable() {
     let (code, _, err) = run_source("exact-memory.probl", source, &["--max-report-summary", "0"]);
     assert_eq!(code, Some(0), "{err}");
 }
+
+#[test]
+fn a_program_imports_files_relative_to_each_file() {
+    let dir = std::env::temp_dir().join(format!("probl-cli-imports-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("lib")).unwrap();
+    let write = |name: &str, text: &str| std::fs::write(dir.join(name), text).unwrap();
+    write("lib/prior.probl", "export let rate ~ one_of([0.2, 0.5, 0.8])\n");
+    let shop = "import { rate } from \"./prior.probl\"\nobserve 4 from binomial(5, rate)\nexport let next_week ~ binomial(10, rate)\n";
+    write("lib/shop_a.probl", shop);
+    write("lib/shop_b.probl", shop);
+    write(
+        "main.probl",
+        "import { rate } from \"./lib/prior.probl\"\nimport { next_week as a } from \"./lib/shop_a.probl\"\nimport { next_week as b } from \"./lib/shop_b.probl\"\nreport rate == 0.8\n",
+    );
+    let run = |file: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_probl"))
+            .arg("run")
+            .arg(dir.join(file))
+            .output()
+            .unwrap();
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+    let (code, out, err) = run("main.probl");
+    assert_eq!(code, Some(0), "{out}{err}");
+    assert!(out.contains("rate == 0.8    87.28%"), "{out}");
+    // An error in an imported file says which file.
+    write(
+        "lib/bad.probl",
+        "import { rate } from \"./prior.probl\"\nexport let bad = rate + \"x\"\n",
+    );
+    write("bad.probl", "import { bad } from \"./lib/bad.probl\"\nreport bad\n");
+    let (code, _, err) = run("bad.probl");
+    assert_eq!(code, Some(1));
+    assert!(err.contains("bad.probl:2:18") && err.contains("lib"), "{err}");
+    // A path without `.probl`, and one that doesn't exist.
+    write("odd.probl", "import { x } from \"./lib/prior\"\n");
+    let (_, _, err) = run("odd.probl");
+    assert!(err.contains("an imported file's path ends in `.probl`"), "{err}");
+    write("missing.probl", "import { x } from \"./nowhere.probl\"\n");
+    let (_, _, err) = run("missing.probl");
+    assert!(err.contains("there's no such file"), "{err}");
+}

@@ -910,3 +910,39 @@ fn every_example_s_numbers_are_the_ones_it_prints() {
     }
     assert!(checked >= 20, "only {checked} reports were checked");
 }
+
+#[test]
+fn a_program_imports_from_the_sources_given() {
+    let mut sources: probl::MemorySources = [
+        ("lib/prior.probl", "export let rate ~ one_of([0.2, 0.5, 0.8])\n"),
+        (
+            "lib/shop.probl",
+            "import { rate } from \"./prior.probl\"\nobserve 4 from binomial(5, rate)\nexport fn forecast() { rate * 10 }\n",
+        ),
+    ]
+    .into_iter()
+    .collect();
+    let main = "import { rate } from \"./lib/prior.probl\"\nimport { forecast } from \"./lib/shop.probl\"\nreport rate == 0.8\nreport forecast() == rate * 10";
+    let program = probl::compile_with("main.probl", main, &mut sources).unwrap();
+    let out = program.run(&Options::new()).unwrap();
+    close(
+        probability(&out, "rate == 0.8").point().unwrap(),
+        0.4096 / 0.57225,
+        1e-12,
+    );
+    close(probability(&out, "forecast() == rate * 10").point().unwrap(), 1.0, 0.0);
+
+    // A diagnostic says which file it's about, with the span in that file.
+    sources.insert("lib/bad.probl", "export let x = 1\nexport let y = nope");
+    let e = probl::compile_with("main.probl", "import { x } from \"./lib/bad.probl\"", &mut sources).unwrap_err();
+    assert_eq!(e.kind(), ErrorKind::Compile);
+    let d = &e.diagnostics()[0];
+    assert_eq!(d.file(), "lib/bad.probl");
+    assert_eq!(d.line_column(), (2, 16));
+    assert_eq!(&"export let x = 1\nexport let y = nope"[d.span()], "nope");
+    assert!(e.render(false).contains("lib/bad.probl:2:16"), "{}", e.render(false));
+
+    // `compile` compiles a program on its own, which can't import.
+    let e = probl::compile("main.probl", main).unwrap_err();
+    assert!(e.to_string().contains("can't import"), "{e}");
+}

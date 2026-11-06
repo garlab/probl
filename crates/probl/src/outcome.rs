@@ -5,7 +5,7 @@ use crate::{DataSource, Date, DateTime, Diagnostic, FailureMode, FaultContext};
 use probl_engine::report::{self, GroupResult, Status};
 use probl_engine::value::Value;
 use probl_sema::ir;
-use probl_syntax::SourceFile;
+use probl_syntax::SourceMap;
 use std::ops::Range;
 use std::sync::{Arc, OnceLock};
 
@@ -38,11 +38,7 @@ pub struct Outcome {
 }
 
 impl Outcome {
-    pub(crate) fn new(
-        mut outcome: probl_engine::Outcome,
-        program: &Arc<ir::Program>,
-        file: &Arc<SourceFile>,
-    ) -> Outcome {
+    pub(crate) fn new(mut outcome: probl_engine::Outcome, program: &Arc<ir::Program>, sources: &SourceMap) -> Outcome {
         let reports = program
             .reports
             .iter()
@@ -58,7 +54,7 @@ impl Outcome {
             })
             .collect();
         let runs = outcome.sample.as_ref().map(|s| s.runs);
-        let (failures, failed_share) = failures(&outcome, file);
+        let (failures, failed_share) = failures(&outcome, sources);
         let mut text = std::mem::take(&mut outcome.output);
         if !failures.is_empty() {
             // After the reports, as a report would be.
@@ -81,7 +77,7 @@ impl Outcome {
                 seed: s.seed,
                 effective_runs: s.effective,
             }),
-            stats: Stats::new(&outcome, file),
+            stats: Stats::new(&outcome, sources),
             data: outcome.data.iter().map(DataSource::new).collect(),
             today: outcome.today.map(Date::from_days),
             now: outcome.now.map(DateTime),
@@ -272,7 +268,7 @@ const LISTED_FAILURES: usize = 10;
 
 /// The run's failures, each with a diagnostic that says how much failed,
 /// and the share that failed overall when it's known.
-fn failures(outcome: &probl_engine::Outcome, file: &Arc<SourceFile>) -> (Vec<Failure>, Option<f64>) {
+fn failures(outcome: &probl_engine::Outcome, sources: &SourceMap) -> (Vec<Failure>, Option<f64>) {
     let all = &outcome.failures;
     let comparable = all.comparable();
     let total = outcome.finished + all.weight;
@@ -299,7 +295,7 @@ fn failures(outcome: &probl_engine::Outcome, file: &Arc<SourceFile>) -> (Vec<Fai
                 _ => None,
             };
             // The first failing world's (or run's) values: an example.
-            let fault = g.error.context.as_deref().map(|c| FaultContext::new(c, file));
+            let fault = g.error.context.as_deref().map(|c| FaultContext::new(c, sources));
             let when = fault.as_ref().and_then(FaultContext::when);
             let note = match (&outcome.sample, share) {
                 (Some(s), _) => {
@@ -330,7 +326,7 @@ fn failures(outcome: &probl_engine::Outcome, file: &Arc<SourceFile>) -> (Vec<Fai
             };
             let error = g.error.clone().with_note(note);
             Failure {
-                diagnostic: Diagnostic::new(error.to_diagnostic(), file),
+                diagnostic: Diagnostic::new(error.to_diagnostic(), sources),
                 fault: fault.map(Arc::new),
                 share,
                 standard_error,
@@ -974,7 +970,7 @@ pub struct Stats {
 }
 
 impl Stats {
-    fn new(outcome: &probl_engine::Outcome, file: &SourceFile) -> Stats {
+    fn new(outcome: &probl_engine::Outcome, sources: &SourceMap) -> Stats {
         let s = &outcome.stats;
         Stats {
             peak_worlds: s.peak_worlds,
@@ -991,7 +987,9 @@ impl Stats {
                 .iter()
                 .map(|(variable, u)| ExactUpdates {
                     variable: variable.name.clone(),
-                    line: file.line_col(variable.span.lo).0,
+                    line: sources
+                        .locate(variable.span)
+                        .map_or(0, |(file, span)| file.line_col(span.lo).0),
                     delayed: u.delayed,
                     observations: u.exact,
                     drawn: u.drawn,

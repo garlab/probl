@@ -35,6 +35,7 @@ mod files;
 mod options;
 mod outcome;
 mod program;
+mod sources;
 
 pub use error::{Diagnostic, Error, ErrorKind, FailedRun, FaultContext, FaultInput, Severity};
 #[cfg(not(target_arch = "wasm32"))]
@@ -50,7 +51,10 @@ pub use outcome::{ReportJsonError, ReportJsonLimits};
 pub use probl_engine::report::{
     QuantileApproximation, ReportCollection, ReportCollectionError, ReportStatistic, ReportSummary, ReportSummaryError,
 };
-pub use program::{Mode, Program, compile};
+pub use program::{Mode, Program, compile, compile_with};
+#[cfg(not(target_arch = "wasm32"))]
+pub use sources::LocalSources;
+pub use sources::{MemorySources, SourceText, Sources};
 
 /// This version of Probl.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

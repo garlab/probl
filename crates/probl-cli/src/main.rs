@@ -2,7 +2,10 @@
 
 use clap::{Parser, Subcommand, ValueEnum};
 use probl::__internal::{EngineChecks, Symbolic, diagrams, engine_checks};
-use probl::{Cancel, Date, DateTime, ErrorKind, FailureMode, Files, Limits, LocalFiles, Options, Program, Snapshots};
+use probl::{
+    Cancel, Date, DateTime, ErrorKind, FailureMode, Files, Limits, LocalFiles, LocalSources, Options, Program,
+    Snapshots,
+};
 use probl_cli::parse_size;
 use probl_engine::data::{self, InputLimits};
 use probl_engine::report::thousands;
@@ -400,9 +403,10 @@ fn read(path: &Path) -> Option<String> {
     }
 }
 
-/// Compile a program, printing its diagnostics.
+/// Compile a program, printing its diagnostics. Its imports are read from
+/// disk, relative to the file that imports them.
 fn compile(name: &str, text: &str) -> Option<Program> {
-    match probl::compile(name, text) {
+    match probl::compile_with(name, text, &mut LocalSources::new()) {
         Ok(program) => {
             for warning in program.warnings() {
                 eprint!("{}", warning.render(color()));
