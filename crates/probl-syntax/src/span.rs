@@ -72,3 +72,66 @@ impl SourceFile {
         (line, col)
     }
 }
+
+/// The files of a program, in one space of offsets: each file's text starts
+/// at its base, so a span says which file it's in. A program of one file has
+/// it at 0, so its spans are its own offsets.
+#[derive(Clone, Debug, Default)]
+pub struct SourceMap {
+    /// Each file with its base, in increasing order.
+    files: Vec<(u32, std::sync::Arc<SourceFile>)>,
+    /// Every file's text at its base, a newline between two, so that the
+    /// text of any span can be read directly.
+    text: String,
+}
+
+impl SourceMap {
+    pub fn new() -> SourceMap {
+        SourceMap::default()
+    }
+
+    /// A map of one file, at 0.
+    pub fn single(file: SourceFile) -> SourceMap {
+        let mut map = SourceMap::new();
+        map.add(file);
+        map
+    }
+
+    /// Add a file after the others, and return its base.
+    pub fn add(&mut self, file: SourceFile) -> u32 {
+        if !self.files.is_empty() {
+            self.text.push('\n');
+        }
+        let base = self.text.len() as u32;
+        self.text.push_str(&file.text);
+        self.files.push((base, std::sync::Arc::new(file)));
+        base
+    }
+
+    /// Every file's text at its base: `&self.text()[span.range()]` is the
+    /// text of `span`.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn files(&self) -> impl Iterator<Item = (u32, &std::sync::Arc<SourceFile>)> {
+        self.files.iter().map(|(base, file)| (*base, file))
+    }
+
+    /// The file `span` starts in, and the span within that file.
+    pub fn locate(&self, span: Span) -> Option<(&std::sync::Arc<SourceFile>, Span)> {
+        let i = self
+            .files
+            .partition_point(|(base, _)| *base <= span.lo)
+            .checked_sub(1)?;
+        let (base, file) = &self.files[i];
+        let end = base + file.text.len() as u32;
+        Some((
+            file,
+            Span {
+                lo: span.lo - base,
+                hi: span.hi.min(end).max(span.lo) - base,
+            },
+        ))
+    }
+}

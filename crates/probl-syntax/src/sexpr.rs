@@ -36,7 +36,20 @@ pub fn item(item: &Item) -> String {
             let names: Vec<&str> = e.variants.iter().map(|v| v.name.as_str()).collect();
             format!("(enum {} {})", e.name.name, names.join(" "))
         }
-        Item::Import(i) => format!("(import {:?})", i.path),
+        Item::Import(i) => match &i.names {
+            None => format!("(import {:?})", i.path),
+            Some(names) => {
+                let names: Vec<String> = names
+                    .iter()
+                    .map(|n| match &n.alias {
+                        Some(alias) => format!("{} as {}", n.name.name, alias.name),
+                        None => n.name.name.clone(),
+                    })
+                    .collect();
+                format!("(import ({}) {:?})", names.join(", "), i.path)
+            }
+        },
+        Item::Export(e) => format!("(export {})", self::item(&e.item)),
         Item::Stmt(s) => stmt(s),
     }
 }

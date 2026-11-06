@@ -9,7 +9,15 @@ use crate::token::{StrPart, Tok, Token};
 /// Parse a whole program. Parsing continues after errors, so the program is
 /// returned even when there are diagnostics.
 pub fn parse_program(src: &str) -> (Program, Vec<Diagnostic>) {
-    let (tokens, mut diags) = lex(src, 0);
+    parse_program_at(src, 0)
+}
+
+/// Parse a whole file whose text starts at `base` in a [`SourceMap`]'s
+/// offsets: every span is `base` further on.
+///
+/// [`SourceMap`]: crate::span::SourceMap
+pub fn parse_program_at(src: &str, base: u32) -> (Program, Vec<Diagnostic>) {
+    let (tokens, mut diags) = lex(src, base);
     let mut parser = Parser::new(tokens);
     let program = parser.program();
     diags.append(&mut parser.diags);
@@ -304,31 +312,24 @@ impl Parser {
             Tok::Fn => self.fn_decl().map(Item::Fn),
             Tok::Type => self.type_decl().map(Item::Type),
             Tok::Enum => self.enum_decl().map(Item::Enum),
-            Tok::Import => {
-                let lo = self.bump().span;
-                match self.peek().clone() {
-                    Tok::Str(parts) => {
-                        let span = self.bump().span;
-                        match plain_string(&parts) {
-                            Some(path) => Ok(Item::Import(Import {
-                                path,
-                                span: lo.to(span),
-                            })),
-                            None => {
-                                self.error(span, "an import path can't contain `{…}`");
-                                Err(Failed)
-                            }
-                        }
-                    }
-                    other => {
-                        let span = self.span();
-                        self.error(
-                            span,
-                            format!("expected a file path after `import`, found {}", other.describe()),
-                        );
-                        Err(Failed)
-                    }
-                }
+            Tok::Import => self.import().map(Item::Import),
+            // `export` is a word only before what it exports, so programs
+            // can still name a variable `export`.
+            Tok::Ident(word)
+                if word == "export"
+                    && matches!(self.peek_at(1), Tok::Fn | Tok::Type | Tok::Enum | Tok::Let | Tok::Var) =>
+            {
+                let span = self.bump().span;
+                let item = match self.peek() {
+                    Tok::Fn => Item::Fn(self.fn_decl()?),
+                    Tok::Type => Item::Type(self.type_decl()?),
+                    Tok::Enum => Item::Enum(self.enum_decl()?),
+                    _ => Item::Stmt(self.stmt()?),
+                };
+                Ok(Item::Export(Export {
+                    item: Box::new(item),
+                    span,
+                }))
             }
             Tok::At => {
                 let span = self.span();
@@ -389,6 +390,65 @@ impl Parser {
         let ty = self.type_expr()?;
         let span = lo.to(self.prev_span());
         Ok(TypeDecl { name, ty, span })
+    }
+
+    /// `import { walk, step as move } from "./walk.probl"`, or a bare
+    /// `import "./walk.probl"`.
+    fn import(&mut self) -> PResult<Import> {
+        let lo = self.bump().span; // import
+        let names = if self.eat(&Tok::LBrace) {
+            let mut names = Vec::new();
+            self.skip_newlines();
+            while !self.at(&Tok::RBrace) {
+                let name = self.ident("a name to import")?;
+                let alias = if self.peek().is_ident("as") {
+                    self.bump();
+                    Some(self.ident("the name to import it as, after `as`")?)
+                } else {
+                    None
+                };
+                names.push(ImportName { name, alias });
+                self.skip_newlines();
+                if !self.eat(&Tok::Comma) {
+                    break;
+                }
+                self.skip_newlines();
+            }
+            self.expect(&Tok::RBrace, "after the imported names")?;
+            if !self.peek().is_ident("from") {
+                let span = self.span();
+                let found = self.peek().describe();
+                self.error(span, format!("expected `from` and a file path, found {found}"))
+                    .help("write `import { name } from \"./file.probl\"`");
+                return Err(Failed);
+            }
+            self.bump();
+            Some(names)
+        } else {
+            None
+        };
+        match self.peek().clone() {
+            Tok::Str(parts) => {
+                let path_span = self.bump().span;
+                match plain_string(&parts) {
+                    Some(path) => Ok(Import {
+                        path,
+                        path_span,
+                        names,
+                        span: lo.to(path_span),
+                    }),
+                    None => {
+                        self.error(path_span, "an import path can't contain `{…}`");
+                        Err(Failed)
+                    }
+                }
+            }
+            other => {
+                let span = self.span();
+                self.error(span, format!("expected a file path, found {}", other.describe()));
+                Err(Failed)
+            }
+        }
     }
 
     fn enum_decl(&mut self) -> PResult<EnumDecl> {

@@ -28,7 +28,16 @@ pub enum Item {
     Type(TypeDecl),
     Enum(EnumDecl),
     Import(Import),
+    Export(Export),
     Stmt(Stmt),
+}
+
+/// `export` before a declaration or a top-level `let` or `var`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Export {
+    pub item: Box<Item>,
+    /// The word `export`.
+    pub span: Span,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -60,10 +69,29 @@ pub struct EnumDecl {
     pub span: Span,
 }
 
+/// `import { walk, step as move } from "./walk.probl"`, or a bare
+/// `import "./walk.probl"`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Import {
     pub path: String,
+    pub path_span: Span,
+    /// The names it imports; `None` for a bare import.
+    pub names: Option<Vec<ImportName>>,
     pub span: Span,
+}
+
+/// `step` or `step as move` in an import.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImportName {
+    pub name: Ident,
+    pub alias: Option<Ident>,
+}
+
+impl ImportName {
+    /// The name it has in the importing file.
+    pub fn local(&self) -> &Ident {
+        self.alias.as_ref().unwrap_or(&self.name)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

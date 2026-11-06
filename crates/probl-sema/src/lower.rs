@@ -22,8 +22,22 @@ pub fn lower(program: &ast::Program, src: &str) -> (Program, Vec<Diagnostic>) {
 
 /// Lower a parsed program, and say where its names are declared and used.
 pub fn lower_with_symbols(program: &ast::Program, src: &str) -> (Program, Vec<Diagnostic>, Symbols) {
+    let module = ModuleAst {
+        ast: program,
+        entry: true,
+        imports: Vec::new(),
+    };
+    lower_modules(&[module], src)
+}
+
+/// Lower a program's files, in evaluation order: each after the files it
+/// imports, the entry last. `src` is the text of a [`SourceMap`] holding
+/// them all, which their spans are offsets in.
+///
+/// [`SourceMap`]: probl_syntax::SourceMap
+pub fn lower_modules(modules: &[ModuleAst], src: &str) -> (Program, Vec<Diagnostic>, Symbols) {
     let mut lowerer = Lowerer::new(src);
-    lowerer.program(program);
+    lowerer.program(modules);
     let mut symbols = std::mem::take(&mut lowerer.symbols);
     // A field read by name is the one declared record's with that field, if
     // only one has it and no record without a type does. Otherwise it
@@ -86,8 +100,53 @@ struct Binding {
     mutable: bool,
     /// Copied in from outside the function, so it can't be assigned.
     captured: bool,
+    /// Imported from another file, so it can't be assigned.
+    imported: bool,
     /// Declared type, checked whenever the variable is assigned.
     ty: Option<TypeSpec>,
+}
+
+/// One file of a program, for [`lower_modules`]: its syntax, whether it's
+/// the entry, and, for each of its imports in order, the index of the module
+/// it names (`None` when it couldn't be loaded, which is already reported).
+pub struct ModuleAst<'a> {
+    pub ast: &'a ast::Program,
+    pub entry: bool,
+    pub imports: Vec<Option<usize>>,
+}
+
+/// The names a file defines at its top level. Each file has its own; the
+/// lowerer works in the current file's.
+#[derive(Default)]
+struct Namespace {
+    fn_by_name: FxHashMap<String, FnId>,
+    record_by_name: FxHashMap<String, u32>,
+    enum_by_name: FxHashMap<String, u32>,
+    variants: FxHashMap<String, Variant>,
+    globals: FxHashMap<String, Binding>,
+    fn_defs: FxHashMap<String, usize>,
+    type_defs: FxHashMap<String, usize>,
+}
+
+/// What an `export` names.
+#[derive(Clone, Copy)]
+enum Exported {
+    Fn,
+    Type,
+    Enum,
+    Value,
+}
+
+/// What a file exports, for the files that import it.
+#[derive(Default)]
+struct Exports {
+    fns: FxHashMap<String, (FnId, Option<usize>)>,
+    records: FxHashMap<String, (u32, Option<usize>)>,
+    enums: FxHashMap<String, (u32, Option<usize>)>,
+    values: FxHashMap<String, Binding>,
+    /// Every name the file defines at its top level, exported or not, to
+    /// say so when a private one is imported.
+    defined: FxHashSet<String>,
 }
 
 struct Ctx {
@@ -157,6 +216,9 @@ struct Lowerer<'a> {
     /// Fields used by name, whose record isn't known until the program runs.
     field_uses: Vec<(Span, String)>,
     declared_types: Vec<(TypeSpec, Span)>,
+    /// Whether the file being lowered is the program's entry: only it may
+    /// report, read data or set how the program runs.
+    is_entry: bool,
 }
 
 impl<'a> Lowerer<'a> {
@@ -188,7 +250,20 @@ impl<'a> Lowerer<'a> {
             anonymous_fields: FxHashSet::default(),
             field_uses: Vec::new(),
             declared_types: Vec::new(),
+            is_entry: true,
         }
+    }
+
+    /// Put `ns` in place of the current file's names, and the current
+    /// file's names in `ns`.
+    fn swap_namespace(&mut self, ns: &mut Namespace) {
+        std::mem::swap(&mut self.fn_by_name, &mut ns.fn_by_name);
+        std::mem::swap(&mut self.record_by_name, &mut ns.record_by_name);
+        std::mem::swap(&mut self.enum_by_name, &mut ns.enum_by_name);
+        std::mem::swap(&mut self.variants, &mut ns.variants);
+        std::mem::swap(&mut self.globals, &mut ns.globals);
+        std::mem::swap(&mut self.fn_defs, &mut ns.fn_defs);
+        std::mem::swap(&mut self.type_defs, &mut ns.type_defs);
     }
 
     /// Record a definition, visible from `scope.lo` to `scope.hi`.
@@ -320,9 +395,14 @@ impl<'a> Lowerer<'a> {
         {
             open.push(def);
         }
-        if top && self.globals.contains_key(name) {
-            self.error(span, format!("`{name}` is already defined at the top level"))
-                .help("top-level names must be unique; use `var` and assign to change a value");
+        if top && let Some(existing) = self.globals.get(name) {
+            if existing.imported {
+                self.error(span, format!("`{name}` is imported"))
+                    .help("give this variable another name, or the import another name with `as`");
+            } else {
+                self.error(span, format!("`{name}` is already defined at the top level"))
+                    .help("top-level names must be unique; use `var` and assign to change a value");
+            }
         }
         let func = self.cur_func();
         let slot = self.new_slot_in(func, name, span);
@@ -331,6 +411,7 @@ impl<'a> Lowerer<'a> {
             def,
             mutable,
             captured: false,
+            imported: false,
             ty: None,
         };
         if top {
@@ -711,6 +792,7 @@ impl<'a> Lowerer<'a> {
             def,
             mutable: false,
             captured: true,
+            imported: false,
             ty: None,
         };
         self.ctx[depth].scopes[0].insert(name.to_string(), binding.clone());
@@ -782,81 +864,43 @@ impl<'a> Lowerer<'a> {
 
     // ── Program ──────────────────────────────────────────────────────────
 
-    fn program(&mut self, program: &ast::Program) {
-        for pragma in &program.pragmas {
-            self.pragma(pragma);
+    /// Lower a program's files, in evaluation order: each module after the
+    /// modules it imports, the entry last. Each file's top level is part of
+    /// the main function, in that order, and its names are its own.
+    fn program(&mut self, modules: &[ModuleAst]) {
+        let entry = modules
+            .iter()
+            .position(|m| m.entry)
+            .unwrap_or(modules.len().saturating_sub(1));
+        if let Some(m) = modules.get(entry) {
+            for pragma in &m.ast.pragmas {
+                self.pragma(pragma);
+            }
+        }
+        for m in modules.iter().filter(|m| !m.entry) {
+            for pragma in &m.ast.pragmas {
+                self.error(pragma.span, "pragmas belong in the program's entry file")
+                    .help("the file that's run says how it runs; remove this from the imported file");
+            }
         }
         self.new_fn("the top level", FnKind::Main, Span::default(), None);
-
-        // Declarations first, so they can be used before they're defined.
-        let mut fn_decls = Vec::new();
-        let mut type_decls = Vec::new();
-        for item in &program.items {
-            match item {
-                ast::Item::Fn(decl) => {
-                    let name = &decl.name.name;
-                    if self.fn_by_name.contains_key(name) {
-                        self.error(decl.name.span, format!("the function `{name}` is defined twice"));
-                        continue;
-                    }
-                    if Builtin::from_name(name).is_some() || name == "read" {
-                        self.warning(
-                            decl.name.span,
-                            format!("`{name}` hides the built-in function of the same name"),
-                        );
-                    }
-                    let id = self.new_fn(name, FnKind::Named, decl.span, None);
-                    self.funcs[id as usize].n_params = decl.params.len() as u32;
-                    self.fn_by_name.insert(name.clone(), id);
-                    let def = self.define(name, DefKind::Function, decl.name.span, EVERYWHERE);
-                    self.fn_defs.insert(name.clone(), def);
-                    fn_decls.push((id, decl));
-                }
-                ast::Item::Type(decl) => {
-                    if let Some(id) = self.type_decl(decl) {
-                        type_decls.push((id, decl));
-                    }
-                }
-                ast::Item::Enum(decl) => self.enum_decl(decl),
-                ast::Item::Import(import) => {
-                    self.error(import.span, "`import` isn't supported yet");
-                }
-                ast::Item::Stmt(_) => {}
-            }
-        }
-        // Fields' types, once every type's name is known.
-        for (id, decl) in type_decls {
-            self.record_fields(id, decl);
-        }
-        self.check_record_cycles();
-        for (id, decl) in &fn_decls {
-            self.funcs[*id as usize].param_types = decl
-                .params
-                .iter()
-                .map(|p| p.ty.as_ref().and_then(|t| self.type_spec(t)))
-                .collect();
-        }
-
-        // The top level.
-        self.ctx.push(Ctx {
-            func: MAIN,
-            scopes: vec![FxHashMap::default()],
-            loops: Vec::new(),
-            ret: None,
-        });
+        let mut exports: Vec<Exports> = Vec::with_capacity(modules.len());
         let mut body = Vec::new();
-        for item in &program.items {
-            if let ast::Item::Stmt(stmt) = item {
-                self.lower_stmt(stmt, &mut body);
+        for m in modules {
+            // Each file starts with no names but the built-ins. The entry's
+            // stay in place once it's lowered.
+            let mut names = Namespace::default();
+            self.swap_namespace(&mut names);
+            self.is_entry = m.entry;
+            let exported = self.module(m, &exports, &mut body);
+            if !m.entry {
+                self.swap_namespace(&mut names);
             }
+            exports.push(exported);
         }
+        self.is_entry = true;
         self.funcs[MAIN as usize].body = Block { stmts: body };
-        self.ctx.pop();
-
-        // Named functions, now that every top-level name is known.
-        for (id, decl) in fn_decls {
-            self.fn_body(id, decl);
-        }
+        self.check_record_cycles();
         let mut reported = BTreeSet::new();
         for (ty, span) in std::mem::take(&mut self.declared_types) {
             for (path, a, b) in crate::types::validate(&ty, &self.records) {
@@ -877,6 +921,282 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
+    }
+
+    /// Lower one file: its declarations, its imports, its top level
+    /// (appended to `body`, the main function's) and its functions. Return
+    /// what it exports.
+    fn module(&mut self, m: &ModuleAst, done: &[Exports], body: &mut Vec<Stmt>) -> Exports {
+        // Declarations first, so they can be used before they're defined.
+        let mut fn_decls = Vec::new();
+        let mut type_decls = Vec::new();
+        let mut imports = Vec::new();
+        let mut started = false;
+        for item in &m.ast.items {
+            let inner = match item {
+                ast::Item::Export(e) => &*e.item,
+                item => item,
+            };
+            match inner {
+                ast::Item::Import(import) => {
+                    if started {
+                        self.error(import.span, "imports go before everything else in a file");
+                    }
+                    imports.push(import);
+                    continue;
+                }
+                ast::Item::Fn(decl) => {
+                    let name = &decl.name.name;
+                    if self.fn_by_name.contains_key(name) {
+                        self.error(decl.name.span, format!("the function `{name}` is defined twice"));
+                    } else {
+                        if Builtin::from_name(name).is_some() || name == "read" {
+                            self.warning(
+                                decl.name.span,
+                                format!("`{name}` hides the built-in function of the same name"),
+                            );
+                        }
+                        let id = self.new_fn(name, FnKind::Named, decl.span, None);
+                        self.funcs[id as usize].n_params = decl.params.len() as u32;
+                        self.fn_by_name.insert(name.clone(), id);
+                        let def = self.define(name, DefKind::Function, decl.name.span, EVERYWHERE);
+                        self.fn_defs.insert(name.clone(), def);
+                        fn_decls.push((id, decl));
+                    }
+                }
+                ast::Item::Type(decl) => {
+                    if let Some(id) = self.type_decl(decl) {
+                        type_decls.push((id, decl));
+                    }
+                }
+                ast::Item::Enum(decl) => self.enum_decl(decl),
+                ast::Item::Stmt(_) | ast::Item::Export(_) => {}
+            }
+            started = true;
+        }
+
+        // What it exports: names, checked once its top level is lowered.
+        let mut exported = Vec::new();
+        for item in &m.ast.items {
+            let ast::Item::Export(e) = item else { continue };
+            match &*e.item {
+                ast::Item::Fn(decl) => exported.push((decl.name.clone(), Exported::Fn)),
+                ast::Item::Type(decl) => exported.push((decl.name.clone(), Exported::Type)),
+                ast::Item::Enum(decl) => exported.push((decl.name.clone(), Exported::Enum)),
+                ast::Item::Stmt(ast::Stmt {
+                    kind:
+                        ast::StmtKind::Let {
+                            pattern:
+                                ast::Pattern {
+                                    kind: ast::PatternKind::Name(name),
+                                    span,
+                                },
+                            ..
+                        },
+                    ..
+                }) => exported.push((
+                    ast::Ident {
+                        name: name.clone(),
+                        span: *span,
+                    },
+                    Exported::Value,
+                )),
+                _ => {
+                    self.error(e.span, "`export` names one value, function or type")
+                        .help("write `export let name = …`, `export fn …`, `export type …` or `export enum …`");
+                }
+            }
+        }
+
+        let imported = self.imports(m, &imports, done);
+
+        // Fields' types, once every type's name is known.
+        for (id, decl) in type_decls {
+            self.record_fields(id, decl);
+        }
+        for (id, decl) in &fn_decls {
+            self.funcs[*id as usize].param_types = decl
+                .params
+                .iter()
+                .map(|p| p.ty.as_ref().and_then(|t| self.type_spec(t)))
+                .collect();
+        }
+
+        // The file's top level, in the main function, with its imports in
+        // scope.
+        self.ctx.push(Ctx {
+            func: MAIN,
+            scopes: vec![imported],
+            loops: Vec::new(),
+            ret: None,
+        });
+        for item in &m.ast.items {
+            let inner = match item {
+                ast::Item::Export(e) => &*e.item,
+                item => item,
+            };
+            if let ast::Item::Stmt(stmt) = inner {
+                self.lower_stmt(stmt, body);
+            }
+        }
+        let top = self
+            .ctx
+            .pop()
+            .and_then(|c| c.scopes.into_iter().next())
+            .unwrap_or_default();
+
+        // Named functions, now that every top-level name is known.
+        let local_fns: Vec<String> = fn_decls.iter().map(|(_, d)| d.name.name.clone()).collect();
+        for (id, decl) in fn_decls {
+            self.fn_body(id, decl);
+        }
+
+        let mut out = Exports::default();
+        out.defined.extend(local_fns);
+        out.defined.extend(
+            m.ast
+                .items
+                .iter()
+                .map(|item| match item {
+                    ast::Item::Export(e) => &*e.item,
+                    item => item,
+                })
+                .filter_map(|item| match item {
+                    ast::Item::Type(d) => Some(d.name.name.clone()),
+                    ast::Item::Enum(d) => Some(d.name.name.clone()),
+                    _ => None,
+                }),
+        );
+        out.defined
+            .extend(top.iter().filter(|(_, b)| !b.imported).map(|(n, _)| n.clone()));
+        for (name, kind) in exported {
+            let n = &name.name;
+            match kind {
+                Exported::Fn => {
+                    if let Some(&id) = self.fn_by_name.get(n) {
+                        out.fns.insert(n.clone(), (id, self.fn_defs.get(n).copied()));
+                    }
+                }
+                Exported::Type => {
+                    if let Some(&id) = self.record_by_name.get(n) {
+                        out.records.insert(n.clone(), (id, self.type_defs.get(n).copied()));
+                    }
+                }
+                Exported::Enum => {
+                    if let Some(&id) = self.enum_by_name.get(n) {
+                        out.enums.insert(n.clone(), (id, self.type_defs.get(n).copied()));
+                    }
+                }
+                Exported::Value => match top.get(n) {
+                    Some(b) if !b.imported => {
+                        out.values.insert(n.clone(), b.clone());
+                    }
+                    _ => {}
+                },
+            }
+        }
+        out
+    }
+
+    /// Bring a file's imports into its names, from the files already
+    /// lowered, and return the imported values, for its top-level scope.
+    fn imports(&mut self, m: &ModuleAst, imports: &[&ast::Import], done: &[Exports]) -> FxHashMap<String, Binding> {
+        let mut values = FxHashMap::default();
+        let mut seen = FxHashSet::default();
+        for (k, import) in imports.iter().enumerate() {
+            let target = match m.imports.get(k) {
+                Some(Some(target)) => *target,
+                // It couldn't be loaded, which is already reported.
+                Some(None) => continue,
+                None => {
+                    self.error(import.span, "`import` needs the files the program imports")
+                        .help("run the program from its file, with `probl run`, so that imports can be read");
+                    continue;
+                }
+            };
+            let (Some(names), Some(ex)) = (&import.names, done.get(target)) else {
+                continue;
+            };
+            if names.is_empty() {
+                self.error(import.span, "an import needs at least one name")
+                    .help("write `import { name } from \"…\"`");
+            }
+            for n in names {
+                let (name, local) = (&n.name.name, n.local());
+                if !seen.insert(local.name.clone()) {
+                    self.error(local.span, format!("`{}` is imported twice", local.name))
+                        .help("import it once, or give one import another name with `as`");
+                    continue;
+                }
+                if self.fn_by_name.contains_key(&local.name)
+                    || self.record_by_name.contains_key(&local.name)
+                    || self.enum_by_name.contains_key(&local.name)
+                {
+                    self.error(local.span, format!("`{}` is already defined in this file", local.name))
+                        .help(format!("import it under another name: `{name} as …`"));
+                    continue;
+                }
+                let mut found = false;
+                if let Some(&(id, def)) = ex.fns.get(name) {
+                    self.fn_by_name.insert(local.name.clone(), id);
+                    if let Some(def) = def {
+                        self.fn_defs.insert(local.name.clone(), def);
+                        self.refer(n.name.span, def);
+                    }
+                    found = true;
+                }
+                if let Some(&(id, def)) = ex.records.get(name) {
+                    self.record_by_name.insert(local.name.clone(), id);
+                    if let Some(def) = def {
+                        self.type_defs.insert(local.name.clone(), def);
+                        self.refer(n.name.span, def);
+                    }
+                    found = true;
+                }
+                if let Some(&(id, def)) = ex.enums.get(name) {
+                    self.enum_by_name.insert(local.name.clone(), id);
+                    if let Some(def) = def {
+                        self.type_defs.insert(local.name.clone(), def);
+                        self.refer(n.name.span, def);
+                    }
+                    found = true;
+                }
+                if let Some(b) = ex.values.get(name) {
+                    let b = Binding {
+                        mutable: false,
+                        captured: false,
+                        imported: true,
+                        ..b.clone()
+                    };
+                    self.refer(n.name.span, b.def);
+                    self.globals.insert(local.name.clone(), b.clone());
+                    values.insert(local.name.clone(), b);
+                    found = true;
+                }
+                if !found {
+                    let path = &import.path;
+                    if ex.defined.contains(name) {
+                        self.error(n.name.span, format!("`{name}` isn't exported by \"{path}\""))
+                            .help("add `export` before its definition there");
+                    } else {
+                        let candidates: Vec<String> = ex
+                            .fns
+                            .keys()
+                            .chain(ex.records.keys())
+                            .chain(ex.enums.keys())
+                            .chain(ex.values.keys())
+                            .cloned()
+                            .collect();
+                        let suggestion = closest(name, &candidates);
+                        let d = self.error(n.name.span, format!("\"{path}\" doesn't define `{name}`"));
+                        if let Some(s) = suggestion {
+                            d.help(format!("did you mean `{s}`?"));
+                        }
+                    }
+                }
+            }
+        }
+        values
     }
 
     fn pragma(&mut self, pragma: &ast::Pragma) {
@@ -1494,7 +1814,11 @@ impl<'a> Lowerer<'a> {
         call: Span,
     ) -> Option<Input> {
         let mut ok = true;
-        if !self.at_top_level() {
+        if !self.is_entry {
+            self.error(call, "`read` in an imported file isn't supported yet")
+                .help("read the data in the file that's run, and pass it to the functions that need it");
+            ok = false;
+        } else if !self.at_top_level() {
             self.error(call, "`read` must be at the top level of the program")
                 .help("data is read once, before the program runs: read it at the top, and use the variable here");
             ok = false;
@@ -1766,6 +2090,14 @@ impl<'a> Lowerer<'a> {
                 }
                 match local {
                     Some(b) if b.mutable => Some(Place::slot(b.slot)),
+                    Some(b) if b.imported => {
+                        self.error(
+                            e.span,
+                            format!("can't {action} `{name}`: it's imported, and imports are read-only"),
+                        )
+                        .help(format!("copy it into a variable of your own: `var mine = {name}`"));
+                        None
+                    }
                     Some(b) if b.captured => {
                         self.error(e.span, format!("can't {action} `{name}` here"))
                             .note("functions, lambdas and `simulate` blocks can read outside variables but only change their own")
@@ -1909,6 +2241,11 @@ impl<'a> Lowerer<'a> {
         if self.ctx.len() > 1 || self.cur_func() != MAIN {
             self.error(span, "`report` is only allowed at the top level of the program")
                 .help("return the value from the function and report it where it's called");
+            return;
+        }
+        if !self.is_entry {
+            self.error(span, "`report` is only allowed in the program's entry file")
+                .help("export the value, and report it in the file that's run");
             return;
         }
         if by.is_none() && !self.ctx[0].loops.is_empty() {

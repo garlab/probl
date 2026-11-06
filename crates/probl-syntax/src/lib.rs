@@ -12,5 +12,5 @@ pub mod span;
 pub mod token;
 
 pub use diagnostic::{Diagnostic, Severity, render_all};
-pub use parser::{parse_expr, parse_program};
-pub use span::{SourceFile, Span};
+pub use parser::{parse_expr, parse_program, parse_program_at};
+pub use span::{SourceFile, SourceMap, Span};
