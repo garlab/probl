@@ -946,3 +946,23 @@ fn a_program_imports_from_the_sources_given() {
     let e = probl::compile("main.probl", main).unwrap_err();
     assert!(e.to_string().contains("can't import"), "{e}");
 }
+
+#[test]
+fn an_imported_file_reads_data_next_to_itself() {
+    let mut sources: probl::MemorySources = [(
+        "lib/sales.probl",
+        "let sales: list[int] = read(\"sales.json\")\nexport let total = sum(sales)\n",
+    )]
+    .into_iter()
+    .collect();
+    let program = probl::compile_with(
+        "main.probl",
+        "import { total } from \"./lib/sales.probl\"\nreport total",
+        &mut sources,
+    )
+    .unwrap();
+    let mut files: probl::MemoryFiles = [("lib/sales.json", "[1, 2, 3]")].into_iter().collect();
+    let data = program.load(&mut files, &Options::new()).unwrap();
+    let out = program.run(&Options::new().data(data)).unwrap();
+    assert!(out.text().contains("total    6"), "{}", out.text());
+}

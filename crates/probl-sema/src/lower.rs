@@ -1814,11 +1814,7 @@ impl<'a> Lowerer<'a> {
         call: Span,
     ) -> Option<Input> {
         let mut ok = true;
-        if !self.is_entry {
-            self.error(call, "`read` in an imported file isn't supported yet")
-                .help("read the data in the file that's run, and pass it to the functions that need it");
-            ok = false;
-        } else if !self.at_top_level() {
+        if !self.at_top_level() {
             self.error(call, "`read` must be at the top level of the program")
                 .help("data is read once, before the program runs: read it at the top, and use the variable here");
             ok = false;

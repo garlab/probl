@@ -42,8 +42,9 @@ pub struct Program {
 pub struct Input {
     /// The variable it's bound to, which identifies it.
     pub name: String,
-    /// As written: relative to the program's file, or `-` for standard
-    /// input. What it means is up to whoever loads it.
+    /// Relative to the program's entry file, or `-` for standard input: as
+    /// written in the entry, and resolved against an imported file's place
+    /// for a `read` there. What it means is up to whoever loads it.
     pub path: String,
     pub format: DataFormat,
     /// What the data is read as.

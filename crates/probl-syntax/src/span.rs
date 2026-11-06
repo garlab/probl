@@ -118,6 +118,12 @@ impl SourceMap {
         self.files.iter().map(|(base, file)| (*base, file))
     }
 
+    /// The position, among the files in the order they were added, of the
+    /// file that `offset` is in.
+    pub fn file_index(&self, offset: u32) -> Option<usize> {
+        self.files.partition_point(|(base, _)| *base <= offset).checked_sub(1)
+    }
+
     /// The file `span` starts in, and the span within that file.
     pub fn locate(&self, span: Span) -> Option<(&std::sync::Arc<SourceFile>, Span)> {
         let i = self

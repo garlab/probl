@@ -273,13 +273,6 @@ fn import_errors_say_what_to_do() {
         ),
         (
             &[
-                ("main.probl", "import { x } from \"./a.probl\""),
-                ("a.probl", "export let x: list[int] = read(\"x.json\")"),
-            ],
-            "a.probl: `read` in an imported file isn't supported yet",
-        ),
-        (
-            &[
                 ("main.probl", "let y = 1\nimport { x } from \"./a.probl\""),
                 ("a.probl", "export let x = 1"),
             ],
@@ -308,4 +301,18 @@ fn a_program_compiled_on_its_own_cant_import() {
     let (program, diags) = probl_sema::compile("import { x } from \"./a.probl\"\nreport x");
     assert!(program.is_none());
     assert!(diags[0].message.contains("can't import"), "{:?}", diags[0].message);
+}
+
+#[test]
+fn a_module_reads_data_relative_to_itself() {
+    let program = compile(&[
+        (
+            "main.probl",
+            "import { x } from \"./lib/a.probl\"\nlet y: list[int] = read(\"y.json\")\nreport x",
+        ),
+        ("lib/a.probl", "export let x: list[int] = read(\"x.json\")"),
+    ])
+    .unwrap();
+    let paths: Vec<&str> = program.inputs.iter().map(|i| i.path.as_str()).collect();
+    assert_eq!(paths, ["lib/x.json", "y.json"]);
 }

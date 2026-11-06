@@ -17,6 +17,17 @@ pub trait Sources {
     fn entry(&mut self, name: &str) -> String {
         name.to_string()
     }
+
+    /// The path a `read(path)` in the imported file `importer` names, for
+    /// the [`Files`](crate::Files) that load the program's data, which
+    /// resolve paths relative to the entry file. By default, `path` relative
+    /// to the directory of `importer`, with `/` between parts.
+    fn data_path(&mut self, importer: &str, path: &str) -> String {
+        if path.starts_with('/') {
+            return path.to_string();
+        }
+        join(importer, path).unwrap_or_else(|| path.to_string())
+    }
 }
 
 /// An imported file's text, with its identity and the name diagnostics give
@@ -49,6 +60,10 @@ impl probl_sema::Loader for Load<'_> {
             name: s.name,
             text: s.text,
         })
+    }
+
+    fn data_path(&mut self, importer: &str, path: &str) -> String {
+        self.0.data_path(importer, path)
     }
 }
 
@@ -174,6 +189,11 @@ mod local {
 
         fn entry(&mut self, name: &str) -> String {
             std::fs::canonicalize(name).map_or_else(|_| name.to_string(), |p| p.display().to_string())
+        }
+
+        fn data_path(&mut self, importer: &str, path: &str) -> String {
+            let dir = Path::new(importer).parent().unwrap_or(Path::new(""));
+            dir.join(path).display().to_string()
         }
     }
 }

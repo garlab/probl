@@ -33,6 +33,20 @@ pub trait Loader {
     /// `importer`. The same file must have the same identity however it's
     /// named, since a file is evaluated once per run.
     fn load(&mut self, importer: &str, path: &str) -> Result<Source, String>;
+
+    /// The path a `read(path)` in the file `importer` names, for the host
+    /// that loads the program's data, which reads paths relative to the
+    /// entry file. By default, `path` relative to the directory of
+    /// `importer`, with `/` between parts.
+    fn data_path(&mut self, importer: &str, path: &str) -> String {
+        if path.starts_with('/') {
+            return path.to_string();
+        }
+        match importer.rsplit_once('/') {
+            Some((dir, _)) => format!("{dir}/{}", path.strip_prefix("./").unwrap_or(path)),
+            None => path.to_string(),
+        }
+    }
 }
 
 /// The loader of a program compiled on its own, which can't import.
@@ -59,7 +73,7 @@ pub struct Compiled {
 /// with `loader`.
 pub fn compile_program(entry: Source, loader: &mut dyn Loader) -> Compiled {
     let mut graph = Graph {
-        loader,
+        loader: &mut *loader,
         nodes: Vec::new(),
         by_identity: FxHashMap::default(),
         sources: SourceMap::new(),
@@ -110,8 +124,17 @@ pub fn compile_program(entry: Source, loader: &mut dyn Loader) -> Compiled {
             imports: nodes[i].imports.iter().map(|t| t.map(|t| position[t])).collect(),
         })
         .collect();
-    let (program, mut lowered, symbols) = lower_modules(&modules, sources.text());
+    let (mut program, mut lowered, symbols) = lower_modules(&modules, sources.text());
     diags.append(&mut lowered);
+    // An imported file reads data relative to itself.
+    for input in &mut program.inputs {
+        if let Some(file) = sources.file_index(input.span.lo)
+            && file != root
+            && input.path != "-"
+        {
+            input.path = loader.data_path(&nodes[file].identity, &input.path);
+        }
+    }
     diags.sort_by_key(|d| d.span.lo);
     let program = (!diags.iter().any(Diagnostic::is_error)).then_some(program);
     Compiled {
