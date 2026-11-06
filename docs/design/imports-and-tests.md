@@ -41,7 +41,7 @@ report position
 report move
 ```
 
-Named imports make dependencies visible and allow aliases for collisions. Start with this one import form: no wildcard, implicit import-all, side-effect-only import, default export, dynamic path or package download. A namespace form such as `import "./random_walk.probl" as walk` can be added later; it also requires qualified names in types and record constructors and is not necessary for the first implementation. The currently parsed bare `import "file.probl"` stays rejected with a help message for now; whether it should evaluate a module for its evidence alone is an open question (below).
+Named imports make dependencies visible and allow aliases for collisions. Start with this one import form: no wildcard, implicit import-all, side-effect-only import, default export, dynamic path or package download. A namespace form such as `import "./random_walk.probl" as walk` can be added later; it also requires qualified names in types and record constructors and is not necessary for the first implementation. The currently parsed bare `import "file.probl"` stays rejected with a help message for now; it's reserved for importing a module for its evidence alone ([deferred](#deferred)).
 
 Imports are top-level declarations, resolved before execution. Require them before other declarations and executable statements for readability. They are not allowed inside a function, branch, loop, `simulate` or test body. Test files import at their file level.
 
@@ -87,6 +87,7 @@ Each module is evaluated once per run, as a JavaScript module instance is: `prio
 - **`print`** in a module prints once per world, as anywhere.
 - **Faults and errors.** A fault in a module follows the run's failure mode, as any statement's does: it stops the run in total mode, and ends its world in partial mode. Other errors stop the run. Diagnostics name the module's file.
 - **Snapshots.** `today`, `now` and `env` are the run's, the same in every module.
+- **Data.** A module's `read` follows the entry file's rules ([semantics, section 15](../semantics.md#15-data)): its data is read before the program runs, before any world exists, as a constant, the same in every world. The path is relative to the module's file. A module is evaluated once per run, so its data is read once, however many files import it.
 - **Sampling.** Modules are sampled as any statement is. `simulate` inside a module always enumerates, as it does today; a sampled `simulate` is later work, not needed for imports.
 
 ### What an imported file may contain
@@ -102,7 +103,7 @@ Use the `.probl` extension for both scripts and reusable modules; validate a fil
 | Draws, probabilistic conditions, `chance`, observations and scores | Allowed: they run once per run, in the program's worlds, and observations are evidence for the whole program |
 | `simulate` | Allowed: a local model, as anywhere |
 | `print` | Allowed |
-| `read` | Rejected initially: the entry file reads the program's data. Reading in a module needs the data to be loaded for the whole program before it runs |
+| `read` | Allowed, with the entry file's rules: read before the run, relative to the module, once per run |
 | `report` | Rejected: the entry file reports |
 | Invocation settings such as `@mode`, epsilon or failure policy | Rejected; the entry program/test runner controls execution |
 | Tests and expectations | Rejected; test files are separate roots and cannot be imported |
@@ -170,14 +171,13 @@ Use resolver-provided canonical identities and a visiting/finished graph travers
 
 Paths are literal UTF-8 strings with an explicit `.probl` suffix, resolved relative to the importing source, not the process's current directory. Start with relative file paths; defer package names, extension guessing, directories-as-modules, URLs and network resolution. `..` is subject to host authority. A native resolver must canonicalize aliases/symlinks consistently and enforce any host-configured root on the resolved target; merely removing `..` is not a sandbox. The existing CLI data resolver's local filesystem policy need not become a claim of confinement.
 
-The source resolver receives both the importing identity and requested path. This differs from the current data resolver. A host may supply only an in-memory source map, including in WASM. Imports never grant the engine ambient filesystem access, and permission to read data is not automatically permission to load it as source.
+The source resolver receives both the importing identity and requested path. The data resolver needs the same for a module's `read`, whose path is relative to the module; today it receives only a path relative to the entry file. A host may supply only an in-memory source map, including in WASM. Imports never grant the engine ambient filesystem access; permission to read data is not permission to load it as source, nor the reverse. `probl check --data` checks every module's data against its declared type.
 
 Freeze source bytes and identities for one compilation/test invocation. Repeated loads of an identity must not observe different revisions. Bound individual and total source bytes, module count and dependency depth; modules' evaluation counts against the run's ordinary budgets. Reject oversized graphs cleanly. Canonical identity, not source text equality, determines module identity. Record source snapshots or content digests for replay and cache invalidation, including transitive changes.
 
-### Open questions for imports
+### Deferred
 
-- **A module imported for its evidence alone.** A module that observes data but exports nothing would need a side-effect import, such as the bare `import "./data.probl"` the parser already recognizes. It would evaluate the module once, like any import, not include its text. Requiring a named import of something it exports is the alternative.
-- **`read` in modules.** Initially only the entry file reads data. A module could read its own data if the host loads every module's inputs before the run starts, with paths relative to the module.
+- **A module imported for its evidence alone.** A module that observes data but exports nothing would need a side-effect import. No program needs one yet: a module that observes can export a name its importer uses. When one does, the form is the bare `import "./data.probl"` the parser already recognizes, evaluating the module once, like any import, not including its text.
 - **Sampled `simulate`.** A module that exports a `simulate` result enumerates it, as everywhere today. Sampling `simulate` blocks is separate work that modules don't depend on.
 
 ## Test files and isolation
@@ -253,7 +253,7 @@ During setup, `foo` is still an `int` in each world. Inside `expect`, a referenc
 
 #### What varies across worlds
 
-Whether an expression in an expectation is world-indexed or shared is decided before running, by what it depends on, not by the values a run happens to produce. A binding is world-indexed when its value can depend on a draw or a probabilistic branch: a binding of the test's setup, a binding of an imported module or of the test file (they run in the test's worlds), or any binding assigned under such a branch. An expression is world-indexed when it reads one, directly or through a function it calls: through its arguments, a lambda's captures, or the module and file bindings a named function reads, transitively. Literals, constants, the run's snapshots (`today`, `now`, `env`), data read by the entry file, and bindings computed only from these are shared.
+Whether an expression in an expectation is world-indexed or shared is decided before running, by what it depends on, not by the values a run happens to produce. A binding is world-indexed when its value can depend on a draw or a probabilistic branch: a binding of the test's setup, a binding of an imported module or of the test file (they run in the test's worlds), or any binding assigned under such a branch. An expression is world-indexed when it reads one, directly or through a function it calls: through its arguments, a lambda's captures, or the module and file bindings a named function reads, transitively. Literals, constants, the run's snapshots (`today`, `now`, `env`), data read by any file, and bindings computed only from these are shared.
 
 For example, with a module that has
 
@@ -388,7 +388,7 @@ Modules and basic tests do not require the deferred portal implementation or loc
 |---|---|
 | Graph loading | Direct/transitive imports, diamond reuse, self/cyclic imports with traces, alias paths, symlinks, missing sources, malformed UTF-8, depth/count/total-byte limits |
 | Boundaries | Private export rejection, aliases/collisions, qualified enum variants, record constructors, private helpers/captures, public signatures, same declaration through two paths |
-| Module evaluation | Each module once per run, after its dependencies and before its importers, a diamond's shared dependency once; a module's draw the same for every importer in each world; observations in several modules combining (the 87.28% example); private/exported `var` with a final value per world, value snapshots versus later assignments, existing closure captures, read-only imports and independent mutable copies; `simulate` and `print` as in the entry file; `report`, `read` and invocation settings rejected; faults under total and partial modes; forward value dependencies rejected; nothing shared across runs or tests |
+| Module evaluation | Each module once per run, after its dependencies and before its importers, a diamond's shared dependency once; a module's draw the same for every importer in each world; observations in several modules combining (the 87.28% example); private/exported `var` with a final value per world, value snapshots versus later assignments, existing closure captures, read-only imports and independent mutable copies; `simulate` and `print` as in the entry file; `report` and invocation settings rejected; a module's `read` once per run, before it, relative to the module, the same in every world; faults under total and partial modes; forward value dependencies rejected; nothing shared across runs or tests |
 | Semantics across files | Splitting a program into modules gives exactly the result of the same code written out in evaluation order, under merging, memoization, recursion, sampling and evidence; correct source locations and cache invalidation after transitive edits |
 | Test grammar/discovery | Test-only source mode, no imported tests, duplicate names, optional labels, empty suite/filter, no expectation, illegal nested/late model statements |
 | Isolation | Mutable collections/bags, observations, captures, input snapshots, `now` and `today`, budgets and output isolated across tests; imported modules and file-level fixtures evaluated afresh per test, a fixture derived from an imported draw correlated with it; order does not affect results |
