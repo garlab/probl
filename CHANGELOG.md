@@ -6,6 +6,7 @@ All notable changes to the published crates are recorded here. The format follow
 
 ### Added
 
+- Imports across files: `import { walk, step as move } from "./walk.probl"`, and `export` before a `fn`, `type`, `enum`, `let` or `var`. Definitions are static; a file's top level runs once per run, before the files that import it, in the program's worlds, so a draw there is the same outcome for every importer and its observations are the program's evidence. Imported values are read-only, and only the file that's run reports or sets pragmas. A `read` in an imported file is relative to that file. `probl run`, `probl check` and the REPL read imports from disk; the library's `compile_with` takes them from a host's `Sources` (`LocalSources`, `MemorySources`), and each `Diagnostic` names its `file()`.
 - When a fault stops a run, its diagnostic notes for which values the operation failed (`for example when x = 0`) and, when enumerating, how often: `fails for 16.67% of the weight reaching this operation`. The share is given only where it can be established without running anything more of the model, and is labelled per pass inside a loop. When sampling, the note names the failing run and the seed. The library's `Error::fault` returns the same as a `FaultContext`. Partial results' diagnostics, and each `Failure::fault`, give the first failing world's or run's values as an example.
 
 ## [0.5.0] - 2026-11-05

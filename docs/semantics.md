@@ -753,7 +753,28 @@ When few runs carry the weight (a small effective sample size), this estimate is
 - **A constant.** The value is the same in every world and every run, as if it had been written in the program. Reading it splits nothing and weighs nothing: it isn't evidence. To condition on data, `observe` it.
 - **Part of the input.** The same program, data, environment, execution-date snapshot and seed give the same output for a given engine version.
 
-## 16. Not specified yet
+## 16. Files and imports
+
+A program is its entry file, the file that's run, and the files it imports, directly or not.
+
+**Identity and loading.** The host resolves each import's path, relative to the importing file, to a file and an identity: the command line uses canonical paths on disk, and requires the `.probl` suffix. A file is loaded and parsed once per compilation, however many files import it. Imports can't form a cycle, including a file importing itself; the error names the cycle. A program compiled from text alone, without a host that loads files, can't import.
+
+**Syntax.** Imports come before everything else in a file: `import { a, b as c } from "./file.probl"` imports `a` and `b`, the latter under the name `c`. `export` before a `fn`, `type`, `enum`, or a top-level `let` or `var` that names one value, makes it importable. A bare `import "./file.probl"` is reserved, and an error.
+
+**Names.** Each file has its own top-level names: functions, types, enums, enum variants and variables. An imported name refers to the exporting file's definition, so an enum or record type imported through two files is the same type. An enum's variants are imported with it, qualified (`Side.Left`). Importing a name the file doesn't export, importing a name twice, or importing a name the file also defines at its top level, is an error.
+
+**Evaluation.** Files are evaluated depth first: each file's imports, in the order they're written, then its own top level; a file already evaluated is skipped. Each file's top level runs once per run, in the program's worlds, before the first statement of any file that imports it. So the program means the same as its files' top levels written out in that order, each in a namespace of its own:
+
+- A draw in a file's top level splits the program's worlds once: every file that imports the value sees the same outcome in each world.
+- An observation or a score in a file's top level is evidence for the whole program, as anywhere else.
+- `print` and `simulate` behave as anywhere. A fault in a file follows the run's failure mode (section 11).
+- Only the entry file may `report` or set pragmas. Every other file is evaluated before the entry's first statement, so every observation in an imported file comes before every report (section 7).
+
+**Values and functions.** An imported variable is read-only in the importing file, which can copy it (`var mine = x`). It has the exporting file's value once that file's top level has run, so an exported `var` gives its final value. A named function reads the variables of its own file when it's called (section 6), whichever file calls it.
+
+**Data.** A `read` in an imported file reads a path relative to that file, under the same rules as in the entry file (section 15): before the run, once, as a constant.
+
+## 17. Not specified yet
 
 - **Particles, beam search and merged runs** (audit D4): how merged samples keep their statistical bookkeeping, and when particles resample.
 - **A general method for models that aren't conjugate**, such as MCMC: its target, its moves and its report estimators ([inference guide](inference.md), section 2).

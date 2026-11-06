@@ -35,6 +35,27 @@ The longer [craps example](../crates/probl/examples/craps.rs) demonstrates unres
 cargo run -p probl --example craps
 ```
 
+### Programs in several files
+
+A program that [imports](language-overview.md#files-and-imports) compiles with `compile_with`, which takes the imported files from the host's `Sources`:
+
+```rust
+use probl::{MemorySources, Options, compile_with};
+
+let mut sources: MemorySources = [
+    ("lib/prior.probl", "export let rate ~ one_of([0.2, 0.5, 0.8])"),
+]
+.into_iter()
+.collect();
+let main = "import { rate } from \"./lib/prior.probl\"\nreport rate";
+let program = compile_with("main.probl", main, &mut sources)?;
+```
+
+- `Sources::load(importer, path)` gives the file a path names, imported by the file `importer`, as a `SourceText`: its identity, the name diagnostics give it, and its text. Two paths to the same file must give the same identity, since each file runs once per run. `entry(name)` gives the entry file's identity, and `data_path(importer, path)` the path a `read` in an imported file names, for the `Files` that load the data.
+- `MemorySources` holds files in memory, by path, with `/` between directories, each importing relative to its own directory. `LocalSources` reads files from disk, relative to the importing file, identifies them by canonical path, and requires the `.probl` suffix; like `LocalFiles`, it follows the local file system's rules and isn't a sandbox. The command line uses it.
+- `compile(name, source)` compiles one text, which can't import: an import is a compile error saying so.
+- Each `Diagnostic` is about one file: `file()` names it, and `span()` and `line_column()` are within it.
+
 ## Options and modes
 
 Settings are optional and use builder methods:

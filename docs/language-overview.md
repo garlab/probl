@@ -612,6 +612,40 @@ Three of these types describe uncertainty, and keeping them apart is what lets `
 - `prob` is a **probability**: a checked finite value from 0 to 1, such as a success rate. Use it directly in conditions, draws (`~p`), `score p`, or a `chance` weight. `bernoulli(p)` explicitly constructs the equivalent `dist[bool]`. Arithmetic (`p * 2`, `1 - p`) gives a `float`. A probability-consuming context checks and converts it; `prob(x)` also constructs a probability explicitly.
 - `dist[T]` is a **distribution**: `d6`, `bernoulli(30%)`, or `d6 > 4`, a `dist[bool]` that is an uncertain fact.
 
+### Files and imports
+
+A program can be split into files. A file says what other files may use with `export` before a `fn`, `type`, `enum`, `let` or `var`, and a file imports what it uses by name, from a path relative to itself:
+
+```probl
+# lib/prior.probl
+export let rate ~ one_of([0.2, 0.5, 0.8])     # how often a visitor buys
+```
+
+```probl
+# lib/shop.probl
+import { rate } from "./prior.probl"
+
+let visits: list[int] = read("visits.json")    # next to this file
+observe 4 from binomial(sum(visits), rate)
+export fn sales(days: int) { binomial(days, rate) }
+```
+
+```probl
+# main.probl
+import { rate } from "./lib/prior.probl"
+import { sales } from "./lib/shop.probl"
+
+report rate                                     # mean 0.71 · sd 0.14 · 5% 0.50 · median 0.80 · 95% 0.80
+report ~sales(10)
+```
+
+- **Definitions** are static. An imported function reads its own file's variables, whatever the importing file has; an imported recipe (`export let step = one_of([-1, 1])`) is a value, drawn at each `~`.
+- **A file's top level runs once per run**, before the files that import it, in the program's worlds. `rate` is drawn once: it's the same outcome in `lib/shop.probl` and `main.probl`, so the shop's observation updates the `rate` that `main.probl` reports. Splitting a program into files gives the same result as writing them out in one, in that order. A file that two others import runs once.
+- **Imported values are read-only**: `var mine = rate` makes a copy to change. `import { rate as r } from …` imports under another name; names a file doesn't export stay its own.
+- **Only the file that's run** reports and sets pragmas. A `read` in an imported file reads relative to that file. Imports come first in a file, their paths end in `.probl`, and files can't import each other in a cycle.
+
+`probl run` and `probl check` read the imported files from disk. The playground and `probl::compile` compile one text, which can't import; the library's `compile_with` takes the files from the host ([library guide](library.md#programs-in-several-files)).
+
 ## 4. Distributions
 
 ### Making them
@@ -1007,13 +1041,14 @@ EBNF. `NEWLINE` ends a statement unless the line clearly continues: inside `( )`
 ```ebnf
 program      = { pragma } { item } ;
 pragma       = "@" IDENT [ expr ] NEWLINE ;      (* @mode enumerate · @mode sample(runs: 1000) · @epsilon 1e-9 · @on_error partial · @integrate 1e-9 *)
-item         = fn_decl | type_decl | enum_decl | import | stmt ;
+item         = [ "export" ] ( fn_decl | type_decl | enum_decl | binding ) | import | stmt ;
 
 fn_decl      = "fn" IDENT "(" [ param { "," param } ] ")" [ ":" type ] block ;
 param        = IDENT [ ":" type ] ;
 type_decl    = "type" IDENT "=" type ;
 enum_decl    = "enum" IDENT "{" IDENT { "," IDENT } [ "," ] "}" ;
-import       = "import" STRING ;
+import       = "import" "{" [ import_name { "," import_name } [ "," ] ] "}" "from" STRING ;
+import_name  = IDENT [ "as" IDENT ] ;     (* an exported binding names one value: export let x = … *)
 type         = IDENT [ "[" type { "," type } "]" ]            (* int, list[int], dist[int] *)
              | "{" IDENT ":" type { "," IDENT ":" type } [ "," ] "}" ;
 
@@ -1100,7 +1135,7 @@ From loosest to tightest binding:
 
 `and` `break` `catch` `chance` `continue` `div` `else` `enum` `false` `fn` `for` `if` `import` `in` `let` `loop` `match` `mod` `not` `observe` `or` `repeat` `report` `return` `score` `simulate` `true` `try` `type` `typeof` `var` `while` `with`
 
-`as`, `by`, `from` and `to` are keywords only where the grammar uses them, so they remain usable as variable names.
+`as`, `by`, `export`, `from` and `to` are keywords only where the grammar uses them, so they remain usable as variable names.
 
 ## Appendix D: Standard library (initial)
 

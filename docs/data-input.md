@@ -65,7 +65,7 @@ tail -n +2 pilot.csv | cut -d, -f3 | probl run counts.probl   # with: let counts
   - The type is not a check made after reading. It decides how each value is read: the text `12` is an int in an `int` field and 12.0 in a `float` one, `007` stays `"007"` in a `str` field, and `Small` is a variant in a field of an enum type.
   - So the program, not the data, decides what the data means. A stray `2.5` or `n/a` is an error at the boundary, with its line number. It doesn't become a float or a string that fails later, somewhere in the model.
 - **The path is a string literal.** Data is read once, before the program runs, by whoever runs it: the command line, a test, an embedding application or the playground. The engine never touches files. So `read("data_" + month + ".csv")` is a compile error.
-- **Relative paths are relative to the program's file**, so a model and its data move together (more under [Where data comes from](#where-data-comes-from)).
+- **Relative paths are relative to the program's file**, so a model and its data move together (more under [Where data comes from](#where-data-comes-from)). In an [imported file](language-overview.md#files-and-imports), they're relative to that file.
 - **Data is a constant.** Every world and every run sees the same value, as if it had been typed in. Reading data isn't evidence: to condition on it, `observe` it, as above.
 - **Standard input can be read only once in a program.** It can't be read at all in the REPL, where it's the session.
 
@@ -154,7 +154,7 @@ It's a starting point, to paste into the program and edit: `probl run` never gue
 A program only names paths. What a path refers to, and whether it may be read at all, is the policy of whoever runs the program, and a program can't widen it. In the library, that policy is a `Files` (`probl::Files`; the engine's `Resolver` underneath). It turns each path into an identity, such as a full file name, and opens it, or refuses.
 
 The command line runs your own programs, so its policy (`probl::LocalFiles`) is broad, but it reads only files:
-- **Relative paths** are relative to the directory of the program's file, as it was named. A program reached through a link reads data next to the link, not next to its target. The REPL uses the working directory.
+- **Relative paths** are relative to the directory of the program's file, as it was named. A program reached through a link reads data next to the link, not next to its target. The REPL uses the working directory. A `read` in an imported file is relative to that file, by its canonical path; `probl check --data` checks every file's data.
 - **Absolute paths** are used as they are, and links in data paths are followed.
 - **Only regular files are read.** That's checked before opening, so a program can't make the command wait on a pipe or read a device.
 - **Standard input** (`-`) is read on a thread of its own, so `--timeout` ends a wait for data that doesn't come.

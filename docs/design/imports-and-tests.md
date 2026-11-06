@@ -1,6 +1,6 @@
 # Imports and model tests
 
-> Draft proposal, updated 6 November 2026: a module's top level may now hold a model, evaluated once in the program's worlds. Imports, exports, `test` and `expect` below are proposed features, not executable syntax. The parser currently recognizes a bare import, but lowering rejects it. This document recommends contracts before implementation; the [reference semantics](../semantics.md) remains authoritative for current behavior.
+> Draft proposal, updated 6 November 2026. Imports and exports are implemented as proposed here ([as built](#as-built), [semantics, section 16](../semantics.md#16-files-and-imports)); `test` and `expect` are proposed features, not executable syntax. This document recommends contracts before implementation; the [reference semantics](../semantics.md) remains authoritative for current behavior.
 
 ## Recommendation
 
@@ -174,6 +174,13 @@ Paths are literal UTF-8 strings with an explicit `.probl` suffix, resolved relat
 The source resolver receives both the importing identity and requested path. The data resolver needs the same for a module's `read`, whose path is relative to the module; today it receives only a path relative to the entry file. A host may supply only an in-memory source map, including in WASM. Imports never grant the engine ambient filesystem access; permission to read data is not permission to load it as source, nor the reverse. `probl check --data` checks every module's data against its declared type.
 
 Freeze source bytes and identities for one compilation/test invocation. Repeated loads of an identity must not observe different revisions. Bound individual and total source bytes, module count and dependency depth; modules' evaluation counts against the run's ordinary budgets. Reject oversized graphs cleanly. Canonical identity, not source text equality, determines module identity. Record source snapshots or content digests for replay and cache invalidation, including transitive changes.
+
+### As built
+
+- **Compiler.** `probl_sema::compile_program` loads the entry and its imports through a host `Loader`, depth first, each file once, with a visiting/finished traversal that reports a cycle with its chain. Files share one offset space (a `SourceMap`), so every span says which file it's in. Lowering puts each file's top level in the main function, in evaluation order, with a namespace of its own; imported functions, types, enums and values refer to the exporting file's definitions and slots, and named functions capture their own file's variables by slot, so they read them whichever file calls them.
+- **Limits.** At most 1,000 files, 64 imports deep, 8 MiB per file and 32 MiB together.
+- **Hosts.** The library's `compile_with` takes a `Sources`: `LocalSources` (canonical paths on disk, `.probl` suffix, no root confinement, as `LocalFiles`) or `MemorySources`. `probl run`, `probl check` and the REPL use `LocalSources`. A `read` in an imported file is rewritten at compile time through `data_path`, relative to that file, so the host's `Files` are unchanged.
+- **Not yet.** The namespace form, re-exports, the playground's and WASM API's multi-file sources, editor symbols across files, and tests.
 
 ### Deferred
 
