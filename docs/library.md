@@ -52,9 +52,9 @@ let program = compile_with("main.probl", main, &mut sources)?;
 ```
 
 - `Sources::load(importer, path)` gives the file a path names, imported by the file `importer`, as a `SourceText`: its identity, the name diagnostics give it, and its text. Two paths to the same file must give the same identity, since each file runs once per run. `entry(name)` gives the entry file's identity, and `data_path(importer, path)` the path a `read` in an imported file names, for the `Files` that load the data.
-- `MemorySources` holds files in memory, by path, with `/` between directories, each importing relative to its own directory. `LocalSources` reads files from disk, relative to the importing file, identifies them by canonical path, and requires the `.probl` suffix; like `LocalFiles`, it follows the local file system's rules and isn't a sandbox. The command line uses it.
+- `MemorySources` holds files in memory, by path, with `/` between directories (`./lib.probl` and `lib.probl` are one file), each importing relative to its own directory. `LocalSources` reads files from disk, relative to the importing file, identifies them by canonical path, and requires the `.probl` suffix; like `LocalFiles`, it follows the local file system's rules and isn't a sandbox. The command line uses it.
 - `compile(name, source)` compiles one text, which can't import: an import is a compile error saying so.
-- Each `Diagnostic` is about one file: `file()` names it, and `span()` and `line_column()` are within it.
+- Each `Diagnostic` is about one file: `file()` names it, `file_text()` is its text, and `span()` and `line_column()` are within it.
 
 ## Options and modes
 

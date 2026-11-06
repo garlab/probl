@@ -3,6 +3,10 @@
 // keywords' documentation. It gives completion, descriptions on hover, going to a
 // definition with Cmd-click, Ctrl-click or F12, and highlights of the
 // name under the cursor.
+//
+// The symbols are the file's in the editor. A name it imports is declared
+// in its import, with the index of the definition it imports; definitions
+// in other files have their `file`, and no place in this one.
 
 import { closeCompletion, completionStatus, selectedCompletion } from '@codemirror/autocomplete';
 import { syntaxTree } from '@codemirror/language';
@@ -33,7 +37,7 @@ function mapSymbols(symbols, changes) {
   // contain the edits, follow them.
   const edited = (from, to) => changes.touchesRange(from, to) !== false;
   const definitions = symbols.definitions.map((d) => {
-    if (d.gone) return d;
+    if (d.gone || d.file) return d;
     return edited(d.from, d.to)
       ? { ...d, from: -1, to: -1, scope: [-1, -1], gone: true }
       : { ...d, from: at(d.from), to: at(d.to, 1), scope: [at(d.scope[0]), at(d.scope[1], 1)] };
@@ -53,8 +57,16 @@ function definitionAt(state, pos) {
   if (!symbols) return null;
   const reference = symbols.references.find(([from, to]) => from <= pos && pos <= to);
   if (reference) return { ...symbols.definitions[reference[2]], index: reference[2] };
-  const index = symbols.definitions.findIndex((d) => d.from <= pos && pos <= d.to);
+  const index = symbols.definitions.findIndex((d) => !d.file && d.from <= pos && pos <= d.to);
   return index < 0 ? null : { ...symbols.definitions[index], index };
+}
+
+/** What describes a definition: for an imported name, the definition it
+ * imports, in its file. */
+function described(symbols, d) {
+  const origin = d.imported == null ? null : symbols?.definitions[d.imported];
+  if (!origin) return d;
+  return { ...d, detail: origin.detail, doc: origin.doc, line: origin.line, owner: origin.owner, from_file: origin.file };
 }
 
 /** Whether `pos` is in a comment or a string, where words aren't names:
@@ -177,14 +189,15 @@ function describeDefinition(d) {
     variant: `variant of ${d.owner}`,
     field: `field of ${d.owner}`,
   }[d.kind];
-  return { code: d.detail, what: `${what}, line ${d.line}`, doc: d.doc };
+  const file = d.from_file ?? d.file;
+  return { code: d.detail, what: file ? `${what} in ${file}, line ${d.line}` : `${what}, line ${d.line}`, doc: d.doc };
 }
 
 /** What a definition's declaration says after its name, shown beside it in
  * the completion list: `(days: int): int` for a function, `~ beta(2, 40)`
  * for a variable; or a field's type, or a variant's enum. */
 function declaredAs(d) {
-  const declared = new RegExp(`^(?:fn|let|var) ${d.name}\\b`).exec(d.detail);
+  const declared = new RegExp(`^(?:export )?(?:fn|let|var) ${d.name}\\b`).exec(d.detail);
   if (declared && (d.kind === 'function' || d.kind === 'variable')) return d.detail.slice(declared[0].length).trim();
   if (d.kind === 'field') return d.detail.slice(d.detail.indexOf(':') + 1).trim();
   if (d.kind === 'variant') return d.owner;
@@ -237,11 +250,12 @@ function card({ code, what, doc }) {
 }
 
 /** The editor's extensions, given the reference (`docs()` from the module),
- * `names(source)`, which gives a program's symbols, or null, and
- * `showReference(name)`, which shows a built-in's, constant's or keyword's entry. Put
- * them before `basicSetup`: Enter must reach them before the completion
- * list. */
-export function intelligence(docs, names, showReference) {
+ * `names(source)`, which gives a program's symbols, or null,
+ * `showReference(name)`, which shows a built-in's, constant's or keyword's
+ * entry, and `showDefinition(file, from, to)`, which shows a definition in
+ * another file. Put them before `basicSetup`: Enter must reach them before
+ * the completion list. */
+export function intelligence(docs, names, showReference, showDefinition) {
   const builtins = new Map(docs.builtins.map((b) => [b.name, b]));
   builtins.set('read', docs.read);
   const constants = new Map(docs.constants.map((c) => [c.name, c]));
@@ -286,26 +300,31 @@ export function intelligence(docs, names, showReference) {
       seen.add(option.label);
       options.push(option);
     };
-    const fromDefinition = (d, boost) => ({
-      label: d.name,
-      type: kinds[d.kind],
-      detail: declaredAs(d),
-      info: () => card(describeDefinition(d)),
-      boost,
-    });
+    const fromDefinition = (d, boost) => {
+      const shown = described(symbols, d);
+      return {
+        label: d.name,
+        type: kinds[d.kind],
+        detail: declaredAs(shown),
+        info: () => card(describeDefinition(shown)),
+        boost,
+      };
+    };
     if (dotted) {
       const base = dotted[1];
-      const enumType = definitions.find((d) => d.kind === 'enum' && d.name === base);
+      const enumType = definitions.find((d) => !d.file && d.kind === 'enum' && d.name === base);
       if (enumType) {
+        // An imported enum's variants belong to it under its own name.
+        const owner = enumType.imported == null ? base : symbols.definitions[enumType.imported].name;
         // (Without their enum's name beside them: it's just been typed.)
         definitions
-          .filter((d) => d.kind === 'variant' && d.owner === base)
+          .filter((d) => d.kind === 'variant' && d.owner === owner)
           .forEach((d) => add({ ...fromDefinition(d, 2), detail: undefined }));
         return { from, options, validFor: /^\w*$/ };
       }
       // Fields, and any function as a method: `x.f(y)` is `f(x, y)`.
       definitions.filter((d) => d.kind === 'field').forEach((d) => add(fromDefinition(d, 2)));
-      definitions.filter((d) => d.kind === 'function').forEach((d) => add(fromDefinition(d, 1)));
+      definitions.filter((d) => !d.file && d.kind === 'function').forEach((d) => add(fromDefinition(d, 1)));
       for (const b of docs.builtins) {
         add({ label: b.name, type: 'method', detail: parameters(b), info: () => card(documented(b)) });
       }
@@ -341,7 +360,7 @@ export function intelligence(docs, names, showReference) {
     if (!word || inText(view.state, pos, side)) return null;
     const def = definitionAt(view.state, pos);
     let content = null;
-    if (def) content = describeDefinition(def);
+    if (def) content = describeDefinition(described(view.state.field(symbolsField, false), def));
     else if (builtins.has(word.text)) content = documented(builtins.get(word.text));
     else if (constants.has(word.text)) content = documented(constants.get(word.text));
     else if (keywords.has(word.text)) content = documented(keywords.get(word.text));
@@ -365,6 +384,12 @@ export function intelligence(docs, names, showReference) {
       if (word) showReference(word.text);
       return word !== null;
     }
+    // An imported name's definition is the one it imports, in its file.
+    const origin = def.imported == null ? def : view.state.field(symbolsField).definitions[def.imported];
+    if (origin.file) {
+      showDefinition(origin.file, origin.from, origin.to);
+      return true;
+    }
     view.dispatch({
       selection: { anchor: def.from, head: def.to },
       effects: EditorView.scrollIntoView(def.from, { y: 'center' }),
@@ -379,7 +404,8 @@ export function intelligence(docs, names, showReference) {
     const def = definitionAt(view.state, pos);
     if (!def) return false;
     const { references } = view.state.field(symbolsField);
-    const ranges = [[def.from, def.to], ...references.filter(([, , d]) => d === def.index)]
+    const declared = def.file ? [] : [[def.from, def.to]];
+    const ranges = [...declared, ...references.filter(([, , d]) => d === def.index)]
       .filter(([from, to]) => from < to)
       .sort((a, b) => a[0] - b[0]);
     const main = Math.max(
@@ -428,7 +454,7 @@ export function intelligence(docs, names, showReference) {
     const def = definitionAt(state, selection.head);
     if (!def) return Decoration.none;
     const ranges = symbols.references.filter(([, , d]) => d === def.index).map(([from, to]) => [from, to]);
-    ranges.push([def.from, def.to]);
+    if (!def.file) ranges.push([def.from, def.to]);
     ranges.sort((a, b) => a[0] - b[0]);
     return Decoration.set(
       ranges.filter(([from, to]) => from < to).map(([from, to]) => same.range(from, to)),
@@ -447,8 +473,9 @@ export function intelligence(docs, names, showReference) {
    * is, and the function's documentation. */
   function signatureFor(state, call) {
     const symbols = state.field(symbolsField, false);
-    const own = symbols?.definitions.find((d) => d.kind === 'function' && !d.gone && d.name === call.name);
-    const entry = own ? { signature: own.detail.replace(/^fn\s+/, ''), summary: own.doc } : builtins.get(call.name);
+    const found = symbols?.definitions.find((d) => d.kind === 'function' && !d.gone && !d.file && d.name === call.name);
+    const own = found && described(symbols, found);
+    const entry = own ? { signature: own.detail.replace(/^(?:export\s+)?fn\s+/, ''), summary: own.doc } : builtins.get(call.name);
     const parsed = entry && parametersOf(entry.signature, call.name);
     if (!parsed) return null;
     // `xs.f(y)` is `f(xs, y)`: the first argument is before the dot.

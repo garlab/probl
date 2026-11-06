@@ -168,7 +168,21 @@ main {
   min-height: 0;
 }
 
-#editor { min-height: 0; overflow: hidden; }
+#program { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+#editor { flex: 1; min-height: 0; overflow: hidden; }
+/* The program's files: main.probl, which runs, and the files it imports. */
+#files { display: flex; flex: none; align-items: stretch; overflow-x: auto; scrollbar-width: thin; border-bottom: 1px solid var(--line); }
+#files .file { display: flex; align-items: center; border-right: 1px solid var(--line); }
+#files .file.current { background: var(--editor); box-shadow: inset 0 -2px var(--accent); }
+#files button { border: none; border-radius: 0; background: none; color: var(--faint); font: 13px/1.4 var(--mono); padding: 6px 10px; white-space: nowrap; }
+#files button:not(:disabled):hover { background: var(--hover); color: var(--text); }
+#files .current .name { color: var(--text); }
+#files .close { padding: 6px 8px 6px 2px; visibility: hidden; }
+#files .file:hover .close, #files .file.current .close, #files .close:focus-visible { visibility: visible; }
+/* A dot: the file has errors. */
+#files .errors .name::after { content: ''; display: inline-block; width: 6px; height: 6px; margin: 0 0 1px 7px; border-radius: 50%; background: var(--error); vertical-align: middle; }
+#files .new-file { font: 16px/1 system-ui, sans-serif; padding: 4px 12px; }
+#files .file-name { font: 13px/1.4 var(--mono); width: 18ch; margin: 3px 6px; padding: 2px 6px; }
 #divider { cursor: col-resize; background: linear-gradient(var(--line), var(--line)) center / 1px 100% no-repeat; touch-action: none; }
 #divider:hover, #divider:focus-visible, #divider.dragging { background-image: linear-gradient(var(--accent), var(--accent)); background-size: 2px 100%; outline: none; }
 #editor .cm-editor { height: 100%; font-size: 14px; }
@@ -367,6 +381,6 @@ footer a { color: var(--accent); }
   #examples { flex: 1 1 100%; width: 100%; min-width: 0; max-width: none; }
   main { grid-template-columns: minmax(0, 1fr); }
   #divider { display: none; }
-  #editor { height: 55vh; border-right: none; border-bottom: 1px solid var(--line); }
+  #program { height: 55vh; border-bottom: 1px solid var(--line); }
   #output { min-height: 40vh; }
 }

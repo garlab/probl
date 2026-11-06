@@ -1,7 +1,7 @@
 // The playground in real browsers, headless: every example prints what
 // `probl run` prints; stopping, limits, errors in the editor and share
 // links work; and so do completion, descriptions on hover, going to a
-// definition, the reference and the guide. Needs `bun run build`, `cargo
+// definition, the reference, the guide and programs of several files. Needs `bun run build`, `cargo
 // build --release -p probl-cli`, and Chrome or Firefox where macOS puts
 // them (or PROBL_CHROME and PROBL_FIREFOX).
 //
@@ -1234,6 +1234,130 @@ report minutes(delay) by 1 as "Delay"`;
   await showTab('guide');
   const widths = await editor.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
   expect(widths[0] <= widths[1], 'on a phone, the page fits the screen', widths.join(' > '));
+
+  // A program of several files: main.probl runs, and imports the others.
+  {
+    const multi = await open();
+    await multi.evaluate(() => {
+      localStorage.removeItem('probl-playground-files');
+      window.playground.setSource('report 1');
+    });
+    const tabs = () => multi.$$eval('#files .file', (all) => all.map((t) => `${t.dataset.file}${t.classList.contains('current') ? '*' : ''}${t.classList.contains('errors') ? '!' : ''}`).join(' '));
+    // In the file shown, as the person types it.
+    const type = (text) =>
+      multi.evaluate((text) => {
+        const { view } = window.playground;
+        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, userEvent: 'input.type' });
+      }, text);
+    await multi.evaluate(() => document.querySelector('#files .new-file').click());
+    await multi.waitForSelector('#files .file-name');
+    const proposed = await multi.$eval('#files .file-name', (input) => input.value);
+    await multi.keyboard.press('Enter');
+    expect(proposed === 'lib.probl' && (await tabs()) === 'main.probl lib.probl*', 'a new file is named, then shown', `${proposed}: ${await tabs()}`);
+    const lib = '# Twice as much.\nexport fn twice(x: int): int { 2 * x }\nexport let coin ~ d2\n';
+    await type(lib);
+    await multi.evaluate(() => window.playground.showFile('main.probl'));
+    const main = 'import { twice, coin } from "./lib.probl"\nreport twice(coin)';
+    await type(main);
+    let { result } = await run(multi);
+    expect(result.includes('twice(coin)    mean 3.00'), 'the program runs with the files it imports', result);
+
+    // An imported name describes itself from its file, and leads there.
+    const twiceAt = main.indexOf('twice(coin)') + 2;
+    await becomes(multi, () => window.playground.view.state.field !== undefined && document.querySelector('.cm-gutter-lint') !== null);
+    await multi.evaluate((pos) => {
+      window.playground.view.dispatch({ selection: { anchor: pos } });
+      window.playground.view.focus();
+    }, twiceAt);
+    await becomes(multi, () => document.querySelectorAll('.cm-probl-same').length === 2);
+    await multi.evaluate((pos) => {
+      const { view } = window.playground;
+      const a = view.coordsAtPos(pos, 1);
+      const init = { clientX: a.left + 2, clientY: (a.top + a.bottom) / 2, bubbles: true };
+      document.elementFromPoint(init.clientX, init.clientY).dispatchEvent(new MouseEvent('mousemove', init));
+    }, twiceAt);
+    await becomes(multi, () => document.querySelector('.cm-probl-card'));
+    const described = await multi.evaluate(() => {
+      const card = document.querySelector('.cm-probl-card');
+      return ['signature', 'what', 'doc'].map((part) => card?.querySelector(`.cm-probl-${part}`)?.textContent).join(' | ');
+    });
+    expect(
+      described === 'export fn twice(x: int): int { 2 * x } | function in lib.probl, line 2 | Twice as much.',
+      'hovering an imported name describes it from its file',
+      described,
+    );
+    await multi.evaluate(() => window.playground.view.dom.dispatchEvent(new MouseEvent('mouseleave', { relatedTarget: document.body })));
+    await multi.keyboard.press('F12');
+    const landed = await becomes(multi, () => window.playground.shownFile() === 'lib.probl');
+    const where = await multi.evaluate(() => {
+      const { state } = window.playground.view;
+      const { from, to } = state.selection.main;
+      return `${window.playground.shownFile()}: ${state.sliceDoc(from, to)} on line ${state.doc.lineAt(from).number}`;
+    });
+    expect(landed && where === 'lib.probl: twice on line 2', 'F12 on an imported name goes to its file', where);
+
+    // Errors in another file mark its tab, and show in it.
+    await type('export fn twice(x: int): int { 2 * y }\nexport let coin ~ d2\n');
+    await multi.evaluate(() => window.playground.showFile('main.probl'));
+    const marked = await becomes(multi, () => document.querySelector('#files .file[data-file="lib.probl"].errors') !== null);
+    expect(marked, 'a file with errors is marked', await tabs());
+    ({ result } = await run(multi));
+    expect(result.includes('lib.probl:1:'), 'a run’s error names the file it’s in', result);
+    await multi.evaluate(() => window.playground.showFile('lib.probl'));
+    const shownError = await becomes(multi, () => document.querySelector('.cm-lintRange-error') !== null);
+    expect(shownError, 'and the file shows its errors');
+    await type(lib);
+    const cleared = await becomes(multi, () => document.querySelector('#files .errors') === null);
+    expect(cleared, 'fixed, it isn’t marked', await tabs());
+
+    // Renaming: double-click, or F2. A bad name is refused.
+    await multi.evaluate(() => document.querySelector('#files .file[data-file="lib.probl"] .name').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+    await multi.waitForSelector('#files .file-name');
+    await multi.evaluate(() => {
+      document.querySelector('#files .file-name').value = 'not a name';
+    });
+    await multi.keyboard.press('Enter');
+    const refused = await multi.$eval('#files .file-name', (input) => !input.validity.valid);
+    await multi.evaluate(() => {
+      document.querySelector('#files .file-name').value = 'dice.probl';
+    });
+    await multi.keyboard.press('Enter');
+    expect(refused && (await tabs()) === 'main.probl dice.probl*', 'a file can be renamed, to a good name', await tabs());
+    await multi.evaluate(() => window.playground.showFile('main.probl'));
+    const missing = await becomes(multi, () => [...document.querySelectorAll('.cm-lintRange-error')].length > 0);
+    expect(missing, 'and its importers see the change');
+    await multi.evaluate(() => document.querySelector('#files .file[data-file="dice.probl"] .name').focus());
+    await multi.keyboard.press('F2');
+    await multi.waitForSelector('#files .file-name');
+    await multi.evaluate(() => {
+      document.querySelector('#files .file-name').value = 'lib.probl';
+    });
+    await multi.keyboard.press('Enter');
+
+    // The files are kept for next time, and shared with the program.
+    await becomes(multi, () => localStorage.getItem('probl-playground-files')?.includes('lib.probl'));
+    await multi.reload();
+    await multi.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+    const reloaded = await multi.evaluate(() => [window.playground.files().join(' '), window.playground.getFile('lib.probl')]);
+    expect(reloaded[0] === 'main.probl lib.probl' && reloaded[1] === lib, 'reloading keeps the files', JSON.stringify(reloaded));
+    await shareProgram(multi);
+    const link = await multi.evaluate(() => location.href);
+    expect(link.includes('files='), 'a share link carries the files', link);
+    await multi.evaluate(() => localStorage.removeItem('probl-playground-files'));
+    const linkedPage = await open(link);
+    const opened = await linkedPage.evaluate(() => [window.playground.files().join(' '), window.playground.getFile('lib.probl'), window.playground.getSource()]);
+    expect(opened[0] === 'main.probl lib.probl' && opened[1] === lib && opened[2] === main, 'and opens them', JSON.stringify(opened));
+    await linkedPage.close();
+
+    // Deleting a file asks first, unless it's empty.
+    multi.once('dialog', (dialog) => dialog.accept());
+    await multi.evaluate(() => document.querySelector('#files .file[data-file="lib.probl"] .close').click());
+    const left = await multi.evaluate(() => window.playground.files().join(' '));
+    expect(left === 'main.probl', 'a file can be deleted', left);
+    const broken = await becomes(multi, () => document.querySelector('#files .file[data-file="main.probl"].errors') !== null);
+    expect(broken, 'and the file that imported it has an error');
+    await multi.close();
+  }
 } finally {
   await browser.close();
   await server?.stop(true);

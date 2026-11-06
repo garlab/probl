@@ -644,7 +644,7 @@ report ~sales(10)
 - **Imported values are read-only**: `var mine = rate` makes a copy to change. `import { rate as r } from …` imports under another name; names a file doesn't export stay its own.
 - **Only the file that's run** reports and sets pragmas. A `read` in an imported file reads relative to that file. Imports come first in a file, their paths end in `.probl`, and files can't import each other in a cycle.
 
-`probl run` and `probl check` read the imported files from disk. The playground and `probl::compile` compile one text, which can't import; the library's `compile_with` takes the files from the host ([library guide](library.md#programs-in-several-files)).
+`probl run` and `probl check` read the imported files from disk. In the playground, a program's files are tabs above the editor: `+` adds one, which `main.probl` imports as `"./lib.probl"`. `probl::compile` compiles one text, which can't import; the library's `compile_with` takes the files from the host ([library guide](library.md#programs-in-several-files)).
 
 ## 4. Distributions
 

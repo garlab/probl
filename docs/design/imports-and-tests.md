@@ -180,7 +180,9 @@ Freeze source bytes and identities for one compilation/test invocation. Repeated
 - **Compiler.** `probl_sema::compile_program` loads the entry and its imports through a host `Loader`, depth first, each file once, with a visiting/finished traversal that reports a cycle with its chain. Files share one offset space (a `SourceMap`), so every span says which file it's in. Lowering puts each file's top level in the main function, in evaluation order, with a namespace of its own; imported functions, types, enums and values refer to the exporting file's definitions and slots, and named functions capture their own file's variables by slot, so they read them whichever file calls them.
 - **Limits.** At most 1,000 files, 64 imports deep, 8 MiB per file and 32 MiB together.
 - **Hosts.** The library's `compile_with` takes a `Sources`: `LocalSources` (canonical paths on disk, `.probl` suffix, no root confinement, as `LocalFiles`) or `MemorySources`. `probl run`, `probl check` and the REPL use `LocalSources`. A `read` in an imported file is rewritten at compile time through `data_path`, relative to that file, so the host's `Files` are unchanged.
-- **Not yet.** The namespace form, re-exports, the playground's and WASM API's multi-file sources, editor symbols across files, and tests.
+- **Editors.** An imported name is a definition in the importing file, linked to the one it imports, so each file's symbols stand on their own. `probl_sema::compile_module` checks a file as it's compiled when imported, with what it imports, as an editor checks the file it shows.
+- **Playground.** The WASM API's `check` and `run` take the other files as `"sources"`; `check` can check any of them, and its symbols name the definitions in other files that the checked file uses. The page shows a program's files as tabs, `main.probl` first; it saves them, shares them in the link, marks files with errors, and goes to an imported name's definition in its file.
+- **Not yet.** The namespace form, re-exports, renaming a file's imports with it, and tests.
 
 ### Deferred
 

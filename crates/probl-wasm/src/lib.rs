@@ -202,7 +202,8 @@ impl Text<'_> {
 ///   `imported`. Definitions in another file, which the checked file uses
 ///   (imported ones, and their fields and variants), say which `file`,
 ///   with their `from`, `to` and `line` in it, and a `scope` of `[-1, -1]`:
-///   they can't be used by name in the checked file;
+///   they can't be used by name in the checked file. The fields and
+///   variants of imported types are among them;
 /// - `references`: `[from, to, definition]` for every use of a name;
 /// - `functions`: `[from, to]` for each named function.
 ///
@@ -229,12 +230,24 @@ fn symbols(symbols: &Symbols, sources: &SourceMap) -> Json {
             order.push(i);
         }
     }
+    let imported: Vec<usize> = order.iter().filter_map(|&i| symbols.definitions[i].imported).collect();
+    // The fields and variants of imported types, for completing them.
+    let members = imported.iter().flat_map(|&origin| {
+        let o = &symbols.definitions[origin];
+        let file = file_of(o.span.lo);
+        let typed = matches!(o.kind, DefKind::Record | DefKind::Enum);
+        symbols.definitions.iter().enumerate().filter_map(move |(i, d)| {
+            let member = matches!(d.kind, DefKind::Field | DefKind::Variant);
+            (typed && member && d.owner.as_ref() == Some(&o.name) && file_of(d.span.lo) == file).then_some(i)
+        })
+    });
     let used = symbols
         .references
         .iter()
         .filter(|(span, _)| root.has(span.lo))
         .map(|&(_, d)| d)
-        .chain(order.iter().filter_map(|&i| symbols.definitions[i].imported))
+        .chain(imported.iter().copied())
+        .chain(members)
         .collect::<Vec<_>>();
     for d in used {
         if index[d].is_none() {

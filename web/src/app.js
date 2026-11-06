@@ -4,11 +4,14 @@
 // Two workers share the compiled module: the checker checks the program as
 // it's edited, and the runner runs it. Stopping a run ends the runner's
 // worker, and a new one takes its place.
+//
+// A program can have several files: `main.probl`, which runs, and the files
+// it imports. Each has its own editor state, which the editor shows in turn.
 
 import { indentWithTab, isolateHistory } from '@codemirror/commands';
 import { syntaxHighlighting } from '@codemirror/language';
-import { linter, lintGutter, setDiagnostics } from '@codemirror/lint';
-import { Compartment, Prec } from '@codemirror/state';
+import { forceLinting, linter, lintGutter, setDiagnostics } from '@codemirror/lint';
+import { Compartment, EditorState, Prec } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { basicSetup } from 'codemirror';
 import { intelligence, setSymbols } from './intel.js';
@@ -20,8 +23,21 @@ import { renderSummaryControls } from './summary-controls.js';
 /** Seconds a run may take before it's stopped, unless the options say not to. */
 const TIME_LIMIT = 30;
 const STORED = 'probl-playground-source';
+const FILES = 'probl-playground-files';
 const SPLIT = 'probl-playground-split';
 const CHARTS = 'probl-playground-charts';
+/** The file that runs. The others are the files it imports. */
+const ENTRY = 'main.probl';
+/** What another file may be called: a path of words, ending in `.probl`. */
+const FILE_NAME = /^[\w-]+(\/[\w-]+)*\.probl$/;
+const FILE_NAME_HELP = 'A file’s name is a path ending in .probl, like lib.probl or lib/dice.probl.';
+
+/** Whether `files` is `{name: text}` for files besides the entry. */
+const validFiles = (files) =>
+  files !== null &&
+  typeof files === 'object' &&
+  !Array.isArray(files) &&
+  Object.entries(files).every(([name, text]) => FILE_NAME.test(name) && name !== ENTRY && typeof text === 'string');
 
 const $ = (id) => document.getElementById(id);
 /** The modifier key for shortcuts: ⌘ on Apple's systems, Ctrl elsewhere. */
@@ -93,6 +109,16 @@ function remembered(key = STORED) {
   }
 }
 
+/** The files besides the entry, as left. */
+function rememberedFiles() {
+  try {
+    const files = JSON.parse(remembered(FILES));
+    return validFiles(files) ? files : {};
+  } catch {
+    return {};
+  }
+}
+
 // ── The page ─────────────────────────────────────────────────────────────
 
 const theme = EditorView.theme({
@@ -129,29 +155,45 @@ async function main() {
   const intel = intelligence(
     docs,
     async (source) => {
-      const answer = await check(source);
+      const file = shown;
+      const answer = await check(file, source);
       const symbols = answer.type === 'done' ? answer.result.symbols : null;
       // They're the newest names: keep them for hovers, highlights and
       // later completions too, if the text hasn't changed since.
       if (symbols) {
         setTimeout(() => {
-          if (view.state.doc.toString() === source) view.dispatch({ effects: setSymbols.of(symbols) });
+          if (shown === file && view.state.doc.toString() === source) view.dispatch({ effects: setSymbols.of(symbols) });
         });
       }
       return symbols;
     },
     (name) => showReference(name),
+    (file, from, to) => {
+      if (!states.has(file)) return;
+      showFile(file);
+      view.dispatch({ selection: { anchor: from, head: to }, effects: EditorView.scrollIntoView(from, { y: 'center' }) });
+      view.focus();
+    },
   );
 
   // The examples' data, which any program may read.
-  const files = Object.assign({}, ...examples.map((e) => e.files));
+  const data = Object.assign({}, ...examples.map((e) => e.files));
 
-  /** The program's diagnostics, from the checker. */
-  function check(source) {
+  /** The diagnostics and names of the file `name`, whose text is `text`,
+   * from the checker. */
+  function check(name, text) {
     const id = ++lastId;
+    const program = { name: ENTRY, sources: sources() };
+    let source = entrySource();
+    if (name === ENTRY) {
+      source = text;
+    } else {
+      program.sources[name] = text;
+      program.file = name;
+    }
     return new Promise((resolve) => {
       waiting.set(id, resolve);
-      checker.send({ type: 'check', id, source });
+      checker.send({ type: 'check', id, source, program });
     });
   }
 
@@ -169,15 +211,19 @@ async function main() {
 
   const lint = linter(
     async (view) => {
+      const file = shown;
       const source = view.state.doc.toString();
-      const answer = await check(source);
-      if (answer.type !== 'done') return [];
+      const answer = await check(file, source);
+      if (answer.type !== 'done' || answer.result.error) return [];
+      markErrors(answer.result);
       // Names, for the document as it still is. While it doesn't parse, the
       // last ones stay, following the edits.
+      const current = shown === file && view.state.doc.toString() === source;
       const { symbols } = answer.result;
-      if (symbols && view.state.doc.toString() === source) view.dispatch({ effects: setSymbols.of(symbols) });
-      if (view.state.doc.toString() === source) showSummaryControls(answer.result.reports);
-      return answer.result.diagnostics.map((d) => toEditor(d, view.state.doc));
+      if (symbols && current) view.dispatch({ effects: setSymbols.of(symbols) });
+      if (current && file === ENTRY) showSummaryControls(answer.result.reports);
+      // Only this file's: the others' show when they're shown.
+      return answer.result.diagnostics.filter((d) => d.file === file).map((d) => toEditor(d, view.state.doc));
     },
     { delay: 300 },
   );
@@ -201,7 +247,7 @@ async function main() {
     } catch { return chartSettings(null); }
   }
   function saveChartChoices() {
-    const source = view.state.doc.toString();
+    const source = entrySource();
     remember(JSON.stringify({ source, settings: charts }), CHARTS);
     if (linked === source) {
       const hash = new URLSearchParams(location.hash.slice(1));
@@ -221,9 +267,7 @@ async function main() {
     });
   }
   const userEdits = ['input', 'delete', 'move', 'undo', 'redo'];
-  const view = new EditorView({
-    parent: $('editor'),
-    extensions: [
+  const extensions = [
       intel.extensions,
       basicSetup,
       probl,
@@ -242,7 +286,7 @@ async function main() {
       EditorView.updateListener.of((update) => {
         if (!update.docChanged) return;
         const source = update.state.doc.toString();
-        if (source !== chartSource) {
+        if (shown === ENTRY && source !== chartSource) {
           chartSource = source;
           charts = chartSettings(null);
           resetCharts();
@@ -254,22 +298,237 @@ async function main() {
         edited ||= update.transactions.some((tr) => userEdits.some((event) => tr.isUserEvent(event)));
         clearTimeout(saving);
         saving = setTimeout(() => {
-          const source = update.state.doc.toString();
-          if (edited) remember(source);
+          if (edited) save();
           edited = false;
-          followEdits(source);
+          followEdits();
         }, 500);
       }),
-    ],
+  ];
+  const view = new EditorView({ parent: $('editor'), state: EditorState.create({ extensions }) });
+
+  // ── Files ──
+  // Each file's editor state, the entry first, then the others in the order
+  // they were added. The one shown is `shown`, whose state is the view's.
+  const states = new Map([[ENTRY, view.state]]);
+  let shown = ENTRY;
+  const stateOf = (name) => (name === shown ? view.state : states.get(name));
+  const entrySource = () => stateOf(ENTRY).doc.toString();
+  /** The files besides the entry: `{name: text}`. */
+  const sources = () =>
+    Object.fromEntries([...states.keys()].filter((n) => n !== ENTRY).map((n) => [n, stateOf(n).doc.toString()]));
+  // The files with errors, when they were last checked.
+  const errors = new Set();
+
+  /** Show the file `name` in the editor. */
+  function showFile(name) {
+    if (name === shown || !states.has(name)) return;
+    states.set(shown, view.state);
+    shown = name;
+    view.setState(states.get(name));
+    // The page's scheme may have changed while it was hidden.
+    view.dispatch({ effects: scheme.reconfigure(EditorView.darkTheme.of(darkScheme.matches)) });
+    renderFiles();
+  }
+
+  function addFile(name, text = '') {
+    states.set(name, EditorState.create({ doc: text, extensions }));
+  }
+
+  /** Make the files besides the entry `files`, `{name: text}`. */
+  function setFiles(files) {
+    showFile(ENTRY);
+    for (const name of [...states.keys()]) if (name !== ENTRY) states.delete(name);
+    for (const [name, text] of Object.entries(files)) addFile(name, text);
+    errors.clear();
+    renderFiles();
+  }
+
+  /** After the person adds, renames or deletes a file: keep the program,
+   * and check the file shown again, since what it imports may have changed. */
+  function filesChanged() {
+    save();
+    followEdits();
+    renderFiles();
+    forceLinting(view);
+  }
+
+  /** Why `name` can't be a new file's name, or null. `was` is the file's
+   * name before, when it's renamed. */
+  function badName(name, was = null) {
+    if (!FILE_NAME.test(name)) return FILE_NAME_HELP;
+    if (name !== was && states.has(name)) return `There's already a file called ${name}.`;
+    return null;
+  }
+
+  /** Ask for a file's name, in place of `replaced`, or at the end of the
+   * files. `done(name)` is called with a valid one. */
+  function askName(initial, replaced, done) {
+    const input = document.createElement('input');
+    input.className = 'file-name';
+    input.value = initial;
+    input.spellcheck = false;
+    input.setAttribute('aria-label', 'File name');
+    let finished = false;
+    const finish = (name) => {
+      if (finished) return;
+      finished = true;
+      renderedFiles = null;
+      if (name === null) renderFiles();
+      else done(name);
+    };
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        finish(null);
+        view.focus();
+      } else if (event.key === 'Enter') {
+        event.preventDefault();
+        const problem = badName(input.value.trim(), replaced?.dataset.file ?? null);
+        input.setCustomValidity(problem ?? '');
+        if (problem) input.reportValidity();
+        else finish(input.value.trim());
+      }
+    });
+    input.addEventListener('input', () => input.setCustomValidity(''));
+    // Clicking elsewhere keeps a good name, and forgets a bad one.
+    input.addEventListener('blur', () => {
+      const name = input.value.trim();
+      finish(badName(name, replaced?.dataset.file ?? null) ? null : name);
+    });
+    if (replaced) replaced.replaceWith(input);
+    else $('files').querySelector('.new-file').before(input);
+    input.focus();
+    // The name without `.probl`, ready to be typed over.
+    input.setSelectionRange(0, Math.max(0, initial.lastIndexOf('.probl')));
+  }
+
+  function newFile() {
+    // One name at a time.
+    const asking = $('files').querySelector('.file-name');
+    if (asking) return asking.focus();
+    let name = 'lib.probl';
+    for (let i = 2; states.has(name); i += 1) name = `lib${i}.probl`;
+    askName(name, null, (name) => {
+      addFile(name);
+      showFile(name);
+      filesChanged();
+      view.focus();
+    });
+  }
+
+  function renameFile(name) {
+    const tab = $('files').querySelector(`.file[data-file="${CSS.escape(name)}"]`);
+    if (!tab || name === ENTRY) return;
+    askName(name, tab, (renamed) => {
+      if (renamed !== name) {
+        const all = [...states];
+        states.clear();
+        for (const [n, state] of all) states.set(n === name ? renamed : n, state);
+        if (shown === name) shown = renamed;
+        errors.delete(name);
+      }
+      filesChanged();
+    });
+  }
+
+  function deleteFile(name) {
+    if (name === ENTRY || !states.has(name)) return;
+    if (stateOf(name).doc.toString().trim() !== '' && !confirm(`Delete ${name}? Its text can’t be brought back.`)) return;
+    showFile(ENTRY);
+    states.delete(name);
+    errors.delete(name);
+    filesChanged();
+    view.focus();
+  }
+
+  /** Mark the files a check found errors in, among those it checked. */
+  function markErrors(result) {
+    for (const file of result.files ?? []) {
+      const failed = result.diagnostics.some((d) => d.file === file && d.severity === 'error');
+      if (failed) errors.add(file);
+      else errors.delete(file);
+    }
+    renderFiles();
+  }
+
+  // The files' tabs, drawn again only when they change.
+  let renderedFiles = null;
+  function renderFiles() {
+    const key = JSON.stringify([[...states.keys()], shown, [...errors]]);
+    if (key === renderedFiles) return;
+    renderedFiles = key;
+    const tabs = [...states.keys()].map((name) => {
+      const tab = document.createElement('span');
+      tab.className = 'file';
+      tab.dataset.file = name;
+      tab.classList.toggle('current', name === shown);
+      tab.classList.toggle('errors', errors.has(name));
+      const button = document.createElement('button');
+      button.className = 'name';
+      button.textContent = name;
+      if (name === shown) button.setAttribute('aria-current', 'true');
+      if (errors.has(name)) button.setAttribute('aria-label', `${name} (has errors)`);
+      button.title = name === ENTRY ? 'The program: the file that runs' : 'Double-click or press F2 to rename';
+      tab.append(button);
+      if (name !== ENTRY) {
+        const close = document.createElement('button');
+        close.className = 'close';
+        close.textContent = '×';
+        close.title = `Delete ${name}`;
+        close.setAttribute('aria-label', `Delete ${name}`);
+        tab.append(close);
+      }
+      return tab;
+    });
+    const add = document.createElement('button');
+    add.className = 'new-file';
+    add.textContent = '+';
+    add.title = 'Add a file, for the program to import';
+    add.setAttribute('aria-label', 'New file');
+    $('files').replaceChildren(...tabs, add);
+  }
+  $('files').addEventListener('click', (event) => {
+    const button = event.target.closest('button');
+    const name = event.target.closest('.file')?.dataset.file;
+    if (!button) return;
+    if (button.classList.contains('new-file')) newFile();
+    else if (button.classList.contains('close')) deleteFile(name);
+    else if (event.detail === 1) {
+      showFile(name);
+      view.focus();
+    } else if (event.detail === 0) {
+      // From the keyboard: the tab keeps the focus.
+      showFile(name);
+      $('files').querySelector(`.file[data-file="${CSS.escape(name)}"] .name`)?.focus();
+    }
   });
+  $('files').addEventListener('dblclick', (event) => {
+    const name = event.target.closest('.file .name') && event.target.closest('.file').dataset.file;
+    if (name) renameFile(name);
+  });
+  $('files').addEventListener('keydown', (event) => {
+    const name = event.target.closest('.file .name') && event.target.closest('.file').dataset.file;
+    if (!name) return;
+    if (event.key === 'F2') renameFile(name);
+    else if (event.key === 'Delete' || event.key === 'Backspace') deleteFile(name);
+    else return;
+    event.preventDefault();
+  });
+
+  /** Keep the program for next time: the entry and the other files. */
+  function save() {
+    remember(entrySource());
+    remember(JSON.stringify(sources()), FILES);
+  }
 
   darkScheme.addEventListener('change', () => {
     view.dispatch({ effects: scheme.reconfigure(EditorView.darkTheme.of(darkScheme.matches)) });
   });
 
   // A new program is a step of its own in the history, so that undo takes
-  // back that and no more.
+  // back that and no more. It goes in the entry.
   const setSource = (source) => {
+    showFile(ENTRY);
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: source },
       annotations: isolateHistory.of('full'),
@@ -277,13 +536,14 @@ async function main() {
   };
 
   // The program the address links to (`#code=` or `#example=`), until it's
-  // edited.
+  // edited: its entry, and its other files, as JSON, when it has them.
   let linked = null;
+  let linkedFiles = null;
 
   /** Put a program in the editor. If it replaces a program of the person's
    * own, the note for the status line says how to get it back. */
   function load(source) {
-    const before = view.state.doc.toString();
+    const before = entrySource();
     setSource(source);
     charts = restoreCharts(source);
     const own = before.trim() !== '' && before !== source && before !== linked && !examples.some((e) => e.source === before);
@@ -303,6 +563,7 @@ async function main() {
     if (!example) return;
     const note = load(example.source);
     linked = example.source;
+    linkedFiles = null;
     const hash = new URLSearchParams({ example: example.name });
     if (Object.keys(charts.reports).length) hash.set('charts', JSON.stringify(charts));
     history.replaceState(null, '', `#${hash}`);
@@ -313,11 +574,14 @@ async function main() {
   /** After edits: the menu names the example the program is, if it is one,
    * and a link to another program leaves the address, so that reloading
    * keeps the edits. */
-  function followEdits(source) {
+  function followEdits() {
+    const source = entrySource();
     select.value = examples.find((e) => e.source === source)?.name ?? '';
-    if (linked !== null && source !== linked) {
+    const files = linkedFiles !== null && JSON.stringify(sources()) !== linkedFiles;
+    if (linked !== null && (source !== linked || files)) {
       history.replaceState(null, '', location.pathname + location.search);
       linked = null;
+      linkedFiles = null;
     }
   }
 
@@ -374,7 +638,7 @@ async function main() {
   }
 
   function request() {
-    const r = { source: view.state.doc.toString(), files };
+    const r = { source: entrySource(), name: ENTRY, sources: sources(), files: data };
     const mode = $('mode').value;
     if (mode !== 'program') r.mode = mode;
     if (mode === 'sample') {
@@ -480,7 +744,7 @@ async function main() {
     };
     if (result.output !== undefined) {
       showOutput(result.output);
-      if (source === view.state.doc.toString()) {
+      if (source === entrySource()) {
         clearCharts = renderCharts($('charts'), result.reports, charts, (id, choice) => {
           charts = chartSettings({ version: 1, reports: { ...charts.reports, [id]: { ...charts.reports[id], ...choice } } });
           saveChartChoices();
@@ -499,9 +763,11 @@ async function main() {
       status(`${parts.join(' · ')}.`);
       setState(result.partial ? 'partial' : 'done');
       if (result.partial) {
+        // In the file shown: the others' messages name their files.
         const doc = view.state.doc;
-        const warnings = result.diagnostics.filter((d) => d.severity === 'warning').map((d) => toEditor(d, doc));
-        const failures = result.failures.filter((d) => d.from !== undefined).map((d) => toEditor(d, doc));
+        const here = (d) => d.file === shown;
+        const warnings = result.diagnostics.filter((d) => here(d) && d.severity === 'warning').map((d) => toEditor(d, doc));
+        const failures = result.failures.filter((d) => here(d) && d.from !== undefined).map((d) => toEditor(d, doc));
         view.dispatch(setDiagnostics(view.state, [...warnings, ...failures]));
       }
       return;
@@ -512,10 +778,10 @@ async function main() {
     const limit = error?.kind === 'limit' ? ' The playground’s limits are lower than the command line’s.' : '';
     status(`Failed after ${time}.${limit}`);
     setState('failed');
-    if (error?.from !== undefined) {
+    if (error?.from !== undefined && error.file === shown) {
       const doc = view.state.doc;
-      const diagnostics = result.diagnostics.filter((d) => d.severity === 'warning').map((d) => toEditor(d, doc));
-      view.dispatch(setDiagnostics(view.state, [...diagnostics, toEditor(error, doc)]));
+      const warnings = result.diagnostics.filter((d) => d.file === shown && d.severity === 'warning');
+      view.dispatch(setDiagnostics(view.state, [...warnings.map((d) => toEditor(d, doc)), toEditor(error, doc)]));
     }
   }
 
@@ -694,6 +960,7 @@ async function main() {
     if (button) {
       const note = load(button.previousElementSibling.textContent);
       linked = null;
+      linkedFiles = null;
       history.replaceState(null, '', location.pathname + location.search);
       start(note);
       return;
@@ -708,13 +975,16 @@ async function main() {
 
   // ── Sharing ──
   $('share').addEventListener('click', async () => {
-    const source = view.state.doc.toString();
+    const source = entrySource();
+    const others = JSON.stringify(sources());
     const selectedCharts = charts;
     const code = await encode(source);
     const hash = new URLSearchParams({ code });
+    if (others !== '{}') hash.set('files', await encode(others));
     if (Object.keys(selectedCharts.reports).length) hash.set('charts', JSON.stringify(selectedCharts));
     history.replaceState(null, '', `#${hash}`);
     linked = source;
+    linkedFiles = others;
     setState(null);
     try {
       await navigator.clipboard.writeText(location.href);
@@ -725,11 +995,15 @@ async function main() {
   });
 
   // ── The program in the link: a shared one, or an example ──
+  // A shared program's other files are `files`, `{name: text}`; an
+  // example's are null: it has none, and the person's stay.
   async function fromLink() {
     const hash = new URLSearchParams(location.hash.slice(1));
     if (hash.has('code')) {
       try {
-        return { source: await decode(hash.get('code')), charts: readChartSettings(hash.get('charts')) };
+        const files = hash.has('files') ? JSON.parse(await decode(hash.get('files'))) : null;
+        if (files !== null && !validFiles(files)) throw new Error('not files');
+        return { source: await decode(hash.get('code')), files, charts: readChartSettings(hash.get('charts')) };
       } catch {
         $('status').textContent = 'The link’s program couldn’t be read.';
         return null;
@@ -738,15 +1012,17 @@ async function main() {
     const named = examples.find((e) => e.name === hash.get('example'));
     if (!named) return null;
     select.value = named.name;
-    return { source: named.source, charts: readChartSettings(hash.get('charts')) };
+    return { source: named.source, files: null, charts: readChartSettings(hash.get('charts')) };
   }
   window.addEventListener('hashchange', async () => {
     const shared = await fromLink();
     if (shared !== null) {
       const { source } = shared;
       const note = load(source);
+      if (shared.files) setFiles(shared.files);
       charts = shared.charts;
       linked = source;
+      linkedFiles = shared.files && JSON.stringify(shared.files);
       clearOutput(note);
       showPane('output');
     }
@@ -755,7 +1031,9 @@ async function main() {
   // The first program: from the link, then as left, then the tour.
   const shared = await fromLink();
   linked = shared?.source ?? null;
+  linkedFiles = shared?.files ? JSON.stringify(shared.files) : null;
   const first = linked ?? remembered() ?? examples[0].source;
+  setFiles(shared?.files ?? rememberedFiles());
   setSource(first);
   charts = shared?.charts ?? restoreCharts(first);
   select.value = examples.find((e) => e.source === first)?.name ?? '';
@@ -773,8 +1051,16 @@ async function main() {
   window.playground = {
     view,
     examples,
-    getSource: () => view.state.doc.toString(),
+    getSource: entrySource,
     setSource,
+    files: () => [...states.keys()],
+    shownFile: () => shown,
+    showFile,
+    getFile: (name) => stateOf(name)?.doc.toString(),
+    addFile: (name, text) => {
+      addFile(name, text);
+      filesChanged();
+    },
     run: () => start(),
     stop: () => stop('Stopped.'),
     isRunning: () => running !== null,
