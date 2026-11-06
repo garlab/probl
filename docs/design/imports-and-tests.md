@@ -1,10 +1,10 @@
 # Imports and model tests
 
-> Draft proposal, updated 8 October 2026. Imports, exports, `test` and `expect` below are proposed features, not executable syntax. The parser currently recognizes a bare import, but lowering rejects it. This document recommends contracts before implementation; the [reference semantics](../semantics.md) remains authoritative for current behavior.
+> Draft proposal, updated 6 November 2026: a module's top level may now hold a model, evaluated once in the program's worlds. Imports, exports, `test` and `expect` below are proposed features, not executable syntax. The parser currently recognizes a bare import, but lowering rejects it. This document recommends contracts before implementation; the [reference semantics](../semantics.md) remains authoritative for current behavior.
 
 ## Recommendation
 
-Add static imports of explicitly exported definitions, with an acyclic file dependency graph. Imported files may initialize their definitions deterministically, including using local mutation, but do not run a probabilistic model on import. Initialization finishes before the entry model starts, and imported bindings are read-only. Consequently, importing does not depend on how many worlds exist.
+Add static imports of explicitly exported definitions, with an acyclic file dependency graph. Definitions (functions, types, enums) are static, as in JavaScript. A module's top level may also hold a model: it's evaluated once per run, before its importers and in dependency order, in the program's worlds, as an ECMAScript module with top-level `await` is evaluated once before the modules that import it. A draw there gives every importer the same outcome in each world, and an observation there is evidence for the whole program, so data in several files combines. Imported bindings are read-only.
 
 Add `*.test.probl` files containing named, isolated `test` blocks and report-like `expect condition as "description"` statements. Tests construct a model, then check its final population. A failed expectation records a failure without conditioning or otherwise changing that population.
 
@@ -14,7 +14,7 @@ Start with enumerated tests. Sampled tests need a separate contract for empirica
 
 ## Imports
 
-### Import definitions with deterministic initialization
+### Definitions are static
 
 Suggested first syntax:
 
@@ -41,13 +41,53 @@ report position
 report move
 ```
 
-Named imports make dependencies visible and allow aliases for collisions. Start with this one import form: no wildcard, implicit import-all, side-effect-only import, default export, dynamic path or package download. A namespace form such as `import "./random_walk.probl" as walk` can be added later; it also requires qualified names in types and record constructors and is not necessary for the first implementation. The currently parsed bare `import "file.probl"` should remain rejected with a migration/help message, not become textual inclusion.
+Named imports make dependencies visible and allow aliases for collisions. Start with this one import form: no wildcard, implicit import-all, side-effect-only import, default export, dynamic path or package download. A namespace form such as `import "./random_walk.probl" as walk` can be added later; it also requires qualified names in types and record constructors and is not necessary for the first implementation. The currently parsed bare `import "file.probl"` stays rejected with a help message for now; whether it should evaluate a module for its evidence alone is an open question (below).
 
 Imports are top-level declarations, resolved before execution. Require them before other declarations and executable statements for readability. They are not allowed inside a function, branch, loop, `simulate` or test body. Test files import at their file level.
 
-This answers the single-world question: **an import is a static dependency declaration, not an operation in a world**. Its module's deterministic initialization is a separate preparation step. Calling an imported function after a split is fine. If it draws, observes or prints, it does so under the same rules as an equivalent local function, in the caller's execution and evidence scope. Returning a recipe still does not draw it. Importing that function does none of these things.
+Importing doesn't wrap a module in a function. An exported function is a function: `walk(4)` runs in the caller's worlds each time it's called, and draws, observes or prints there, as a local function would. Returning a recipe still doesn't draw it. A recipe exported as a value (`step`) is a value: each `~step` is a fresh draw.
 
-Requiring “one world” would be a poor boundary: sampling commonly represents one realization at a time, and merging can reduce many histories to one state. It also would not prevent printing, input loading or local inference during initialization.
+### A module's model runs once, in the program's worlds
+
+A module's top level can draw, branch on chances and observe, as the entry program's can:
+
+```probl
+# prior.probl — how often a customer buys
+export let rate ~ one_of([0.2, 0.5, 0.8])
+```
+
+```probl
+# shop_a.probl — one shop's data, and its forecast
+import { rate } from "./prior.probl"
+observe 4 from binomial(5, rate)
+export let next_week ~ binomial(10, rate)
+```
+
+```probl
+# main.probl — shop_b.probl is shop_a.probl with its own data
+import { rate } from "./prior.probl"
+import { next_week as a } from "./shop_a.probl"
+import { next_week as b } from "./shop_b.probl"
+
+report rate == 0.8
+report a + b
+```
+
+Each module is evaluated once per run, as a JavaScript module instance is: `prior.probl` runs once, before `shop_a.probl`, `shop_b.probl` and `main.probl`, and `rate` is one value in each world, the same in all four files. Its draw splits the program's worlds as a draw in `main.probl` would. The shops' observations are evidence for the whole program, so both datasets update the same `rate`: `rate == 0.8` is 87.28%, as when the files are written out in one, in evaluation order.
+
+**The rule.** A program is its modules' top levels, each once, in dependency order, followed by the entry file's, each module's names in its own namespace. Splitting a program into modules must give exactly the result of the same code written out in that order.
+
+**Why not like `simulate`.** If a module were evaluated like `simulate`, as its own normalized model, `shop_a.probl`'s observation would condition only its own copy of `rate`, and `shop_b.probl`'s only its own. The two datasets would never combine: `rate == 0.8` would be 71.58% for each copy, from one dataset each, and the program's evidence would leave out the modules' data. Caching such a module would cache a distribution, and each importer would still draw its own outcome. A module that means to export a self-contained posterior says so: `export let posterior = simulate { … }` is a distribution value, which importers draw as they choose.
+
+### Evaluation order and effects
+
+- **Order.** Modules are evaluated depth-first, after their dependencies, following import declarations in source order; a module reached again is reused, so a dependency shared by two modules (a diamond) runs once. This is ECMAScript's module evaluation order, without cycles.
+- **In the program's worlds.** A module's statements are ordinary statements of the program: its draws split worlds, its observations and scores weight them, and liveness, draw scheduling and merging apply to them as to any statement, without changing results. Module bindings, including `var`s, have a value in each world.
+- **Reports.** Only the entry file reports. Every module runs before the entry's first statement, so every observation in a module comes before every report, and the observe-after-report rule holds across files by construction.
+- **`print`** in a module prints once per world, as anywhere.
+- **Faults and errors.** A fault in a module follows the run's failure mode, as any statement's does: it stops the run in total mode, and ends its world in partial mode. Other errors stop the run. Diagnostics name the module's file.
+- **Snapshots.** `today`, `now` and `env` are the run's, the same in every module.
+- **Sampling.** Modules are sampled as any statement is. `simulate` inside a module always enumerates, as it does today; a sampled `simulate` is later work, not needed for imports.
 
 ### What an imported file may contain
 
@@ -57,26 +97,23 @@ Use the `.probl` extension for both scripts and reusable modules; validate a fil
 |---|---|
 | Imports | Allowed, subject to the acyclic graph and host resolver |
 | `fn`, `type`, `enum` | Allowed; private unless explicitly exported |
-| `let` and `var` bindings, private or exported | Allowed with deterministic initialization and no inference or external effects |
+| `let` and `var` bindings, private or exported | Allowed, evaluated in the program's worlds |
 | Distribution recipes such as `d6`, `one_of(...)`, recipe arithmetic | Allowed as values; construction is not a draw |
-| Assignments, deterministic branches/loops and expression statements | Allowed during initialization; mutation is confined to the module's own variables and execution remains subject to budgets |
-| Draws, probabilistic conditions, `chance`, observations and scores in initializers | Rejected, including indirectly through helper calls |
-| `simulate` in initializers | Rejected initially, even though it returns one distribution value |
-| `read`, `print`, `report` or future host effects during initialization | Rejected |
+| Draws, probabilistic conditions, `chance`, observations and scores | Allowed: they run once per run, in the program's worlds, and observations are evidence for the whole program |
+| `simulate` | Allowed: a local model, as anywhere |
+| `print` | Allowed |
+| `read` | Rejected initially: the entry file reads the program's data. Reading in a module needs the data to be loaded for the whole program before it runs |
+| `report` | Rejected: the entry file reports |
 | Invocation settings such as `@mode`, epsilon or failure policy | Rejected; the entry program/test runner controls execution |
 | Tests and expectations | Rejected; test files are separate roots and cannot be imported |
 
-These restrictions apply to private definitions as well as exports. Do not quietly ignore a script's forbidden top-level effects and extract only its functions: reject it as an import and suggest moving reusable definitions into a module. The RPG duel example could extract `Fighter`, `attack` and `duel` into a module while keeping hero selection and reports in its entry script.
+These restrictions apply to private definitions as well as exports. A script that reports or sets invocation settings can't be imported as it is; move what's reusable into a module. The RPG duel example could extract `Fighter`, `attack` and `duel` into a module while keeping hero selection and reports in its entry script.
 
-The initializer rule is about effects, not the number of resulting values. `let x = ~one_of([1])` and `let x = if 50% { 1 } else { 1 }` remain forbidden. Pure arithmetic, collections, recipe constructors and calls to helpers proven to satisfy the initializer restrictions are allowed, subject to budgets. Unproven indirect calls are conservatively rejected; this is not permission to execute arbitrary helpers to discover whether they split.
+Reject reading a binding before its module has evaluated it, including through a helper; do not introduce forward value initialization or lazy cycles. Functions and type declarations keep their existing forward-reference rules.
 
-Initially keep initializers independent of host data and the `today` snapshot too. Put computations needing those inputs in functions and pass the inputs explicitly. Function bodies retain the normal language's capabilities and restrictions, including the existing restriction on where `read` may appear; imports do not create a new I/O mechanism.
+Each module has one evaluation per run or isolated test, and nothing is shared across runs or tests: there is no mutable process-wide module state. Compiled declarations may be shared, and identical immutable values may be cached, but optimization must not change results, diagnostics or the host's resource contract.
 
-Initialize dependencies before dependents, executing bindings and initialization statements within a module in source order, before any entry-model execution. Reject reading a not-yet-initialized binding, including through a helper; do not introduce forward value initialization or lazy cycles. Functions and type declarations can keep their existing forward-reference rules. A module initializer error fails preparation, not one random world, and cannot be rescued by the proposed world-continuation policy.
-
-Each module has one logical initialization per program execution or isolated test. Its environment is read-only after preparation. Compiled declarations may be shared, and identical immutable values may be safely cached, but there is no mutable process-wide module state. Optimization must not change initialization diagnostics or the host's resource contract.
-
-### Mutation during initialization and exported variables
+### Mutation in modules and exported variables
 
 Mutability in the defining scope and permission to modify an imported binding are separate decisions. Module-local mutation does not require writable imports. Recommend allowing both of these:
 
@@ -92,9 +129,9 @@ export let y = x
 x = 4
 ```
 
-In the second example, `y` is 3: ordinary assignment captures the value at that statement, not a live alias to `x`. The final private `x` is 4. An exported named function reading `x` after initialization sees 4; a closure created earlier retains the normal capture-by-value behavior. Exporting a definition must not change either rule.
+In the second example, `y` is 3: ordinary assignment captures the value at that statement, not a live alias to `x`. The final private `x` is 4. An exported named function reading `x` after the module has run sees 4; a closure created earlier retains the normal capture-by-value behavior. Exporting a definition must not change either rule.
 
-Likewise, `export var x = 3; x += 1` exposes the final value 4 after initialization completes. `var` permits rebinding in its defining module's initialization scope; `export` controls visibility. Neither grants write access in an importer:
+Likewise, `export var x = 3; x += 1` exposes the final value 4 once the module has run. `var` permits rebinding in its defining module's top level; `export` controls visibility. A module variable has a value in each world, and importers see that world's final value. Neither grants write access in an importer:
 
 ```probl
 import { x } from "./settings.probl"
@@ -103,13 +140,13 @@ x = 5             # error: imported bindings are read-only
 
 An importer that wants its own mutable state can write `var local = x`. That binding then follows the ordinary per-world mutation and collection-copy rules, without changing the module or another importer. The same applies to a mutable bag copied from an exported initial value.
 
-This agrees with the existing function rule: functions may read outer variables but cannot assign to them. An exported function cannot become a setter for module variables merely because they were declared with `var`. During initialization, helper calls read the values available at the call; afterwards, named functions read the completed module environment. No new global-mutation permission is introduced.
+This agrees with the existing function rule: functions may read outer variables but cannot assign to them. An exported function cannot become a setter for module variables merely because they were declared with `var`. While the module runs, helper calls read the values available at the call; afterwards, named functions read the module's final values in the calling world. No new global-mutation permission is introduced.
 
 Writable imports would be a separate feature, requiring decisions about aliases across importers and copies at world splits. Such state could be defined per world; it is not inherently impossible. It is unnecessary for either example above, and this proposal does not add it.
 
 ### Visibility, captures and identity
 
-`export` may prefix a function, type, enum or eligible `let`/`var` binding. Everything else is private to its defining module. An exported function may call private helpers and read private module bindings under the initialization/capture rules above. Its names resolve in its defining module, never against coincidentally named bindings in the importer.
+`export` may prefix a function, type, enum or `let`/`var` binding. Everything else is private to its defining module. An exported function may call private helpers and read private module bindings under the capture rules above. Its names resolve in its defining module, never against coincidentally named bindings in the importer.
 
 Imported bindings are read-only. Same-scope name collisions are errors and require an alias; normal inner-scope shadowing remains possible. Exporting an enum exports its qualified variants: after importing `Direction`, use `Direction.Left`. It does not inject every variant into the importer's bare-name scope. Exported record declarations bring their constructor and type under the imported name. Declared public signatures and fields must not expose a private named type; initially export that type explicitly rather than introducing opaque public types.
 
@@ -129,13 +166,19 @@ a.probl -> b.probl -> a.probl                      error
 
 “Recursive imports” here means revisiting an active module during loading. It does not remove Probl's existing function recursion; ordinary recursive functions inside an acyclic module graph retain their current inference rules.
 
-Use resolver-provided canonical identities and a visiting/finished graph traversal. Reaching a visiting identity reports the full cycle with import locations. Reaching a finished identity reuses it. A simple visited set would wrongly classify a diamond as a cycle. Reject cycles before evaluating any initializer, including dependencies whose exports happen not to be used.
+Use resolver-provided canonical identities and a visiting/finished graph traversal. Reaching a visiting identity reports the full cycle with import locations. Reaching a finished identity reuses it. A simple visited set would wrongly classify a diamond as a cycle. Reject cycles before evaluating any module, including dependencies whose exports happen not to be used.
 
 Paths are literal UTF-8 strings with an explicit `.probl` suffix, resolved relative to the importing source, not the process's current directory. Start with relative file paths; defer package names, extension guessing, directories-as-modules, URLs and network resolution. `..` is subject to host authority. A native resolver must canonicalize aliases/symlinks consistently and enforce any host-configured root on the resolved target; merely removing `..` is not a sandbox. The existing CLI data resolver's local filesystem policy need not become a claim of confinement.
 
 The source resolver receives both the importing identity and requested path. This differs from the current data resolver. A host may supply only an in-memory source map, including in WASM. Imports never grant the engine ambient filesystem access, and permission to read data is not automatically permission to load it as source.
 
-Freeze source bytes and identities for one compilation/test invocation. Repeated loads of an identity must not observe different revisions. Bound individual and total source bytes, module count, dependency depth and initialization work; reject oversized graphs cleanly. Canonical identity, not source text equality, determines module identity. Record source snapshots or content digests for replay and cache invalidation, including transitive changes.
+Freeze source bytes and identities for one compilation/test invocation. Repeated loads of an identity must not observe different revisions. Bound individual and total source bytes, module count and dependency depth; modules' evaluation counts against the run's ordinary budgets. Reject oversized graphs cleanly. Canonical identity, not source text equality, determines module identity. Record source snapshots or content digests for replay and cache invalidation, including transitive changes.
+
+### Open questions for imports
+
+- **A module imported for its evidence alone.** A module that observes data but exports nothing would need a side-effect import, such as the bare `import "./data.probl"` the parser already recognizes. It would evaluate the module once, like any import, not include its text. Requiring a named import of something it exports is the alternative.
+- **`read` in modules.** Initially only the entry file reads data. A module could read its own data if the host loads every module's inputs before the run starts, with paths relative to the module.
+- **Sampled `simulate`.** A module that exports a `simulate` result enumerates it, as everywhere today. Sampling `simulate` blocks is separate work that modules don't depend on.
 
 ## Test files and isolation
 
@@ -166,7 +209,7 @@ Recognize `test "name" { ... }` only at the top level of a test source. Names ar
 
 Use `.test.probl` as the CLI/editor convention and an explicit test-source kind in compiler/library APIs. Renaming a diagnostic display name must not accidentally grant test syntax. A host-provided virtual test source uses the same test parse mode. Ordinary sources reject test declarations/expectation statements; contextual recognition can preserve ordinary identifiers named `test` or `expect`. Test sources cannot be imported, including from other test sources. Shared helpers belong in normal modules.
 
-Outside tests, a test file may contain imports, helper functions/types/enums and deterministic fixture initialization under the module restrictions. Initialization may use `var`, but completed fixtures are read-only to test bodies; a test can copy one into its own local `var`. There is no shared mutable fixture or probabilistic model execution at file scope. A test has a fresh environment, weight 1, evidence scope, resource accounting and diagnostic/report sinks. Mutating a local collection or bag in one test cannot affect another. Test return values do not become a distribution in a parent model; there is no parent model population.
+Outside tests, a test file may contain imports, helper functions/types/enums and deterministic fixture initialization. Fixtures may use `var`, but completed fixtures are read-only to test bodies; a test can copy one into its own local `var`. Imported modules are evaluated afresh for each test, in that test's worlds, before its body, so a module's model is part of every test that imports it, and nothing is shared between tests. The test file's own top level stays deterministic initially: the model under test is built in the test body. A test has a fresh environment, weight 1, evidence scope, resource accounting and diagnostic/report sinks. Mutating a local collection or bag in one test cannot affect another. Test return values do not become a distribution in a parent model; there is no parent model population.
 
 This is like `simulate` in isolation, but a runner executes each test as its own entry model. It must not be implemented as a normal call returning a mixture of all tests or as a nested `simulate` that loses assertion sites. Each test has its own pass/fail status. A model error fails that test and normally leaves the runner free to execute other independent tests; cancellation or an internal engine failure may abort the suite.
 
@@ -309,14 +352,15 @@ The current [AST](../../crates/probl-syntax/src/ast.rs) and [parser](../../crate
 
 - [Spans](../../crates/probl-syntax/src/span.rs) currently contain only byte offsets, and the public [Program](../../crates/probl/src/program.rs) retains one source file. Add source identities and a source map, or an equivalent explicit mapping, throughout compile/runtime diagnostics, report labels, editor symbols and snippets. Concatenating files without a source mapping is insufficient.
 - Name resolution currently registers functions/types in one compilation context. Give each module a lexical namespace, resolve exports/import aliases to declaration identities, and remap IDs once when linking. Preserve captures, effect analysis, liveness, draw scheduling, recursive calls and memoization.
-- Current [effect analysis](../../crates/probl-sema/src/effects.rs) primarily propagates evidence and print effects. Module initializers and expectation expressions need a stronger check for draws, mutation, input access, nested inference and indirect calls. “No print and no observe” does not mean deterministic.
+- Link modules into one entry program: module top levels become a prologue in evaluation order, each with its own namespace and source identity, so liveness, draw scheduling, merging and memoization apply across files unchanged.
+- Current [effect analysis](../../crates/probl-sema/src/effects.rs) primarily propagates evidence and print effects. Expectation expressions, and a test file's own top level, need a stronger check for draws, mutation, input access, nested inference and indirect calls. “No print and no observe” does not mean deterministic. Module top levels don't need it: they run as model code.
 - Tests need independent entry functions/settings and a final expectation query plan. Track shared versus world-indexed expressions, pointwise operations and reduction dependencies. Capture only referenced values/projections with correct weights; preserve their liveness through setup and maintain joint expressions until after projection. Assertion sites must survive optimizations, including assertions of deterministic false expressions.
 - Reuse structured distribution/statistic calculations, but preserve completeness information and do not base test results on rendered reports. A test runner written on top of today's report text would inherit rounding and conditional-population ambiguities.
 
 Recommended order:
 
 1. Multi-source resolver, identities, source maps and graph/limit diagnostics.
-2. Export/import name resolution, deterministic initialization checks and read-only import bindings.
+2. Export/import name resolution, module evaluation as a prologue in dependency order, and read-only import bindings.
 3. Isolated enumerated tests with terminal boolean expectations and structured results.
 4. Population query reductions, including joint-value, shared/world-indexed operand and completeness checks; these can ship with stage 3 if ready.
 5. Native/WASM/editor integration and regression coverage; only then design sampled checks and richer assertion scopes.
@@ -329,8 +373,8 @@ Modules and basic tests do not require the deferred portal implementation or loc
 |---|---|
 | Graph loading | Direct/transitive imports, diamond reuse, self/cyclic imports with traces, alias paths, symlinks, missing sources, malformed UTF-8, depth/count/total-byte limits |
 | Boundaries | Private export rejection, aliases/collisions, qualified enum variants, record constructors, private helpers/captures, public signatures, same declaration through two paths |
-| Initialization | Private/exported `var`, ordered local mutation, value snapshots versus later assignments, existing closure captures, read-only imports and independent mutable copies; recipes accepted; hidden draws/evidence/print/read/`simulate` rejected; forward value dependencies rejected; unused invalid dependencies diagnosed; no shared mutable state |
-| Semantics across files | Matching inline/imported models under merging, memoization, recursion, sampling and evidence; correct source locations and cache invalidation after transitive edits |
+| Module evaluation | Each module once per run, after its dependencies and before its importers, a diamond's shared dependency once; a module's draw the same for every importer in each world; observations in several modules combining (the 87.28% example); private/exported `var` with a final value per world, value snapshots versus later assignments, existing closure captures, read-only imports and independent mutable copies; `simulate` and `print` as in the entry file; `report`, `read` and invocation settings rejected; faults under total and partial modes; forward value dependencies rejected; nothing shared across runs or tests |
+| Semantics across files | Splitting a program into modules gives exactly the result of the same code written out in evaluation order, under merging, memoization, recursion, sampling and evidence; correct source locations and cache invalidation after transitive edits |
 | Test grammar/discovery | Test-only source mode, no imported tests, duplicate names, optional labels, empty suite/filter, no expectation, illegal nested/late model statements |
 | Isolation | Mutable collections/bags, observations, captures, input snapshots, date, budgets and output isolated across tests; order does not affect results |
 | Expectations | Non-boolean rejection, all-world/recipe predicates, tiny positive counterexample weight, failed expectations do not filter, all expectations share the final population |
@@ -344,6 +388,6 @@ Use small models with independent hand/rational answers, not only snapshots of t
 
 - **Zig** uses named `test` declarations and an `expect` helper, showing that this vocabulary works without BDD nesting. Its tests can live alongside normal code and are omitted outside test builds; Probl's separate-file restriction would be a deliberate difference. [Zig 0.15.2 language reference](https://ziglang.org/documentation/0.15.2/#Zig-Test).
 - **Rust** treats integration tests as separate consumers of the library's public API, while in-module tests can access private items. The separate-file proposal follows the former visibility model initially; private-testing privileges would need a separate decision. [Rust test organization](https://doc.rust-lang.org/book/ch11-03-test-organization.html).
-- **ECMAScript** provides explicit named imports/exports and aliases, and specifies a substantially richer cyclic-module lifecycle. Borrowing the explicit dependency spelling does not require Probl to adopt live mutable exports, arbitrary module execution or cyclic initialization. [Import syntax](https://tc39.es/ecma262/multipage/ecmascript-language-scripts-and-modules.html#sec-imports), [cyclic module records](https://tc39.es/ecma262/multipage/ecmascript-language-scripts-and-modules.html#sec-cyclic-module-records).
+- **ECMAScript** provides explicit named imports/exports and aliases. Its modules are evaluated once, after their dependencies and before their importers, and a module with top-level `await` makes its importers wait for its result. Probl adopts that evaluation model, with a draw in the role of `await`: importers see its outcome, the same in each world. It doesn't adopt live mutable exports or cyclic initialization. [Import syntax](https://tc39.es/ecma262/multipage/ecmascript-language-scripts-and-modules.html#sec-imports), [cyclic module records](https://tc39.es/ecma262/multipage/ecmascript-language-scripts-and-modules.html#sec-cyclic-module-records).
 
 The key Probl-specific additions are weighted assertion semantics, preservation of joint relationships, and an honest distinction between a checked population, unresolved inference and sampled evidence.

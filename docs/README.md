@@ -27,7 +27,7 @@ The [examples directory](../examples) contains runnable models with expected out
 ## Research and historical rationale
 
 - [Extending enumeration](design/enumeration-support.md): what enumeration computes beyond explicit worlds and how, what's left with first estimates, and how each phase was checked.
-- [Imports and model tests](design/imports-and-tests.md): static reusable definitions, acyclic dependencies, isolated `.test.probl` files and explicit assertions over weighted populations.
+- [Imports and model tests](design/imports-and-tests.md): static reusable definitions, acyclic dependencies, modules whose models run once in the program's worlds, isolated `.test.probl` files and explicit assertions over weighted populations.
 - [Error handling](design/error-handling.md): a near-term proposal for specific local catches and total/partial failure modes (partial by default when sampling), with explicit failure accounting and partial-result reporting.
 - [Static checking and explanations](design/static-checking.md): a proposal for errors before running, only for definite mistakes: kinds of values first, then types and effects; explanations for the world limit and lost conjugate updates; with a survey of which runtime errors are decidable.
 - [Type annotations and unions](design/annotations-and-unions.md): a proposal for annotations that give a value its declared type, converting only between close numeric types; collection literals that take their kind from the declaration; and union types written `A or B`.

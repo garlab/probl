@@ -343,7 +343,7 @@ Partial outcomes need effective policy, failure groups and coverage, plus each r
 
 The playground should show “partial result,” failure counts or justified mass, source locations and the affected reporting basis prominently. Running more samples and discovering an error should be presented as finding an invalid outcome, not as a suggestion to reduce runs until the error disappears.
 
-Future module initialization and prologue/portal operations run outside ordinary world continuation. Their failures need scope-appropriate preparation/host-operation handling, not an instruction to drop some model worlds. This does not preclude a later explicit local recovery contract for those scopes. No new I/O, tasks or portal implementation is needed for this proposal. The [test proposal](imports-and-tests.md) must fail a test on any unhandled model fault regardless of partial execution; one test's failure need not stop other isolated tests.
+Under the [imports proposal](imports-and-tests.md), a module's top level runs in the program's worlds, so its faults follow the failure modes like any statement's. Future prologue/portal operations run outside ordinary world continuation. Their failures need scope-appropriate preparation/host-operation handling, not an instruction to drop some model worlds. This does not preclude a later explicit local recovery contract for those scopes. No new I/O, tasks or portal implementation is needed for this proposal. The [test proposal](imports-and-tests.md) must fail a test on any unhandled model fault regardless of partial execution; one test's failure need not stop other isolated tests.
 
 ## Implementation order and validation
 
