@@ -36,8 +36,16 @@ pub fn lower_with_symbols(program: &ast::Program, src: &str) -> (Program, Vec<Di
 ///
 /// [`SourceMap`]: probl_syntax::SourceMap
 pub fn lower_modules(modules: &[ModuleAst], src: &str) -> (Program, Vec<Diagnostic>, Symbols) {
+    lower_model_test(modules, src, None)
+}
+
+pub(crate) fn lower_model_test(
+    modules: &[ModuleAst],
+    src: &str,
+    test: Option<&ast::ModelTest>,
+) -> (Program, Vec<Diagnostic>, Symbols) {
     let mut lowerer = Lowerer::new(src);
-    lowerer.program(modules);
+    lowerer.program(modules, test);
     let mut symbols = std::mem::take(&mut lowerer.symbols);
     // A field read by name is the one declared record's with that field, if
     // only one has it and no record without a type does. Otherwise it
@@ -217,7 +225,7 @@ struct Lowerer<'a> {
     field_uses: Vec<(Span, String)>,
     declared_types: Vec<(TypeSpec, Span)>,
     /// Whether the file being lowered is the program's entry: only it may
-    /// report, read data or set how the program runs.
+    /// report or set how the program runs.
     is_entry: bool,
 }
 
@@ -407,11 +415,18 @@ impl<'a> Lowerer<'a> {
         {
             open.push(def);
         }
-        if top && let Some(existing) = self.globals.get(name) {
-            if existing.imported {
+        if top {
+            let imported = self.globals.get(name).is_some_and(|b| b.imported)
+                || self
+                    .fn_defs
+                    .get(name)
+                    .into_iter()
+                    .chain(self.type_defs.get(name))
+                    .any(|&d| self.symbols.definitions[d].imported.is_some());
+            if imported {
                 self.error(span, format!("`{name}` is imported"))
                     .help("give this variable another name, or the import another name with `as`");
-            } else {
+            } else if self.globals.contains_key(name) {
                 self.error(span, format!("`{name}` is already defined at the top level"))
                     .help("top-level names must be unique; use `var` and assign to change a value");
             }
@@ -879,7 +894,7 @@ impl<'a> Lowerer<'a> {
     /// Lower a program's files, in evaluation order: each module after the
     /// modules it imports, the entry last. Each file's top level is part of
     /// the main function, in that order, and its names are its own.
-    fn program(&mut self, modules: &[ModuleAst]) {
+    fn program(&mut self, modules: &[ModuleAst], test: Option<&ast::ModelTest>) {
         let entry = modules
             .iter()
             .position(|m| m.entry)
@@ -898,13 +913,14 @@ impl<'a> Lowerer<'a> {
         self.new_fn("the top level", FnKind::Main, Span::default(), None);
         let mut exports: Vec<Exports> = Vec::with_capacity(modules.len());
         let mut body = Vec::new();
-        for m in modules {
+        for (i, m) in modules.iter().enumerate() {
             // Each file starts with no names but the built-ins. The entry's
             // stay in place once it's lowered.
             let mut names = Namespace::default();
             self.swap_namespace(&mut names);
             self.is_entry = m.entry;
-            let exported = self.module(m, &exports, &mut body);
+            let selected = test.filter(|_| i + 1 == modules.len());
+            let exported = self.module(m, &exports, &mut body, selected);
             if !m.entry {
                 self.swap_namespace(&mut names);
             }
@@ -938,7 +954,13 @@ impl<'a> Lowerer<'a> {
     /// Lower one file: its declarations, its imports, its top level
     /// (appended to `body`, the main function's) and its functions. Return
     /// what it exports.
-    fn module(&mut self, m: &ModuleAst, done: &[Exports], body: &mut Vec<Stmt>) -> Exports {
+    fn module(
+        &mut self,
+        m: &ModuleAst,
+        done: &[Exports],
+        body: &mut Vec<Stmt>,
+        test: Option<&ast::ModelTest>,
+    ) -> Exports {
         // Declarations first, so they can be used before they're defined.
         let mut fn_decls = Vec::new();
         let mut type_decls = Vec::new();
@@ -1021,6 +1043,7 @@ impl<'a> Lowerer<'a> {
         }
 
         let imported = self.imports(m, &imports, done);
+        self.check_public_types(m, &exported);
 
         // Fields' types, once every type's name is known.
         for (id, decl) in type_decls {
@@ -1050,6 +1073,40 @@ impl<'a> Lowerer<'a> {
             if let ast::Item::Stmt(stmt) = inner {
                 self.lower_stmt(stmt, body);
             }
+        }
+        if let Some(test) = test {
+            // Fixtures have finished. A test may copy them but cannot
+            // modify them, and its locals aren't file-level globals.
+            for binding in self.cur().scopes[0].values_mut() {
+                binding.mutable = false;
+                binding.captured = true;
+            }
+            self.push_scope();
+            for stmt in &test.setup {
+                self.lower_stmt(stmt, body);
+            }
+            self.is_entry = true;
+            for assertion in &test.assertions {
+                let closure = self.lambda(&[], &assertion.value, assertion.span);
+                let value = builtin(
+                    Builtin::TestQuery,
+                    vec![closure, lit(Lit::Bool(!assertion.report), assertion.span)],
+                    assertion.value.span,
+                );
+                let site = self.reports.len() as u32;
+                self.reports.push(ReportSite {
+                    label: assertion
+                        .label
+                        .as_ref()
+                        .map_or_else(|| self.text(assertion.value.span), |(label, _)| label.clone()),
+                    key_label: None,
+                    kind: ReportKind::Once,
+                    span: assertion.span,
+                });
+                body.push(self.stmt(assertion.span, StmtKind::Report { site, value, key: None }));
+            }
+            self.is_entry = false;
+            self.pop_scope(test.span.hi);
         }
         let top = self
             .ctx
@@ -1110,6 +1167,71 @@ impl<'a> Lowerer<'a> {
         out
     }
 
+    /// Public annotations must name public types, including inside
+    /// containers and anonymous records. Imported types are already public
+    /// in their defining file; local ones must be explicitly exported.
+    fn check_public_types(&mut self, m: &ModuleAst, exported: &[(ast::Ident, Exported)]) {
+        let public: FxHashSet<&str> = exported
+            .iter()
+            .filter(|(_, kind)| matches!(kind, Exported::Type | Exported::Enum))
+            .map(|(name, _)| name.name.as_str())
+            .collect();
+        let private: FxHashSet<String> = self
+            .type_defs
+            .iter()
+            .filter(|(name, def)| !public.contains(name.as_str()) && self.symbols.definitions[**def].imported.is_none())
+            .map(|(name, _)| name.clone())
+            .collect();
+        fn check(lowerer: &mut Lowerer<'_>, ty: &ast::TypeExpr, private: &FxHashSet<String>) {
+            match ty {
+                ast::TypeExpr::Named { name, args } => {
+                    if private.contains(&name.name) {
+                        lowerer
+                            .error(
+                                name.span,
+                                format!("a public annotation exposes private type `{}`", name.name),
+                            )
+                            .help(format!("add `export` before the definition of `{}`", name.name));
+                    }
+                    for arg in args {
+                        check(lowerer, arg, private);
+                    }
+                }
+                ast::TypeExpr::Record { fields, .. } => {
+                    for (_, ty) in fields {
+                        check(lowerer, ty, private);
+                    }
+                }
+                ast::TypeExpr::Union { members, .. } => {
+                    for ty in members {
+                        check(lowerer, ty, private);
+                    }
+                }
+            }
+        }
+        for item in &m.ast.items {
+            let ast::Item::Export(export) = item else { continue };
+            match &*export.item {
+                ast::Item::Fn(decl) => {
+                    for ty in decl
+                        .params
+                        .iter()
+                        .filter_map(|p| p.ty.as_ref())
+                        .chain(decl.ret.as_ref())
+                    {
+                        check(self, ty, &private);
+                    }
+                }
+                ast::Item::Type(decl) => check(self, &decl.ty, &private),
+                ast::Item::Stmt(ast::Stmt {
+                    kind: ast::StmtKind::Let { ty: Some(ty), .. },
+                    ..
+                }) => check(self, ty, &private),
+                _ => {}
+            }
+        }
+    }
+
     /// Bring a file's imports into its names, from the files already
     /// lowered, and return the imported values, for its top-level scope.
     fn imports(&mut self, m: &ModuleAst, imports: &[&ast::Import], done: &[Exports]) -> FxHashMap<String, Binding> {
@@ -1143,6 +1265,7 @@ impl<'a> Lowerer<'a> {
                 if self.fn_by_name.contains_key(&local.name)
                     || self.record_by_name.contains_key(&local.name)
                     || self.enum_by_name.contains_key(&local.name)
+                    || self.variants.contains_key(&local.name)
                 {
                     self.error(local.span, format!("`{}` is already defined in this file", local.name))
                         .help(format!("import it under another name: `{name} as …`"));

@@ -6,9 +6,14 @@ All notable changes to the published crates are recorded here. The format follow
 
 ### Added
 
+- Initial model tests: `probl test` discovers `.test.probl` files and runs named `test` blocks with terminal boolean `expect` assertions. Tests enumerate independently with fresh fixtures/imports, preserve tiny counterexample weights, and distinguish failures, errors and incomplete inference. The library exposes `compile_tests` and structured results. Population reductions in expectations and playground execution remain later stages.
 - Imports across files: `import { walk, step as move } from "./walk.probl"`, and `export` before a `fn`, `type`, `enum`, `let` or `var`. Definitions are static; a file's top level runs once per run, before the files that import it, in the program's worlds, so a draw there is the same outcome for every importer and its observations are the program's evidence. Imported values are read-only, and only the file that's run reports or sets pragmas. A `read` in an imported file is relative to that file. `probl run`, `probl check` and the REPL read imports from disk; the library's `compile_with` takes them from a host's `Sources` (`LocalSources`, `MemorySources`), and each `Diagnostic` names its `file()`.
 - The playground's programs can have several files, shown as tabs above the editor: `main.probl` runs, and `+` adds a file it can import. Files are saved in the browser and shared in the link; a file with errors is marked, and going to an imported name's definition opens its file. The WASM API's `check` takes a JSON request (`check(source, {name, sources, file})` in JavaScript), `run` takes `name` and `sources`, and each diagnostic names its `file`.
 - When a fault stops a run, its diagnostic notes for which values the operation failed (`for example when x = 0`) and, when enumerating, how often: `fails for 16.67% of the weight reaching this operation`. The share is given only where it can be established without running anything more of the model, and is labelled per pass inside a loop. When sampling, the note names the failing run and the seed. The library's `Error::fault` returns the same as a `FaultContext`. Partial results' diagnostics, and each `Failure::fault`, give the first failing world's or run's values as an example.
+
+### Fixed
+
+- Analytic boolean events retain tiny tails when a probability rounds to zero or one, and boolean reports preserve products below binary64's range. Explicit comparisons whose nonzero tails cannot be represented in CDF coordinates now produce a capability error.
 
 ## [0.5.0] - 2026-11-05
 

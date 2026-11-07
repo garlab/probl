@@ -15,6 +15,8 @@ use std::io::{BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+mod model_tests;
+
 #[derive(Parser)]
 #[command(
     name = "probl",
@@ -151,6 +153,8 @@ struct RunArgs {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Run isolated model tests by enumerating their final populations.
+    Test(model_tests::Args),
     /// Run a program and print its reports.
     Run(Box<RunArgs>),
     /// Check a program for errors without running it.
@@ -183,6 +187,7 @@ enum Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
+        Command::Test(args) => model_tests::run(args),
         Command::Run(args) => {
             let RunArgs {
                 file,

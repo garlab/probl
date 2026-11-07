@@ -55,10 +55,10 @@ pub fn compile_with(name: &str, source: &str, sources: &mut dyn Sources) -> Resu
 /// times, from any thread.
 #[derive(Clone)]
 pub struct Program {
-    ir: Arc<ir::Program>,
+    pub(crate) ir: Arc<ir::Program>,
     /// Its files.
-    sources: Arc<SourceMap>,
-    warnings: Vec<Diagnostic>,
+    pub(crate) sources: Arc<SourceMap>,
+    pub(crate) warnings: Vec<Diagnostic>,
 }
 
 /// How a program runs: its `@mode`, or what [`Options`] choose instead.

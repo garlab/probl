@@ -1358,6 +1358,55 @@ report minutes(delay) by 1 as "Delay"`;
     expect(broken, 'and the file that imported it has an error');
     await multi.close();
   }
+
+  // Imported aliases retain the original function's signature and the
+  // identity of an enum, even when two files give their enums the same name.
+  {
+    const aliases = await open(url, 'Linux x86_64');
+    await aliases.evaluate(() => {
+      window.playground.addFile('left.probl', 'export enum Side { Left }\nexport fn twice(x: int): int { 2 * x }');
+      window.playground.addFile('right.probl', 'export enum Side { Right }');
+    });
+    const imports = 'import { Side as A, twice as double } from "./left.probl"\nimport { Side as B } from "./right.probl"\n';
+    for (const [name, variant] of [['A', 'Left'], ['B', 'Right']]) {
+      await aliases.evaluate(({ source, variant }) => {
+        window.playground.setSource(source);
+        const { view } = window.playground;
+        view.dispatch({ selection: { anchor: source.length - variant.length - 1 } });
+        view.focus();
+      }, { source: `${imports}report ${name}.${variant}`, variant });
+      await becomes(aliases, () => document.querySelectorAll('.cm-probl-same').length === 2);
+      await aliases.evaluate((count) => {
+        const { view } = window.playground;
+        const from = view.state.doc.length - count;
+        view.dispatch({ changes: { from, to: view.state.doc.length }, selection: { anchor: from } });
+      }, variant.length + 1);
+      await aliases.keyboard.type('.');
+      await becomes(aliases, () => document.querySelector('.cm-tooltip-autocomplete li'));
+      const offered = await aliases.$$eval('.cm-tooltip-autocomplete .cm-completionLabel', (all) => all.map((e) => e.textContent));
+      expect(offered.join() === variant, `${name} offers only the variants of its imported enum`, offered.join(', '));
+      await aliases.keyboard.press('Escape');
+    }
+    await aliases.evaluate((source) => {
+      window.playground.setSource(source);
+      const { view } = window.playground;
+      view.dispatch({ selection: { anchor: source.lastIndexOf('double') + 2 } });
+      view.focus();
+    }, `${imports}report double(1)`);
+    await becomes(aliases, () => document.querySelectorAll('.cm-probl-same').length === 2);
+    await aliases.evaluate(() => {
+      const { view } = window.playground;
+      view.dispatch({ selection: { anchor: view.state.doc.length - 1 } });
+    });
+    await aliases.keyboard.down('Control');
+    await aliases.keyboard.down('Shift');
+    await aliases.keyboard.press('Space');
+    await aliases.keyboard.up('Shift');
+    await aliases.keyboard.up('Control');
+    const helped = await becomes(aliases, () => document.querySelector('.cm-probl-signature-help b')?.textContent === 'x: int');
+    expect(helped, 'a function imported with an alias shows parameter help');
+    await aliases.close();
+  }
 } finally {
   await browser.close();
   await server?.stop(true);

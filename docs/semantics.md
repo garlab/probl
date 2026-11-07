@@ -679,6 +679,11 @@ This implementation deliberately rejects unsupported uses with a sampling diagno
 
 Continuous draws inside `simulate` make a distribution whose outcomes own their draws, so that each draw from it is fresh and its parts stay correlated (section 8); capturing analytic outcomes into `simulate` remains unsupported. Ordinary functions can already return analytic outcomes. Cyclic loops involving analytic state use bounded unrolling and the usual iteration/work limits rather than the finite-state Markov solver.
 
+Explicit comparisons reject a threshold within the support when its CDF rounds
+to an endpoint and erases a nonzero tail. A capability diagnostic replaces a
+predicate incorrectly rounded to a constant. Internal numeric CDF queries still
+use binary64 precision.
+
 ### Numerical integration
 
 `@integrate`, or `@integrate 1e-6` with a relative tolerance (1e-9 by default, at most 0.001), lets enumeration compute by numerical integration what has no formula. The host can turn it on too (`--integrate`, `Options::integrate`). It's opt-in because its results are approximations beyond rounding: the summary line says `integrated to 1e-9`, and the library's `Outcome::integration()` gives the tolerance. Then every probability, summary and the evidence of the run can be approximate to about that tolerance. Results that didn't need it aren't marked.
@@ -763,6 +768,8 @@ A program is its entry file, the file that's run, and the files it imports, dire
 
 **Names.** Each file has its own top-level names: functions, types, enums, enum variants and variables. An imported name refers to the exporting file's definition, so an enum or record type imported through two files is the same type. An enum's variants are imported with it, qualified (`Side.Left`). Importing a name the file doesn't export, importing a name twice, or importing a name the file also defines at its top level, is an error.
 
+Annotations on exported functions, values and record fields must not expose a private named type, including inside containers or unions. Export that type too, or use a public type imported from its defining file. Private types remain usable inside function bodies.
+
 **Evaluation.** Files are evaluated depth first: each file's imports, in the order they're written, then its own top level; a file already evaluated is skipped. Each file's top level runs once per run, in the program's worlds, before the first statement of any file that imports it. So the program means the same as its files' top levels written out in that order, each in a namespace of its own:
 
 - A draw in a file's top level splits the program's worlds once: every file that imports the value sees the same outcome in each world.
@@ -774,7 +781,27 @@ A program is its entry file, the file that's run, and the files it imports, dire
 
 **Data.** A `read` in an imported file reads a path relative to that file, under the same rules as in the entry file (section 15): before the run, once, as a constant.
 
-## 17. Not specified yet
+## 17. Model tests
+
+Explicit test sources contain named `test` blocks with setup followed by terminal
+`expect` assertions. Each test evaluates imports, file fixtures and its own setup
+afresh, in one joint population. Fixtures are read-only to test bodies. Boolean
+assertions inspect the final population without conditioning it; boolean recipes
+are integrated. A positive counterexample fails regardless of display rounding.
+Supported analytic predicates are almost-sure checks. A comparison with a
+nonzero tail beyond the analytic CDF's precision is a capability error, rather
+than a predicate rounded to a constant. Sampling and numerical integration
+requests are rejected by the test runner.
+
+Assertions and diagnostic reports are read-only, including through callbacks.
+Incomplete model or nested-inference weight prevents a pass; impossible evidence
+and runtime faults are errors. Execution enumerates without sampling fallback.
+Population reductions in expectations are not implemented yet and are rejected
+explicitly. [Model tests](model-tests.md) describes the current CLI/library subset,
+replay settings and structured results; the [design](design/imports-and-tests.md)
+describes the remaining query and editor stages.
+
+## 18. Not specified yet
 
 - **Particles, beam search and merged runs** (audit D4): how merged samples keep their statistical bookkeeping, and when particles resample.
 - **A general method for models that aren't conjugate**, such as MCMC: its target, its moves and its report estimators ([inference guide](inference.md), section 2).

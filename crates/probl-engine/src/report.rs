@@ -362,7 +362,7 @@ impl Acc {
             }
             Value::Event(e) => {
                 self.facts += weight;
-                self.yes += weight.scale(e.probability());
+                self.yes += weight * e.probability_weight();
             }
             Value::Bool(b) => {
                 self.facts += weight;

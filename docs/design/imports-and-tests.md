@@ -1,6 +1,6 @@
 # Imports and model tests
 
-> Draft proposal, updated 6 November 2026. Imports and exports are implemented as proposed here ([as built](#as-built), [semantics, section 16](../semantics.md#16-files-and-imports)); `test` and `expect` are proposed features, not executable syntax. This document recommends contracts before implementation; the [reference semantics](../semantics.md) remains authoritative for current behavior.
+> Design, updated 6 November 2026. Imports and exports are implemented ([as built](#as-built), [semantics, section 16](../semantics.md#16-files-and-imports)). The [first model-test runner](../model-tests.md) implements isolated enumerated tests with terminal boolean expectations in the CLI and library. Population reductions, static effect checks, richer counterexamples and playground test execution remain proposals. The [reference semantics](../semantics.md) remains authoritative for current behavior.
 
 ## Recommendation
 
@@ -182,7 +182,8 @@ Freeze source bytes and identities for one compilation/test invocation. Repeated
 - **Hosts.** The library's `compile_with` takes a `Sources`: `LocalSources` (canonical paths on disk, `.probl` suffix, no root confinement, as `LocalFiles`) or `MemorySources`. `probl run`, `probl check` and the REPL use `LocalSources`. A `read` in an imported file is rewritten at compile time through `data_path`, relative to that file, so the host's `Files` are unchanged.
 - **Editors.** An imported name is a definition in the importing file, linked to the one it imports, so each file's symbols stand on their own. `probl_sema::compile_module` checks a file as it's compiled when imported, with what it imports, as an editor checks the file it shows.
 - **Playground.** The WASM API's `check` and `run` take the other files as `"sources"`; `check` can check any of them, and its symbols name the definitions in other files that the checked file uses. The page shows a program's files as tabs, `main.probl` first; it saves them, shares them in the link, marks files with errors, and goes to an imported name's definition in its file.
-- **Not yet.** The namespace form, re-exports, renaming a file's imports with it, and tests.
+- **Tests, first stage.** `probl test` and `probl::compile_tests` compile each test as an independent model with fresh fixtures and imports. Terminal boolean expectations use read-only runtime guards and unrounded counterexample weights. Results distinguish pass, failure, error and inconclusive, retaining incomplete inference used during setup. See [model tests](../model-tests.md) for the implemented subset and limits.
+- **Not yet.** The namespace form, re-exports, renaming a file's imports with it, population query reductions, static assertion effect diagnostics, richer counterexample values, and playground test execution.
 
 ### Deferred
 
@@ -383,9 +384,9 @@ The playground can begin with a host-supplied virtual source map. A later multi-
 
 ## Implementation implications and order
 
-The current [AST](../../crates/probl-syntax/src/ast.rs) and [parser](../../crates/probl-syntax/src/parser.rs) already contain an import-path placeholder; [lowering](../../crates/probl-sema/src/lower.rs) explicitly rejects it. Cycle detection itself is a small graph task. The important work is making a multi-file program preserve existing semantics:
+The [AST](../../crates/probl-syntax/src/ast.rs), [parser](../../crates/probl-syntax/src/parser.rs) and [lowering](../../crates/probl-sema/src/lower.rs) now implement imports and the first boolean-test stage. The remaining query work must preserve the same multi-file semantics:
 
-- [Spans](../../crates/probl-syntax/src/span.rs) currently contain only byte offsets, and the public [Program](../../crates/probl/src/program.rs) retains one source file. Add source identities and a source map, or an equivalent explicit mapping, throughout compile/runtime diagnostics, report labels, editor symbols and snippets. Concatenating files without a source mapping is insufficient.
+- [Spans](../../crates/probl-syntax/src/span.rs) now use one offset space with a source map, and the public [Program](../../crates/probl/src/program.rs) owns the complete source snapshot. Keep this mapping throughout test/query diagnostics and editor integration.
 - Name resolution currently registers functions/types in one compilation context. Give each module a lexical namespace, resolve exports/import aliases to declaration identities, and remap IDs once when linking. Preserve captures, effect analysis, liveness, draw scheduling, recursive calls and memoization.
 - Link modules into one entry program: module top levels become a prologue in evaluation order, each with its own namespace and source identity, so liveness, draw scheduling, merging and memoization apply across files unchanged.
 - Current [effect analysis](../../crates/probl-sema/src/effects.rs) primarily propagates evidence and print effects. Expectation expressions need a stronger check for draws, mutation, input access, nested inference and indirect calls. “No print and no observe” does not mean deterministic. Module top levels and a test file's top level don't need it: they run as model code. The expectation rules also need a dependence analysis, to tell world-indexed expressions from shared ones through captures and module bindings.

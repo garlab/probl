@@ -14,7 +14,7 @@ A sampled run repeats exactly with the same `--seed`, and a model that uses `tod
 
 ## Set up
 
-You'll need Rust 1.85 or later. The playground also needs [Bun](https://bun.sh) and the `wasm32-unknown-unknown` target; see the README for setup and [playground development](docs/playground.md#develop-locally).
+You'll need the latest stable Rust (minimum 1.99). The playground also needs [Bun](https://bun.sh) and the `wasm32-unknown-unknown` target; see the README for setup and [playground development](docs/playground.md#develop-locally).
 
 ```sh
 git clone https://github.com/garlab/probl

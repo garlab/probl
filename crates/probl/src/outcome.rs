@@ -16,6 +16,9 @@ pub use json::{ReportJsonError, ReportJsonLimits};
 
 /// What a run gives back.
 pub struct Outcome {
+    /// Unrounded fact weights, used by model tests rather than display probabilities.
+    pub(crate) test_facts: Vec<Option<(probl_engine::Weight, probl_engine::Weight, bool)>>,
+    pub(crate) incomplete_inference: bool,
     program: Arc<ir::Program>,
     results: Vec<report::ReportResult>,
     format: report::Format,
@@ -69,6 +72,15 @@ impl Outcome {
             None => outcome.unresolved,
         };
         Outcome {
+            test_facts: outcome
+                .reports
+                .iter()
+                .map(|sink| {
+                    let acc = sink.groups.get(&Value::Unit)?;
+                    acc.is_event().then_some((acc.yes, acc.facts, acc.missing.is_zero()))
+                })
+                .collect(),
+            incomplete_inference: outcome.stats.incomplete_inference,
             integration: outcome.integration,
             evidence: evidence(&outcome),
             unresolved: Unresolved(unresolved),

@@ -10,7 +10,7 @@ const keywords = new Set([
   'let', 'loop', 'match', 'mod', 'not', 'observe', 'or', 'repeat', 'report', 'return', 'score', 'simulate',
   'try', 'type', 'typeof', 'var', 'while', 'with',
   // Only keywords in their places, but always highlighted.
-  'as', 'by', 'from', 'to',
+  'as', 'by', 'from', 'to', 'export', 'test', 'expect',
 ]);
 const atoms = new Set(['true', 'false']);
 const types = new Set(['int', 'float', 'complex', 'prob', 'bool', 'str', 'date', 'datetime', 'duration', 'squared_duration', 'list', 'map', 'bag', 'set', 'dist']);

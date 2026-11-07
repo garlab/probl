@@ -10,6 +10,7 @@ Start with the [repository README](../README.md) to install and run Probl, or th
 | [Reference semantics](semantics.md) | Types, identity, inference, approximation and resource contracts |
 | [Reading data](data-input.md) | Typed CSV, JSON and line input; schemas, limits and host authority |
 | [Rust library](library.md) | Compile/load/run, structured results, uncertainty and embedding |
+| [Model tests](model-tests.md) | Isolated `test` blocks, boolean expectations, CLI discovery and structured results |
 | [Inference](inference.md) | Supported conjugate updates, likelihood-weighting limitations and deferred methods |
 | [Use cases and gaps](use-cases.md) | Decisions, queues, predictive checks, monitoring and correlated risks |
 

@@ -25,6 +25,17 @@ pub fn parse_program_at(src: &str, base: u32) -> (Program, Vec<Diagnostic>) {
     (program, diags)
 }
 
+/// Parse a test source explicitly; its display name never enables syntax.
+pub fn parse_tests_at(src: &str, base: u32) -> (Program, Vec<ModelTest>, Vec<Diagnostic>) {
+    let (tokens, mut diags) = lex(src, base);
+    let mut parser = Parser::new(tokens);
+    parser.test_source = true;
+    let program = parser.program();
+    diags.append(&mut parser.diags);
+    diags.sort_by_key(|d| d.span.lo);
+    (program, parser.tests, diags)
+}
+
 /// Parse a single expression (used for string interpolation and the REPL).
 pub fn parse_expr(src: &str, base: u32) -> (Option<Expr>, Vec<Diagnostic>) {
     parse_nested_expr(src, base, 0)
@@ -78,6 +89,8 @@ struct Parser {
     /// Set while parsing the header of `if`, `while`, `for`, `repeat` and
     /// `match`, where `{` starts the body rather than a record.
     restricted: bool,
+    test_source: bool,
+    tests: Vec<ModelTest>,
 }
 
 impl Parser {
@@ -88,6 +101,8 @@ impl Parser {
             diags: Vec::new(),
             depth: 0,
             restricted: false,
+            test_source: false,
+            tests: Vec::new(),
         }
     }
 
@@ -273,6 +288,25 @@ impl Parser {
             self.skip_separators();
         }
         while !self.at(&Tok::Eof) {
+            if self.test_source && self.peek().is_ident("test") && matches!(self.peek_at(1), Tok::Str(_)) {
+                match self.model_test() {
+                    Ok(test) => {
+                        if self.tests.iter().any(|t| t.name == test.name) {
+                            self.error(test.span, format!("the test {:?} is defined twice", test.name));
+                        }
+                        self.tests.push(test);
+                        if self.end_of_statement().is_err() {
+                            self.recover();
+                        }
+                    }
+                    Err(Failed) => self.recover(),
+                }
+                self.skip_separators();
+                continue;
+            }
+            if self.at(&Tok::Import) && !self.tests.is_empty() {
+                self.error(self.span(), "imports go before tests");
+            }
             if self.at(&Tok::RBrace) {
                 let span = self.span();
                 self.error(span, "unexpected `}`")
@@ -293,6 +327,71 @@ impl Parser {
             self.skip_separators();
         }
         Program { pragmas, items }
+    }
+
+    fn model_test(&mut self) -> PResult<ModelTest> {
+        let lo = self.bump().span;
+        let token = self.bump();
+        let Tok::Str(parts) = token.tok else { unreachable!() };
+        let Some(name) = plain_string(&parts).filter(|s| !s.trim().is_empty()) else {
+            self.error(token.span, "a test needs a nonempty name without interpolation");
+            return Err(Failed);
+        };
+        self.expect(&Tok::LBrace, "after the test name")?;
+        let mut setup = Vec::new();
+        let mut assertions = Vec::new();
+        let mut expecting = false;
+        loop {
+            self.skip_separators();
+            if self.at(&Tok::RBrace) {
+                break;
+            }
+            if self.at(&Tok::Eof) {
+                self.error(lo, "this test's `{` is never closed");
+                return Err(Failed);
+            }
+            let span = self.span();
+            let expect = self.peek().is_ident("expect");
+            let report = self.at(&Tok::Report);
+            let parsed = if expect || (report && expecting) {
+                self.bump();
+                expecting |= expect;
+                self.report_value().map(|kind| {
+                    let StmtKind::Report { value, by, label } = kind else {
+                        unreachable!()
+                    };
+                    if by.is_some() {
+                        self.error(span, "test assertions don't take a `by` key");
+                    }
+                    assertions.push(Assertion {
+                        value,
+                        label,
+                        span: span.to(self.prev_span()),
+                        report,
+                    });
+                })
+            } else {
+                self.stmt().map(|stmt| {
+                    if expecting {
+                        self.error(stmt.span, "model setup must come before the first `expect`");
+                    }
+                    setup.push(stmt);
+                })
+            };
+            if parsed.is_err() || self.end_of_statement().is_err() {
+                self.recover();
+            }
+        }
+        let span = lo.to(self.bump().span);
+        if !expecting {
+            self.error(span, "a test needs at least one `expect`");
+        }
+        Ok(ModelTest {
+            name,
+            span,
+            setup,
+            assertions,
+        })
     }
 
     fn pragma(&mut self) -> PResult<Pragma> {
@@ -575,6 +674,42 @@ impl Parser {
         })
     }
 
+    fn report_value(&mut self) -> PResult<StmtKind> {
+        let value = self.expr()?;
+        let by = if self.peek().is_ident("by") {
+            self.bump();
+            Some(self.expr()?)
+        } else {
+            None
+        };
+        let label = if self.peek().is_ident("as") {
+            self.bump();
+            match self.peek().clone() {
+                Tok::Str(parts) => {
+                    let span = self.bump().span;
+                    match plain_string(&parts) {
+                        Some(text) => Some((text, span)),
+                        None => {
+                            self.error(span, "a report label can't contain `{…}`");
+                            return Err(Failed);
+                        }
+                    }
+                }
+                other => {
+                    let span = self.span();
+                    self.error(
+                        span,
+                        format!("expected a label string after `as`, found {}", other.describe()),
+                    );
+                    return Err(Failed);
+                }
+            }
+        } else {
+            None
+        };
+        Ok(StmtKind::Report { value, by, label })
+    }
+
     fn stmt(&mut self) -> PResult<Stmt> {
         let lo = self.span();
         let kind = match self.peek() {
@@ -668,39 +803,7 @@ impl Parser {
             }
             Tok::Report => {
                 self.bump();
-                let value = self.expr()?;
-                let by = if self.peek().is_ident("by") {
-                    self.bump();
-                    Some(self.expr()?)
-                } else {
-                    None
-                };
-                let label = if self.peek().is_ident("as") {
-                    self.bump();
-                    match self.peek().clone() {
-                        Tok::Str(parts) => {
-                            let span = self.bump().span;
-                            match plain_string(&parts) {
-                                Some(text) => Some((text, span)),
-                                None => {
-                                    self.error(span, "a report label can't contain `{…}`");
-                                    return Err(Failed);
-                                }
-                            }
-                        }
-                        other => {
-                            let span = self.span();
-                            self.error(
-                                span,
-                                format!("expected a label string after `as`, found {}", other.describe()),
-                            );
-                            return Err(Failed);
-                        }
-                    }
-                } else {
-                    None
-                };
-                StmtKind::Report { value, by, label }
+                self.report_value()?
             }
             Tok::Fn | Tok::Type | Tok::Enum | Tok::Import => {
                 let span = self.span();

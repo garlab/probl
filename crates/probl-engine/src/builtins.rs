@@ -432,6 +432,7 @@ fn call_plain_inner(b: Builtin, args: &[Value], budget: &mut Budget) -> OpResult
         B::Int => Ok(Value::Int(ops::whole(a(0), budget)?)),
         B::Float => ops::to_float(a(0)),
         B::BooleanLaw => ops::boolean_law(a(0)),
+        B::TestQuery => unreachable!("test queries run in the interpreter"),
         B::BagLiteral => bag(a(0), budget),
         B::SetLiteral => match a(0) {
             Value::List(items) => Ok(Value::set(items)),

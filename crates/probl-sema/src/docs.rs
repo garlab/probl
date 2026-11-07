@@ -214,6 +214,7 @@ pub fn category(b: Builtin) -> &'static str {
         | B::Last
         | B::DropLast
         | B::BooleanLaw
+        | B::TestQuery
         | B::ScoreLaw
         | B::Typeof => "Internal",
     }
@@ -910,6 +911,7 @@ pub fn builtin(b: Builtin) -> Option<Doc> {
         | B::Last
         | B::DropLast
         | B::BooleanLaw
+        | B::TestQuery
         | B::ScoreLaw
         | B::Typeof => None,
     }
@@ -989,7 +991,7 @@ pub const READ: Doc = Doc {
 pub const KEYWORDS: &[&str] = &[
     "let", "var", "fn", "return", "if", "else", "for", "in", "while", "loop", "repeat", "break", "continue", "match",
     "chance", "observe", "score", "from", "report", "by", "as", "simulate", "type", "enum", "with", "and", "or", "not",
-    "div", "mod", "to", "true", "false", "import", "typeof", "try", "catch",
+    "div", "mod", "to", "true", "false", "import", "export", "test", "expect", "typeof", "try", "catch",
 ];
 
 pub fn keyword(word: &str) -> Option<Doc> {
@@ -1075,7 +1077,22 @@ pub fn keyword(word: &str) -> Option<Doc> {
         "mod" => doc("a mod b", "The remainder of `a div b`, with the sign of `b`."),
         "to" => builtin(Builtin::To),
         "true" | "false" => doc("true, false", "The two facts."),
-        "import" => doc("import …", "Not supported yet."),
+        "import" => doc(
+            "import { name, other as alias } from \"./file.probl\"",
+            "Import explicitly exported names. A module runs once, before its importers, in the program's worlds. Imports are read-only.",
+        ),
+        "export" => doc(
+            "export let name = value",
+            "Make a top-level binding, function, record type or enum importable from another file.",
+        ),
+        "test" => doc(
+            "test \"name\" { setup; expect condition }",
+            "An isolated enumerated model test, in an explicit test source. Run .test.probl files with `probl test`. Each test gets fresh fixtures and module state.",
+        ),
+        "expect" => doc(
+            "expect condition as \"description\"",
+            "Check a boolean property across a test's final population without conditioning it. Expectations form the final section and are read-only. Population reductions are not implemented yet; compute ordinary per-world statistics during setup.",
+        ),
         _ => None,
     }
 }

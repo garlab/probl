@@ -36,6 +36,7 @@ mod options;
 mod outcome;
 mod program;
 mod sources;
+mod testing;
 
 pub use error::{Diagnostic, Error, ErrorKind, FailedRun, FaultContext, FaultInput, Severity};
 #[cfg(not(target_arch = "wasm32"))]
@@ -55,6 +56,7 @@ pub use program::{Mode, Program, compile, compile_with};
 #[cfg(not(target_arch = "wasm32"))]
 pub use sources::LocalSources;
 pub use sources::{MemorySources, SourceText, Sources};
+pub use testing::{AssertionResult, TestCase, TestResult, TestStatus, TestSuite, compile_tests};
 
 /// This version of Probl.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -237,6 +237,8 @@ builtins! {
     /// A boolean recipe for an immediately observed draw. Unlike `P`, this
     /// keeps the unresolved mass of a distribution.
     BooleanLaw = "$boolean_law", 1..=1, Raw, false;
+    /// Evaluate a read-only test query; true asks for its counterexample law.
+    TestQuery = "$test_query", 2..=2, Raw, false;
     /// Strict scalar likelihood for `score`; unlike `bernoulli`, never lifts.
     ScoreLaw = "$score_law", 1..=1, Raw, false;
     /// Checks a `for` loop's collection and turns it into something indexable.

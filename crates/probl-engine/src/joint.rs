@@ -119,7 +119,13 @@ fn truths(v: &Value, budget: &mut Budget) -> OpResult<Vec<(Value, f64)>> {
                 Some(all) => all.combine(&side, BinOp::And)?,
             });
         }
-        let p = all.map_or(1.0, |e| e.probability());
+        let weight = all.map_or(crate::Weight::ONE, |e| e.probability_weight());
+        let p = weight.to_f64();
+        if p == 0.0 && !weight.is_zero() {
+            return Err(OpError::unsupported(
+                "this analytic recipe has positive outcomes too small for its probability representation",
+            ));
+        }
         if p > 0.0 {
             out.push((with_truths(v, &events, mask), p));
         }

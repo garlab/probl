@@ -315,10 +315,10 @@ export function intelligence(docs, names, showReference, showDefinition) {
       const enumType = definitions.find((d) => !d.file && d.kind === 'enum' && d.name === base);
       if (enumType) {
         // An imported enum's variants belong to it under its own name.
-        const owner = enumType.imported == null ? base : symbols.definitions[enumType.imported].name;
+        const owner = enumType.imported == null ? enumType : symbols.definitions[enumType.imported];
         // (Without their enum's name beside them: it's just been typed.)
         definitions
-          .filter((d) => d.kind === 'variant' && d.owner === owner)
+          .filter((d) => d.kind === 'variant' && d.owner === owner.name && d.file === owner.file)
           .forEach((d) => add({ ...fromDefinition(d, 2), detail: undefined }));
         return { from, options, validFor: /^\w*$/ };
       }
@@ -476,7 +476,8 @@ export function intelligence(docs, names, showReference, showDefinition) {
     const found = symbols?.definitions.find((d) => d.kind === 'function' && !d.gone && !d.file && d.name === call.name);
     const own = found && described(symbols, found);
     const entry = own ? { signature: own.detail.replace(/^(?:export\s+)?fn\s+/, ''), summary: own.doc } : builtins.get(call.name);
-    const parsed = entry && parametersOf(entry.signature, call.name);
+    const name = found?.imported == null ? call.name : symbols.definitions[found.imported].name;
+    const parsed = entry && parametersOf(entry.signature, name);
     if (!parsed) return null;
     // `xs.f(y)` is `f(xs, y)`: the first argument is before the dot.
     let index = call.index + (call.method && !parsed.method ? 1 : 0);

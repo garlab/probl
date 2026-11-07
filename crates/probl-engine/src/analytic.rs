@@ -654,7 +654,15 @@ impl Fun {
     }
     /// The part of a piece of the draw where it's below `t`, or at most `t`
     /// unless `strict`.
-    fn below_on(self, family: &Family, start: f64, end: f64, t: f64, strict: bool) -> OpResult<(f64, f64)> {
+    fn below_on(
+        self,
+        family: &Family,
+        start: f64,
+        end: f64,
+        t: f64,
+        strict: bool,
+        certify: bool,
+    ) -> OpResult<(f64, f64)> {
         if let Some(c) = self.as_constant() {
             return Ok(if c < t || (!strict && c == t) {
                 (start, end)
@@ -669,7 +677,7 @@ impl Fun {
                 .kernel
                 .upper_edge(if up == strict { y.ceil() - 1.0 } else { y.floor() });
             let f = Fun::affine(self.inner);
-            let (a, b) = f.below_on(family, start, end, edge * self.quantum, false)?;
+            let (a, b) = f.below_on(family, start, end, edge * self.quantum, false, certify)?;
             return Ok(if up {
                 (a, b)
             } else if a == start {
@@ -679,9 +687,17 @@ impl Fun {
             });
         }
         if let Some(f) = self.as_affine() {
-            let p = family.cdf(f.inverse(t));
+            let threshold = f.inverse(t);
+            let p = family.cdf(threshold);
             if !p.is_finite() {
                 return Err(unsupported("this numerically unstable comparison"));
+            }
+            if certify
+                && (p == 0.0 || p == 1.0)
+                && family.quantile(start) < threshold
+                && threshold < family.quantile(end)
+            {
+                return Err(comparison_precision());
             }
             return Ok(if f.scale > 0.0 {
                 (start, end.min(p))
@@ -701,6 +717,9 @@ impl Fun {
         let u = self.coordinate(family, start, end, t);
         if !u.is_finite() {
             return Err(unsupported("this numerically unstable comparison"));
+        }
+        if certify && (u == 0.0 || u == 1.0) {
+            return Err(comparison_precision());
         }
         let u = u.clamp(start, end);
         Ok(if up { (start, u) } else { (u, end) })
@@ -773,10 +792,16 @@ fn select(yes: &Domain, then: &[(f64, Fun)], otherwise: &[(f64, Fun)]) -> Pieces
 /// Where a function of a latent is below `t` (or at most `t`), in the
 /// latent's CDF coordinates.
 fn below(family: &Family, pieces: &[(f64, Fun)], t: f64, strict: bool) -> OpResult<Domain> {
+    below_checked(family, pieces, t, strict, false)
+}
+
+/// Explicit predicates must distinguish a rounded CDF endpoint from an
+/// impossible event. Internal numeric queries retain their f64 precision.
+fn below_checked(family: &Family, pieces: &[(f64, Fun)], t: f64, strict: bool, certify: bool) -> OpResult<Domain> {
     let mut out = Vec::with_capacity(pieces.len());
     let mut start = 0.0;
     for &(end, f) in pieces {
-        let (lo, hi) = f.below_on(family, start, end, t, strict)?;
+        let (lo, hi) = f.below_on(family, start, end, t, strict, certify)?;
         push(&mut out, lo, hi);
         start = end;
     }
@@ -1722,13 +1747,39 @@ impl Event {
             .sum();
         p.clamp(0.0, 1.0)
     }
+    /// Preserve products too small for an f64 when collecting boolean facts.
+    pub fn probability_weight(&self) -> crate::Weight {
+        let weight = crate::Weight::sum(self.boxes.iter().map(|b| {
+            self.draws
+                .iter()
+                .zip(b)
+                .fold(crate::Weight::ONE, |weight, (draw, yes)| weight.scale(draw.share(yes)))
+        }));
+        if weight > crate::Weight::ONE {
+            crate::Weight::ONE
+        } else {
+            weight
+        }
+    }
     pub fn value(self) -> Value {
         let p = self.probability();
-        if p == 0.0 || p == 1.0 {
-            Value::Bool(p == 1.0)
-        } else {
-            Value::Event(Arc::new(self))
+        // A rounded probability of zero or one isn't a constant predicate:
+        // retain the geometry so complementing it can recover a tiny tail.
+        let has_mass = |boxes: &[Vec<Domain>]| {
+            boxes.iter().any(|b| {
+                self.draws
+                    .iter()
+                    .zip(b)
+                    .all(|(draw, part)| !draw.domain.intersect(part).0.is_empty())
+            })
+        };
+        if p == 0.0 && !has_mass(&self.boxes) {
+            return Value::Bool(false);
         }
+        if p == 1.0 && self.side(false).is_ok_and(|boxes| !has_mass(&boxes)) {
+            return Value::Bool(true);
+        }
+        Value::Event(Arc::new(self))
     }
     /// Where it doesn't hold.
     pub fn complement(&self) -> OpResult<Event> {
@@ -2456,10 +2507,17 @@ fn quantized_moments(family: &Family, f: Fun, lo: f64, hi: f64) -> Option<(f64, 
     Some((mean, variance))
 }
 
+fn comparison_precision() -> OpError {
+    OpError::unsupported("this comparison has a nonzero tail too small for the analytic CDF to represent").help(
+        "enumeration cannot certify this predicate; use sampling for an approximate report, not an exhaustive test",
+    )
+}
+
 /// The event that a difference `d` of outcomes of `x`'s draw compares with
 /// zero by `op`.
 fn compare(x: &Analytic, op: BinOp, d: &[(f64, Fun)]) -> OpResult<Event> {
     use BinOp::*;
+    let below = |family, pieces, t, strict| below_checked(family, pieces, t, strict, true);
     let yes = match op {
         Lt => below(&x.family, d, 0.0, true)?,
         Le => below(&x.family, d, 0.0, false)?,

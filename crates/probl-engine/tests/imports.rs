@@ -252,6 +252,16 @@ fn import_errors_say_what_to_do() {
         ),
         (
             &[
+                (
+                    "main.probl",
+                    "import { First } from \"./a.probl\"\nenum State { First, Second }",
+                ),
+                ("a.probl", "export let First = 2"),
+            ],
+            "main.probl: `First` is already defined in this file",
+        ),
+        (
+            &[
                 ("main.probl", "import { x } from \"./a.probl\"\nx = 2"),
                 ("a.probl", "export var x = 1"),
             ],
@@ -315,4 +325,60 @@ fn a_module_reads_data_relative_to_itself() {
     .unwrap();
     let paths: Vec<&str> = program.inputs.iter().map(|i| i.path.as_str()).collect();
     assert_eq!(paths, ["lib/x.json", "y.json"]);
+}
+
+#[test]
+fn imported_functions_and_types_cant_be_hidden_at_top_level() {
+    for lib in [
+        "export fn item() { 2 }",
+        "export type item = { x: int }",
+        "export enum item { First, Second }",
+    ] {
+        let e = errors(&[
+            ("main.probl", "import { item } from \"./lib.probl\"\nlet item = 3"),
+            ("lib.probl", lib),
+        ]);
+        assert!(e.contains("`item` is imported"), "{e}");
+    }
+    // Inner scopes can still shadow an import.
+    let (out, _) = outcome(&[
+        (
+            "main.probl",
+            "import { item } from \"./lib.probl\"\nfn local() { let item = 3; item }\nreport local() + item()",
+        ),
+        ("lib.probl", "export fn item() { 2 }"),
+    ]);
+    assert_eq!(out.reports[0].distribution(), [(Value::Int(5.into()), 1.0)]);
+}
+
+#[test]
+fn public_annotations_cant_expose_private_named_types() {
+    for lib in [
+        "type Hidden = { x: int }\nexport fn api(x: list[Hidden]) { len(x) }",
+        "type Hidden = { x: int }\nexport fn api(): Hidden { Hidden { x: 1 } }",
+        "enum Hidden { First, Second }\nexport type api = { inner: map[int, list[Hidden]] }",
+        "type Hidden = { x: int }\nexport let api: Hidden or int = 1",
+        "type Hidden = { x: int }\nexport fn api(x: { inner: Hidden }) { x }",
+    ] {
+        let e = errors(&[
+            ("main.probl", "import { api } from \"./lib.probl\""),
+            ("lib.probl", lib),
+        ]);
+        assert!(e.contains("lib.probl:") && e.contains("private type `Hidden`"), "{e}");
+        assert!(e.contains("export"), "{e}");
+    }
+    // A public type from another module stays public even when imported
+    // under an alias; private types remain usable inside function bodies.
+    let (out, _) = outcome(&[
+        (
+            "main.probl",
+            "import { Box } from \"./types.probl\"\nimport { api } from \"./lib.probl\"\nreport api(Box { x: 2 }).x",
+        ),
+        ("types.probl", "export type Box = { x: int }"),
+        (
+            "lib.probl",
+            "import { Box as Public } from \"./types.probl\"\ntype Hidden = { x: int }\nexport fn api(x: Public): Public { let h = Hidden { x: x.x + 1 }; Public { x: h.x } }",
+        ),
+    ]);
+    assert_eq!(out.reports[0].distribution(), [(Value::Int(3.into()), 1.0)]);
 }

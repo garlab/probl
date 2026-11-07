@@ -2,7 +2,7 @@
 //! in evaluation order (docs/design/imports-and-tests.md).
 
 use crate::ir;
-use crate::lower::{ModuleAst, lower_modules};
+use crate::lower::{ModuleAst, lower_model_test};
 use crate::symbols::Symbols;
 use probl_syntax::ast::{self, Item};
 use probl_syntax::{Diagnostic, SourceFile, SourceMap, Span, parse_program_at};
@@ -72,19 +72,122 @@ pub struct Compiled {
 /// Compile the program whose entry is `entry`, loading the files it imports
 /// with `loader`.
 pub fn compile_program(entry: Source, loader: &mut dyn Loader) -> Compiled {
-    compile(entry, loader, true)
+    compile(entry, loader, true, None)
 }
 
 /// Compile a file as it's compiled when another file imports it, with the
 /// files it imports: to check it on its own, as an editor does. It can't
 /// `report` or set pragmas, and its program is only for checking.
 pub fn compile_module(source: Source, loader: &mut dyn Loader) -> Compiled {
-    compile(source, loader, false)
+    compile(source, loader, false, None)
+}
+
+/// A test source's independently compiled tests, in declaration order.
+pub struct CompiledTests {
+    pub tests: Vec<(String, Compiled)>,
+    pub assertions: Vec<Vec<bool>>,
+    pub diagnostics: Vec<Diagnostic>,
+    pub sources: SourceMap,
+}
+
+/// Compile test syntax explicitly. Dependencies are frozen for the suite,
+/// and each test gets a fresh program containing the fixtures and its body.
+pub fn compile_tests(source: Source, loader: &mut dyn Loader) -> CompiledTests {
+    let sources = SourceMap::single(SourceFile::new(source.name.clone(), source.text.clone()));
+    let (fixtures, tests, mut diagnostics) = if source.text.len() > MAX_SOURCE {
+        (
+            ast::Program {
+                pragmas: Vec::new(),
+                items: Vec::new(),
+            },
+            Vec::new(),
+            vec![Diagnostic::error(Span::default(), "the test source is too large")],
+        )
+    } else {
+        probl_syntax::parser::parse_tests_at(&source.text, 0)
+    };
+    if tests.is_empty() {
+        diagnostics.push(Diagnostic::error(
+            Span::default(),
+            "a test source needs at least one test",
+        ));
+    }
+    if tests.len() > 1000 {
+        diagnostics.push(Diagnostic::error(
+            Span::default(),
+            "a test source may contain at most 1,000 tests",
+        ));
+    }
+    if diagnostics.iter().any(Diagnostic::is_error) {
+        return CompiledTests {
+            tests: Vec::new(),
+            assertions: Vec::new(),
+            diagnostics,
+            sources,
+        };
+    }
+    struct Snapshot<'a> {
+        loader: &'a mut dyn Loader,
+        paths: FxHashMap<(String, String), Result<Source, String>>,
+        identities: FxHashMap<String, Source>,
+    }
+    impl Loader for Snapshot<'_> {
+        fn load(&mut self, importer: &str, path: &str) -> Result<Source, String> {
+            let key = (importer.to_string(), path.to_string());
+            if let Some(source) = self.paths.get(&key) {
+                return source.clone();
+            }
+            let loaded = self
+                .loader
+                .load(importer, path)
+                .map(|source| self.identities.entry(source.identity.clone()).or_insert(source).clone());
+            self.paths.insert(key, loaded.clone());
+            loaded
+        }
+        fn data_path(&mut self, importer: &str, path: &str) -> String {
+            self.loader.data_path(importer, path)
+        }
+    }
+    let mut loader = Snapshot {
+        loader,
+        paths: FxHashMap::default(),
+        identities: FxHashMap::default(),
+    };
+    let assertions = tests
+        .iter()
+        .map(|test| test.assertions.iter().map(|a| !a.report).collect())
+        .collect();
+    let mut lowered = Vec::new();
+    let mut source_work = 0;
+    for test in &tests {
+        let compiled = compile(source.clone(), &mut loader, false, Some((&fixtures, test)));
+        source_work += compiled.sources.text().len();
+        if source_work > 64 * 1024 * 1024 {
+            diagnostics.push(Diagnostic::error(
+                test.span,
+                "compiling this test suite exceeds 64 MiB of source across its tests",
+            ));
+            break;
+        }
+        lowered.push((test.name.clone(), compiled));
+    }
+    let tests = lowered;
+    CompiledTests {
+        tests,
+        assertions,
+        diagnostics,
+        sources,
+    }
 }
 
 /// Compile the file `root` and the files it imports; `root` is the entry
 /// when `entry` is true.
-fn compile(root: Source, loader: &mut dyn Loader, entry: bool) -> Compiled {
+fn compile(
+    root: Source,
+    loader: &mut dyn Loader,
+    entry: bool,
+    test: Option<(&ast::Program, &ast::ModelTest)>,
+) -> Compiled {
     let mut graph = Graph {
         loader: &mut *loader,
         nodes: Vec::new(),
@@ -106,7 +209,10 @@ fn compile(root: Source, loader: &mut dyn Loader, entry: bool) -> Compiled {
             symbols: None,
         };
     }
-    let root = graph.add(root);
+    let root = match test {
+        Some((ast, _)) => graph.add_parsed(root, ast.clone()),
+        None => graph.add(root),
+    };
     graph.visit(root);
     let Graph {
         nodes,
@@ -137,7 +243,7 @@ fn compile(root: Source, loader: &mut dyn Loader, entry: bool) -> Compiled {
             imports: nodes[i].imports.iter().map(|t| t.map(|t| position[t])).collect(),
         })
         .collect();
-    let (mut program, mut lowered, symbols) = lower_modules(&modules, sources.text());
+    let (mut program, mut lowered, symbols) = lower_model_test(&modules, sources.text(), test.map(|(_, test)| test));
     diags.append(&mut lowered);
     // An imported file reads data relative to itself.
     for input in &mut program.inputs {
@@ -182,11 +288,15 @@ struct Graph<'l> {
 impl Graph<'_> {
     /// Parse a file, at its place in the source map.
     fn add(&mut self, source: Source) -> usize {
-        let base = self
-            .sources
-            .add(SourceFile::new(source.name.clone(), source.text.clone()));
+        let base = self.sources.text().len() as u32 + u32::from(!self.nodes.is_empty());
         let (ast, mut diags) = parse_program_at(&source.text, base);
         self.diags.append(&mut diags);
+        self.add_parsed(source, ast)
+    }
+
+    fn add_parsed(&mut self, source: Source, ast: ast::Program) -> usize {
+        self.sources
+            .add(SourceFile::new(source.name.clone(), source.text.clone()));
         self.by_identity.insert(source.identity.clone(), self.nodes.len());
         self.nodes.push(Node {
             identity: source.identity,
@@ -235,6 +345,13 @@ impl Graph<'_> {
     /// The file that file `i` imports as `path`, loaded, parsed and visited
     /// unless it was already.
     fn resolve(&mut self, i: usize, path: &str, span: Span) -> Option<usize> {
+        if path.ends_with(".test.probl") {
+            self.diags.push(
+                Diagnostic::error(span, "test sources can't be imported")
+                    .with_help("put shared helpers in an ordinary .probl module"),
+            );
+            return None;
+        }
         let importer = self.nodes[i].identity.clone();
         let source = match self.loader.load(&importer, path) {
             Ok(source) => source,
@@ -244,6 +361,11 @@ impl Graph<'_> {
                 return None;
             }
         };
+        if source.identity.ends_with(".test.probl") {
+            self.diags
+                .push(Diagnostic::error(span, "test sources can't be imported"));
+            return None;
+        }
         if let Some(&k) = self.by_identity.get(&source.identity) {
             if !self.nodes[k].finished {
                 let start = self.stack.iter().position(|&s| s == k).unwrap_or(0);

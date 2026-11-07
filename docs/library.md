@@ -56,6 +56,15 @@ let program = compile_with("main.probl", main, &mut sources)?;
 - `compile(name, source)` compiles one text, which can't import: an import is a compile error saying so.
 - Each `Diagnostic` is about one file: `file()` names it, `file_text()` is its text, and `span()` and `line_column()` are within it.
 
+### Model tests
+
+The checkout also provides `compile_tests(name, source, &mut sources)`. It
+explicitly enables test syntax and returns a `TestSuite` of independent
+`TestCase`s. Call each test's `run(&options, &mut files)` with a shared pinned
+clock/environment snapshot. Results retain assertion statuses, source spans,
+counterexample weights, diagnostics and captured output. Test execution always
+enumerates; see [model tests](model-tests.md) for the current subset and limits.
+
 ## Options and modes
 
 Settings are optional and use builder methods:

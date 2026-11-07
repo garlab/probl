@@ -34,6 +34,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone, Debug, Default)]
 pub struct Stats {
+    /// Executed inference or a summary depended on unresolved outcomes.
+    pub incomplete_inference: bool,
     /// Largest number of worlds any statement ran on.
     pub peak_worlds: usize,
     /// Statement executions, counting each world separately.
@@ -70,6 +72,7 @@ pub struct Updates {
 impl Stats {
     /// Add up another batch's statistics.
     pub fn absorb(&mut self, other: &Stats) {
+        self.incomplete_inference |= other.incomplete_inference;
         self.peak_worlds = self.peak_worlds.max(other.peak_worlds);
         self.world_steps += other.world_steps;
         self.calls += other.calls;
@@ -330,6 +333,9 @@ pub struct Engine<'p> {
     /// Dynamic effect boundary for collection callbacks. Effects inside an
     /// explicit `simulate` are local to that computation instead.
     callback: Option<&'static str>,
+    /// Read-only assertion/report queries must not hide effects inside
+    /// callbacks or nested inference.
+    test_query: bool,
     /// In partial mode: the worlds that failed, in the current call.
     pub failures: Failures,
     /// The `try`s running, innermost last, each with the depth of the call
@@ -623,6 +629,7 @@ impl<'p> Engine<'p> {
             next_latent: 0,
             env: None,
             callback: None,
+            test_query: false,
             failures: Failures::default(),
             evidence: probl_sema::effects::evidence_order(prog),
             handlers: Vec::new(),
@@ -4067,6 +4074,10 @@ impl<'p> Engine<'p> {
     /// `simulate { … }`: run a block as a separate model and return its
     /// normalized distribution (docs/semantics.md, section 8).
     fn simulate(&mut self, func: FnId, key: Vec<Value>, span: Span) -> Result<Value> {
+        if self.test_query {
+            return Err(RuntimeError::new(span, "an expectation can't run nested inference")
+                .with_help("compute the `simulate` result during test setup"));
+        }
         if self.probing {
             return Err(RuntimeError::new(span, "`simulate` while checking other worlds"));
         }
@@ -4097,6 +4108,7 @@ impl<'p> Engine<'p> {
         let local_density_at = std::mem::replace(&mut self.local_density_at, saved_local.0);
         self.returned_densities = saved_local.1;
         let result = result?;
+        self.stats.incomplete_inference |= !result.unresolved.is_zero();
         if let Some(span) = local_density_at.filter(|_| !result.unresolved.is_zero()) {
             return Err(OpError::unsupported(
                 "observing a value from a continuous distribution while some probability is unresolved isn't supported when enumerating",
@@ -4125,6 +4137,13 @@ impl<'p> Engine<'p> {
             return Err(RuntimeError::new(span, message));
         }
         let denom = resolved + result.unresolved;
+        // Recipes store binary64 probabilities. A retained world's positive
+        // weight can be too small for that representation; tests must not
+        // certify a predicate after that outcome has disappeared.
+        self.stats.incomplete_inference |= result
+            .outcomes
+            .iter()
+            .any(|(_, weight, _)| !weight.is_zero() && weight.ratio(denom) == 0.0);
         let pairs: Vec<(Value, f64)> = result
             .outcomes
             .iter()
@@ -4194,6 +4213,12 @@ impl<'p> Engine<'p> {
     // ── Places ───────────────────────────────────────────────────────────
 
     fn check_callback_effect(&self, span: Span) -> Result<()> {
+        if self.test_query {
+            return Err(
+                RuntimeError::new(span, "an expectation can't draw, branch on chances, observe or score")
+                    .with_help("perform model operations before the first `expect`"),
+            );
+        }
         match self.callback {
             Some(what) => Err(RuntimeError::new(
                 span,
@@ -4975,6 +5000,37 @@ impl<'p> Engine<'p> {
         spread: bool,
     ) -> Result<Value> {
         let (f, span) = site;
+        if self.test_query && matches!(b, Builtin::Print | Builtin::ScoreLaw) {
+            return Err(RuntimeError::new(
+                span,
+                format!("an expectation can't call `{}`", b.name()),
+            ));
+        }
+        let reducer = matches!(
+            b,
+            Builtin::P
+                | Builtin::Mean
+                | Builtin::Variance
+                | Builtin::Sd
+                | Builtin::Median
+                | Builtin::MedianLow
+                | Builtin::MedianHigh
+                | Builtin::Quantile
+                | Builtin::Cdf
+                | Builtin::Pmf
+                | Builtin::Pdf
+                | Builtin::Support
+        );
+        if self.test_query && reducer {
+            return Err(OpError::unsupported("population reductions in `expect` aren't implemented yet")
+                .help("this first test runner supports boolean properties; compute ordinary per-world statistics during setup")
+                .at(span));
+        }
+        if reducer {
+            self.stats.incomplete_inference |= values
+                .iter()
+                .any(|v| matches!(v, Value::Dist(d) | Value::Joint(d) if d.missing > 0.0));
+        }
         if spread && !b.accepts_spread() {
             return Err(RuntimeError::new(
                 span,
@@ -5044,6 +5100,32 @@ impl<'p> Engine<'p> {
             return Err(analytic::unsupported(&format!("`{name}` on this outcome")).at(span));
         }
         match b {
+            Builtin::TestQuery => {
+                let previous = std::mem::replace(&mut self.test_query, true);
+                let result = self.call_pure(&values[0], Vec::new(), "expect", span);
+                self.test_query = previous;
+                let value = result?;
+                if values[1] == Value::Bool(false) {
+                    return Ok(value);
+                }
+                let boolean = match &value {
+                    Value::Bool(_) | Value::Event(_) => true,
+                    Value::Dist(d) => d.outcomes.iter().all(|(v, _)| matches!(v, Value::Bool(_))),
+                    _ => false,
+                };
+                if !boolean {
+                    return Err(RuntimeError::new(
+                        span,
+                        format!(
+                            "`expect` needs a boolean property, found {}",
+                            ops::article(&value.kind())
+                        ),
+                    ));
+                }
+                // Collect the counterexample law directly, so a tiny
+                // false weight isn't lost by subtracting from one.
+                ops::unary(probl_syntax::ast::UnOp::Not, &value, &mut self.budget).map_err(at)
+            }
             Builtin::Typeof => crate::type_name::of(&values[0], &self.prog.enums, &mut self.budget).map_err(at),
             Builtin::RunDate => self.config.today.map(Value::Date).ok_or_else(|| {
                 RuntimeError::new(span, "the host did not supply an execution date for `today`")
@@ -5559,6 +5641,7 @@ fn handles_analytic(b: Builtin, values: &[Value]) -> bool {
         | B::IterItems
         | B::Settled
         | B::BooleanLaw
+        | B::TestQuery
         | B::IsListOfLen => true,
         // They move values without looking at them.
         B::List

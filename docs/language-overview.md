@@ -646,6 +646,19 @@ report ~sales(10)
 
 `probl run` and `probl check` read the imported files from disk. In the playground, a program's files are tabs above the editor: `+` adds one, which `main.probl` imports as `"./lib.probl"`. `probl::compile` compiles one text, which can't import; the library's `compile_with` takes the files from the host ([library guide](library.md#programs-in-several-files)).
 
+### Model tests
+
+The checkout supports named `test` blocks in `.test.probl` files, run with
+`probl test tests/`. For example, `test "bounds" { let x ~ d6; expect x > 0 }`
+checks every positive-weight outcome. Each test gets fresh imports and fixtures;
+its final `expect` section inspects the population without conditioning it.
+Failures, errors and incomplete inference all make the command unsuccessful.
+
+This first stage supports boolean properties through the CLI and Rust library.
+Population reductions inside expectations, such as `expect mean(x) == 3.5`, and
+playground test execution remain later work. See [model tests](model-tests.md)
+for syntax, isolation, limits and replay settings.
+
 ## 4. Distributions
 
 ### Making them
@@ -1135,7 +1148,7 @@ From loosest to tightest binding:
 
 `and` `break` `catch` `chance` `continue` `div` `else` `enum` `false` `fn` `for` `if` `import` `in` `let` `loop` `match` `mod` `not` `observe` `or` `repeat` `report` `return` `score` `simulate` `true` `try` `type` `typeof` `var` `while` `with`
 
-`as`, `by`, `export`, `from` and `to` are keywords only where the grammar uses them, so they remain usable as variable names.
+`as`, `by`, `export`, `from` and `to` are keywords only where the grammar uses them, so they remain usable as variable names. Explicit test sources also use contextual `test` and `expect`.
 
 ## Appendix D: Standard library (initial)
 

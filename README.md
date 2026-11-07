@@ -85,9 +85,14 @@ probl run model.probl --stats                 # inspect execution and effective 
 probl run model.probl --on-error total        # stop at the first fault, even when sampling
 probl check model.probl                       # compile without running or opening data
 probl check --data model.probl                # also validate declared input files
+probl test tests/ --today 2026-11-06           # enumerate isolated model tests (checkout)
 probl schema examples/data/pilot.csv          # suggest an input type
 probl repl
 ```
+
+The checkout's [model tests](docs/model-tests.md) support named `test` blocks and
+terminal boolean `expect` assertions. Population reductions in expectations and
+playground test execution are the next stages.
 
 Models get one immutable UTC datetime snapshot as `now`, with its date as `today`. Pin both with `--now 2027-01-31T09:30:00Z`, or use `--today 2026-09-29` for midnight on a date and to reproduce the calendar examples' documented output. Explicit date and datetime snapshots must agree. Likewise, `env` is the environment variables, an immutable `map[str, str]` captured once: `env.get("REGION", "eu")` reads one, and `--env REGION=us` sets one in place of the shell's. Successful runs are reproducible for the same program, data, environment, datetime snapshot, seed and engine version.
 
@@ -135,7 +140,7 @@ Probl is early-stage software at version `0.5.0`. The language and Rust API are 
 - Enumeration uses floating-point weights and can retain unresolved mass; displayed fractions are approximations. State spaces can still grow exponentially.
 - Sampling can be unreliable with rare events or concentrated evidence. Inspect effective sample size and uncertainty; zero empirical variation is not proof of certainty.
 - Analytic continuous enumeration supports affine calculations, `abs`, `min`, `max`, `clamp`, rounding, squares, `sqrt`, `exp`, `ln`, reciprocals and threshold conditions on a shared draw, events of independent draws, sums of normal draws with normal observations of them, and continuous draws inside `simulate`, whose results are distributions to draw from. With `@integrate`, observations of one draw that aren't conjugate are computed by numerical integration, to a tolerance the results state. Other nonlinear combinations need sampling, and `simulate` always enumerates.
-- Some type errors are detected only at runtime. Optional/null values, model tests, general MCMC, particles and beam search are not implemented. The playground's files live in the browser: it has no local-file picker.
+- Some type errors are detected only at runtime. Optional/null values, population reductions in model tests, general MCMC, particles and beam search are not implemented. The playground's files live in the browser: it has no local-file picker.
 - Complex scalar arithmetic is available; quantum-amplitude simulation is not.
 
 The [reference semantics](docs/semantics.md) documents these contracts. Verification includes known answers, regression tests, an independent rational-arithmetic interpreter, generated sampling comparisons and native/WASM parity. The [testing guide](docs/testing.md) explains their scope and remaining automation gaps.

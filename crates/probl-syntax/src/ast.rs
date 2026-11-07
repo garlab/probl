@@ -14,6 +14,24 @@ pub struct Program {
     pub items: Vec<Item>,
 }
 
+/// A separately compiled model test. Its assertions run after all setup.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModelTest {
+    pub name: String,
+    pub span: Span,
+    pub setup: Vec<Stmt>,
+    pub assertions: Vec<Assertion>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Assertion {
+    pub value: Expr,
+    pub label: Option<(String, Span)>,
+    pub span: Span,
+    /// A diagnostic `report`, rather than an `expect`.
+    pub report: bool,
+}
+
 /// `@mode exact`, `@mode sample(runs: 1000)`, `@epsilon 1e-9`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pragma {
