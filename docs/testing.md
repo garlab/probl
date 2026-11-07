@@ -26,7 +26,7 @@ on stable. Container builds keep their reviewed, digest-pinned toolchain.
 
 ## Run the checks
 
-To test a model written in Probl, use the checkout's [`probl test`](model-tests.md).
+To test a model written in Probl, use [`probl test`](model-tests.md).
 The checks below exercise the language implementation itself.
 
 From the repository root:

@@ -4,12 +4,18 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-07
+
 ### Added
 
 - Initial model tests: `probl test` discovers `.test.probl` files and runs named `test` blocks with terminal boolean `expect` assertions; `probl check` compiles them. Tests enumerate independently with fresh fixtures/imports, preserve tiny counterexample weights, and distinguish failures, errors and incomplete inference. The library exposes `compile_tests` and structured results. Population reductions in expectations and playground execution remain later stages.
 - Imports across files: `import { walk, step as move } from "./walk.probl"`, and `export` before a `fn`, `type`, `enum`, `let` or `var`. Definitions are static; a file's top level runs once per run, before the files that import it, in the program's worlds, so a draw there is the same outcome for every importer and its observations are the program's evidence. Imported values are read-only, and only the file that's run reports or sets pragmas. A `read` in an imported file is relative to that file. `probl run`, `probl check` and the REPL read imports from disk; the library's `compile_with` takes them from a host's `Sources` (`LocalSources`, `MemorySources`), and each `Diagnostic` names its `file()`.
 - The playground's programs can have several files, shown as tabs above the editor: `main.probl` runs, and `+` adds a file it can import. Files are saved in the browser and shared in the link; a file with errors is marked, and going to an imported name's definition opens its file. The WASM API's `check` takes a JSON request (`check(source, {name, sources, file})` in JavaScript), `run` takes `name` and `sources`, and each diagnostic names its `file`.
 - When a fault stops a run, its diagnostic notes for which values the operation failed (`for example when x = 0`) and, when enumerating, how often: `fails for 16.67% of the weight reaching this operation`. The share is given only where it can be established without running anything more of the model, and is labelled per pass inside a loop. When sampling, the note names the failing run and the seed. The library's `Error::fault` returns the same as a `FaultContext`. Partial results' diagnostics, and each `Failure::fault`, give the first failing world's or run's values as an example.
+
+### Changed
+
+- The WASM module's `probl_check` export takes a JSON request, `{source, name?, sources?, file?}`, instead of a program's text; the JavaScript wrapper's `check(source)` works as before. Editor symbols name the definitions an imported name stands for (`imported`) and the file of a definition in another file (`file`).
 
 ### Fixed
 
@@ -180,7 +186,8 @@ The first release.
 
 The [language overview](docs/language-overview.md) and the [reference semantics](docs/semantics.md) describe the language, and [status and limits](README.md#status-and-limits) lists what isn't implemented yet.
 
-[Unreleased]: https://github.com/garlab/probl/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/garlab/probl/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/garlab/probl/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/garlab/probl/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/garlab/probl/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/garlab/probl/compare/v0.3.2...v0.3.3

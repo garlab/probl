@@ -648,7 +648,7 @@ report ~sales(10)
 
 ### Model tests
 
-The checkout supports named `test` blocks in `.test.probl` files, run with
+Named `test` blocks go in `.test.probl` files, run with
 `probl test tests/`. For example, `test "bounds" { let x ~ d6; expect x > 0 }`
 checks every positive-weight outcome. Each test gets fresh imports and fixtures;
 its final `expect` section inspects the population without conditioning it.

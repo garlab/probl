@@ -1,6 +1,6 @@
 # Model tests
 
-The checkout supports isolated, enumerated model tests in `.test.probl` files:
+Model tests are isolated and enumerated, in `.test.probl` files:
 
 ```probl
 test "a die stays in bounds" {
