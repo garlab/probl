@@ -6,7 +6,7 @@ use crate::lower::{ModuleAst, lower_model_test};
 use crate::symbols::Symbols;
 use probl_syntax::ast::{self, Item};
 use probl_syntax::{Diagnostic, SourceFile, SourceMap, Span, parse_program_at};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// The largest source text one file may have, in bytes.
 pub const MAX_SOURCE: usize = 8 * 1024 * 1024;
@@ -84,9 +84,14 @@ pub fn compile_module(source: Source, loader: &mut dyn Loader) -> Compiled {
 
 /// A test source's independently compiled tests, in declaration order.
 pub struct CompiledTests {
+    /// Each test's program, with the diagnostics only it has.
     pub tests: Vec<(String, Compiled)>,
     pub assertions: Vec<Vec<bool>>,
+    /// The suite's: the test file's and its imports', outside any test,
+    /// given once rather than with every test. With an error, there are no
+    /// tests.
     pub diagnostics: Vec<Diagnostic>,
+    /// The test file and the files it imports, as every test has them.
     pub sources: SourceMap,
 }
 
@@ -157,10 +162,36 @@ pub fn compile_tests(source: Source, loader: &mut dyn Loader) -> CompiledTests {
         .iter()
         .map(|test| test.assertions.iter().map(|a| !a.report).collect())
         .collect();
+    // The test file and what it imports, once, without a test: what's
+    // wrong there is wrong in every test, so it's the suite's, given once.
+    let empty = ast::ModelTest {
+        name: String::new(),
+        span: Span::default(),
+        setup: Vec::new(),
+        assertions: Vec::new(),
+    };
+    let shared = compile(source.clone(), &mut loader, false, Some((&fixtures, &empty)));
+    let sources = shared.sources;
+    diagnostics.extend(shared.diagnostics);
+    if diagnostics.iter().any(Diagnostic::is_error) {
+        return CompiledTests {
+            tests: Vec::new(),
+            assertions: Vec::new(),
+            diagnostics,
+            sources,
+        };
+    }
+    let given: FxHashSet<(u32, u32, String)> = diagnostics
+        .iter()
+        .map(|d| (d.span.lo, d.span.hi, d.message.clone()))
+        .collect();
     let mut lowered = Vec::new();
-    let mut source_work = 0;
+    let mut source_work = sources.text().len();
     for test in &tests {
-        let compiled = compile(source.clone(), &mut loader, false, Some((&fixtures, test)));
+        let mut compiled = compile(source.clone(), &mut loader, false, Some((&fixtures, test)));
+        compiled
+            .diagnostics
+            .retain(|d| !given.contains(&(d.span.lo, d.span.hi, d.message.clone())));
         source_work += compiled.sources.text().len();
         if source_work > 64 * 1024 * 1024 {
             diagnostics.push(Diagnostic::error(
@@ -288,7 +319,7 @@ struct Graph<'l> {
 impl Graph<'_> {
     /// Parse a file, at its place in the source map.
     fn add(&mut self, source: Source) -> usize {
-        let base = self.sources.text().len() as u32 + u32::from(!self.nodes.is_empty());
+        let base = self.sources.next_base();
         let (ast, mut diags) = parse_program_at(&source.text, base);
         self.diags.append(&mut diags);
         self.add_parsed(source, ast)

@@ -21,6 +21,16 @@ test names containing that text; `--verbose` shows captured output on success.
 An empty selection is an error. Discovery sorts canonical paths, deduplicates
 overlapping roots, skips symlinks, hidden directories, `target` and `node_modules`,
 and accepts only `.test.probl` files. Tests cannot be imported as modules.
+Paths print relative to the current directory. A failed expectation says how
+much of the final weight it's false for, as a report prints a probability
+(`false for 16.67% of the weight`), or its power of ten when that's too small
+to print. An error in the test file outside its tests, or in a file it imports,
+is reported once for the file, and none of its tests run.
+
+`probl check model.test.probl` compiles every test without running it, and
+`--data` reads the data its fixtures read. `probl run` refuses a test file and
+names the command that runs it; a `test` block in an ordinary program is an
+error saying where tests go.
 
 Every test starts afresh: imports execute in dependency order, then file-level
 fixtures, then the test's setup. Imported draws and fixtures retain their
@@ -83,9 +93,13 @@ owns its source snapshot. Iterate `suite.tests()` and call
 options for every test. Hosts control data access and cancellation as for a
 normal program. A `Snapshots<Files>` wrapper can freeze input bytes across tests.
 
+`suite.warnings()` are the warnings about the test file and its imports outside
+any test, given once rather than with each test; `test.program()` is the test's
+compiled program, or why it doesn't compile, for checking it without running it.
 `TestResult` contains its status, diagnostics, captured output, clock metadata
 and assertion results with labels, file spans, counterexample probabilities and
-log weights. `error_kind` distinguishes runtime, compilation, capability, limit
+log weights, and the log of a counterexample share too small for its
+probability (`log_false_share`). `error_kind` distinguishes runtime, compilation, capability, limit
 and internal errors. Hosts should stop on cancellation or internal failures.
 Results use typed engine data, not report text. Requests for sampling or numerical
 integration are rejected; the first runner cannot certify approximate checks.

@@ -439,7 +439,17 @@ fn load(program: &Program, files: &mut dyn Files, options: Options) -> Option<Op
     }
 }
 
+/// Whether `path` is a test file, which `probl test` runs.
+fn is_test_file(path: &Path) -> bool {
+    path.to_string_lossy().ends_with(".test.probl")
+}
+
 fn run_file(path: &Path, options: Options, cancel: Option<&Cancel>, stats: bool) -> ExitCode {
+    if is_test_file(path) {
+        let path = path.display();
+        eprintln!("error: {path} is a test file: run its tests with `probl test {path}`");
+        return ExitCode::FAILURE;
+    }
     let Some(text) = read(path) else {
         return ExitCode::FAILURE;
     };
@@ -545,11 +555,49 @@ fn check_file(path: &Path, data: Option<Option<u64>>) -> ExitCode {
         return ExitCode::FAILURE;
     };
     let name = path.display().to_string();
-    let Some(program) = compile(&name, &text) else {
-        return ExitCode::FAILURE;
+    // A test file's programs: each test's, with the file's fixtures.
+    let programs: Vec<Program> = if is_test_file(path) {
+        let suite = match probl::compile_tests(&name, &text, &mut LocalSources::new()) {
+            Ok(suite) => suite,
+            Err(e) => {
+                eprint!("{}", e.render(color()));
+                return ExitCode::FAILURE;
+            }
+        };
+        for warning in suite.warnings() {
+            eprint!("{}", warning.render(color()));
+        }
+        let mut programs = Vec::new();
+        let mut failed = false;
+        for test in suite.tests() {
+            match test.program() {
+                Ok(program) => {
+                    for warning in program.warnings() {
+                        eprint!("{}", warning.render(color()));
+                    }
+                    programs.push(program.clone());
+                }
+                Err(e) => {
+                    eprint!("{}", e.render(color()));
+                    failed = true;
+                }
+            }
+        }
+        if failed {
+            return ExitCode::FAILURE;
+        }
+        programs
+    } else {
+        let Some(program) = compile(&name, &text) else {
+            return ExitCode::FAILURE;
+        };
+        vec![program]
     };
     let mut sources = String::new();
-    if let Some(max_input) = data.filter(|_| program.reads_data()) {
+    // The tests of a file read what its fixtures read: the first says.
+    if let Some(max_input) = data
+        && let Some(program) = programs.iter().find(|p| p.reads_data())
+    {
         let mut limits = Limits::default();
         if let Some(n) = max_input {
             limits.max_input_bytes = n;
@@ -566,7 +614,12 @@ fn check_file(path: &Path, data: Option<Option<u64>>) -> ExitCode {
             }
         }
     }
-    eprintln!("{name}: ok{sources}");
+    let tests = match programs.len() {
+        _ if !is_test_file(path) => String::new(),
+        1 => " (1 test)".to_string(),
+        n => format!(" ({n} tests)"),
+    };
+    eprintln!("{name}: ok{tests}{sources}");
     ExitCode::SUCCESS
 }
 

@@ -171,6 +171,9 @@ fn analytic_properties_use_almost_sure_checks_and_never_sample() {
     assert_eq!(results[0].status, TestStatus::Fail, "{:?}", results[0].message);
     assert_eq!(results[0].assertions[0].false_probability, 0.0);
     assert!(results[0].assertions[0].log_false_weight.is_finite());
+    // Four tails of Φ(-20) = 2.7536e-89 each.
+    let power = results[0].assertions[0].log_false_share / std::f64::consts::LN_10;
+    assert!((power - 4.0 * 2.7536241186062e-89f64.log10()).abs() < 1e-6, "{power}");
     for options in [Options::new().runs(1).seed(12), Options::new().integrate(0.01)] {
         let result = run("test \"no approximation\" { expect true }", options).remove(0);
         assert_eq!(result.status, TestStatus::Error);
@@ -214,4 +217,77 @@ fn tests_preserve_source_snapshots_data_and_clock_metadata() {
     assert_eq!(result.status, TestStatus::Pass, "{:?}", result.message);
     assert_eq!(result.now.unwrap().to_string(), "2026-11-06T00:00:00");
     assert_eq!(result.today.unwrap().to_string(), "2026-11-06");
+}
+
+#[test]
+fn what_is_wrong_outside_the_tests_is_said_once() {
+    // An error in the fixtures fails the suite once, not every test.
+    let error = compile_tests(
+        "model.test.probl",
+        "report 1\ntest \"a\" { expect true }\ntest \"b\" { expect true }",
+        &mut MemorySources::new(),
+    )
+    .unwrap_err();
+    assert_eq!(error.diagnostics().len(), 1, "{}", error.render(false));
+    assert!(error.diagnostics()[0].message().contains("reports only in its tests"));
+    // So is an imported file's, located in it.
+    let mut sources: MemorySources = [("lib.probl", "export let x = nope")].into_iter().collect();
+    let error = compile_tests(
+        "model.test.probl",
+        "import { x } from \"./lib.probl\"\ntest \"a\" { expect x == 1 }\ntest \"b\" { expect true }",
+        &mut sources,
+    )
+    .unwrap_err();
+    assert_eq!(error.diagnostics().len(), 1, "{}", error.render(false));
+    assert_eq!(error.diagnostics()[0].file(), "lib.probl");
+    // A warning there is the suite's; each test keeps only its own.
+    let suite = compile_tests(
+        "model.test.probl",
+        "1 + 1\ntest \"a\" { 2 + 2; expect true }\ntest \"b\" { expect true }",
+        &mut MemorySources::new(),
+    )
+    .unwrap();
+    assert_eq!(suite.warnings().len(), 1);
+    let warnings: Vec<usize> = suite
+        .tests()
+        .iter()
+        .map(|t| t.program().unwrap().warnings().len())
+        .collect();
+    assert_eq!(warnings, [1, 0]);
+}
+
+#[test]
+fn messages_in_tests_speak_of_tests() {
+    let message = |source: &str| {
+        let suite = compile_tests("model.test.probl", source, &mut MemorySources::new());
+        let error = match suite {
+            Err(e) => e,
+            Ok(suite) => suite.tests()[0].program().unwrap_err().clone(),
+        };
+        error.render(false)
+    };
+    let setup = message("test \"a\" { report 1; expect true }");
+    assert!(
+        setup.contains("a test's `report`s go after its first `expect`"),
+        "{setup}"
+    );
+    let fixture = message("var count = 0\ntest \"a\" { count = 3; expect count == 3 }");
+    assert!(
+        fixture.contains("it's the test file's, and tests only read it") && fixture.contains("var mine = count"),
+        "{fixture}"
+    );
+    // An expectation's fault isn't said to be inside a lambda.
+    let results = run("test \"a\" { let x = 0; expect 1 / x > 0 }", Options::new());
+    let rendered: String = results[0].diagnostics.iter().map(|d| d.render(false)).collect();
+    assert!(
+        rendered.contains("division by zero") && !rendered.contains("lambda"),
+        "{rendered}"
+    );
+    // A test in an ordinary program says where tests go.
+    let error = probl::compile("model.probl", "test \"a\" { expect true }").unwrap_err();
+    assert!(
+        error.render(false).contains("tests go in a test file"),
+        "{}",
+        error.render(false)
+    );
 }

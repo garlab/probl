@@ -94,3 +94,62 @@ fn cancellation_and_empty_suites_do_not_pass() {
             .success()
     );
 }
+
+#[test]
+fn check_compiles_test_files_and_run_points_to_test() {
+    let files = Files::new();
+    files.write(
+        "model.test.probl",
+        "let n = 2\ntest \"a\" { expect n == 2 }\ntest \"b\" { expect n > 1 }",
+    );
+    let probl = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_probl"))
+            .args(args)
+            .current_dir(&files.0)
+            .output()
+            .unwrap()
+    };
+    let out = probl(&["check", "model.test.probl"]);
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success() && text.contains("model.test.probl: ok (2 tests)"),
+        "{text}"
+    );
+    let out = probl(&["run", "model.test.probl"]);
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && text.contains("probl test model.test.probl"),
+        "{text}"
+    );
+    files.write(
+        "broken.test.probl",
+        "report 1\ntest \"a\" { expect true }\ntest \"b\" { expect true }",
+    );
+    let out = probl(&["check", "broken.test.probl"]);
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && text.matches("reports only in its tests").count() == 1,
+        "{text}"
+    );
+}
+
+#[test]
+fn output_names_files_relatively_and_failures_by_their_share() {
+    let files = Files::new();
+    files.write(
+        "tests/dice.test.probl",
+        "1 + 1\ntest \"six\" { let r ~ d6\n expect r < 6 as \"never a six\" }\ntest \"other\" { expect true }",
+    );
+    let out = files.run(&["tests"]);
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert!(stdout.contains("FAIL tests/dice.test.probl :: six"), "{stdout}");
+    assert!(
+        stdout.contains("FAIL: never a six: false for 16.67% of the weight"),
+        "{stdout}"
+    );
+    // The file's warning, once.
+    assert_eq!(stderr.matches("this value isn't used").count(), 1, "{stderr}");
+}

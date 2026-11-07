@@ -288,8 +288,15 @@ impl Parser {
             self.skip_separators();
         }
         while !self.at(&Tok::Eof) {
-            if self.test_source && self.peek().is_ident("test") && matches!(self.peek_at(1), Tok::Str(_)) {
+            // A name then a string is only ever a test.
+            if self.peek().is_ident("test") && matches!(self.peek_at(1), Tok::Str(_)) {
+                if !self.test_source {
+                    let span = self.span();
+                    self.error(span, "tests go in a test file, whose name ends in `.test.probl`")
+                        .help("move it to a `.test.probl` file, and run it with `probl test`");
+                }
                 match self.model_test() {
+                    Ok(_) if !self.test_source => {}
                     Ok(test) => {
                         if self.tests.iter().any(|t| t.name == test.name) {
                             self.error(test.span, format!("the test {:?} is defined twice", test.name));

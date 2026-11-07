@@ -99,13 +99,19 @@ impl SourceMap {
 
     /// Add a file after the others, and return its base.
     pub fn add(&mut self, file: SourceFile) -> u32 {
+        let base = self.next_base();
         if !self.files.is_empty() {
             self.text.push('\n');
         }
-        let base = self.text.len() as u32;
+        debug_assert_eq!(base as usize, self.text.len());
         self.text.push_str(&file.text);
         self.files.push((base, std::sync::Arc::new(file)));
         base
+    }
+
+    /// The base the next file added will have: to parse it there first.
+    pub fn next_base(&self) -> u32 {
+        self.text.len() as u32 + u32::from(!self.files.is_empty())
     }
 
     /// Every file's text at its base: `&self.text()[span.range()]` is the

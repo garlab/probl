@@ -5104,7 +5104,14 @@ impl<'p> Engine<'p> {
                 let previous = std::mem::replace(&mut self.test_query, true);
                 let result = self.call_pure(&values[0], Vec::new(), "expect", span);
                 self.test_query = previous;
-                let value = result?;
+                // The assertion runs as a lambda, which isn't one to the
+                // person: its frame's note is the last.
+                let value = result.map_err(|mut e| {
+                    if e.notes.last().is_some_and(|n| n == "inside a lambda") {
+                        e.notes.pop();
+                    }
+                    e
+                })?;
                 if values[1] == Value::Bool(false) {
                     return Ok(value);
                 }

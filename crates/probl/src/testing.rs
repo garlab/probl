@@ -15,9 +15,15 @@ pub fn compile_tests(name: &str, source: &str, sources: &mut dyn Sources) -> Res
         text: source.to_string(),
     };
     let compiled = probl_sema::modules::compile_tests(root, &mut crate::sources::Load(sources));
+    let suite_sources = Arc::new(compiled.sources);
     if compiled.diagnostics.iter().any(probl_syntax::Diagnostic::is_error) {
-        return Err(Error::compile(compiled.diagnostics, &Arc::new(compiled.sources)));
+        return Err(Error::compile(compiled.diagnostics, &suite_sources));
     }
+    let warnings = compiled
+        .diagnostics
+        .into_iter()
+        .map(|d| Diagnostic::new(d, &suite_sources))
+        .collect();
     let compiled_source_bytes = compiled.tests.iter().map(|(_, test)| test.sources.text().len()).sum();
     let mut shared_sources = None;
     let tests = compiled
@@ -48,6 +54,7 @@ pub fn compile_tests(name: &str, source: &str, sources: &mut dyn Sources) -> Res
         .collect();
     Ok(TestSuite {
         tests,
+        warnings,
         compiled_source_bytes,
     })
 }
@@ -55,12 +62,19 @@ pub fn compile_tests(name: &str, source: &str, sources: &mut dyn Sources) -> Res
 #[derive(Debug)]
 pub struct TestSuite {
     tests: Vec<TestCase>,
+    warnings: Vec<Diagnostic>,
     compiled_source_bytes: usize,
 }
 
 impl TestSuite {
     pub fn tests(&self) -> &[TestCase] {
         &self.tests
+    }
+
+    /// Warnings about the test file and its imports, outside any test:
+    /// given here once, not with each test's result.
+    pub fn warnings(&self) -> &[Diagnostic] {
+        &self.warnings
     }
 
     /// Source bytes processed across the independently compiled tests,
@@ -98,6 +112,9 @@ pub struct AssertionResult {
     pub false_probability: f64,
     /// Natural log of unnormalized counterexample weight; -infinity for zero.
     pub log_false_weight: f64,
+    /// Natural log of `false_probability`, which it keeps when that
+    /// underflows to zero; -infinity for zero.
+    pub log_false_share: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -118,6 +135,13 @@ pub struct TestResult {
 impl TestCase {
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The test's program, with the fixtures and imports it runs with, or
+    /// why it doesn't compile: to check it, or the data it reads, without
+    /// running it.
+    pub fn program(&self) -> Result<&Program, &Error> {
+        self.program.as_ref()
     }
 
     /// Run with fresh model state. Supply one pinned clock/environment
@@ -211,6 +235,7 @@ impl TestCase {
                     status: TestStatus::Inconclusive,
                     false_probability: 0.0,
                     log_false_weight: f64::NEG_INFINITY,
+                    log_false_share: f64::NEG_INFINITY,
                 });
                 continue;
             };
@@ -238,6 +263,7 @@ impl TestCase {
                 status,
                 false_probability: false_weight.ratio(total),
                 log_false_weight: false_weight.ln(),
+                log_false_share: false_weight.ln() - total.ln(),
             });
         }
     }

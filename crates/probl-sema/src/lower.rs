@@ -110,6 +110,8 @@ struct Binding {
     captured: bool,
     /// Imported from another file, so it can't be assigned.
     imported: bool,
+    /// A test file's top-level variable, which its tests only read.
+    fixture: bool,
     /// Declared type, checked whenever the variable is assigned.
     ty: Option<TypeSpec>,
 }
@@ -155,6 +157,17 @@ struct Exports {
     /// Every name the file defines at its top level, exported or not, to
     /// say so when a private one is imported.
     defined: FxHashSet<String>,
+}
+
+/// Where a `report` stands in a test file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TestPlace {
+    /// Not in a test file.
+    None,
+    /// The test file's top level and functions.
+    Fixtures,
+    /// A test's setup, before its first `expect`.
+    Setup,
 }
 
 struct Ctx {
@@ -227,6 +240,9 @@ struct Lowerer<'a> {
     /// Whether the file being lowered is the program's entry: only it may
     /// report or set how the program runs.
     is_entry: bool,
+    /// Where a `report` stands in a test file: in its fixtures, in a test's
+    /// setup, or nowhere in one (docs/model-tests.md).
+    test_place: TestPlace,
 }
 
 impl<'a> Lowerer<'a> {
@@ -259,6 +275,7 @@ impl<'a> Lowerer<'a> {
             field_uses: Vec::new(),
             declared_types: Vec::new(),
             is_entry: true,
+            test_place: TestPlace::None,
         }
     }
 
@@ -439,6 +456,7 @@ impl<'a> Lowerer<'a> {
             mutable,
             captured: false,
             imported: false,
+            fixture: false,
             ty: None,
         };
         if top {
@@ -820,6 +838,7 @@ impl<'a> Lowerer<'a> {
             mutable: false,
             captured: true,
             imported: false,
+            fixture: false,
             ty: None,
         };
         self.ctx[depth].scopes[0].insert(name.to_string(), binding.clone());
@@ -921,7 +940,13 @@ impl<'a> Lowerer<'a> {
             self.swap_namespace(&mut names);
             self.is_entry = m.entry;
             let selected = test.filter(|_| i + 1 == modules.len());
+            self.test_place = if selected.is_some() {
+                TestPlace::Fixtures
+            } else {
+                TestPlace::None
+            };
             let exported = self.module(m, &exports, &mut body, selected);
+            self.test_place = TestPlace::None;
             if !m.entry {
                 self.swap_namespace(&mut names);
             }
@@ -1080,12 +1105,14 @@ impl<'a> Lowerer<'a> {
             // modify them, and its locals aren't file-level globals.
             for binding in self.cur().scopes[0].values_mut() {
                 binding.mutable = false;
-                binding.captured = true;
+                binding.fixture = true;
             }
             self.push_scope();
+            self.test_place = TestPlace::Setup;
             for stmt in &test.setup {
                 self.lower_stmt(stmt, body);
             }
+            self.test_place = TestPlace::Fixtures;
             self.is_entry = true;
             for assertion in &test.assertions {
                 let closure = self.lambda(&[], &assertion.value, assertion.span);
@@ -1311,6 +1338,7 @@ impl<'a> Lowerer<'a> {
                         mutable: false,
                         captured: false,
                         imported: true,
+                        fixture: false,
                         def: declare(self, b.def, true),
                         ..b.clone()
                     };
@@ -2239,6 +2267,16 @@ impl<'a> Lowerer<'a> {
                         .help(format!("copy it into a variable of your own: `var mine = {name}`"));
                         None
                     }
+                    Some(b) if b.fixture => {
+                        self.error(
+                            e.span,
+                            format!("can't {action} `{name}`: it's the test file's, and tests only read it"),
+                        )
+                        .help(format!(
+                            "copy it into a variable of the test's own: `var mine = {name}`"
+                        ));
+                        None
+                    }
                     Some(b) if b.captured => {
                         self.error(e.span, format!("can't {action} `{name}` here"))
                             .note("functions, lambdas and `simulate` blocks can read outside variables but only change their own")
@@ -2384,10 +2422,23 @@ impl<'a> Lowerer<'a> {
                 .help("return the value from the function and report it where it's called");
             return;
         }
-        if !self.is_entry {
-            self.error(span, "`report` is only allowed in the program's entry file")
-                .help("export the value, and report it in the file that's run");
-            return;
+        match self.test_place {
+            _ if self.is_entry => {}
+            TestPlace::Fixtures => {
+                self.error(span, "a test file reports only in its tests")
+                    .help("move the `report` into a test, after its first `expect`");
+                return;
+            }
+            TestPlace::Setup => {
+                self.error(span, "a test's `report`s go after its first `expect`")
+                    .help("move it after the first `expect`: it describes the population the expectations check");
+                return;
+            }
+            TestPlace::None => {
+                self.error(span, "`report` is only allowed in the program's entry file")
+                    .help("export the value, and report it in the file that's run");
+                return;
+            }
         }
         if by.is_none() && !self.ctx[0].loops.is_empty() {
             self.error(span, "a `report` inside a loop needs `by`")

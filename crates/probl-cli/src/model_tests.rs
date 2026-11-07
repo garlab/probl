@@ -98,7 +98,7 @@ pub fn run(args: Args) -> ExitCode {
         let suite = std::fs::read_to_string(&path)
             .map_err(|e| e.to_string())
             .and_then(|text| {
-                probl::compile_tests(&path.display().to_string(), &text, &mut LocalSources::new())
+                probl::compile_tests(&shown(&path), &text, &mut LocalSources::new())
                     .map_err(|e| e.render(super::color()))
             });
         if let Ok(suite) = &suite {
@@ -116,14 +116,20 @@ pub fn run(args: Args) -> ExitCode {
     let mut stopped = false;
     println!("enumerated tests · now {now}");
     for (path, suite) in suites {
+        let name = shown(&path);
         let suite = match suite {
             Ok(suite) => suite,
             Err(error) => {
                 counts[2] += 1;
-                eprintln!("{}: {error}", path.display());
+                println!("ERROR {name}");
+                eprint!("{error}");
                 continue;
             }
         };
+        // What's wrong outside the tests, once for the file.
+        for warning in suite.warnings() {
+            eprint!("{}", warning.render(super::color()));
+        }
         let mut files = Snapshots::new(LocalFiles::next_to(&path));
         for test in suite.tests() {
             if args.filter.as_ref().is_some_and(|filter| !test.name().contains(filter)) {
@@ -132,20 +138,21 @@ pub fn run(args: Args) -> ExitCode {
             selected += 1;
             if stopped || cancel.is_cancelled() {
                 stopped = true;
-                println!("UNRUN {} :: {}", path.display(), test.name());
+                println!("UNRUN {name} :: {}", test.name());
                 continue;
             }
             let result = test.run(&options, &mut files);
             stopped |= result.error_kind == Some(probl::ErrorKind::Internal);
             let (index, label) = status(result.status);
             counts[index] += 1;
-            println!("{label} {} :: {}", path.display(), result.name);
+            println!("{label} {name} :: {}", result.name);
             for assertion in result.assertions.iter().filter(|a| a.status != TestStatus::Pass) {
                 let (_, label) = status(assertion.status);
                 if assertion.status == TestStatus::Fail {
                     println!(
-                        "  {label}: {} (false weight {:.6e}; log weight {})",
-                        assertion.label, assertion.false_probability, assertion.log_false_weight
+                        "  {label}: {}: false for {} of the weight",
+                        assertion.label,
+                        share(assertion)
                     );
                 } else {
                     println!("  {label}: {}", assertion.label);
@@ -179,6 +186,25 @@ pub fn run(args: Args) -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+/// How much of the weight an assertion is false for: as a report prints a
+/// probability, or, too small for that, its power of ten.
+fn share(assertion: &probl::AssertionResult) -> String {
+    if assertion.false_probability > 0.0 {
+        return probl_engine::value::fmt_prob(assertion.false_probability);
+    }
+    format!("about 1e{:.0}", assertion.log_false_share / std::f64::consts::LN_10)
+}
+
+/// How to show `path` in the output: relative to the current directory,
+/// when it's inside it.
+fn shown(path: &Path) -> String {
+    let here = std::env::current_dir().and_then(std::fs::canonicalize).ok();
+    match here.as_deref().and_then(|here| path.strip_prefix(here).ok()) {
+        Some(relative) => relative.display().to_string(),
+        None => path.display().to_string(),
     }
 }
 
