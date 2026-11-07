@@ -13,7 +13,7 @@ All notable changes to the published crates are recorded here. The format follow
 
 ### Fixed
 
-- Analytic boolean events retain tiny tails when a probability rounds to zero or one, and boolean reports preserve products below binary64's range. Explicit comparisons whose nonzero tails cannot be represented in CDF coordinates now produce a capability error.
+- Boolean reports preserve products of analytic events below binary64's range. In model tests, analytic events also retain tiny tails when a probability rounds to zero or one, and a comparison whose nonzero tail can't be represented in CDF coordinates is a capability error rather than a certified constant. Ordinary programs round such tails, as they print them.
 
 ## [0.5.0] - 2026-11-05
 

@@ -443,3 +443,21 @@ fn pieces_are_limited() {
     let e = exec_raw(&src.replace("10", "40"), &Options::default()).unwrap_err();
     assert!(e.message.contains("pieces is over the limit"), "{}", e.message);
 }
+
+#[test]
+fn ordinary_programs_round_tails_too_small_for_a_probability() {
+    // A tail beyond binary64's CDF (about 8.3 sd above, 38 below) rounds,
+    // as the report prints it. Only model tests refuse to certify it.
+    let o = outcome(
+        "let height ~ normal(170, 3)\nobserve height < 200\nlet x ~ normal(0, 1)\nreport x < 9\nreport x > 40\nreport not (x > 9)\nreport height > 100",
+    );
+    assert_eq!(o.reports[0].distribution(), vec![(Value::Bool(true), 1.0)]);
+    assert_eq!(o.reports[1].distribution(), vec![(Value::Bool(false), 1.0)]);
+    assert_eq!(o.reports[2].distribution(), vec![(Value::Bool(true), 1.0)]);
+    assert_eq!(o.reports[3].distribution(), vec![(Value::Bool(true), 1.0)]);
+    // Products of tails that underflow, too.
+    let o = outcome(
+        "let x ~ normal(0, 1)\nlet y ~ normal(0, 1)\nlet z ~ normal(0, 1)\nlet w ~ normal(0, 1)\nreport x < -20 and y < -20 and z < -20 and w < -20",
+    );
+    assert_eq!(o.reports[0].distribution(), vec![(Value::Bool(false), 1.0)]);
+}

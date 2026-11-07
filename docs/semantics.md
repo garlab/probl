@@ -679,10 +679,12 @@ This implementation deliberately rejects unsupported uses with a sampling diagno
 
 Continuous draws inside `simulate` make a distribution whose outcomes own their draws, so that each draw from it is fresh and its parts stay correlated (section 8); capturing analytic outcomes into `simulate` remains unsupported. Ordinary functions can already return analytic outcomes. Cyclic loops involving analytic state use bounded unrolling and the usual iteration/work limits rather than the finite-state Markov solver.
 
-Explicit comparisons reject a threshold within the support when its CDF rounds
-to an endpoint and erases a nonzero tail. A capability diagnostic replaces a
-predicate incorrectly rounded to a constant. Internal numeric CDF queries still
-use binary64 precision.
+A comparison's tail can be too small for binary64 CDF coordinates: about 8.3
+standard deviations above a normal's mean, or 38 below. An ordinary program
+rounds it, so `normal(0, 1) < 9` is `true`, as a report would print it. A model
+test (section 17) mustn't certify a check from a rounded constant: there a
+comparison keeps a tail its probability can't hold, and one its CDF can't is a
+capability error. Internal numeric CDF queries still use binary64 precision.
 
 ### Numerical integration
 

@@ -439,6 +439,7 @@ fn run_here(
             max_collection: limits.max_collection,
             work_left: limits.max_work,
             shared: None,
+            certify_tails: settings.model_test,
         },
         cancel: options.cancel.clone(),
         sample_seed: sample.map(|(_, seed)| seed),

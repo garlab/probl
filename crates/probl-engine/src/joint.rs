@@ -121,7 +121,7 @@ fn truths(v: &Value, budget: &mut Budget) -> OpResult<Vec<(Value, f64)>> {
         }
         let weight = all.map_or(crate::Weight::ONE, |e| e.probability_weight());
         let p = weight.to_f64();
-        if p == 0.0 && !weight.is_zero() {
+        if p == 0.0 && !weight.is_zero() && budget.certify_tails {
             return Err(OpError::unsupported(
                 "this analytic recipe has positive outcomes too small for its probability representation",
             ));

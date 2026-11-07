@@ -1761,10 +1761,15 @@ impl Event {
             weight
         }
     }
-    pub fn value(self) -> Value {
+    /// As a value: a fact when its probability rounds to zero or one.
+    /// Unless `certify` (in a model test), where a rounded probability isn't
+    /// a constant predicate: it stays an event while it has any mass, so
+    /// that complementing it can recover a tiny tail.
+    pub fn value(self, certify: bool) -> Value {
         let p = self.probability();
-        // A rounded probability of zero or one isn't a constant predicate:
-        // retain the geometry so complementing it can recover a tiny tail.
+        if !certify && (p == 0.0 || p == 1.0) {
+            return Value::Bool(p == 1.0);
+        }
         let has_mass = |boxes: &[Vec<Domain>]| {
             boxes.iter().any(|b| {
                 self.draws
@@ -2298,7 +2303,7 @@ pub fn binary(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> OpResult<
             if !d.iter().all(|(_, f)| f.is_finite()) {
                 return Err(unsupported("non-finite affine coefficients"));
             }
-            return Ok(compare(x, op, &d)?.value());
+            return Ok(compare(x, op, &d, budget.certify_tails)?.value(budget.certify_tails));
         }
         _ => return Err(nonlinear()),
     };
@@ -2515,9 +2520,9 @@ fn comparison_precision() -> OpError {
 
 /// The event that a difference `d` of outcomes of `x`'s draw compares with
 /// zero by `op`.
-fn compare(x: &Analytic, op: BinOp, d: &[(f64, Fun)]) -> OpResult<Event> {
+fn compare(x: &Analytic, op: BinOp, d: &[(f64, Fun)], certify: bool) -> OpResult<Event> {
     use BinOp::*;
-    let below = |family, pieces, t, strict| below_checked(family, pieces, t, strict, true);
+    let below = |family, pieces, t, strict| below_checked(family, pieces, t, strict, certify);
     let yes = match op {
         Lt => below(&x.family, d, 0.0, true)?,
         Le => below(&x.family, d, 0.0, false)?,
@@ -2818,7 +2823,7 @@ pub fn clamp(x: &Analytic, lo: &Value, hi: &Value, budget: &mut Budget) -> OpRes
     x.with_type(pieces, int).value()
 }
 
-pub fn logic(and: bool, a: &Value, b: &Value) -> OpResult<Value> {
+pub fn logic(and: bool, a: &Value, b: &Value, certify: bool) -> OpResult<Value> {
     let (event, other) = match (a, b) {
         (Value::Event(e), b) | (b, Value::Event(e)) => (e, b),
         _ => return Err(unsupported("this logical operation")),
@@ -2826,7 +2831,9 @@ pub fn logic(and: bool, a: &Value, b: &Value) -> OpResult<Value> {
     match other {
         Value::Bool(x) if *x != and => Ok(Value::Bool(*x)),
         Value::Bool(_) => Ok(Value::Event(event.clone())),
-        Value::Event(other) => Ok(event.combine(other, if and { BinOp::And } else { BinOp::Or })?.value()),
+        Value::Event(other) => Ok(event
+            .combine(other, if and { BinOp::And } else { BinOp::Or })?
+            .value(certify)),
         _ => Err(unsupported("combining this event with a probability")),
     }
 }
@@ -3115,7 +3122,7 @@ fn resolve_at(v: &Value, c: &Constraints, b: &mut Budget, depth: usize) -> OpRes
                     }
                 }
             }
-            Event { draws, boxes }.simplified().value()
+            Event { draws, boxes }.simplified().value(b.certify_tails)
         }
         Value::List(xs) => Value::list(
             xs.iter()

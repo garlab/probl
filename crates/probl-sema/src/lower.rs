@@ -895,6 +895,7 @@ impl<'a> Lowerer<'a> {
     /// modules it imports, the entry last. Each file's top level is part of
     /// the main function, in that order, and its names are its own.
     fn program(&mut self, modules: &[ModuleAst], test: Option<&ast::ModelTest>) {
+        self.settings.model_test = test.is_some();
         let entry = modules
             .iter()
             .position(|m| m.entry)

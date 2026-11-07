@@ -54,6 +54,10 @@ pub struct Budget {
     /// Work shared with other threads, which `work_left` is topped up from
     /// (when batches of runs are sampled in parallel).
     pub shared: Option<Arc<AtomicU64>>,
+    /// Running a model test: analytic comparisons keep tails too small for
+    /// a binary64 probability, or fail, instead of rounding them to a
+    /// constant (`Settings::model_test`).
+    pub certify_tails: bool,
 }
 
 impl Budget {
@@ -69,6 +73,7 @@ impl Budget {
             max_collection: usize::MAX,
             work_left: u64::MAX,
             shared: None,
+            certify_tails: false,
         }
     }
 

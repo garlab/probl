@@ -83,6 +83,11 @@ pub struct Settings {
     /// numerical integration, to this relative tolerance (docs/semantics.md,
     /// section 13). `None` without it.
     pub integrate: Option<f64>,
+    /// Compiled from a model test, which must not certify a check from a
+    /// probability rounded to a constant: comparisons keep tails too small
+    /// to round, or fail when they can't (docs/model-tests.md). Ordinary
+    /// programs round them, as they print them.
+    pub model_test: bool,
 }
 
 /// `@integrate`'s tolerance when it doesn't give one.
@@ -98,6 +103,7 @@ impl Default for Settings {
             max_worlds: 10_000_000,
             on_error: None,
             integrate: None,
+            model_test: false,
         }
     }
 }

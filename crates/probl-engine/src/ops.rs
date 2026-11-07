@@ -358,7 +358,7 @@ pub fn not(v: &Value, budget: &mut Budget) -> OpResult<Value> {
         Truth::Fact(b) => Ok(Value::Bool(!b)),
         Truth::Analytic(e) => {
             budget.work(e.size() as u64)?;
-            Ok(e.complement()?.value())
+            Ok(e.complement()?.value(budget.certify_tails))
         }
         Truth::Probability(p) => computed_prob(1.0 - p, "not"),
         Truth::Uncertain(d) => lift1(&Value::Dist(d), budget, |x, _| match x {
@@ -384,7 +384,7 @@ pub fn logic(and: bool, a: Truth, b: Truth, budget: &mut Budget) -> OpResult<Val
                 budget.work(e.size() as u64)?;
             }
         }
-        return crate::analytic::logic(and, &a, &b);
+        return crate::analytic::logic(and, &a, &b, budget.certify_tails);
     }
     let op = |x: bool, y: bool| if and { x && y } else { x || y };
     match (a, b) {
@@ -797,7 +797,7 @@ fn analytic_comparison(op: BinOp, a: &Value, b: &Value, budget: &mut Budget) -> 
     {
         budget.work((x.size() + y.size()) as u64)?;
         let equal = x.combine(y, BinOp::Eq)?;
-        return Ok(if op == BinOp::Eq { equal } else { equal.complement()? }.value());
+        return Ok(if op == BinOp::Eq { equal } else { equal.complement()? }.value(budget.certify_tails));
     }
     Err(crate::analytic::unsupported(
         "comparing aggregate or boolean analytic outcomes",
