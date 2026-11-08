@@ -873,6 +873,47 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// `Enum.Variant`, where `enum_name` names the enum `ty` in this file:
+    /// the variant, after an error when the enum has none of that name.
+    fn qualified_variant(&mut self, ty: u32, enum_name: &str, enum_span: Span, variant: &ast::Ident) -> Lit {
+        if let Some(&def) = self.type_defs.get(enum_name) {
+            self.refer(enum_span, def);
+        }
+        let enum_type = &self.enums[ty as usize];
+        match enum_type.variants.iter().position(|v| *v == variant.name) {
+            Some(i) => {
+                let lit = Lit::Enum { ty, variant: i as u32 };
+                self.refer_variant(&lit, variant.span);
+                lit
+            }
+            None => {
+                let enum_name = enum_type.name.clone();
+                self.error(variant.span, format!("`{enum_name}` has no variant `{}`", variant.name));
+                Lit::Unit
+            }
+        }
+    }
+
+    /// Warn when a pattern's name, which binds a new variable, is the name
+    /// of an imported enum's variant: those are written with the enum's
+    /// name, so the pattern matches every value.
+    fn warn_unqualified_variant(&mut self, name: &str, span: Span) {
+        let mut qualified: Vec<String> = self
+            .enum_by_name
+            .iter()
+            .filter(|&(_, &ty)| self.enums[ty as usize].variants.iter().any(|v| v == name))
+            .map(|(local, _)| format!("`{local}.{name}`"))
+            .collect();
+        qualified.sort();
+        let help = match qualified.as_slice() {
+            [] => return,
+            [one] => format!("to match the variant of the imported enum, write {one}"),
+            many => format!("to match a variant of an imported enum, write {}", many.join(" or ")),
+        };
+        self.warning(span, format!("`{name}` binds a new variable, which matches any value"))
+            .help(help);
+    }
+
     /// Names that could be meant at this point, nearest scopes first.
     fn visible_names(&self) -> Vec<String> {
         fn sorted<'s>(names: impl Iterator<Item = &'s String>) -> Vec<String> {
@@ -2136,7 +2177,7 @@ impl<'a> Lowerer<'a> {
                     self.bind_pattern(item, element, mutable, out);
                 }
             }
-            ast::PatternKind::Literal(_) | ast::PatternKind::Or(_) => {
+            ast::PatternKind::Literal(_) | ast::PatternKind::Variant { .. } | ast::PatternKind::Or(_) => {
                 self.error(pattern.span, "this pattern might not match")
                     .help("use `match` to test values against patterns");
             }
@@ -2807,6 +2848,7 @@ impl<'a> Lowerer<'a> {
                     self.refer_variant(&variant, span);
                     return binary(BinOp::Eq, value.clone(), lit(variant, span), span);
                 }
+                self.warn_unqualified_variant(name, span);
                 let dest = self.declare(name, span, false);
                 let st = self.stmt(
                     span,
@@ -2817,6 +2859,24 @@ impl<'a> Lowerer<'a> {
                 );
                 binds.push(st);
                 lit(Lit::Bool(true), span)
+            }
+            ast::PatternKind::Variant { ty, variant } => {
+                // In a pattern, `X.Y` can only name a variant: a variable
+                // `X` doesn't hide the enum, as it does in an expression.
+                let Some(&id) = self.enum_by_name.get(&ty.name) else {
+                    let enums: Vec<String> = self.enum_by_name.keys().cloned().collect();
+                    let help = match closest(&ty.name, &enums) {
+                        Some(s) => format!("did you mean `{s}`?"),
+                        None => format!(
+                            "a pattern names a variant with its enum's name, like `Market.Boom`; to compare with a value, use a guard: `x if x == {}`",
+                            self.text(span)
+                        ),
+                    };
+                    self.error(ty.span, format!("`{}` isn't an enum", ty.name)).help(help);
+                    return lit(Lit::Bool(false), span);
+                };
+                let variant = self.qualified_variant(id, &ty.name, ty.span, variant);
+                binary(BinOp::Eq, value.clone(), lit(variant, span), span)
             }
             ast::PatternKind::Literal(e) => {
                 let mut scratch = Vec::new();
@@ -3204,22 +3264,8 @@ impl<'a> Lowerer<'a> {
                     && let Some(&ty) = self.enum_by_name.get(base)
                     && self.lookup(base).is_none()
                 {
-                    if let Some(&def) = self.type_defs.get(base) {
-                        self.refer(expr.span, def);
-                    }
-                    let enum_type = &self.enums[ty as usize];
-                    return match enum_type.variants.iter().position(|v| *v == name.name) {
-                        Some(i) => {
-                            let variant = Lit::Enum { ty, variant: i as u32 };
-                            self.refer_variant(&variant, name.span);
-                            lit(variant, span)
-                        }
-                        None => {
-                            let enum_name = enum_type.name.clone();
-                            self.error(name.span, format!("`{enum_name}` has no variant `{}`", name.name));
-                            lit(Lit::Unit, span)
-                        }
-                    };
+                    let variant = self.qualified_variant(ty, base, expr.span, name);
+                    return lit(variant, span);
                 }
                 self.field_uses.push((name.span, name.name.clone()));
                 ExprKind::Field(Box::new(self.expr(expr, out)), name.name.clone())

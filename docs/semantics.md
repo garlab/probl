@@ -309,7 +309,7 @@ A probability or distribution stored in the bag remains a recipe after extractio
 
 **Combinations.** `combinations(xs, n)`, also `xs.combinations(n)`, returns all `n`-element groups from a list, integer range or string. Results are lists of lists, in lexicographic order of strictly increasing input indices; elements within each group retain input order. Equal values at different indices remain distinct: `[1,1,2].combinations(2)` is `[[1,1],[1,2],[1,2]]`. Strings contribute Unicode scalar characters. The input is unchanged, values are not compared, and recipes and analytic draw identities are preserved. The count uses checked integer conversion; a negative count raises `DomainError`, zero gives `[[]]`, and a count above the input length gives `[]`. These last two cases do not materialize a range. Other results are checked against collection and work limits before allocation; this is an eager operation, not an iterator. As with other collection transforms, finite distribution arguments lift outcome by outcome, but elements inside a list are not implicitly drawn. `choose(n, k)` remains the numeric binomial coefficient.
 
-**`match` needs a settled subject.** Matching a distribution is an error; draw it first. Patterns are tests on a single value, and `|` between patterns is an ordinary `or` on facts.
+**`match` needs a settled subject.** Matching a distribution is an error; draw it first. Patterns are tests on a single value, and `|` between patterns is an ordinary `or` on facts. A name matches the enum variant it names, if any, and otherwise binds a new variable; `Enum.Variant` always names a variant, so a variable called `Enum` doesn't hide it in a pattern.
 
 ## 3. Conditions and branching
 
@@ -768,7 +768,7 @@ A program is its entry file, the file that's run, and the files it imports, dire
 
 **Syntax.** Imports come before everything else in a file: `import { a, b as c } from "./file.probl"` imports `a` and `b`, the latter under the name `c`. `export` before a `fn`, `type`, `enum`, or a top-level `let` or `var` that names one value, makes it importable. A bare `import "./file.probl"` is reserved, and an error.
 
-**Names.** Each file has its own top-level names: functions, types, enums, enum variants and variables. An imported name refers to the exporting file's definition, so an enum or record type imported through two files is the same type. An enum's variants are imported with it, qualified (`Side.Left`). Importing a name the file doesn't export, importing a name twice, or importing a name the file also defines at its top level, is an error.
+**Names.** Each file has its own top-level names: functions, types, enums, enum variants and variables. An imported name refers to the exporting file's definition, so an enum or record type imported through two files is the same type. An enum's variants are imported with it, qualified (`Side.Left`), in expressions and patterns alike. In a pattern, a bare name that isn't a variant of the file's own enums binds a new variable, even when an imported enum has a variant of that name; the compiler warns about it. Importing a name the file doesn't export, importing a name twice, or importing a name the file also defines at its top level, is an error.
 
 Annotations on exported functions, values and record fields must not expose a private named type, including inside containers or unions. Export that type too, or use a public type imported from its defining file. Private types remain usable inside function bodies.
 

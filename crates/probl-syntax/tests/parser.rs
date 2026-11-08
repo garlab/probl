@@ -242,3 +242,13 @@ fn temporal_literals_are_canonical_constants_and_patterns() {
         assert!(!parse_errors(source).is_empty(), "{source}");
     }
 }
+
+#[test]
+fn a_pattern_names_a_variant_with_its_enum() {
+    assert_eq!(
+        parse_ok("match p {\n  Pot.Isa | Pot.Ruby => 1\n  [Pot.Opal, n] => n\n  other => 0\n}"),
+        "(match p ((| (. Pot Isa) (. Pot Ruby)) => 1) ([(. Pot Opal) n] => n) (other => 0))\n"
+    );
+    let e = parse_errors("match p { Pot. => 1 }");
+    assert!(e.contains("expected a variant's name after `.`, found `=>`"), "{e}");
+}

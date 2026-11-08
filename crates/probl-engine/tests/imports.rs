@@ -33,8 +33,10 @@ impl Loader for Files {
     }
 }
 
-/// Compile `main.probl` with the other files, or say what's wrong.
-fn compile(files: &[(&'static str, &'static str)]) -> Result<probl_sema::ir::Program, Vec<String>> {
+/// Compile `main.probl` with the other files: the program, unless there are
+/// errors, and the errors and warnings, each with its file and its help.
+#[allow(clippy::type_complexity)]
+fn compile_all(files: &[(&'static str, &'static str)]) -> (Option<probl_sema::ir::Program>, Vec<String>, Vec<String>) {
     let mut files = Files(files.iter().copied().collect());
     let entry = Source {
         identity: "main.probl".into(),
@@ -42,17 +44,20 @@ fn compile(files: &[(&'static str, &'static str)]) -> Result<probl_sema::ir::Pro
         text: files.0["main.probl"].to_string(),
     };
     let compiled = compile_program(entry, &mut files);
-    let errors: Vec<String> = compiled
-        .diagnostics
-        .iter()
-        .filter(|d| d.is_error())
-        .map(|d| {
-            let (file, _) = compiled.sources.locate(d.span).expect("a located diagnostic");
-            let help = d.help.as_deref().map(|h| format!(" (help: {h})")).unwrap_or_default();
-            format!("{}: {}{help}", file.name, d.message)
-        })
-        .collect();
-    compiled.program.ok_or(errors)
+    let (mut errors, mut warnings) = (Vec::new(), Vec::new());
+    for d in &compiled.diagnostics {
+        let (file, _) = compiled.sources.locate(d.span).expect("a located diagnostic");
+        let help = d.help.as_deref().map(|h| format!(" (help: {h})")).unwrap_or_default();
+        let line = format!("{}: {}{help}", file.name, d.message);
+        if d.is_error() { &mut errors } else { &mut warnings }.push(line);
+    }
+    (compiled.program, errors, warnings)
+}
+
+/// Compile `main.probl` with the other files, or say what's wrong.
+fn compile(files: &[(&'static str, &'static str)]) -> Result<probl_sema::ir::Program, Vec<String>> {
+    let (program, errors, _) = compile_all(files);
+    program.ok_or(errors)
 }
 
 fn outcome(files: &[(&'static str, &'static str)]) -> (probl_engine::Outcome, Vec<String>) {
@@ -381,4 +386,87 @@ fn public_annotations_cant_expose_private_named_types() {
         ),
     ]);
     assert_eq!(out.reports[0].distribution(), [(Value::Int(3.into()), 1.0)]);
+}
+
+#[test]
+fn an_imported_enums_variants_are_matched_with_its_name() {
+    const POT: &str = "export enum Pot { Isa, Ruby, Opal }\nexport let brewed = one_of([Pot.Isa, Pot.Ruby, Pot.Opal])";
+    let (out, _) = outcome(&[
+        (
+            "main.probl",
+            "import { Pot as P, brewed } from \"./pot.probl\"
+let p ~ brewed
+report match p {
+  P.Isa => 1
+  P.Ruby | P.Opal => 2
+}
+report match [p, 5] { [P.Opal, n] => n, _ => 0 }",
+        ),
+        ("pot.probl", POT),
+    ]);
+    let third = 1.0 / 3.0;
+    let first = out.reports[0].distribution();
+    assert_eq!(first.len(), 2);
+    assert_eq!(first[0].0, Value::Int(1.into()));
+    close(first[0].1, third);
+    close(first[1].1, 2.0 * third);
+    let second = out.reports[1].distribution();
+    assert_eq!(second[1].0, Value::Int(5.into()));
+    close(second[1].1, third);
+
+    // A bare variant's name binds a new variable, which matches anything:
+    // the program still compiles, with a warning that says what to write.
+    let (program, problems, warnings) = compile_all(&[
+        (
+            "main.probl",
+            "import { Pot, brewed } from \"./pot.probl\"\nlet p ~ brewed\nreport match p { Isa => 1, _ => 2 }",
+        ),
+        ("pot.probl", POT),
+    ]);
+    assert!(program.is_some(), "{problems:?}");
+    assert_eq!(
+        warnings,
+        [
+            "main.probl: `Isa` binds a new variable, which matches any value (help: to match the variant of the imported enum, write `Pot.Isa`)"
+        ]
+    );
+    // No warning for a name that isn't a variant, or for an enum's own file.
+    let (_, _, warnings) = compile_all(&[
+        (
+            "main.probl",
+            "import { Pot, brewed } from \"./pot.probl\"\nlet p ~ brewed\nreport match p { other => 1 }",
+        ),
+        (
+            "pot.probl",
+            "export enum Pot { Isa, Ruby, Opal }\nexport let brewed = one_of([Isa, Ruby, Opal])\nexport fn first(p) { match p { Isa => true, _ => false } }",
+        ),
+    ]);
+    assert_eq!(warnings, Vec::<String>::new());
+
+    macro_rules! main {
+        ($rest:literal) => {
+            concat!(
+                "import { Pot, brewed } from \"./pot.probl\"\nlet p ~ brewed\n",
+                $rest
+            )
+        };
+    }
+    for (main, expected) in [
+        (
+            main!("report match p { Pt.Isa => 1, _ => 2 }"),
+            "main.probl: `Pt` isn't an enum (help: did you mean `Pot`?)",
+        ),
+        (
+            main!("report match p { Pot.Isaa => 1, _ => 2 }"),
+            "main.probl: `Pot` has no variant `Isaa`",
+        ),
+        (
+            main!("let r = { kind: Pot.Isa }\nreport match p { r.kind => 1, _ => 2 }"),
+            "main.probl: `r` isn't an enum (help: a pattern names a variant with its enum's name, like `Market.Boom`; to compare with a value, use a guard: `x if x == r.kind`)",
+        ),
+        (main!("let Pot.Isa = p"), "main.probl: this pattern might not match"),
+    ] {
+        let e = errors(&[("main.probl", main), ("pot.probl", POT)]);
+        assert!(e.contains(expected), "expected {expected:?} in:\n{e}");
+    }
 }

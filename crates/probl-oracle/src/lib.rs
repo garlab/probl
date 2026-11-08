@@ -1075,6 +1075,7 @@ impl<'a> Interp<'a> {
                 Ok(false)
             }
             PatternKind::List(_) => unsupported("list patterns"),
+            PatternKind::Variant { .. } => unsupported("enum variants"),
         }
     }
 

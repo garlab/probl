@@ -25,7 +25,8 @@ for day in [Day { visitors: 10, signups: 2 }] {
 let doubled = map([1, 2], n -> n * x)
 let label = match market {
   Boom => \"up\"
-  other => \"steady or down\"
+  Market.Slump => \"down\"
+  other => \"steady\"
 }
 report earn(x)
 ";
@@ -76,6 +77,8 @@ fn uses_lead_to_their_declarations() {
     assert_eq!(definition(&s, offset("Market.Steady", 0, 7)), ("Steady".into(), 1));
     assert_eq!(definition(&s, offset("= Boom", 0, 2)), ("Boom".into(), 1));
     assert_eq!(definition(&s, offset("Boom =>", 0, 0)), ("Boom".into(), 1));
+    assert_eq!(definition(&s, offset("Market.Slump", 0, 0)), ("Market".into(), 1));
+    assert_eq!(definition(&s, offset("Market.Slump", 0, 7)), ("Slump".into(), 1));
     // Fields: in a record with its type, and read from a value.
     assert_eq!(definition(&s, offset("visitors: 10", 0, 0)), ("visitors".into(), 2));
     assert_eq!(definition(&s, offset("day.signups", 0, 4)), ("signups".into(), 2));

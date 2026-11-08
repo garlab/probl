@@ -4,6 +4,10 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+### Fixed
+
+- A `match` can test an imported enum's variants: a pattern names a variant with its enum's name (`Pot.Isa =>`), as an expression does. A bare name such as `Isa` still binds a new variable, which matches every value; when the name is a variant of an imported enum, a warning says so and suggests `Pot.Isa`. Qualified patterns also match a file's own variants, including a variant name that two enums share.
+
 ## [0.6.0] - 2026-11-07
 
 ### Added

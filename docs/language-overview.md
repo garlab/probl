@@ -642,6 +642,7 @@ report ~sales(10)
 - **Definitions** are static. An imported function reads its own file's variables, whatever the importing file has; an imported recipe (`export let step = one_of([-1, 1])`) is a value, drawn at each `~`.
 - **A file's top level runs once per run**, before the files that import it, in the program's worlds. `rate` is drawn once: it's the same outcome in `lib/shop.probl` and `main.probl`, so the shop's observation updates the `rate` that `main.probl` reports. Splitting a program into files gives the same result as writing them out in one, in that order. A file that two others import runs once.
 - **Imported values are read-only**: `var mine = rate` makes a copy to change. `import { rate as r } from …` imports under another name; names a file doesn't export stay its own.
+- **An imported enum's variants take its name**: after `import { Side } from …`, write `Side.Left`, in a pattern too (`Side.Left => …`). A bare `Left =>` would bind a new variable that matches anything, so it gets a warning.
 - **Only the file that's run** reports and sets pragmas. A `read` in an imported file reads relative to that file. Imports come first in a file, their paths end in `.probl`, and files can't import each other in a cycle.
 
 `probl run` and `probl check` read the imported files from disk. In the playground, a program's files are tabs above the editor: `+` adds one, which `main.probl` imports as `"./lib.probl"`. `probl::compile` compiles one text, which can't import; the library's `compile_with` takes the files from the host ([library guide](library.md#programs-in-several-files)).
@@ -1110,7 +1111,7 @@ map          = "[" ":" "]" | "[" expr ":" expr { "," expr ":" expr } [ "," ] "]"
 record       = "{" field { "," field } [ "," ] "}" ;
 field        = IDENT [ ":" expr ] ;                          (* { rounds } means { rounds: rounds } *)
 pattern      = alt { "|" alt } ;
-alt          = "_" | IDENT | literal | "[" [ pattern { "," pattern } ] "]" ;
+alt          = "_" | IDENT | IDENT "." IDENT | literal | "[" [ pattern { "," pattern } ] "]" ;
 literal      = INT | FLOAT | PERCENT | STRING | "true" | "false" ;
 sep          = "," | NEWLINE ;
 ```
@@ -1121,7 +1122,7 @@ Lexical notes:
 - `DICE` is `[count] "d" sides`, written with no spaces (`d6`, `2d6`, `10d10`). Names of that shape are reserved: `d2` can't be a variable.
 - In the header of an `if`, `while`, `for` or `match`, a record literal needs parentheses, so `if x == (Point { x: 1, y: 2 }) { … }`, as in Rust.
 - `{` starts a record when it's followed by `IDENT :` or `IDENT ,`. Otherwise it starts a block.
-- In a pattern, a name that refers to an enum variant (`Boom`) matches that variant. Any other name binds a new variable.
+- In a pattern, a name that refers to an enum variant (`Boom`) matches that variant, and so does an enum's name and a variant (`Market.Boom`), which is how an imported enum's variants are written. Any other name binds a new variable.
 
 ## Appendix B: Operator precedence
 

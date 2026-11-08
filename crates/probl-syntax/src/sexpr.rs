@@ -138,6 +138,7 @@ pub fn pattern(p: &Pattern) -> String {
     match &p.kind {
         PatternKind::Wildcard => "_".to_string(),
         PatternKind::Name(n) => n.clone(),
+        PatternKind::Variant { ty, variant } => format!("(. {} {})", ty.name, variant.name),
         PatternKind::Literal(e) => expr(e),
         PatternKind::List(items) => {
             let items: Vec<String> = items.iter().map(pattern).collect();

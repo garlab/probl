@@ -883,7 +883,15 @@ impl Parser {
             }
             Tok::Ident(name) => {
                 self.bump();
-                PatternKind::Name(name)
+                if self.eat(&Tok::Dot) {
+                    let variant = self.ident("a variant's name after `.`")?;
+                    PatternKind::Variant {
+                        ty: Ident { name, span },
+                        variant,
+                    }
+                } else {
+                    PatternKind::Name(name)
+                }
             }
             Tok::Int(_) | Tok::Float(_) | Tok::Percent(_) | Tok::Str(_) | Tok::Quoted(_) | Tok::True | Tok::False => {
                 PatternKind::Literal(self.primary()?)

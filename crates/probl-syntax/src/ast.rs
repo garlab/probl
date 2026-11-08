@@ -409,6 +409,12 @@ pub enum PatternKind {
     Wildcard,
     /// A name: binds a new variable, or matches an enum variant of that name.
     Name(String),
+    /// `Enum.Variant`: matches that variant, as an imported enum's variants
+    /// are named.
+    Variant {
+        ty: Ident,
+        variant: Ident,
+    },
     Literal(Expr),
     List(Vec<Pattern>),
     Or(Vec<Pattern>),
