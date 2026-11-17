@@ -1,0 +1,16 @@
+[package]
+name = "probl-highlighting-tests"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dev-dependencies]
+probl-syntax = { path = "../../crates/probl-syntax" }
+tree-sitter-probl = { path = "../tree-sitter-probl" }
+tree-sitter = "0.27"
+
+[[test]]
+name = "compiler"
+path = "compiler.rs"

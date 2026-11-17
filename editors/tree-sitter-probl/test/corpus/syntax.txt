@@ -1,0 +1,466 @@
+======================================================================
+Declarations and imports
+======================================================================
+
+@mode sample(runs: 100, seed: 7)
+import { f as g, X } from "./x.probl"
+export fn f(x: int or str): list[int] { [1] }
+type X = { value: int }
+enum Kind { A, B }
+
+----------------------------------------------------------------------
+
+(source_file
+  (pragma
+    (identifier)
+    (call_expression
+      (identifier)
+      (arguments
+        (named_argument
+          (identifier)
+          (number))
+        (named_argument
+          (identifier)
+          (number)))))
+  (import_declaration
+    (import_names
+      (import_name
+        (identifier)
+        (identifier))
+      (import_name
+        (identifier)))
+    (string
+      (string_content)))
+  (export_declaration
+    (function_declaration
+      (identifier)
+      (parameters
+        (parameter
+          (identifier)
+          (union_type
+            (type_identifier
+              (identifier))
+            (type_identifier
+              (identifier)))))
+      (generic_type
+        (type_identifier
+          (identifier))
+        (type_identifier
+          (identifier)))
+      (block
+        (expression_statement
+          (list
+            (number))))))
+  (type_declaration
+    (type_identifier
+      (identifier))
+    (record_type
+      (type_field
+        (identifier)
+        (type_identifier
+          (identifier)))))
+  (enum_declaration
+    (type_identifier
+      (identifier))
+    (enum_body
+      (identifier)
+      (identifier))))
+
+======================================================================
+Numbers and contextual names
+======================================================================
+
+let to = d6_0
+report [d6, 2d6, 2d6_0, 0b10_01, 0Xff, 1_2.3_4e-5_6%, 1..6, 1..<7, 3% to 7%]
+
+----------------------------------------------------------------------
+
+(source_file
+  (binding
+    (identifier)
+    (identifier))
+  (report_statement
+    (list
+      (dice)
+      (dice)
+      (dice)
+      (number)
+      (number)
+      (percentage)
+      (binary_expression
+        (number)
+        (number))
+      (binary_expression
+        (number)
+        (number))
+      (binary_expression
+        (percentage)
+        (percentage)))))
+
+======================================================================
+Precedence
+======================================================================
+
+a or b and not c == d
+-x ^ 2 * 3 + 4
+2 ^ 3 ^ 2
+~d6 ^ 2
+x not in [1, 2]
+
+----------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (binary_expression
+      (identifier)
+      (binary_expression
+        (identifier)
+        (unary_expression
+          (binary_expression
+            (identifier)
+            (identifier))))))
+  (expression_statement
+    (binary_expression
+      (binary_expression
+        (unary_expression
+          (binary_expression
+            (identifier)
+            (number)))
+        (number))
+      (number)))
+  (expression_statement
+    (binary_expression
+      (number)
+      (binary_expression
+        (number)
+        (number))))
+  (expression_statement
+    (binary_expression
+      (unary_expression
+        (dice))
+      (number)))
+  (expression_statement
+    (binary_expression
+      (identifier)
+      (not_in_operator)
+      (list
+        (number)
+        (number)))))
+
+======================================================================
+Blocks records and restricted headers
+======================================================================
+
+let x = { a }
+let y = { a, }
+let z = R { a }
+if x { a }
+else { b }
+report z with { a: 2 }
+
+----------------------------------------------------------------------
+
+(source_file
+  (binding
+    (identifier)
+    (block
+      (expression_statement
+        (identifier))))
+  (binding
+    (identifier)
+    (record
+      (shorthand_field
+        (identifier))))
+  (binding
+    (identifier)
+    (typed_record
+      (type_identifier
+        (identifier))
+      (record_fields
+        (shorthand_field
+          (identifier)))))
+  (expression_statement
+    (if_expression
+      (identifier)
+      (block
+        (expression_statement
+          (identifier)))
+      (block
+        (expression_statement
+          (identifier)))))
+  (report_statement
+    (with_expression
+      (identifier)
+      (record_fields
+        (record_field
+          (identifier)
+          (number))))))
+
+======================================================================
+Newlines and nested blocks
+======================================================================
+
+let x = f(1
++ 2, { let y = 1
+y })
+ # chain
+ .abs()
+return
+1
+
+----------------------------------------------------------------------
+
+(source_file
+  (binding
+    (identifier)
+    (call_expression
+      (field_expression
+        (call_expression
+          (identifier)
+          (arguments
+            (binary_expression
+              (number)
+              (number))
+            (block
+              (binding
+                (identifier)
+                (number))
+              (expression_statement
+                (identifier)))))
+        (comment)
+        (identifier))
+      (arguments)))
+  (return_statement)
+  (expression_statement
+    (number)))
+
+======================================================================
+Nested interpolation and escapes
+======================================================================
+
+report "café 🎲 \{ \} \" {f("inner {1}")} {{ x: 2 }.x}"
+
+----------------------------------------------------------------------
+
+(source_file
+  (report_statement
+    (string
+      (string_content)
+      (escape_sequence)
+      (string_content)
+      (escape_sequence)
+      (string_content)
+      (escape_sequence)
+      (string_content)
+      (interpolation
+        (call_expression
+          (identifier)
+          (arguments
+            (string
+              (string_content)
+              (interpolation
+                (number))))))
+      (string_content)
+      (interpolation
+        (field_expression
+          (record
+            (record_field
+              (identifier)
+              (number)))
+          (identifier))))))
+
+======================================================================
+Patterns arms and loops
+======================================================================
+
+for [x, y] in [[1, 2]] { report x by y as "pair" }
+match x { -1 | 0 => return, Pot.A if ready => break, _ => continue }
+chance { 10% => report x
+else => report y }
+
+----------------------------------------------------------------------
+
+(source_file
+  (for_statement
+    (list_pattern
+      (identifier)
+      (identifier))
+    (list
+      (list
+        (number)
+        (number)))
+    (block
+      (report_statement
+        (identifier)
+        (identifier)
+        (string
+          (string_content)))))
+  (expression_statement
+    (match_expression
+      (identifier)
+      (match_body
+        (match_arm
+          (or_pattern
+            (negative_pattern
+              (number))
+            (number))
+          (return_statement))
+        (match_arm
+          (variant_pattern
+            (type_identifier
+              (identifier))
+            (identifier))
+          (identifier)
+          (break_statement))
+        (match_arm
+          (wildcard)
+          (continue_statement)))))
+  (expression_statement
+    (chance_expression
+      (chance_body
+        (chance_arm
+          (percentage)
+          (report_statement
+            (identifier)))
+        (chance_arm
+          (report_statement
+            (identifier)))))))
+
+======================================================================
+Tests and contextual identifiers
+======================================================================
+
+let test = 1
+let expect = 2
+let export = 3
+export(1)
+test(2)
+test "model" { let x ~ d6
+expect P(x > 0) == 1 as "positive" }
+
+----------------------------------------------------------------------
+
+(source_file
+  (binding
+    (identifier)
+    (number))
+  (binding
+    (identifier)
+    (number))
+  (binding
+    (identifier)
+    (number))
+  (expression_statement
+    (call_expression
+      (identifier)
+      (arguments
+        (number))))
+  (expression_statement
+    (call_expression
+      (identifier)
+      (arguments
+        (number))))
+  (test_declaration
+    (string
+      (string_content))
+    (test_body
+      (binding
+        (identifier)
+        (dice))
+      (expect_statement
+        (binary_expression
+          (call_expression
+            (identifier)
+            (arguments
+              (binary_expression
+                (identifier)
+                (number))))
+          (number))
+        (string
+          (string_content))))))
+
+======================================================================
+Collections and lambdas
+======================================================================
+
+let f = (a, b,) -> a + b
+let g = () -> 1
+report f(...[1, 2])
+report ["a": 1, "b": 2]
+
+----------------------------------------------------------------------
+
+(source_file
+  (binding
+    (identifier)
+    (lambda_expression
+      (lambda_parameters
+        (identifier)
+        (identifier))
+      (binary_expression
+        (identifier)
+        (identifier))))
+  (binding
+    (identifier)
+    (lambda_expression
+      (lambda_parameters)
+      (number)))
+  (report_statement
+    (call_expression
+      (identifier)
+      (arguments
+        (spread
+          (list
+            (number)
+            (number))))))
+  (report_statement
+    (map
+      (map_entry
+        (string
+          (string_content))
+        (number))
+      (map_entry
+        (string
+          (string_content))
+        (number)))))
+
+======================================================================
+Try and temporal literals
+======================================================================
+
+report try { simulate { score 10%
+observe 3 from binomial(10, 30%)
+'1h 30m' } }
+catch DivisionByZero { '2024-02-29' }
+catch { '0.25s^2' }
+
+----------------------------------------------------------------------
+
+(source_file
+  (report_statement
+    (try_expression
+      (block
+        (expression_statement
+          (simulate_expression
+            (block
+              (score_statement
+                (percentage))
+              (observe_statement
+                (number)
+                (call_expression
+                  (identifier)
+                  (arguments
+                    (number)
+                    (percentage))))
+              (expression_statement
+                (temporal))))))
+      (catch_clause
+        (type_identifier
+          (identifier))
+        (block
+          (expression_statement
+            (temporal))))
+      (catch_clause
+        (block
+          (expression_statement
+            (temporal)))))))

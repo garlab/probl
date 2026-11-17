@@ -1,0 +1,51 @@
+name: Syntax highlighting
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  grammar:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: ["1.90.0", stable]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: editors/tree-sitter-probl
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+      - run: cargo +${{ matrix.rust }} fmt --check
+      - run: cargo +${{ matrix.rust }} clippy --all-targets --locked -- -D warnings
+      - run: cargo +${{ matrix.rust }} test --locked
+      # Package verification builds only shipped sources, without a generator.
+      - run: cargo +${{ matrix.rust }} package --locked
+      - run: cargo +${{ matrix.rust }} test --locked --manifest-path target/package/tree-sitter-probl-0.1.0/Cargo.toml
+
+  generated-and-compiler:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - run: cargo install tree-sitter-cli --version 0.27.1 --locked --no-default-features
+      - run: tree-sitter generate --js-runtime node
+        working-directory: editors/tree-sitter-probl
+      - run: git diff --exit-code -- editors/tree-sitter-probl/src
+      - run: tree-sitter test
+        working-directory: editors/tree-sitter-probl
+      - run: cargo test --locked --manifest-path editors/highlighting-tests/Cargo.toml

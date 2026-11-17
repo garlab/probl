@@ -1,0 +1,66 @@
+# UTF-8 stays in comments and strings: café, λ, 🎲.
+@mode sample(runs: 1_000, seed: 7)
+@strict
+import "./setup.probl"
+import {
+  step as move,
+  from,
+} from "./walk.probl"
+export enum Pot { Ruby, Opal, Isa }
+export type Entry = { value: (int or str), draws: list[dist[int]], metadata: map[str, float] }
+export fn roll(count: int, die): list[int] { roll(count, die) }
+export let answer = 42
+export var counter = 0
+let [x, _, y]: list[int] = [1, 2, 3]
+let r = Entry { value: 1, draws: [d6], metadata: [:] }
+let a = { x, y }
+let b = { value: 1, x }
+let empty = Entry {}
+let changed = r with { value: "text" }
+let union: set[int] or bag[int] = set(1)
+let from = 1
+let to = 2
+let export = 3
+let test = 4
+let expect = 5
+let by = 6
+let as = 7
+var n ~ 2d6
+n += ~d6
+n -= 1
+n *= 2
+n /= 2
+n ~ d20
+for [a, b] in [[1, 2]] { report a by b as "pair" }
+while n < 20 { n += 1 }
+repeat 2 { report n }
+loop { if n > 0 { break }; continue }
+let f = (a, b,) -> a + b
+let g = () -> { return 1 }
+let h = x -> x.abs()
+report f(...[1, 2])
+report [1, ...[2, 3]]
+report ["a": 1, "b": 2,]
+report simulate { let r ~ d6; observe r > 3; r }
+observe 3 from binomial(10, 30%)
+score 10%
+report try { 1 / n }
+catch DivisionByZero { 0 }
+catch { -1 }
+match n {
+  -1 | 0 => return
+  1 if true => report "one"
+  Pot.Ruby | Pot.Opal => report "gem"
+  [a, b] => report a + b
+  _ => report "other"
+}
+chance {
+  20% => n += 1
+  30% => if true { report n }
+  else => report n - 1
+}
+test "a model test" {
+  let x ~ d6
+  expect P(x > 0) == 1 as "positive"
+  report x as "diagnostic"
+}

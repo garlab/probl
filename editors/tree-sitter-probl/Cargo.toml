@@ -1,0 +1,42 @@
+[package]
+name = "tree-sitter-probl"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+description = "Probl grammar and queries for Tree-sitter"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/garlab/probl"
+readme = "README.md"
+keywords = ["tree-sitter", "probl", "syntax", "highlighting"]
+categories = ["parsing", "text-editors"]
+build = "bindings/rust/build.rs"
+include = [
+    "bindings/rust/*.rs", "src/**", "queries/*.scm", "test/**",
+    "grammar.js", "tree-sitter.json", "Cargo.toml", "Cargo.lock",
+    "README.md", "LICENSE-*", "NOTICE",
+]
+
+# The compiler has its own release cycle and a newer Rust requirement.
+[workspace]
+resolver = "2"
+
+[lib]
+path = "bindings/rust/lib.rs"
+
+[dependencies]
+tree-sitter-language = "0.1"
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
+tree-sitter = "0.27"
+
+[[test]]
+name = "grammar"
+path = "bindings/rust/tests.rs"
+
+[[bench]]
+name = "highlighting"
+path = "bindings/rust/bench.rs"
+harness = false

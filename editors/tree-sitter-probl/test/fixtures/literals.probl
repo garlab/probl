@@ -1,0 +1,11 @@
+let integers = [0, 1_000, 0b10_01, 0B1, 0xff, 0XCA_FE]
+let floats = [1.0, 1.2e3, 3E-2, 2e+1, 1_2.3_4e5_6]
+let probabilities = [0%, 100%, 12.5%, 3e-2%]
+let dice = [d6, 2d6, 1_0d2_0]
+let d6_0 = 1
+let d6x = 2
+let ranges = [1..6, 1..<7, 3% to 7%]
+let temporal = ['2024-02-29', '2027-01-01T01:00:00.10+01:00', '1h 30m', '0.25s^2']
+let text = "café 🎲 \n \t \r \0 \\ \" \{ \} {1 + 2} {f("nested {x}")}"
+let record = "{{ x: 1, y: 2 }.x}"
+report "# is text and 20% is text"

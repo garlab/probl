@@ -1,0 +1,19 @@
+{
+  "grammars": [{
+    "name": "probl",
+    "camelcase": "Probl",
+    "scope": "source.probl",
+    "path": ".",
+    "file-types": ["probl"],
+    "injection-regex": "^[Pp][Rr][Oo][Bb][Ll]$",
+    "highlights": ["queries/highlights.scm"]
+  }],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT OR Apache-2.0",
+    "description": "Probl grammar for Tree-sitter",
+    "authors": [{"name": "Probl contributors"}],
+    "links": {"repository": "https://github.com/garlab/probl"}
+  },
+  "bindings": {"rust": true}
+}

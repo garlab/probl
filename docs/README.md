@@ -22,6 +22,7 @@ The [examples directory](../examples) contains runnable models with expected out
 - [Architecture and priorities](architecture.md): crate responsibilities, execution model, host boundaries and next work.
 - [Testing](testing.md): commands, regression contracts, independent checks and remaining coverage gaps.
 - [Playground](playground.md): local development, browser tests and deployment.
+- [Shared syntax highlighting](design/syntax-highlighting.md): shared Tree-sitter grammar, native editor integrations, validation and release gates.
 - [Benchmarks](benchmarks.md): dated measurements and the optimizations they motivated; these are not current performance guarantees.
 - [Package publication](library.md#packaging-and-publication): the published crates, internal version pins and how to release.
 
