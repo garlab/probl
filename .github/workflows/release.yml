@@ -152,7 +152,7 @@ jobs:
           test "$(docker run --rm probl:test --version)" = "probl ${TAG#v}"
           docker run --rm -v "$PWD":/work probl:test run examples/02_craps.probl --fractions
           docker run --rm -v "$PWD":/work probl:test run examples/08_signup_forecast.probl --today 2026-09-29
-      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         if: env.PUBLISH == 'true'
         with:
           registry: ghcr.io
@@ -241,7 +241,7 @@ jobs:
           merge-multiple: true
           path: ${{ runner.temp }}/digests
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -281,7 +281,7 @@ jobs:
           subject-digest: ${{ steps.index.outputs.digest }}
           push-to-registry: true
       - run: docker run --rm "$IMAGE:${TAG#v}" --version
-      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         if: vars.DOCKERHUB_IMAGE != ''
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
