@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Debian and glibc, not Alpine or musl: see docs/docker.md.
-FROM rust:1.99.0-slim-trixie@sha256:24e632c09342c20abf8312cf4f61430a911c01ed3a5e4c02b87292b1c39c5273 AS build
+FROM rust:1.99.1-slim-trixie@sha256:f6c4a35d21dbb3c89d7a8d056c193e94fc09037f2b58dd858b09c39a47dd02d7 AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
