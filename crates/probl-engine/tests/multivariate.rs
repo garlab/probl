@@ -96,8 +96,8 @@ report x[1]
 report (x[0] - 1) * (x[1] - 2)
 "#;
     let out = exec_raw(source, &sampled(10_000)).unwrap();
-    for i in 0..3 {
-        close(out.reports[i].chance().unwrap(), 1.0);
+    for report in &out.reports[..3] {
+        close(report.chance().unwrap(), 1.0);
     }
     for (i, expected) in [(3, 1.0), (4, 2.0), (5, -6.0)] {
         let group = out.reports[i].groups.values().next().unwrap();

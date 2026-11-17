@@ -4,6 +4,12 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-17
+
+### Added
+
+- Shared native-editor syntax highlighting sources in `editors/tree-sitter-probl`: a generated Tree-sitter parser, highlight and fold queries, Rust 1.90 bindings, and incremental parsing tests. The grammar has its own version and publication process, separate from the Probl workspace release.
+
 ### Fixed
 
 - A `match` can test an imported enum's variants: a pattern names a variant with its enum's name (`Pot.Isa =>`), as an expression does. A bare name such as `Isa` still binds a new variable, which matches every value; when the name is a variant of an imported enum, a warning says so and suggests `Pot.Isa`. Qualified patterns also match a file's own variants, including a variant name that two enums share.
@@ -190,7 +196,8 @@ The first release.
 
 The [language overview](docs/language-overview.md) and the [reference semantics](docs/semantics.md) describe the language, and [status and limits](README.md#status-and-limits) lists what isn't implemented yet.
 
-[Unreleased]: https://github.com/garlab/probl/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/garlab/probl/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/garlab/probl/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/garlab/probl/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/garlab/probl/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/garlab/probl/compare/v0.3.3...v0.4.0

@@ -229,12 +229,8 @@ fn compositions_and_kin_simplify() {
     let o = outcome(
         "let x ~ uniform(-1, 1)\nlet z ~ normal(0, 1)\nlet u ~ uniform(1, 3)\nreport sqrt(x * x) - abs(x)\nreport ln(exp(z)) - z\nreport exp(ln(u)) - u",
     );
-    for i in 0..3 {
-        assert_eq!(
-            o.reports[i].distribution(),
-            vec![(Value::Float(0.0), 1.0)],
-            "report {i}"
-        );
+    for (i, report) in o.reports[..3].iter().enumerate() {
+        assert_eq!(report.distribution(), vec![(Value::Float(0.0), 1.0)], "report {i}");
     }
     // The other logarithms and exponentials are these, rescaled.
     let o = outcome(

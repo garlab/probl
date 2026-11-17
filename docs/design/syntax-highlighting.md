@@ -1,7 +1,7 @@
 # Shared syntax highlighting
 
 > Implementation started 16 November 2026. The shared grammar and native
-> consumer integrations are implemented. Platform/rendering review, first
+> consumer integrations are implemented. Consumer platform/rendering review, first
 > publication and registry-only consumer builds remain release gates below.
 
 ## Implementation status
@@ -28,8 +28,9 @@ contextual words used as names, malformed input, structural folds, and increment
 edits/undo around strings, comments and brackets. Long comment runs cache newline
 lookahead to avoid quadratic scanning. The [dedicated CI workflow](../../.github/workflows/syntax-highlighting.yml)
 checks generated-file reproducibility, package builds, and the stable/minimum
-Rust versions on macOS, Linux and Windows. Those hosted platform runs and first
-publication must pass before calling the initial release complete.
+Rust versions on macOS, Linux and Windows. All six hosted OS/toolchain combinations
+and the generation/compiler checks [passed on 17 November 2026](https://github.com/garlab/probl/actions/runs/44033455944).
+First publication and the consumer release checks below remain pending.
 
 The grammar, packaged crate and both consumer test suites pass locally; the
 Plastext macOS application also builds. Gloss's terminal tests cover both themes.

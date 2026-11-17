@@ -96,6 +96,13 @@ exact commit to `main`, then rerun the failed jobs of the original release run.
 Keep the tag unchanged. A retry publishes the original tagged commit; newer
 commits on `main` need their own version and tag to be included in a release.
 
+## Editor grammar
+
+[`tree-sitter-probl`](../editors/tree-sitter-probl/README.md#release) has its own
+Cargo workspace, version and release process. The Probl release workflow does
+not publish it or change its version. Its sources are included in the source
+archive; native consumers use its independently published registry version.
+
 ## Browser distribution
 
 New releases also contain `probl-X.Y.Z-browser.json` and its `.sha256` checksum
