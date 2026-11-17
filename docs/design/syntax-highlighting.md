@@ -1,8 +1,9 @@
 # Shared syntax highlighting
 
 > Implementation started 16 November 2026. The shared grammar and native
-> consumer integrations are implemented. Consumer platform/rendering review, first
-> publication and registry-only consumer builds remain release gates below.
+> consumer integrations are implemented, and grammar 0.1.0 is published.
+> Consumer platform/rendering review and registry-only builds remain release
+> gates below.
 
 ## Implementation status
 
@@ -30,16 +31,18 @@ lookahead to avoid quadratic scanning. The [dedicated CI workflow](../../.github
 checks generated-file reproducibility, package builds, and the stable/minimum
 Rust versions on macOS, Linux and Windows. All six hosted OS/toolchain combinations
 and the generation/compiler checks [passed on 17 November 2026](https://github.com/garlab/probl/actions/runs/44033455944).
-First publication and the consumer release checks below remain pending.
+Grammar [0.1.0](https://crates.io/crates/tree-sitter-probl/0.1.0) was published on
+17 November 2026 from `tree-sitter-probl-v0.1.0`. Future releases use the
+[tag-based grammar workflow](../../.github/workflows/grammar-release.yml).
 
 The grammar, packaged crate and both consumer test suites pass locally; the
 Plastext macOS application also builds. Gloss's terminal tests cover both themes.
 Plastext's visual review could not run because computer-use permissions were
 unavailable. Native Linux/Windows consumer builds and representative rendering
 review remain pending. Consumer manifests request registry version `0.1.0`;
-untracked Cargo overrides currently resolve the unpublished crate locally.
-After publication, remove those overrides, regenerate the consumer lockfiles
-against the registry, and repeat the consumer builds before release.
+untracked Cargo overrides still resolve the crate locally. Remove those
+overrides, regenerate the consumer lockfiles against the published registry
+version, and repeat the consumer builds before release.
 
 The compiler currently rejects literal newlines in strings, including inside
 interpolations. The grammar follows that rule: `\n` is an escape, while collections

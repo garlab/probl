@@ -99,9 +99,61 @@ commits on `main` need their own version and tag to be included in a release.
 ## Editor grammar
 
 [`tree-sitter-probl`](../editors/tree-sitter-probl/README.md#release) has its own
-Cargo workspace, version and release process. The Probl release workflow does
-not publish it or change its version. Its sources are included in the source
-archive; native consumers use its independently published registry version.
+Cargo workspace and version. The [Grammar release workflow](../.github/workflows/grammar-release.yml)
+runs when a stable `tree-sitter-probl-vX.Y.Z` tag is pushed. The Probl `vX.Y.Z`
+workflow continues to release only the compiler workspace.
+
+The grammar tag must identify a commit on `origin/main` and match both
+`editors/tree-sitter-probl/Cargo.toml` and the `metadata.version` field in
+`editors/tree-sitter-probl/tree-sitter.json`. Publication waits for the same
+checks used in grammar CI: stable and minimum Rust on macOS, Linux and Windows,
+packaged-crate builds/tests, reproducible generation, corpus tests and compiler
+comparisons. The publishing job rechecks the remote tag, then uses short-lived
+crates.io credentials in the existing `release` environment. Build jobs do not
+receive publishing credentials.
+
+Configure a GitHub trusted publisher once in the crate's
+[crates.io settings](https://crates.io/crates/tree-sitter-probl/settings):
+
+| Field | Value |
+| --- | --- |
+| Repository owner | `garlab` |
+| Repository name | `probl` |
+| Workflow filename | `grammar-release.yml` |
+| Environment | `release` |
+
+The workflow filename is the basename, without `.github/workflows/`. Existing
+deployment approvals for `release` apply. Any tag restrictions on that environment
+must allow `tree-sitter-probl-v*`. No long-lived Cargo token secret is needed;
+see [trusted publishing](https://crates.io/docs/trusted-publishing).
+
+For each new grammar version:
+
+1. Update both grammar version fields, review `cargo package --list`, and refresh
+   the grammar and compiler comparison lockfiles:
+
+   ```sh
+   cargo update --workspace --manifest-path editors/tree-sitter-probl/Cargo.toml
+   cargo update --workspace --manifest-path editors/highlighting-tests/Cargo.toml
+   ```
+
+2. Commit the version update on `main`, then tag and push that commit together
+   with the branch (`0.1.1` is an example):
+
+   ```sh
+   git tag -a tree-sitter-probl-v0.1.1 -m "Release tree-sitter-probl 0.1.1"
+   git push --atomic origin main refs/tags/tree-sitter-probl-v0.1.1
+   ```
+
+The tag's commit must contain the workflow. The existing `0.1.0` publication and
+tag remain the initial manual release. To validate a future grammar tag without
+publishing, dispatch `Grammar release` on that tag with `dry_run` enabled, its
+default. A retry skips an already-published version; registry failures stop the
+job instead of being treated as a missing version. After a failed run, keep the
+tag on the tested commit and rerun its failed jobs.
+
+Grammar sources are also included in Probl's source archive; native consumers
+use the grammar's independently published registry version.
 
 ## Browser distribution
 

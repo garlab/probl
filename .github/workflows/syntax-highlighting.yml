@@ -2,7 +2,11 @@ name: Syntax highlighting
 
 on:
   push:
+    branches: ['**']
+    # Grammar release tags run these same jobs through grammar-release.yml.
+    tags-ignore: ['tree-sitter-probl-v*']
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -31,7 +35,12 @@ jobs:
       - run: cargo +${{ matrix.rust }} test --locked
       # Package verification builds only shipped sources, without a generator.
       - run: cargo +${{ matrix.rust }} package --locked
-      - run: cargo +${{ matrix.rust }} test --locked --manifest-path target/package/tree-sitter-probl-0.1.0/Cargo.toml
+      - name: Test the packaged crate
+        shell: bash
+        run: |
+          package_id=$(cargo +${{ matrix.rust }} pkgid --locked -p tree-sitter-probl)
+          version="${package_id##*[@#]}"
+          cargo +${{ matrix.rust }} test --locked --manifest-path "target/package/tree-sitter-probl-$version/Cargo.toml"
 
   generated-and-compiler:
     runs-on: ubuntu-latest

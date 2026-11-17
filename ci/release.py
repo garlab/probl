@@ -76,8 +76,8 @@ def upload(release, path):
     api(None, method='POST', url=url, body=path.read_bytes(), content_type=kind)
 
 
-def check(tag):
-    version(tag)
+def check_identity(tag):
+    """Validate a release checkout before requesting registry credentials."""
     if os.environ['GITHUB_REPOSITORY'] != REPO:
         raise ValueError("Releases may only run in garlab/probl")
     if os.environ['GITHUB_REF'] != f"refs/tags/{tag}":
@@ -95,9 +95,10 @@ def check(tag):
             "Push or merge that exact commit to main, then rerun the failed jobs. "
             "Keep the existing tag unchanged."
         ) from None
-    cargo = tomllib.loads(run('git', 'show', 'HEAD:Cargo.toml'))
-    if tag != 'v' + cargo['workspace']['package']['version']:
-        raise ValueError("Tag does not match the Cargo workspace version")
+    return commit
+
+
+def check_remote_tag(tag, commit):
     obj = api(f'git/ref/tags/{tag}')['object']
     for _ in range(5):
         if obj['type'] != 'tag':
@@ -105,6 +106,15 @@ def check(tag):
         obj = api(f'git/tags/{obj["sha"]}')['object']
     if obj['type'] != 'commit' or obj['sha'] != commit:
         raise ValueError('Remote tag no longer identifies the tested commit')
+
+
+def check(tag):
+    version(tag)
+    commit = check_identity(tag)
+    cargo = tomllib.loads(run('git', 'show', 'HEAD:Cargo.toml'))
+    if tag != 'v' + cargo['workspace']['package']['version']:
+        raise ValueError("Tag does not match the Cargo workspace version")
+    check_remote_tag(tag, commit)
     latest = api('releases/latest', missing=True)
     if latest and version(latest['tag_name']) > version(tag):
         raise ValueError("Refusing to publish an older version over a newer release")

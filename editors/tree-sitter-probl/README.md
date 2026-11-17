@@ -59,8 +59,19 @@ That separate workspace is deliberately excluded from the published package.
 
 ## Release
 
-Release this crate independently of the compiler. Check the registry name and
-review `cargo package --list` before publishing. Use registry versions in
-consumers; temporary path overrides belong in untracked Cargo configuration.
+Release this crate independently of the compiler using a stable
+`tree-sitter-probl-vX.Y.Z` tag on a commit in `main`. The `Grammar release`
+workflow checks that the tag matches both this package's `Cargo.toml` and
+`tree-sitter.json`, runs the shared grammar checks on macOS, Linux and Windows,
+and publishes to crates.io through the repository's `release` environment.
+Manual dispatch on a grammar tag defaults to validation only; already-published
+versions are skipped on retries.
+
+Update both version fields and refresh this package's `Cargo.lock` and the
+compiler comparison workspace's `Cargo.lock` before committing a new version.
+Review `cargo package --list`. The [release guide](https://github.com/garlab/probl/blob/main/docs/releases.md#editor-grammar)
+lists the one-time trusted-publisher configuration and tag commands.
+Use registry versions in consumers; temporary path overrides belong in
+untracked Cargo configuration.
 The repository's MIT OR Apache-2.0 licenses apply; `NOTICE` identifies the
 Tree-sitter header license.
