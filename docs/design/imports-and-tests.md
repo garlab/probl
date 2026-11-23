@@ -1,6 +1,6 @@
 # Imports and model tests
 
-> Design, updated 6 November 2026. Imports and exports are implemented ([as built](#as-built), [semantics, section 16](../semantics.md#16-files-and-imports)). The [first model-test runner](../model-tests.md) implements isolated enumerated tests with terminal boolean expectations in the CLI and library. Population reductions, static effect checks, richer counterexamples and playground test execution remain proposals. The [reference semantics](../semantics.md) remains authoritative for current behavior.
+> Design, updated 6 November 2026. Imports and exports are implemented ([as built](#as-built), [semantics, section 16](../semantics.md#16-files-and-imports)). The [first model-test runner](../model-tests.md) implements isolated enumerated tests with terminal boolean expectations in the CLI and library. Population reductions, static effect checks and richer counterexamples remain proposals; tests won't run in the playground. The [reference semantics](../semantics.md) remains authoritative for current behavior.
 
 ## Recommendation
 
@@ -183,7 +183,7 @@ Freeze source bytes and identities for one compilation/test invocation. Repeated
 - **Editors.** An imported name is a definition in the importing file, linked to the one it imports, so each file's symbols stand on their own. `probl_sema::compile_module` checks a file as it's compiled when imported, with what it imports, as an editor checks the file it shows.
 - **Playground.** The WASM API's `check` and `run` take the other files as `"sources"`; `check` can check any of them, and its symbols name the definitions in other files that the checked file uses. The page shows a program's files as tabs, `main.probl` first; it saves them, shares them in the link, marks files with errors, and goes to an imported name's definition in its file.
 - **Tests, first stage.** `probl test` and `probl::compile_tests` compile each test as an independent model with fresh fixtures and imports. Terminal boolean expectations use read-only runtime guards and unrounded counterexample weights. Results distinguish pass, failure, error and inconclusive, retaining incomplete inference used during setup. See [model tests](../model-tests.md) for the implemented subset and limits.
-- **Not yet.** The namespace form, re-exports, renaming a file's imports with it, population query reductions, static assertion effect diagnostics, richer counterexample values, and playground test execution.
+- **Not yet.** The namespace form, re-exports, renaming a file's imports with it, population query reductions, static assertion effect diagnostics and richer counterexample values. Running tests in the playground isn't planned.
 
 ### Deferred
 

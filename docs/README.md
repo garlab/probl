@@ -20,6 +20,7 @@ The [examples directory](../examples) contains runnable models with expected out
 
 - [Contributing](../CONTRIBUTING.md): bug reports, checks before a pull request, where tests go and commit messages.
 - [Architecture and priorities](architecture.md): crate responsibilities, execution model, host boundaries and next work.
+- [Agenda](agenda.md): the planned work in order, and what's been decided against.
 - [Testing](testing.md): commands, regression contracts, independent checks and remaining coverage gaps.
 - [Playground](playground.md): local development, browser tests and deployment.
 - [Shared syntax highlighting](design/syntax-highlighting.md): shared Tree-sitter grammar, native editor integrations, validation and release gates.
@@ -36,7 +37,7 @@ The [examples directory](../examples) contains runnable models with expected out
 - [Literals](design/literals.md): implemented date and datetime literals in single quotes, explicit runtime parsing, nanosecond precision and UTC offset normalization.
 - [Collection values](design/collection-values.md): how lists, maps and bags are stored, copied, compared and sorted, with measurements; proposes changing them in place instead of copying them on every `push` or `insert`.
 - [Portals and external effects](design/portals-and-effects.md): a deferred proposal for an implicit prologue, read-only joint population views and midway host interaction; better reporting comes first.
-- [Symbolic inference](design/symbolic-inference.md): assessment of the Dice paper and an evaluation plan; no symbolic backend is implemented.
+- [Symbolic inference](design/symbolic-inference.md): assessment of the Dice paper and an evaluation plan; stage 1 is built as an experimental backend, off by default.
 - [Complex values and quantum simulation](design/quantum-and-complex.md): the implemented scalar foundation and an unimplemented quantum-engine proposal.
 - [Original project audit](design/project-audit.md): historical findings against a specific revision, with a [resolution map](architecture.md#original-audit-resolution-map). It is not a list of current vulnerabilities.
 

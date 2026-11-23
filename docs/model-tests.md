@@ -113,6 +113,6 @@ helper or alias, produce an explicit unsupported error. This includes shared
 queries such as `mean(d6)`; compute ordinary per-world statistics in setup.
 Assertions can still inspect collections pointwise with helpers such as `len`.
 
-Static effect diagnostics, richer counterexample values, sampled tests, and
-WASM/playground test execution remain later work. The playground highlights the
-syntax and documents it but does not yet execute test sources.
+Static effect diagnostics, richer counterexample values and sampled tests remain
+later work. The playground highlights test syntax and documents it, but doesn't
+run tests: use `probl test` or the library.

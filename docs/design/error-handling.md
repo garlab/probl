@@ -1,6 +1,6 @@
 # Error handling: local recovery and failed worlds
 
-> Draft proposal, updated 5 November 2026. Intended for near-term language work, independently of [portals and external effects](portals-and-effects.md). The global [failure modes](#failure-modes-total-or-partial) and local recovery with `try`/`catch` are implemented, as the reference semantics specifies them ([failure modes](../semantics.md#failure-modes), [catching faults](../semantics.md#catching-faults)); see [as built](#as-built) for how they differ from this proposal. So are [stage 0](#stage-0-say-how-likely-the-failure-is)'s diagnostics, for some statements. Binding a fault in a catch (`catch F as err`), `finally` and a failure cap are not. Proposed syntax and output elsewhere are illustrative.
+> Draft proposal, updated 5 November 2026. Intended for near-term language work, independently of [portals and external effects](portals-and-effects.md). The global [failure modes](#failure-modes-total-or-partial) and local recovery with `try`/`catch` are implemented, as the reference semantics specifies them ([failure modes](../semantics.md#failure-modes), [catching faults](../semantics.md#catching-faults)); see [as built](#as-built) for how they differ from this proposal. So are [stage 0](#stage-0-say-how-likely-the-failure-is)'s diagnostics, for some statements. Binding a fault in a catch (`catch F as err`) and a failure cap are not, and `finally` won't be added. Proposed syntax and output elsewhere are illustrative.
 
 ## Recommendation
 

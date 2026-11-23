@@ -810,4 +810,4 @@ describes the remaining query and editor stages.
 - **Nested estimates** (D4): `simulate` blocks that must be sampled, and how their error affects decisions.
 - **General continuous composition**, beyond the supported single-draw functions and threshold conditioning in §13; other transforms and combinations of independent continuous draws need further representation and inference contracts.
 - **Reports that update with later evidence** (filtering and smoothing).
-- **A fault's details in a catch**, such as its message, and a `finally` block: see the [error-handling proposal](design/error-handling.md).
+- **A fault's details in a catch**, such as its message: see the [error-handling proposal](design/error-handling.md).

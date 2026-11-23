@@ -91,8 +91,7 @@ probl repl
 ```
 
 [Model tests](docs/model-tests.md) support named `test` blocks and
-terminal boolean `expect` assertions. Population reductions in expectations and
-playground test execution are the next stages.
+terminal boolean `expect` assertions. Population reductions in expectations are the next stage.
 
 Models get one immutable UTC datetime snapshot as `now`, with its date as `today`. Pin both with `--now 2027-01-31T09:30:00Z`, or use `--today 2026-09-29` for midnight on a date and to reproduce the calendar examples' documented output. Explicit date and datetime snapshots must agree. Likewise, `env` is the environment variables, an immutable `map[str, str]` captured once: `env.get("REGION", "eu")` reads one, and `--env REGION=us` sets one in place of the shell's. Successful runs are reproducible for the same program, data, environment, datetime snapshot, seed and engine version.
 

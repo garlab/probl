@@ -656,8 +656,8 @@ its final `expect` section inspects the population without conditioning it.
 Failures, errors and incomplete inference all make the command unsuccessful.
 
 This first stage supports boolean properties through the CLI and Rust library.
-Population reductions inside expectations, such as `expect mean(x) == 3.5`, and
-playground test execution remain later work. See [model tests](model-tests.md)
+Population reductions inside expectations, such as `expect mean(x) == 3.5`,
+remain later work. See [model tests](model-tests.md)
 for syntax, isolation, limits and replay settings.
 
 ## 4. Distributions
