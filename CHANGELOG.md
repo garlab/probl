@@ -4,6 +4,10 @@ All notable changes to the published crates are recorded here. The format follow
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-23
+
+The crates are unchanged from 0.6.1. Version 0.6.1 reached crates.io and `ghcr.io/garlab/probl`, but its GitHub release, which holds the source archive and the browser bundle, failed to publish, so Homebrew and the hosted playground stayed at 0.6.0. 0.6.2 publishes everywhere.
+
 ## [0.6.1] - 2026-11-17
 
 ### Added
@@ -196,7 +200,8 @@ The first release.
 
 The [language overview](docs/language-overview.md) and the [reference semantics](docs/semantics.md) describe the language, and [status and limits](README.md#status-and-limits) lists what isn't implemented yet.
 
-[Unreleased]: https://github.com/garlab/probl/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/garlab/probl/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/garlab/probl/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/garlab/probl/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/garlab/probl/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/garlab/probl/compare/v0.4.0...v0.5.0
